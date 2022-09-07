@@ -1,3 +1,5 @@
+use serde::Serialize;
+use crate::ogf::Ogf;
 
 pub mod disconnect;
 pub mod get_mws_transport_layer_configuration;
@@ -142,9 +144,15 @@ pub mod set_mws_transport_layer;
 pub mod write_authenticated_payload_timeout;
 pub mod write_le_host_support;
 
-
-
-
 pub trait Command {
+    const OGF: Ogf;
+    const OCF: u16;
+    type Parameters: Serialize;
+    type ReturnParameters;
 
+    fn opcode(&self) -> u16 {
+        (Self::OCF & 0b1111111111) | ((((Self::OGF as u8) & 0b111111) as u16) << 10)
+    }
+
+    fn parameters(&self) -> Self::Parameters;
 }
