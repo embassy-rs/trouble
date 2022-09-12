@@ -8,6 +8,9 @@
 //! that indices 0..=36 refer to data channels and 37..=39 refer to the advertising channels
 //! (presumably to simplify channel hopping). The Link-Layer is only interested in these channel
 //! indices, so only those are implemented here.
+//!
+
+use core::future::Future;
 
 /// Returns the center frequency in MHz corresponding to an RF channel.
 fn rf_channel_freq(rf_channel: u8) -> u16 {
@@ -21,7 +24,8 @@ fn whitening_iv(channel_idx: u8) -> u8 {
 }
 
 /// One of the three advertising channels (channel indices 37, 38 or 39).
-#[derive(Copy, Clone, Debug, defmt::Format)]
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdvertisingChannel(u8);
 
 impl AdvertisingChannel {
@@ -90,7 +94,8 @@ impl AdvertisingChannel {
 /// One of 37 data channels on which data channel PDUs are sent between connected devices.
 ///
 /// (channel indices 0..=36)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DataChannel(u8);
 
 impl DataChannel {
@@ -148,9 +153,13 @@ impl DataChannel {
 pub trait Radio {
     type Error;
 
-    type TransmitFuture<'m>: Future<Output = Result<(), Error>> + 'm where Self: 'm;
-    fn transmit(&mut self, buf: &[u8], freq: u16) -> Self::TransmitFuture<'m>;
+    type TransmitFuture<'m>: Future<Output = Result<(), Self::Error>> + 'm
+    where
+        Self: 'm;
+    fn transmit<'m>(&'m mut self, buf: &'m [u8], freq: u16) -> Self::TransmitFuture<'m>;
 
-    type ReceiveFuture<'m>: Future<Output = Result<usize, Error>> + 'm where Self: 'm;
-    fn receive(&mut self, buf: &mut [u8], freq: u16) -> Self::ReceiveFuture<'m>;
+    type ReceiveFuture<'m>: Future<Output = Result<usize, Self::Error>> + 'm
+    where
+        Self: 'm;
+    fn receive<'m>(&'m mut self, buf: &'m mut [u8], freq: u16) -> Self::ReceiveFuture<'m>;
 }

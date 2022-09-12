@@ -1,8 +1,7 @@
 //! Stack configuration trait.
 
-use crate::link::{Transmitter};
 use crate::phy::Radio;
-use crate::{l2cap::ChannelMapper, time::Timer};
+use crate::time::Timer;
 
 /// Trait for trouble stack configuration.
 ///
@@ -14,13 +13,6 @@ pub trait Config {
     /// A time source with microsecond resolution.
     type Timer: Timer;
 
-    /// The BLE packet transmitter (radio).
-    type Transmitter: Transmitter;
+    /// The BLE tranciever (radio).
+    type Radio: Radio;
 }
-
-// Helper aliases to make accessing producer/consumer more convenient.
-pub(crate) type ConfProducer<C> = <<C as Config>::PacketQueue as PacketQueue>::Producer;
-pub(crate) type ConfConsumer<C> = <<C as Config>::PacketQueue as PacketQueue>::Consumer;
-
-// (`C::PacketQueue::Producer` should work, but doesn't)
-// (see: https://github.com/rust-lang/rust/issues/22519)

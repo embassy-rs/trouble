@@ -4,3 +4,6 @@ members = [
   "controller",
   "host",
 ]
+
+[patch.crates-io]
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "master" }

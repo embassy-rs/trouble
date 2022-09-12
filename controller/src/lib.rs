@@ -1,3 +1,5 @@
+#![feature(generic_associated_types)]
+#![feature(type_alias_impl_trait)]
 //! An troublesome BLE link layer
 //!
 //! Trouble-controller is based on [rubble](), with modifications to make it work in an async
@@ -15,18 +17,18 @@ mod fmt;
 //mod utils;
 //pub mod beacon;
 //pub mod bytes;
-//pub mod config;
+pub mod config;
 //pub mod ecdh;
 //mod error;
 //pub mod link;
-//pub mod phy;
+pub mod phy;
 //pub mod security;
-//pub mod time;
+pub mod time;
 //pub mod uuid;
 
-pub use self::error::Error;
+//pub use self::error::Error;
 
-use self::link::llcp::VersionNumber;
+//use self::link::llcp::VersionNumber;
 
-/// Version of the Bluetooth specification implemented by Rubble.
-pub const BLUETOOTH_VERSION: VersionNumber = VersionNumber::V4_2;
+// Version of the Bluetooth specification implemented by Rubble.
+//pub const BLUETOOTH_VERSION: VersionNumber = VersionNumber::V4_2;
