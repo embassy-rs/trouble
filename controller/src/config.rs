@@ -10,9 +10,6 @@ use crate::time::Timer;
 ///
 /// Every application must define a type implementing this trait and supply it to the stack.
 pub trait Config {
-    /// A time source with microsecond resolution.
-    type Timer: Timer;
-
     /// The BLE tranciever (radio).
     type Radio: Radio;
 }

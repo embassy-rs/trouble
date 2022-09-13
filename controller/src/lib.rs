@@ -17,13 +17,12 @@ mod fmt;
 //mod utils;
 //pub mod beacon;
 //pub mod bytes;
-pub mod config;
+//pub mod config;
 //pub mod ecdh;
 //mod error;
-//pub mod link;
+pub mod link;
 pub mod phy;
 //pub mod security;
-pub mod time;
 //pub mod uuid;
 
 //pub use self::error::Error;
