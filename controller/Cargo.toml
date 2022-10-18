@@ -8,3 +8,7 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+embassy-time = { version = "0.1.0", features = ["tick-hz-1_000_000"] }
+
+[dev-dependencies]
+embassy-time = { version = "0.1.0", features = ["std"] }
