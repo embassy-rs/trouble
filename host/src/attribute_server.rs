@@ -140,7 +140,7 @@ where
             }
         }
 
-        trace!("{:#x?}", &attributes);
+        trace!("{:#x}", &attributes);
 
         #[cfg(feature = "crypto")]
         let mut security_manager = AsyncSecurityManager::new(_rng);
@@ -286,7 +286,7 @@ where
                         Ok(WorkResult::DidWork)
                     } else {
                         let packet = Att::decode(l2cap_packet)?;
-                        trace!("att: {:x?}", packet);
+                        trace!("att: {:x}", packet);
                         match packet {
                             Att::ReadByGroupTypeReq { start, end, group_type } => {
                                 self.handle_read_by_group_type_req(src_handle, start, end, group_type)
@@ -370,9 +370,9 @@ where
         let mut data = Data::new_att_read_by_group_type_response();
         let mut val = Err(AttErrorCode::AttributeNotFound);
         for att in self.attributes.iter_mut() {
-            trace!("Check attribute {:x?} {}", att.uuid, att.handle);
+            trace!("Check attribute {:x} {}", att.uuid, att.handle);
             if att.uuid == group_type && att.handle >= start && att.handle <= end {
-                debug!("found! {:x?}", att.handle);
+                debug!("found! {:x}", att.handle);
                 handle = att.handle;
                 val = att.value();
                 if let Ok(val) = val {
@@ -402,7 +402,7 @@ where
         let mut data = Data::new_att_read_by_type_response();
         let mut err = Err(AttErrorCode::AttributeNotFound);
         for att in self.attributes.iter_mut() {
-            trace!("Check attribute {:x?} {}", att.uuid, att.handle);
+            trace!("Check attribute {:x} {}", att.uuid, att.handle);
             if att.uuid == attribute_type && att.handle >= start && att.handle <= end {
                 data.append_value(att.handle);
                 handle = att.handle;
@@ -415,7 +415,7 @@ where
                     }
                 }
 
-                debug!("found! {:x?} {}", att.uuid, att.handle);
+                debug!("found! {:x} {}", att.uuid, att.handle);
                 break;
             }
         }
@@ -490,7 +490,7 @@ where
 
     async fn handle_exchange_mtu(&mut self, src_handle: u16, mtu: u16) -> Result<(), Error<T::Error>> {
         self.mtu = mtu.min(MTU);
-        debug!("Requested MTU {mtu}, returning {}", self.mtu);
+        debug!("Requested MTU {}, returning {}", mtu, self.mtu);
         self.write_att(src_handle, Data::new_att_exchange_mtu_response(self.mtu))
             .await?;
         Ok(())
@@ -523,12 +523,12 @@ where
         let mut data = Data::new_att_find_information_response();
 
         for att in self.attributes.iter_mut() {
-            trace!("Check attribute {:x?} {}", att.uuid, att.handle);
+            trace!("Check attribute {:x} {}", att.uuid, att.handle);
             if att.handle >= start && att.handle <= end {
                 if !data.append_att_find_information_response(att.handle, &att.uuid) {
                     break;
                 }
-                debug!("found! {:x?} {}", att.uuid, att.handle);
+                debug!("found! {:x} {}", att.uuid, att.handle);
             }
         }
 
@@ -614,10 +614,10 @@ where
 
     async fn write_att(&mut self, handle: u16, data: Data) -> Result<(), Error<T::Error>> {
         debug!("src_handle {}", handle);
-        debug!("data {:x?}", data.as_slice());
+        debug!("data {:x}", data.as_slice());
 
         let res = L2capPacket::encode(data);
-        trace!("encoded_l2cap {:x?}", res.as_slice());
+        trace!("encoded_l2cap {:x}", res.as_slice());
 
         let res = AclPacket::encode(
             handle,
@@ -625,7 +625,7 @@ where
             HostBroadcastFlag::NoBroadcast,
             res,
         );
-        trace!("writing {:x?}", res.as_slice());
+        trace!("writing {:x}", res.as_slice());
         self.ble.write_bytes(res.as_slice()).await?;
         Ok(())
     }

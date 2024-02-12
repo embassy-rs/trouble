@@ -177,14 +177,14 @@ impl EventType {
                         }
                     }
                     _ => {
-                        warn!("Ignoring unknown le-meta event {:02x} data = {:02x?}", sub_event, data);
+                        warn!("Ignoring unknown le-meta event {:02x} data = {:02x}", sub_event, data);
                         Self::Unknown
                     }
                 }
             }
             _ => {
                 warn!(
-                    "Ignoring unknown event {:02x} data = {:02x?}",
+                    "Ignoring unknown event {:02x} data = {:02x}",
                     event.code,
                     event.data.as_slice()
                 );
