@@ -15,7 +15,7 @@ pub enum L2capDecodeError {
 impl L2capPacket {
     pub fn decode(packet: AclPacket) -> Result<(u16, Self), L2capDecodeError> {
         let data = packet.data.as_slice();
-        debug!("L2CAP {:02x?}", data);
+        debug!("L2CAP {:02x}", data);
         let length = (data[0] as u16) + ((data[1] as u16) << 8);
         let channel = (data[2] as u16) + ((data[3] as u16) << 8);
         let payload = Data::new(&data[4..]);

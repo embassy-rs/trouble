@@ -1,4 +1,4 @@
-use embedded_io_async::ErrorKind;
+pub use embedded_io_async::ErrorKind;
 
 ///
 /// This trait allows generic code to do limited inspecting of errors,
@@ -45,5 +45,5 @@ pub trait HciDriver {
     async fn read(&mut self, buf: &mut [u8]) -> Result<HciMessageType, Self::Error>;
 
     /// Write the provided data as a single HCI packet.
-    async fn write(&mut self, data: &[u8]) -> Result<(), Self::Error>;
+    async fn write(&mut self, kind: HciMessageType, data: &[u8]) -> Result<(), Self::Error>;
 }

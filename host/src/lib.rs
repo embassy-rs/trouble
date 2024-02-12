@@ -426,8 +426,11 @@ where
         }
     }
 
-    pub(crate) async fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Error<T::Error>> {
-        self.hci.write(bytes).await.map_err(Error::Driver)?;
+    async fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Error<T::Error>> {
+        self.hci
+            .write(HciMessageType::Command, bytes)
+            .await
+            .map_err(Error::Driver)?;
         Ok(())
     }
 }
