@@ -1,14 +1,43 @@
 [package]
 name = "trouble-host"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
-description = "A crate name reserved for the trouble project"
-license = "Apache-2.0"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "An async Rust BLE host"
+license = "Apache-2.0 or MIT"
+keywords = [
+    "no-std",
+]
+categories = [
+    "embedded",
+    "hardware-support",
+    "no-std",
+]
+resolver = "2"
 
 [dependencies]
-trouble-core = { version = "0.1.0", path = "../core"}
-serde = { version = "1.0", default-features = false, features = ["derive"] }
-heapless = "0.7.16"
+# trouble-core = { version = "0.1.0", path = "../core"}
 
+embedded-io-async = { version = "0.6" }
+bitfield = "0.14.0"
+futures = { version = "0.3", default-features = false }
+critical-section = { version = "1.1" }
+rand_core = "0.6.4"
+
+# Optional crypto
+p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arithmetic"], optional = true }
+aes = { version = "0.8.2", optional = true }
+cmac = { version = "0.7.2", optional = true }
+
+# Logging
+log = { version = "0.4.16", optional = true }
+defmt = {version = "0.3", optional = true }
+
+[dev-dependencies]
+env_logger = "0.10.0"
+p256 = { version = "0.13.2", default-features = true }
+
+[features]
+crypto = [ "dep:p256", "dep:aes", "dep:cmac" ]
+defmt = [ "dep:defmt" ]
+mtu128 = []
+mtu256 = []
