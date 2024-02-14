@@ -26,6 +26,7 @@ pub const ATT_READ_BLOB_REQ_OPCODE: u8 = 0x0c;
 const ATT_READ_BLOB_RESP_OPCODE: u8 = 0x0d;
 const ATT_HANDLE_VALUE_NTF_OPTCODE: u8 = 0x1b;
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Uuid {
     Uuid16(u16),
@@ -94,6 +95,7 @@ impl From<&[u8]> for Uuid {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttErrorCode {
     /// Attempted to use an `Handle` that isn't valid on this server.
@@ -132,6 +134,7 @@ pub enum AttErrorCode {
     InsufficientResources = 0x11,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum Att {
     ReadByGroupTypeReq {
@@ -182,6 +185,7 @@ pub enum Att {
     },
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttDecodeError {
     Other,

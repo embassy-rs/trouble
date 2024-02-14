@@ -7,6 +7,7 @@ pub struct L2capPacket {
     pub payload: Data,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum L2capDecodeError {
     Other,
@@ -15,9 +16,15 @@ pub enum L2capDecodeError {
 impl L2capPacket {
     pub fn decode(packet: AclPacket) -> Result<(u16, Self), L2capDecodeError> {
         let data = packet.data.as_slice();
-        debug!("L2CAP {:02x}", data);
         let length = (data[0] as u16) + ((data[1] as u16) << 8);
         let channel = (data[2] as u16) + ((data[3] as u16) << 8);
+        debug!(
+            "L2CAP {:02x} len {} chan {} buf len {}",
+            data,
+            length,
+            channel,
+            data.len()
+        );
         let payload = Data::new(&data[4..]);
 
         Ok((

@@ -20,14 +20,8 @@ impl Error for ErrorKind {
     }
 }
 
-#[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl Error for std::io::Error {
-    fn kind(&self) -> ErrorKind {
-        self.kind().into()
-    }
-}
-
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum HciMessageType {
     Command = 0x01,
