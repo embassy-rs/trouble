@@ -49,7 +49,6 @@ impl AclPacket {
         );
 
         let len = u16::from_le_bytes([data[2], data[3]]);
-        info!("read len {}", len);
         let data = Data::new(&data[4..4 + len as usize]);
 
         Self {
