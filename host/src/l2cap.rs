@@ -18,13 +18,6 @@ impl L2capPacket {
         let data = packet.data.as_slice();
         let length = (data[0] as u16) + ((data[1] as u16) << 8);
         let channel = (data[2] as u16) + ((data[3] as u16) << 8);
-        debug!(
-            "L2CAP {:02x} len {} chan {} buf len {}",
-            data,
-            length,
-            channel,
-            data.len()
-        );
         let payload = Data::new(&data[4..]);
 
         Ok((
