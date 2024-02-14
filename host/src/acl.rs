@@ -1,5 +1,6 @@
 use crate::Data;
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]
 pub struct AclPacket {
     pub handle: u16,
@@ -8,6 +9,7 @@ pub struct AclPacket {
     pub data: Data,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]
 pub enum BoundaryFlag {
     FirstNonAutoFlushable,
@@ -17,6 +19,7 @@ pub enum BoundaryFlag {
 }
 
 /// BC flag from controller to host
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]
 pub enum ControllerBroadcastFlag {
     PointToPoint,
@@ -26,6 +29,7 @@ pub enum ControllerBroadcastFlag {
 }
 
 /// BC flag from host to controller
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]
 pub enum HostBroadcastFlag {
     NoBroadcast,
@@ -82,9 +86,8 @@ impl AclPacket {
         (pb, bc, handle)
     }
 
-    // including type (0x02)
     pub fn encode(handle: u16, pb: BoundaryFlag, bc: HostBroadcastFlag, payload: Data) -> Data {
-        let mut data = Data::new(&[0x02]);
+        let mut data = Data::new(&[]);
 
         let mut raw_handle = handle;
 

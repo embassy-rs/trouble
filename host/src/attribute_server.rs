@@ -49,6 +49,7 @@ pub enum WorkResult {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AttributeServerError<E> {
     L2capError(L2capDecodeError),
     AttError(AttDecodeError),
@@ -188,7 +189,7 @@ where
 
     pub async fn update_le_advertising_data(&mut self, data: Data) -> Result<EventType, Error<T::Error>> {
         self.ble
-            .write_bytes(Command::LeSetAdvertisingData { data }.encode().as_slice())
+            .write_command(Command::LeSetAdvertisingData { data }.encode().as_slice())
             .await?;
         self.ble
             .wait_for_command_complete(LE_OGF, SET_ADVERTISING_DATA_OCF)
@@ -198,7 +199,7 @@ where
 
     pub async fn disconnect(&mut self, reason: u8) -> Result<EventType, Error<T::Error>> {
         self.ble
-            .write_bytes(
+            .write_command(
                 Command::Disconnect {
                     connection_handle: 0,
                     reason,
@@ -246,8 +247,8 @@ where
                 }
                 crate::PollResult::Event(EventType::ConnectionComplete {
                     status: _status,
-                    handle: _,
-                    role: _,
+                    handle,
+                    role,
                     peer_address: _peer_address,
                     interval: _,
                     latency: _,
@@ -256,6 +257,9 @@ where
                     #[cfg(feature = "crypto")]
                     if _status == 0 {
                         self.security_manager.peer_address = Some(_peer_address);
+                    }
+                    if role == 1 {
+                        // TODO: Update connection parameters
                     }
                     Ok(WorkResult::DidWork)
                 }
@@ -272,6 +276,17 @@ where
                             // TODO handle this via long term key request negative reply
                         }
                     }
+                    Ok(WorkResult::DidWork)
+                }
+                crate::PollResult::Event(EventType::CommandStatus {
+                    status,
+                    opcode,
+                    num_packets,
+                }) => {
+                    warn!(
+                        "Error completing last HCI command: status = {:02x}, opcode = {:02x}, num_packets: {}",
+                        status, opcode, num_packets
+                    );
                     Ok(WorkResult::DidWork)
                 }
                 crate::PollResult::Event(_) => Ok(WorkResult::DidWork),
@@ -613,20 +628,14 @@ where
     }
 
     async fn write_att(&mut self, handle: u16, data: Data) -> Result<(), Error<T::Error>> {
-        debug!("src_handle {}", handle);
-        debug!("data {:x}", data.as_slice());
-
         let res = L2capPacket::encode(data);
-        trace!("encoded_l2cap {:x}", res.as_slice());
-
         let res = AclPacket::encode(
             handle,
-            BoundaryFlag::FirstAutoFlushable,
+            BoundaryFlag::FirstNonAutoFlushable,
             HostBroadcastFlag::NoBroadcast,
             res,
         );
-        trace!("writing {:x}", res.as_slice());
-        self.ble.write_bytes(res.as_slice()).await?;
+        self.ble.write_data(res.as_slice()).await?;
         Ok(())
     }
 

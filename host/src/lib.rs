@@ -68,6 +68,7 @@ where
 #[derive(Clone, Copy, Debug)]
 #[must_use]
 #[repr(transparent)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Addr(pub [u8; 7]);
 
 impl Addr {
@@ -83,11 +84,13 @@ impl Addr {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PollResult {
     Event(EventType),
     AsyncData(AclPacket),
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy)]
 pub struct Data {
     pub data: [u8; 256],
@@ -257,7 +260,7 @@ where
     where
         Self: Sized,
     {
-        self.write_bytes(Command::Reset.encode().as_slice()).await?;
+        self.write_command(Command::Reset.encode().as_slice()).await?;
         self.wait_for_command_complete(CONTROLLER_OGF, RESET_OCF)
             .await?
             .check_command_completed()
@@ -267,7 +270,7 @@ where
     where
         Self: Sized,
     {
-        self.write_bytes(Command::SetEventMask { events }.encode().as_slice())
+        self.write_command(Command::SetEventMask { events }.encode().as_slice())
             .await?;
         self.wait_for_command_complete(CONTROLLER_OGF, SET_EVENT_MASK_OCF)
             .await?
@@ -278,7 +281,7 @@ where
     where
         Self: Sized,
     {
-        self.write_bytes(Command::LeSetAdvertisingParameters.encode().as_slice())
+        self.write_command(Command::LeSetAdvertisingParameters.encode().as_slice())
             .await?;
         self.wait_for_command_complete(LE_OGF, SET_ADVERTISING_PARAMETERS_OCF)
             .await?
@@ -292,7 +295,7 @@ where
     where
         Self: Sized,
     {
-        self.write_bytes(Command::LeSetAdvertisingParametersCustom(params).encode().as_slice())
+        self.write_command(Command::LeSetAdvertisingParametersCustom(params).encode().as_slice())
             .await?;
         self.wait_for_command_complete(LE_OGF, SET_ADVERTISING_PARAMETERS_OCF)
             .await?
@@ -303,7 +306,7 @@ where
     where
         Self: Sized,
     {
-        self.write_bytes(Command::LeSetAdvertisingData { data }.encode().as_slice())
+        self.write_command(Command::LeSetAdvertisingData { data }.encode().as_slice())
             .await?;
         self.wait_for_command_complete(LE_OGF, SET_ADVERTISING_DATA_OCF)
             .await?
@@ -314,7 +317,7 @@ where
     where
         Self: Sized,
     {
-        self.write_bytes(Command::LeSetAdvertiseEnable(enable).encode().as_slice())
+        self.write_command(Command::LeSetAdvertiseEnable(enable).encode().as_slice())
             .await?;
         self.wait_for_command_complete(LE_OGF, SET_ADVERTISE_ENABLE_OCF)
             .await?
@@ -329,15 +332,12 @@ where
     where
         Self: Sized,
     {
-        info!("before, key = {:x}, hanlde = {:x}", ltk, handle);
-        self.write_bytes(Command::LeLongTermKeyRequestReply { handle, ltk }.encode().as_slice())
+        self.write_command(Command::LeLongTermKeyRequestReply { handle, ltk }.encode().as_slice())
             .await?;
-        info!("done writing command");
         let res = self
             .wait_for_command_complete(LE_OGF, LONG_TERM_KEY_REQUEST_REPLY_OCF)
             .await?
             .check_command_completed();
-        info!("got completion event");
 
         res
     }
@@ -346,7 +346,7 @@ where
     where
         Self: Sized,
     {
-        self.write_bytes(Command::ReadBrAddr.encode().as_slice()).await?;
+        self.write_command(Command::ReadBrAddr.encode().as_slice()).await?;
         let res = self
             .wait_for_command_complete(INFORMATIONAL_OGF, READ_BD_ADDR_OCF)
             .await?
@@ -389,7 +389,7 @@ where
     where
         Self: Sized,
     {
-        let mut hci_packet = [0u8; 256];
+        let mut hci_packet = [0u8; 259];
         // poll & process input
         let packet_type = self.hci.read(&mut hci_packet).await.map_err(Error::Driver)?;
 
@@ -402,7 +402,7 @@ where
 
                 // somewhat dirty way to handle re-assembling fragmented packets
                 loop {
-                    debug!("Wanted = {}, actual = {}", wanted, acl_packet.data.len());
+                    // debug!("Wanted = {}, actual = {}", wanted, acl_packet.data.len());
 
                     if wanted == acl_packet.data.len() - 4 {
                         break;
@@ -421,12 +421,21 @@ where
             }
             HciMessageType::Event => {
                 let event = EventType::read(&hci_packet[..]);
+                trace!("received event {:?}", event);
                 return Ok(Some(PollResult::Event(event)));
             }
         }
     }
 
-    async fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Error<T::Error>> {
+    async fn write_data(&mut self, bytes: &[u8]) -> Result<(), Error<T::Error>> {
+        self.hci
+            .write(HciMessageType::Data, bytes)
+            .await
+            .map_err(Error::Driver)?;
+        Ok(())
+    }
+
+    async fn write_command(&mut self, bytes: &[u8]) -> Result<(), Error<T::Error>> {
         self.hci
             .write(HciMessageType::Command, bytes)
             .await

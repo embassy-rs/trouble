@@ -1,11 +1,13 @@
 use crate::{Addr, Data, Error};
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub struct Event {
     code: u8,
     data: Data,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]
 pub enum EventType {
     CommandComplete {
@@ -37,9 +39,15 @@ pub enum EventType {
         random: u64,
         diversifier: u16,
     },
+    CommandStatus {
+        status: u8,
+        num_packets: u8,
+        opcode: u16,
+    },
     Unknown,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]
 pub enum ErrorCode {
     Okay = 0x00,
@@ -82,6 +90,7 @@ impl ErrorCode {
 }
 
 const EVENT_COMMAND_COMPLETE: u8 = 0x0e;
+const EVENT_COMMAND_STATUS: u8 = 0x0f;
 const EVENT_DISCONNECTION_COMPLETE: u8 = 0x05;
 const EVENT_NUMBER_OF_COMPLETED_PACKETS: u8 = 0x13;
 const EVENT_LE_META: u8 = 0x3e;
@@ -120,6 +129,17 @@ impl EventType {
                     num_packets,
                     opcode,
                     data,
+                }
+            }
+            EVENT_COMMAND_STATUS => {
+                let data = event.data.as_slice();
+                let status = data[0];
+                let num_packets = data[1];
+                let opcode = ((data[3] as u16) << 8) + data[2] as u16;
+                Self::CommandStatus {
+                    status,
+                    num_packets,
+                    opcode,
                 }
             }
             EVENT_DISCONNECTION_COMPLETE => {
@@ -185,97 +205,6 @@ impl EventType {
             _ => {
                 warn!(
                     "Ignoring unknown event {:02x} data = {:02x}",
-                    event.code,
-                    event.data.as_slice()
-                );
-                Self::Unknown
-            }
-        }
-    }
-
-    #[cfg(feature = "async")]
-    /// Reads and decodes an event and assumes the packet type (0x04) is already read.
-    pub async fn async_read<T>(connector: &mut T) -> Self
-    where
-        T: embedded_io_async::Read,
-    {
-        let event = Event::async_read(connector).await;
-
-        match event.code {
-            EVENT_COMMAND_COMPLETE => {
-                let data = event.data.as_slice();
-                let num_packets = data[0];
-                let opcode = ((data[2] as u16) << 8) + data[1] as u16;
-                let data = event.data.subdata_from(3);
-                Self::CommandComplete {
-                    num_packets,
-                    opcode,
-                    data,
-                }
-            }
-            EVENT_DISCONNECTION_COMPLETE => {
-                let data = event.data.as_slice();
-                let status = data[0];
-                let handle = ((data[2] as u16) << 8) + data[1] as u16;
-                let reason = data[3];
-                let status = ErrorCode::from_u8(status);
-                let reason = ErrorCode::from_u8(reason);
-                Self::DisconnectComplete { handle, status, reason }
-            }
-            EVENT_NUMBER_OF_COMPLETED_PACKETS => {
-                let data = event.data.as_slice();
-                let num_handles = data[0];
-                let connection_handle = ((data[2] as u16) << 8) + data[1] as u16;
-                let completed_packet = ((data[4] as u16) << 8) + data[3] as u16;
-                Self::NumberOfCompletedPackets {
-                    number_of_connection_handles: num_handles,
-                    connection_handles: connection_handle,
-                    completed_packets: completed_packet,
-                }
-            }
-            EVENT_LE_META => {
-                let sub_event = event.data.as_slice()[0];
-                let data = &event.data.as_slice()[1..];
-
-                match sub_event {
-                    EVENT_LE_META_CONNECTION_COMPLETE => {
-                        let status = data[0];
-                        let handle = ((data[2] as u16) << 8) + data[1] as u16;
-                        let role = data[3];
-                        let peer_address = Addr::from_le_bytes(data[4] != 0, data[5..][..6].try_into().unwrap());
-                        let interval = ((data[2] as u16) << 8) + data[1] as u16;
-                        let latency = ((data[2] as u16) << 8) + data[1] as u16;
-                        let timeout = ((data[2] as u16) << 8) + data[1] as u16;
-
-                        Self::ConnectionComplete {
-                            status,
-                            handle,
-                            role,
-                            peer_address,
-                            interval,
-                            latency,
-                            timeout,
-                        }
-                    }
-                    EVENT_LE_META_LONG_TERM_KEY_REQUEST => {
-                        let handle = ((data[1] as u16) << 8) + data[0] as u16;
-                        let random = u64::from_be_bytes((&data[2..][..8]).try_into().unwrap());
-                        let diversifier = ((data[11] as u16) << 8) + data[10] as u16;
-                        Self::LongTermKeyRequest {
-                            handle,
-                            random,
-                            diversifier,
-                        }
-                    }
-                    _ => {
-                        warn!("Ignoring unknown le-meta event {:02x} data = {:02x?}", sub_event, data);
-                        Self::Unknown
-                    }
-                }
-            }
-            _ => {
-                warn!(
-                    "Ignoring unknown event {:02x} data = {:02x?}",
                     event.code,
                     event.data.as_slice()
                 );

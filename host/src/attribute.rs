@@ -263,6 +263,13 @@ impl<'a> fmt::Debug for Attribute<'a> {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for Attribute<'a> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{}", defmt::Debug2Format(self))
+    }
+}
+
 impl<'a> Attribute<'a> {
     pub fn new(uuid: Uuid, data: &'a mut impl AttData) -> Attribute<'a> {
         Attribute {
