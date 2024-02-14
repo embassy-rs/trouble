@@ -247,7 +247,7 @@ where
                 }
                 crate::PollResult::Event(EventType::ConnectionComplete {
                     status: _status,
-                    handle,
+                    handle: _,
                     role,
                     peer_address: _peer_address,
                     interval: _,
