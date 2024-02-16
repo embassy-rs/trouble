@@ -1,7 +1,11 @@
 #![no_std]
 #![allow(async_fn_in_trait)]
 
+use core::cell::RefCell;
+use core::task::{Context, Poll};
+
 use acl::AclPacket;
+use adapter::{AdapterEvent, BleAdapter};
 use command::{
     opcode, Command, INFORMATIONAL_OGF, LONG_TERM_KEY_REQUEST_REPLY_OCF, READ_BD_ADDR_OCF, SET_ADVERTISE_ENABLE_OCF,
     SET_ADVERTISING_DATA_OCF, SET_EVENT_MASK_OCF,
@@ -14,6 +18,7 @@ use event::EventType;
 mod fmt;
 
 pub mod acl;
+pub mod adapter;
 pub mod att;
 pub mod driver;
 pub mod l2cap;
@@ -41,6 +46,8 @@ pub enum Error<E> {
     Timeout,
     Failed(u8),
     Driver(E),
+    Encode,
+    Decode,
 }
 
 #[cfg(feature = "defmt")]
@@ -50,6 +57,12 @@ where
 {
     fn format(&self, fmt: defmt::Formatter) {
         match self {
+            Error::Encode => {
+                defmt::write!(fmt, "Encode")
+            }
+            Error::Decode => {
+                defmt::write!(fmt, "Decode")
+            }
             Error::Timeout => {
                 defmt::write!(fmt, "Timeout")
             }
@@ -181,6 +194,7 @@ impl core::fmt::Debug for Data {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdvertisingType {
     AdvInd = 0x00,
     AdvDirectInd = 0x01,
@@ -190,6 +204,7 @@ pub enum AdvertisingType {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OwnAddressType {
     Public = 0x00,
     Random = 0x01,
@@ -198,12 +213,14 @@ pub enum OwnAddressType {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PeerAddressType {
     Public = 0x00,
     Random = 0x01,
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdvertisingChannelMapBits {
     Channel37 = 0b001,
     Channel38 = 0b010,
@@ -211,6 +228,7 @@ pub enum AdvertisingChannelMapBits {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdvertisingFilterPolicy {
     All = 0x00,
     FilteredScanAllConnect = 0x01,
@@ -219,6 +237,7 @@ pub enum AdvertisingFilterPolicy {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdvertisingParameters {
     pub advertising_interval_min: u16,
     pub advertising_interval_max: u16,
@@ -230,51 +249,58 @@ pub struct AdvertisingParameters {
     pub filter_policy: AdvertisingFilterPolicy,
 }
 
-pub struct Ble<T>
-where
-    T: HciDriver,
-{
-    hci: T,
+/*
+    adapter: BleAdapter<'d, T>,
     millis: fn() -> u64,
 }
 
-impl<T> Ble<T>
+impl<'d, T> Ble<'d, T>
 where
     T: HciDriver,
 {
-    pub fn new(hci: T, millis: fn() -> u64) -> Ble<T> {
-        Ble { hci, millis }
+    pub fn new(adapter: BleAdapter<'d, T>, millis: fn() -> u64) -> Ble<'d, T> {
+        Ble { adapter, millis }
     }
 
-    pub async fn init(&mut self) -> Result<EventType, Error<T::Error>>
-    where
-        Self: Sized,
-    {
-        let res = self.cmd_reset().await?;
-        self.cmd_set_event_mask([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
-            .await?;
-        Ok(res)
+        match self.adapter.process(HciMessage::Command(command)) {
+            Ok(None) => {
+                self.register_write_waker(cx.wake());
+                Poll::Pending
+            }
+            Ok(Some(_)) => Poll::Ready(Ok()),
+            Err(e) => Poll::Ready(Err(e)),
+        })
+        .await?;
+        self.wait_for_command_complete(CONTROLLER_OGF, RESET_OCF).await
     }
 
-    pub async fn cmd_reset(&mut self) -> Result<EventType, Error<T::Error>>
-    where
-        Self: Sized,
-    {
-        self.write_command(Command::Reset.encode().as_slice()).await?;
-        self.wait_for_command_complete(CONTROLLER_OGF, RESET_OCF)
-            .await?
-            .check_command_completed()
+    async fn wait_for_command_complete(&mut self, ogf: u8, ocf: u16) -> Result<(), Error<T::Error>> {
+        poll_fn(|cx| match self.adapter.try_read() {
+            Ok(Some(HciMEssage::Event(EventType::CommandComplete { opcode: code, .. })))
+                if code == opcode(ogf, ocf) =>
+            {
+                Poll::Ready(Ok())
+            }
+            Ok(_) => {
+                self.register_read_waker(cx.wake());
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        })
+        .await
     }
 
-    pub async fn cmd_set_event_mask(&mut self, events: [u8; 8]) -> Result<EventType, Error<T::Error>>
-    where
-        Self: Sized,
-    {
-        self.write_command(Command::SetEventMask { events }.encode().as_slice())
-            .await?;
-        self.wait_for_command_complete(CONTROLLER_OGF, SET_EVENT_MASK_OCF)
-            .await?
-            .check_command_completed()
+    pub async fn init(&mut self) -> Result<(), Error<T::Error>> {
+        self.request(Command::Reset, CONTROLLER_OGF, RESET_OCF).await?;
+        self.request(
+            Command::SetEventMask {
+                events: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+            },
+            CONTROLLER_OGF,
+            SET_EVENT_MASK_OCF,
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn cmd_set_le_advertising_parameters(&mut self) -> Result<EventType, Error<T::Error>>
@@ -426,23 +452,8 @@ where
             }
         }
     }
-
-    async fn write_data(&mut self, bytes: &[u8]) -> Result<(), Error<T::Error>> {
-        self.hci
-            .write(HciMessageType::Data, bytes)
-            .await
-            .map_err(Error::Driver)?;
-        Ok(())
-    }
-
-    async fn write_command(&mut self, bytes: &[u8]) -> Result<(), Error<T::Error>> {
-        self.hci
-            .write(HciMessageType::Command, bytes)
-            .await
-            .map_err(Error::Driver)?;
-        Ok(())
-    }
 }
+*/
 
 #[cfg(not(feature = "crypto"))]
 pub mod no_rng {

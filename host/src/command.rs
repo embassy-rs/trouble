@@ -55,6 +55,8 @@ impl CommandHeader {
     }
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Command<'a> {
     Reset,
     LeSetAdvertisingParameters,
@@ -69,10 +71,24 @@ pub enum Command<'a> {
 }
 
 impl<'a> Command<'a> {
-    pub fn encode(self) -> Data {
+    pub fn opcode(&self) -> (u8, u16) {
+        match self {
+            Self::Reset => (CONTROLLER_OGF, RESET_OCF),
+            Self::LeSetAdvertisingParameters => (LE_OGF, SET_ADVERTISING_PARAMETERS_OCF),
+            Self::LeSetAdvertisingParametersCustom(_) => (LE_OGF, SET_ADVERTISING_PARAMETERS_OCF),
+            Self::LeSetAdvertisingData { .. } => (LE_OGF, SET_ADVERTISING_DATA_OCF),
+            Self::LeSetScanRspData { .. } => (LE_OGF, SET_SCAN_RSP_DATA_OCF),
+            Self::LeSetAdvertiseEnable(_) => (LE_OGF, SET_ADVERTISE_ENABLE_OCF),
+            Self::Disconnect { .. } => (LINK_CONTROL_OGF, DISCONNECT_OCF),
+            Self::LeLongTermKeyRequestReply { .. } => (LE_OGF, LONG_TERM_KEY_REQUEST_REPLY_OCF),
+            Self::ReadBrAddr => (INFORMATIONAL_OGF, READ_BD_ADDR_OCF),
+            Self::SetEventMask { .. } => (CONTROLLER_OGF, SET_EVENT_MASK_OCF),
+        }
+    }
+
+    pub fn encode(&self) -> Data {
         match self {
             Command::Reset => {
-                info!("encode reset command");
                 let mut data = [0u8; 3];
                 CommandHeader::from_ogf_ocf(CONTROLLER_OGF, RESET_OCF, 0x00).write_into(&mut data[..]);
                 Data::new(&data)
@@ -118,7 +134,7 @@ impl<'a> Command<'a> {
             Command::LeSetAdvertiseEnable(enable) => {
                 let mut data = [0u8; 4];
                 CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISE_ENABLE_OCF, 0x01).write_into(&mut data[..]);
-                data[3] = if enable { 1 } else { 0 };
+                data[3] = if *enable { 1 } else { 0 };
                 Data::new(&data)
             }
             Command::Disconnect {
@@ -128,7 +144,7 @@ impl<'a> Command<'a> {
                 let mut data = [0u8; 6];
                 CommandHeader::from_ogf_ocf(LINK_CONTROL_OGF, DISCONNECT_OCF, 0x03).write_into(&mut data[..]);
                 data[3..][..2].copy_from_slice(&connection_handle.to_le_bytes());
-                data[5] = reason;
+                data[5] = *reason;
                 Data::new(&data)
             }
             Command::LeLongTermKeyRequestReply { handle, ltk } => {
@@ -139,16 +155,14 @@ impl<'a> Command<'a> {
                 Data::new(&data)
             }
             Command::ReadBrAddr => {
-                info!("command read br addr");
                 let mut data = [0u8; 3];
                 CommandHeader::from_ogf_ocf(INFORMATIONAL_OGF, READ_BD_ADDR_OCF, 0x00).write_into(&mut data[..]);
                 Data::new(&data)
             }
             Command::SetEventMask { events } => {
-                info!("command set event mask");
                 let mut data = [0u8; 11];
                 CommandHeader::from_ogf_ocf(CONTROLLER_OGF, SET_EVENT_MASK_OCF, 0x08).write_into(&mut data[..]);
-                data[3..].copy_from_slice(&events);
+                data[3..].copy_from_slice(events);
                 Data::new(&data)
             }
         }

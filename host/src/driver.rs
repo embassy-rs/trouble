@@ -1,3 +1,5 @@
+use core::task::{Context, Poll, Waker};
+
 pub use embedded_io_async::ErrorKind;
 
 ///
@@ -33,11 +35,15 @@ pub enum HciMessageType {
 pub trait HciDriver {
     type Error: Error;
 
-    /// Reads an entire HCI packet into the provided buffer.
-    ///
-    /// If successful, returns the message type of the received HCI packet.
-    async fn read(&mut self, buf: &mut [u8]) -> Result<HciMessageType, Self::Error>;
+    // Register interest in available reads.
+    fn register_read_waker(&mut self, waker: &Waker);
+
+    /// Attempt reading a HCI packet. If a packet is pending, put it into buf.
+    fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<HciMessageType>, Self::Error>;
 
     /// Write the provided data as a single HCI packet.
-    async fn write(&mut self, kind: HciMessageType, data: &[u8]) -> Result<(), Self::Error>;
+    fn try_write(&mut self, kind: HciMessageType, data: &[u8]) -> Result<usize, Self::Error>;
+
+    // Register interest in available writes.
+    fn register_write_waker(&mut self, waker: &Waker);
 }

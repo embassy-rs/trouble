@@ -1,5 +1,6 @@
 use core::marker::PhantomData;
 
+use crate::driver::HciDriver;
 use bitfield::bitfield;
 use p256::elliptic_curve::rand_core::{CryptoRng, RngCore};
 
@@ -96,11 +97,11 @@ pub struct SecurityManager<'a, B, R: CryptoRng> {
 }
 
 pub trait BleWriter {
-    fn write_bytes(&mut self, bytes: &[u8]);
+    async fn write_bytes(&mut self, bytes: &[u8]);
 }
 
-impl<'a> BleWriter for Ble<'a> {
-    fn write_bytes(&mut self, bytes: &[u8]) {
+impl<T: HciDriver> BleWriter for Ble<T> {
+    async fn write_bytes(&mut self, bytes: &[u8]) {
         self.write_bytes(bytes);
     }
 }
@@ -127,50 +128,7 @@ impl<'a, B, R: CryptoRng> SecurityManager<'a, B, R> {
     }
 }
 
-#[cfg(feature = "async")]
-pub struct AsyncSecurityManager<'a, B, R: CryptoRng> {
-    ioa: Option<IoCap>,
-
-    skb: Option<SecretKey>,
-    pkb: Option<PublicKey>,
-
-    pka: Option<PublicKey>,
-
-    confirm: Option<Confirm>,
-
-    na: Option<Nonce>,
-    nb: Option<Nonce>,
-
-    dh_key: Option<DHKey>,
-
-    mac_key: Option<MacKey>,
-    eb: Option<Check>,
-
-    pub local_address: Option<Addr>,
-    pub peer_address: Option<Addr>,
-    pub ltk: Option<u128>,
-
-    rng: &'a mut R,
-    phantom: PhantomData<B>,
-}
-
-#[cfg(feature = "async")]
-pub trait AsyncBleWriter {
-    async fn write_bytes(&mut self, bytes: &[u8]);
-}
-
-#[cfg(feature = "async")]
-impl<T> AsyncBleWriter for crate::asynch::Ble<T>
-where
-    T: embedded_io_async::Read + embedded_io_async::Write,
-{
-    async fn write_bytes(&mut self, bytes: &[u8]) {
-        self.write_bytes(bytes).await
-    }
-}
-
-#[cfg(feature = "async")]
-impl<'a, B, R: CryptoRng> AsyncSecurityManager<'a, B, R> {
+impl<'a, B, R: CryptoRng> SecurityManager<'a, B, R> {
     pub fn new(rng: &'a mut R) -> Self {
         Self {
             ioa: None,
@@ -202,12 +160,19 @@ fn make_auth_req() -> AuthReq {
     auth_req
 }
 
-bleps_dedup::dedup! {
-impl<'a, B, R> SYNC SecurityManager<'a, B, R> where B: BleWriter, R: CryptoRng + RngCore
-impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: CryptoRng + RngCore
- {
-    pub(crate) async fn handle(&mut self, ble: &mut B, src_handle: u16, payload: crate::Data, pin_callback: &mut Option<&mut dyn FnMut(u32)>) -> Result<(), AttributeServerError> {
-        log::info!("SM packet {:02x?}", payload.as_slice());
+impl<'a, B, R> SecurityManager<'a, B, R>
+where
+    B: BleWriter,
+    R: CryptoRng + RngCore,
+{
+    pub(crate) async fn handle(
+        &mut self,
+        ble: &mut B,
+        src_handle: u16,
+        payload: crate::Data,
+        pin_callback: &mut Option<&mut dyn FnMut(u32)>,
+    ) -> Result<(), AttributeServerError> {
+        info!("SM packet {:02x?}", payload.as_slice());
 
         let data = &payload.as_slice()[1..];
         let command = payload.as_slice()[0];
@@ -227,8 +192,9 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
             }
             _ => {
                 // handle FAILURE
-                log::error!("Unknown SM command {}", command);
-                self.report_error(ble, src_handle, SecurityManagerError::CommandNotSupported).await;
+                error!("Unknown SM command {}", command);
+                self.report_error(ble, src_handle, SecurityManagerError::CommandNotSupported)
+                    .await;
                 return Err(AttributeServerError::SecurityManagerError);
             }
         }
@@ -238,7 +204,7 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
 
     async fn handle_pairing_request(&mut self, ble: &mut B, src_handle: u16, data: &[u8]) {
         self.ioa = Some(IoCap::new(data[2], data[1] != 0, data[0]));
-        log::info!("got pairing request");
+        info!("got pairing request");
 
         let mut data = Data::new(&[SM_PAIRING_RESPONSE]);
         data.append_value(IoCapability::DisplayYesNo as u8);
@@ -251,10 +217,15 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
         self.write_sm(ble, src_handle, data).await;
     }
 
-    async fn handle_pairing_public_key(&mut self, ble: &mut B, src_handle: u16, pka: &[u8]) -> Result<(), AttributeServerError> {
-        log::info!("got public key");
+    async fn handle_pairing_public_key(
+        &mut self,
+        ble: &mut B,
+        src_handle: u16,
+        pka: &[u8],
+    ) -> Result<(), AttributeServerError> {
+        info!("got public key");
 
-        log::info!("key len = {} {:02x?}", pka.len(), pka);
+        info!("key len = {} {:02x?}", pka.len(), pka);
         let pka = PublicKey::from_bytes(pka);
 
         // Send the local public key before validating the remote key to allow
@@ -301,31 +272,42 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
         Ok(())
     }
 
-    async fn handle_pairing_random(&mut self, ble: &mut B, src_handle: u16, random: &[u8], pin_callback: &mut Option<&mut dyn FnMut(u32)>) -> Result<(), AttributeServerError> {
-        log::info!("got pairing random {:02x?}", random);
+    async fn handle_pairing_random(
+        &mut self,
+        ble: &mut B,
+        src_handle: u16,
+        random: &[u8],
+        pin_callback: &mut Option<&mut dyn FnMut(u32)>,
+    ) -> Result<(), AttributeServerError> {
+        info!("got pairing random {:02x?}", random);
 
         if *&(self.nb).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
         if *&(self.pka).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
         if *&(self.pkb).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
         if *&(self.peer_address).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
         if *&(self.local_address).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
@@ -336,15 +318,11 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
         let na = Nonce(u128::from_le_bytes(random.try_into().unwrap()));
         self.na = Some(na);
         let nb = self.nb.unwrap();
-        let vb = na.g2(
-            self.pka.as_ref().unwrap().x(),
-            self.pkb.as_ref().unwrap().x(),
-            &nb,
-        );
+        let vb = na.g2(self.pka.as_ref().unwrap().x(), self.pkb.as_ref().unwrap().x(), &nb);
 
         // should display the code and get confirmation from user (pin ok or not) - if not okay send a pairing-failed
         // assume it's correct or the user will cancel on central
-        log::info!("Display code is {}", vb.0);
+        info!("Display code is {}", vb.0);
         if let Some(pin_callback) = pin_callback {
             pin_callback(vb.0);
         }
@@ -355,8 +333,8 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
         let a = self.peer_address.unwrap();
         let b = self.local_address.unwrap();
         let ra = 0;
-        log::info!("a = {:02x?}", a.0);
-        log::info!("b = {:02x?}", b.0);
+        info!("a = {:02x?}", a.0);
+        info!("b = {:02x?}", b.0);
 
         let io_cap = IoCapability::DisplayYesNo as u8;
         let iob = IoCap::new(make_auth_req().0, false, io_cap);
@@ -372,31 +350,41 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
         Ok(())
     }
 
-    async fn handle_pairing_dhkey_check(&mut self, ble: &mut B, src_handle: u16, ea: &[u8]) -> Result<(), AttributeServerError> {
-        log::info!("got dhkey_check {:02x?}", ea);
+    async fn handle_pairing_dhkey_check(
+        &mut self,
+        ble: &mut B,
+        src_handle: u16,
+        ea: &[u8],
+    ) -> Result<(), AttributeServerError> {
+        info!("got dhkey_check {:02x?}", ea);
 
         if *&(self.na).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
         if *&(self.nb).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
         if *&(self.ioa).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
         if *&(self.peer_address).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
         if *&(self.local_address).is_none() {
-            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason).await;
+            self.report_error(ble, src_handle, SecurityManagerError::UnspecifiedReason)
+                .await;
             return Err(AttributeServerError::SecurityManagerError);
         }
 
@@ -415,7 +403,7 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
             .0
             .to_le_bytes();
         if ea != expected {
-            log::warn!("DH check failed");
+            warn!("DH check failed");
         }
 
         let mut data = Data::new(&[SM_PAIRING_DHKEY_CHECK]);
@@ -435,10 +423,10 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
             }
         }
 
-        log::debug!("data {:x?}", data.as_slice());
+        debug!("data {:x?}", data.as_slice());
 
         let res = L2capPacket::encode_sm(data);
-        log::info!("encoded_l2cap {:x?}", res.as_slice());
+        info!("encoded_l2cap {:x?}", res.as_slice());
 
         let res = AclPacket::encode(
             handle,
@@ -447,7 +435,7 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
             res,
         );
 
-        log::info!("writing {:02x?}", res.as_slice());
+        info!("writing {:02x?}", res.as_slice());
         ble.write_bytes(res.as_slice()).await;
     }
 
@@ -456,5 +444,4 @@ impl<'a, B, R> ASYNC AsyncSecurityManager<'a, B, R> where B: AsyncBleWriter, R: 
         data.append(&[error as u8]);
         self.write_sm(ble, src_handle, data).await;
     }
-}
 }
