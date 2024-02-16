@@ -5,7 +5,8 @@ use crate::Data;
 pub struct AclPacket {
     pub handle: u16,
     pub boundary_flag: BoundaryFlag,
-    pub bc_flag: ControllerBroadcastFlag,
+    pub bc_flag: BroadcastFlag,
+    // TODO: Use slices
     pub data: Data,
 }
 
@@ -16,6 +17,14 @@ pub enum BoundaryFlag {
     Continuing,
     FirstAutoFlushable,
     Complete,
+}
+
+/// BC flag
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Copy)]
+pub enum BroadcastFlag {
+    Controller(ControllerBroadcastFlag),
+    Host(HostBroadcastFlag),
 }
 
 /// BC flag from controller to host
@@ -54,7 +63,7 @@ impl AclPacket {
         Self {
             handle,
             boundary_flag: pb,
-            bc_flag: bc,
+            bc_flag: BroadcastFlag::Controller(bc),
             data,
         }
     }
@@ -85,31 +94,42 @@ impl AclPacket {
         (pb, bc, handle)
     }
 
-    pub fn encode(handle: u16, pb: BoundaryFlag, bc: HostBroadcastFlag, payload: Data) -> Data {
+    pub fn new(handle: u16, pb: BoundaryFlag, bc: HostBroadcastFlag, payload: Data) -> AclPacket {
+        Self {
+            handle,
+            boundary_flag: pb,
+            bc_flag: BroadcastFlag::Host(bc),
+            data: payload,
+        }
+    }
+
+    pub fn encode(&self) -> Data {
         let mut data = Data::new(&[]);
 
-        let mut raw_handle = handle;
+        let mut raw_handle = self.handle;
 
-        raw_handle |= match pb {
+        raw_handle |= match self.boundary_flag {
             BoundaryFlag::FirstNonAutoFlushable => 0b00,
             BoundaryFlag::Continuing => 0b01,
             BoundaryFlag::FirstAutoFlushable => 0b10,
             BoundaryFlag::Complete => 0b11,
         } << 12;
 
-        raw_handle |= match bc {
-            HostBroadcastFlag::NoBroadcast => 0b00,
-            HostBroadcastFlag::ActiveSlaveBroadcast => 0b01,
-            HostBroadcastFlag::ParkedSlaveBroadcast => 0b10,
-            HostBroadcastFlag::Reserved => 0b11,
-        } << 14;
+        if let BroadcastFlag::Host(bc) = self.bc_flag {
+            raw_handle |= match bc {
+                HostBroadcastFlag::NoBroadcast => 0b00,
+                HostBroadcastFlag::ActiveSlaveBroadcast => 0b01,
+                HostBroadcastFlag::ParkedSlaveBroadcast => 0b10,
+                HostBroadcastFlag::Reserved => 0b11,
+            } << 14;
+        }
 
         data.append(&[(raw_handle & 0xff) as u8, ((raw_handle >> 8) & 0xff) as u8]);
 
-        let len = payload.len;
+        let len = self.data.len;
         data.append(&[(len & 0xff) as u8, ((len >> 8) & 0xff) as u8]);
 
-        data.append(payload.as_slice());
+        data.append(self.data.as_slice());
 
         data
     }

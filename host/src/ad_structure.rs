@@ -7,6 +7,7 @@ pub const SIMUL_LE_BR_CONTROLLER: u8 = 0b00001000;
 pub const SIMUL_LE_BR_HOST: u8 = 0b00010000;
 
 #[derive(Debug, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdvertisementDataError {
     TooLong,
 }
