@@ -4,44 +4,25 @@
 use core::cell::RefCell;
 use core::task::{Context, Poll};
 
-use acl::AclPacket;
 use ad_structure::AdvertisementDataError;
-use adapter::{AdapterEvent, BleAdapter, BleConnection, HciMessage};
-use command::{
-    opcode, Command, INFORMATIONAL_OGF, LONG_TERM_KEY_REQUEST_REPLY_OCF, READ_BD_ADDR_OCF, SET_ADVERTISE_ENABLE_OCF,
-    SET_ADVERTISING_DATA_OCF, SET_EVENT_MASK_OCF,
-};
-use command::{LE_OGF, SET_ADVERTISING_PARAMETERS_OCF};
+use adapter::{AdapterEvent, BleAdapter, BleConnection};
+use bt_hci::FromHciBytesError;
 use driver::HciDriver;
-use driver::HciMessageType;
-use event::EventType;
 
 mod fmt;
 
-pub mod acl;
+mod byte_reader;
+mod byte_writer;
+
 pub mod adapter;
 pub mod att;
 pub mod driver;
 pub mod l2cap;
-mod portal;
-
-pub mod command;
-pub mod event;
 
 pub mod ad_structure;
 
 pub mod attribute;
-pub mod attribute_server;
-
-#[cfg(feature = "crypto")]
-pub mod crypto;
-#[cfg(feature = "crypto")]
-pub mod sm;
-
-use command::CONTROLLER_OGF;
-use command::RESET_OCF;
-
-const TIMEOUT_MILLIS: u64 = 1000;
+//pub mod attribute_server;
 
 #[derive(Debug)]
 pub enum Error<E> {
@@ -50,7 +31,13 @@ pub enum Error<E> {
     Failed(u8),
     Driver(E),
     Encode,
-    Decode,
+    Decode(FromHciBytesError),
+}
+
+impl<E> From<FromHciBytesError> for Error<E> {
+    fn from(error: FromHciBytesError) -> Self {
+        Self::Decode(error)
+    }
 }
 
 #[cfg(feature = "defmt")]
@@ -63,7 +50,7 @@ where
             Error::Encode => {
                 defmt::write!(fmt, "Encode")
             }
-            Error::Decode => {
+            Error::Decode(_) => {
                 defmt::write!(fmt, "Decode")
             }
             Error::Timeout => {
@@ -74,6 +61,9 @@ where
             }
             Error::Driver(value) => {
                 defmt::write!(fmt, "Driver({})", value)
+            }
+            Error::Advertisement(value) => {
+                defmt::write!(fmt, "Advertisement({})", value)
             }
         }
     }
@@ -96,103 +86,6 @@ impl Addr {
         a[0] = u8::from(is_random);
         a[1..].copy_from_slice(&v);
         Self(a)
-    }
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PollResult {
-    Event(EventType),
-    AsyncData(AclPacket),
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy)]
-pub struct Data {
-    pub data: [u8; 256],
-    pub len: usize,
-}
-
-impl Data {
-    pub fn new(bytes: &[u8]) -> Data {
-        let mut data = [0u8; 256];
-        data[..bytes.len()].copy_from_slice(bytes);
-        Data { data, len: bytes.len() }
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        &self.data[0..self.len]
-    }
-
-    pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        &mut self.data[self.len..]
-    }
-
-    pub fn set_len(&mut self, new_len: usize) {
-        self.len = if new_len > self.data.len() {
-            self.data.len()
-        } else {
-            new_len
-        };
-    }
-
-    pub fn append_len(&mut self, extra_len: usize) {
-        self.set_len(self.len + extra_len);
-    }
-
-    pub fn limit_len(&mut self, max_len: usize) {
-        if self.len > max_len {
-            self.len = max_len;
-        }
-    }
-
-    pub fn subdata_from(&self, from: usize) -> Data {
-        let mut data = [0u8; 256];
-        let new_len = self.len - from;
-        data[..new_len].copy_from_slice(&self.data[from..(from + new_len)]);
-        Data { data, len: new_len }
-    }
-
-    pub fn append(&mut self, bytes: &[u8]) {
-        self.data[self.len..(self.len + bytes.len())].copy_from_slice(bytes);
-        self.len += bytes.len();
-    }
-
-    pub fn append_value<T: Sized + 'static>(&mut self, value: T) {
-        let slice = unsafe { core::slice::from_raw_parts(&value as *const _ as *const _, core::mem::size_of::<T>()) };
-
-        #[cfg(target_endian = "little")]
-        self.append(slice);
-
-        #[cfg(target_endian = "big")]
-        {
-            let top = slice.len() - 1;
-            for (index, byte) in slice.iter().enumerate() {
-                self.set(top - index, *byte);
-            }
-            self.append_len(slice.len());
-        }
-    }
-
-    pub fn set(&mut self, index: usize, byte: u8) {
-        self.data[index] = byte;
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-}
-
-impl Default for Data {
-    fn default() -> Self {
-        Data::new(&[])
-    }
-}
-
-impl core::fmt::Debug for Data {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:x?}", &self.data[..self.len]).expect("Failed to format Data");
-        Ok(())
     }
 }
 
@@ -252,9 +145,9 @@ pub struct AdvertisingParameters {
     pub filter_policy: AdvertisingFilterPolicy,
 }
 
-pub struct AdvertiseConfig<'static> {
+pub struct AdvertiseConfig<'d> {
     pub params: Option<AdvertisingParameters>,
-    pub data: &'static [AdStructure<'static>],
+    pub data: &'d [ad_structure::AdStructure<'d>],
 }
 
 pub struct BleConfig {
@@ -263,10 +156,11 @@ pub struct BleConfig {
 
 impl Default for BleConfig {
     fn default() -> Self {
-        Self { advertise: None }
+        Self { advertise_config: None }
     }
 }
 
+/*
 pub struct Ble<'d, T: HciDriver> {
     adapter: BleAdapter<'d, T>,
     config: BleConfig,
@@ -310,19 +204,12 @@ impl<'d, T: HciDriver> Ble<'d, T> {
         Ok(())
     }
 
-    pub async fn run<F: Fn(AdapterEvent) -> Result<Option<HciMessage<'_>>, Error<T::Error>>>(
-        &self,
-        processor: Option<F>,
-    ) -> Result<(), Error<T::Error>> {
+    pub async fn run(&self) -> Result<(), Error<T::Error>> {
         self.init().await?;
         self.start_advertise().await?;
         loop {
             let event = self.adapter.recv().await?;
-            if let Some(processor) = processor {
-                if let Ok(Some(outbound)) = processor(event) {
-
-                self.adapter.send(outbound).await?;
-            }
+            info!("Got event from adapter: {:?}");
         }
     }
 }
@@ -341,7 +228,6 @@ impl<'d, T: HciDriver> Connection<'d, T> {
         })
     }
 }
-/*
     adapter: BleAdapter<'d, T>,
     millis: fn() -> u64,
 }

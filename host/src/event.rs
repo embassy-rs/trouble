@@ -1,19 +1,12 @@
 use crate::{Addr, Data, Error};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug)]
-pub struct Event {
-    code: u8,
-    data: Data,
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]
-pub enum EventType {
+pub enum Event<'d> {
     CommandComplete {
         num_packets: u8,
         opcode: u16,
-        data: Data,
+        data: &'d [u8],
     },
     DisconnectComplete {
         handle: u16,
@@ -98,33 +91,15 @@ const EVENT_LE_META_CONNECTION_COMPLETE: u8 = 0x01;
 // TODO ENHANCED_CONNECTION_COMPLETE
 const EVENT_LE_META_LONG_TERM_KEY_REQUEST: u8 = 0x05;
 
-impl EventType {
-    pub fn check_command_completed<E>(self) -> Result<Self, Error<E>> {
-        if let Self::CommandComplete {
-            num_packets: _,
-            opcode: _,
-            data,
-        } = self
-        {
-            let status = data.as_slice()[0];
-            if status != 0 {
-                return Err(Error::Failed(status));
-            }
-        }
-
-        Ok(self)
-    }
-
+impl Event {
     /// Reads and decodes an event and assumes the packet type (0x04) is already read.
     pub fn read(data: &[u8]) -> Self {
-        let event = Event::read(data);
-
-        match event.code {
+        let mut r = ByteReader::new(data);
+        match r.read_u8() {
             EVENT_COMMAND_COMPLETE => {
-                let data = event.data.as_slice();
-                let num_packets = data[0];
-                let opcode = ((data[2] as u16) << 8) + data[1] as u16;
-                let data = event.data.subdata_from(3);
+                let num_packets = r.read_u8();
+                let opcode = r.read_u16_le();
+                let data = r.consume();
                 Self::CommandComplete {
                     num_packets,
                     opcode,
@@ -132,10 +107,9 @@ impl EventType {
                 }
             }
             EVENT_COMMAND_STATUS => {
-                let data = event.data.as_slice();
-                let status = data[0];
-                let num_packets = data[1];
-                let opcode = ((data[3] as u16) << 8) + data[2] as u16;
+                let status = r.read_u8();
+                let num_packets = r.read_u8();
+                let opcode = r.read_u16_le();
                 Self::CommandStatus {
                     status,
                     num_packets,
@@ -143,10 +117,9 @@ impl EventType {
                 }
             }
             EVENT_DISCONNECTION_COMPLETE => {
-                let data = event.data.as_slice();
-                let status = data[0];
-                let handle = ((data[2] as u16) << 8) + data[1] as u16;
-                let reason = data[3];
+                let status = r.read_u8();
+                let handle = r.read_u16_le();
+                let reason = r.read_u8();
                 let status = ErrorCode::from_u8(status);
                 let reason = ErrorCode::from_u8(reason);
                 Self::DisconnectComplete { handle, status, reason }

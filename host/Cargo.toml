@@ -17,7 +17,7 @@ resolver = "2"
 [dependencies]
 # trouble-core = { version = "0.1.0", path = "../core"}
 
-bt-hci = { path = "../../bt-hci", default-features = false }
+bt-hci = { path = "../../bt-hci", default-features = false, features = ["defmt"] }
 embedded-io-async = { version = "0.6" }
 embassy-sync = "0.5"
 bitfield = "0.14.0"

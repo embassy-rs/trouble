@@ -1,4 +1,4 @@
-use crate::{att::Uuid, Data};
+use crate::att::Uuid;
 
 pub const AD_FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0b00000001;
 pub const LE_GENERAL_DISCOVERABLE: u8 = 0b00000010;
@@ -56,6 +56,7 @@ pub enum AdStructure<'a> {
     },
 }
 
+/*
 impl Data {
     pub fn append_ad_structure(&mut self, src: &AdStructure) {
         match src {
@@ -124,3 +125,4 @@ pub fn create_advertising_data(ad: &[AdStructure]) -> Result<Data, Advertisement
 
     Ok(data)
 }
+*/

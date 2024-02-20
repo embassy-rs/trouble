@@ -1,6 +1,6 @@
 use core::task::{Context, Poll, Waker};
 
-pub use bt_hci::PacketKind;
+use bt_hci::PacketKind;
 pub use embedded_io_async::ErrorKind;
 
 ///

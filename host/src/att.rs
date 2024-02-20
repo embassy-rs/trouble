@@ -1,6 +1,6 @@
+use crate::byte_reader::ByteReader;
+use crate::l2cap::L2capPacket;
 use core::convert::TryInto;
-
-use crate::{l2cap::L2capPacket, Data};
 
 pub const ATT_READ_BY_GROUP_TYPE_REQUEST_OPCODE: u8 = 0x10;
 const ATT_READ_BY_GROUP_TYPE_RESPONSE_OPCODE: u8 = 0x11;
@@ -33,19 +33,6 @@ pub enum Uuid {
     Uuid128([u8; 16]),
 }
 
-impl Data {
-    pub fn append_uuid(&mut self, uuid: &Uuid) {
-        match uuid {
-            Uuid::Uuid16(uuid) => {
-                self.append_value(*uuid);
-            }
-            Uuid::Uuid128(uuid) => {
-                self.append(&uuid[..]);
-            }
-        }
-    }
-}
-
 impl Uuid {
     pub fn bytes(&self, data: &mut [u8]) {
         match self {
@@ -65,19 +52,6 @@ impl Uuid {
         match self {
             Uuid::Uuid16(_) => 6,
             Uuid::Uuid128(_) => 20,
-        }
-    }
-}
-
-impl From<Data> for Uuid {
-    fn from(data: Data) -> Self {
-        match data.len() {
-            2 => Uuid::Uuid16(u16::from_le_bytes(data.as_slice().try_into().unwrap())),
-            16 => {
-                let bytes: [u8; 16] = data.as_slice().try_into().unwrap();
-                Uuid::Uuid128(bytes)
-            }
-            _ => panic!(),
         }
     }
 }
@@ -136,7 +110,7 @@ pub enum AttErrorCode {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
-pub enum Att {
+pub enum Att<'d> {
     ReadByGroupTypeReq {
         start: u16,
         end: u16,
@@ -152,11 +126,11 @@ pub enum Att {
     },
     WriteReq {
         handle: u16,
-        data: Data,
+        data: &'d [u8],
     },
     WriteCmd {
         handle: u16,
-        data: Data,
+        data: &'d [u8],
     },
     ExchangeMtu {
         mtu: u16,
@@ -174,7 +148,7 @@ pub enum Att {
     PrepareWriteReq {
         handle: u16,
         offset: u16,
-        value: Data,
+        value: &'d [u8],
     },
     ExecuteWriteReq {
         flags: u8,
@@ -189,14 +163,15 @@ pub enum Att {
 #[derive(Debug)]
 pub enum AttDecodeError {
     Other,
-    UnknownOpcode(u8, Data),
+    UnknownOpcode(u8),
     UnexpectedPayload,
 }
 
-impl Att {
-    pub fn decode(packet: L2capPacket) -> Result<Self, AttDecodeError> {
-        let opcode = packet.payload.as_slice()[0];
-        let payload = &packet.payload.as_slice()[1..];
+impl<'d> Att<'d> {
+    pub fn decode(packet: L2capPacket<'d>) -> Result<Att<'d>, AttDecodeError> {
+        let mut r = ByteReader::new(packet.payload);
+        let opcode = r.read_u8();
+        let payload = r.consume();
 
         match opcode {
             ATT_READ_BY_GROUP_TYPE_REQUEST_OPCODE => {
@@ -244,15 +219,13 @@ impl Att {
             }
             ATT_WRITE_REQUEST_OPCODE => {
                 let handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
-                let mut data = Data::default();
-                data.append(&payload[2..]);
+                let data = &payload[2..];
 
                 Ok(Self::WriteReq { handle, data })
             }
             ATT_WRITE_CMD_OPCODE => {
                 let handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
-                let mut data = Data::default();
-                data.append(&payload[2..]);
+                let data = &payload[2..];
 
                 Ok(Self::WriteCmd { handle, data })
             }
@@ -285,11 +258,10 @@ impl Att {
             ATT_PREPARE_WRITE_REQ_OPCODE => {
                 let handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
                 let offset = (payload[2] as u16) + ((payload[3] as u16) << 8);
-                let value = &payload[4..];
                 Ok(Self::PrepareWriteReq {
                     handle,
                     offset,
-                    value: Data::new(value),
+                    value: &payload[4..],
                 })
             }
             ATT_EXECUTE_WRITE_REQ_OPCODE => {
@@ -301,11 +273,12 @@ impl Att {
                 let offset = (payload[2] as u16) + ((payload[3] as u16) << 8);
                 Ok(Self::ReadBlobReq { handle, offset })
             }
-            _ => Err(AttDecodeError::UnknownOpcode(opcode, Data::new(payload))),
+            _ => Err(AttDecodeError::UnknownOpcode(opcode)),
         }
     }
 }
 
+/*
 impl Data {
     pub fn append_attribute_data(&mut self, attribute_handle: u16, end_group_handle: u16, attribute_value: &Uuid) {
         self.append_value(attribute_handle);
@@ -433,3 +406,4 @@ impl Data {
         data
     }
 }
+*/
