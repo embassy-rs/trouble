@@ -1,9 +1,13 @@
+use embassy_sync::waitqueue::WakerRegistration;
+
 use crate::acl::AclPacket;
+use crate::attribute::Attribute;
+use crate::attribute_server::AttributeServer;
 use crate::command::{
     opcode, Command, CONTROLLER_OGF, LE_OGF, RESET_OCF, SET_ADVERTISE_ENABLE_OCF, SET_ADVERTISING_DATA_OCF,
     SET_ADVERTISING_PARAMETERS_OCF, SET_EVENT_MASK_OCF,
 };
-use crate::driver::{HciDriver, HciMessageType};
+use crate::driver::{HciDriver, PacketKind};
 use crate::event::EventType;
 use crate::{Addr, Data};
 use crate::{AdvertisingParameters, Error};
@@ -13,12 +17,14 @@ use core::marker::PhantomData;
 use core::task::{Poll, Waker};
 
 pub struct AdapterResources<'d, const CONN: usize> {
+    gatt: AttributeServer<'d>,
     connections: [ConnectionStorage<'d>; CONN],
 }
 
 impl<'d, const CONN: usize> AdapterResources<'d, CONN> {
-    pub const fn new() -> Self {
+    pub fn new(attributes: &'d mut [Attribute<'d>]) -> Self {
         Self {
+            gatt: AttributeServer::new(attributes),
             connections: [ConnectionStorage::EMPTY; CONN],
         }
     }
@@ -41,6 +47,7 @@ pub struct ConnectionState<'d> {
     interval: u16,
     latency: u16,
     timeout: u16,
+    waker: WakerRegistration,
 }
 
 #[derive(Clone, Debug)]
@@ -71,15 +78,15 @@ where
         Self { driver, connections }
     }
 
-    fn try_write(&mut self, message: &HciMessage<'_>) -> Result<usize, Error<T::Error>> {
+    fn try_write(&mut self, message: &HciPacket<'_>) -> Result<usize, Error<T::Error>> {
         let (buffer, t) = message.encode().map_err(|_| Error::Encode)?;
         let v = self.driver.try_write(t, buffer.as_slice())?;
         Ok(v)
     }
 
-    fn try_read<'m>(&mut self, buffer: &'m mut [u8]) -> Result<Option<HciMessage<'m>>, Error<T::Error>> {
+    fn try_read<'m>(&mut self, buffer: &'m mut [u8]) -> Result<Option<HciPacket<'m>>, Error<T::Error>> {
         if let Some(mtype) = self.driver.try_read(buffer)? {
-            Ok(Some(HciMessage::decode(mtype, buffer).map_err(|_| Error::Decode)?))
+            Ok(Some(HciPacket::decode(mtype, buffer).map_err(|_| Error::Decode)?))
         } else {
             Ok(None)
         }
@@ -98,11 +105,12 @@ where
         match self.try_read(&mut buffer)? {
             None => Ok(None),
             Some(message) => match message {
-                HciMessage::Command(_) => Ok(None),
-                HciMessage::Data(data) => {
+                HciPacket::Command(_) => Ok(None),
+                HciPacket::Data(data) => {
                     for conn in self.connections.iter_mut() {
                         if let Some(state) = &conn.state {
                             if state.handle == data.handle {
+                                state.waker.wake();
                                 return Ok(Some(AdapterEvent::Data {
                                     connection: BleConnection { handle: state.handle },
                                     data,
@@ -112,7 +120,7 @@ where
                     }
                     Ok(None)
                 }
-                HciMessage::Event(etype) => match etype {
+                HciPacket::Event(etype) => match etype {
                     EventType::ConnectionComplete {
                         status,
                         handle,
@@ -133,6 +141,7 @@ where
                                     interval,
                                     latency,
                                     timeout,
+                                    waker: WakerRegistration::new(),
                                 });
                                 return Ok(Some(AdapterEvent::Connected {
                                     connection: BleConnection { handle },
@@ -166,7 +175,7 @@ where
         }
     }
 
-    pub fn try_send(&mut self, message: &HciMessage<'_>) -> Result<Option<()>, Error<T::Error>> {
+    pub fn try_send(&self, message: &HciPacket<'_>) -> Result<Option<()>, Error<T::Error>> {
         let s = &mut *self.stack.borrow_mut();
         if s.try_write(&message)? == 0 {
             Ok(None)
@@ -180,7 +189,7 @@ where
         s.do_work()
     }
 
-    pub async fn send(&mut self, message: HciMessage<'_>) -> Result<(), Error<T::Error>> {
+    pub async fn send(&self, message: HciPacket<'_>) -> Result<(), Error<T::Error>> {
         poll_fn(|cx| {
             let s = &mut *self.stack.borrow_mut();
             match s.try_write(&message) {
@@ -212,7 +221,7 @@ where
 
     pub async fn request(&mut self, command: Command<'_>) -> Result<(), Error<T::Error>> {
         let (ogf, ocf) = command.opcode();
-        self.send(HciMessage::Command(command)).await?;
+        self.send(HciPacket::Command(command)).await?;
         poll_fn(|cx| {
             let s = &mut *self.stack.borrow_mut();
             match s.do_work() {
@@ -229,40 +238,6 @@ where
         .await?;
         Ok(())
     }
-
-    pub async fn init(&mut self) -> Result<(), Error<T::Error>> {
-        self.request(Command::Reset).await?;
-        self.request(Command::SetEventMask {
-            events: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
-        })
-        .await?;
-        Ok(())
-    }
-
-    pub async fn start_advertise(&mut self, data: Data) -> Result<(), Error<T::Error>> {
-        self.request(Command::LeSetAdvertisingParameters).await?;
-        self.request(Command::LeSetAdvertisingData { data }).await?;
-        self.request(Command::LeSetAdvertiseEnable(true)).await?;
-        Ok(())
-
-        /*
-        let connection = poll_fn(|cx| {
-            let s = &mut *self.stack.borrow_mut();
-            match s.do_work() {
-                Ok(Some(AdapterEvent::Connected { connection })) => Poll::Ready(Ok(connection)),
-                Ok(_) => {
-                    s.register_read_waker(cx.waker());
-                    Poll::Pending
-                }
-                Err(e) => Poll::Ready(Err(e)),
-            }
-        })
-        .await?;
-
-        self.send(HciMessage::Command(Command::LeSetAdvertiseEnable(false)))
-            .await?;
-        Ok(connection)*/
-    }
 }
 
 #[derive(Debug)]
@@ -276,58 +251,59 @@ pub enum AdapterEvent {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum HciMessage<'d> {
+pub enum HciPacket<'d> {
     Command(Command<'d>),
-    Data(AclPacket),
-    Event(EventType),
+    Data(AclPacket<'d>),
+    Event(Event<'d>),
 }
 
-impl<'d> HciMessage<'d> {
-    fn encode(&self) -> Result<(Data, HciMessageType), ()> {
+impl<'d> HciPacket<'d> {
+    fn encode(&self) -> Result<(Data, PacketKind), ()> {
         match self {
-            Self::Command(command) => Ok((command.encode(), HciMessageType::Command)),
-            Self::Data(acl) => Ok((acl.encode(), HciMessageType::Data)),
+            Self::Command(command) => Ok((command.encode(), PacketKind::Cmd)),
+            Self::Data(acl) => Ok((acl.encode(), PacketKind::AclData)),
             Self::Event(event) => unimplemented!(),
         }
     }
 
-    fn decode(message_type: HciMessageType, buf: &'d [u8]) -> Result<HciMessage<'d>, ()> {
-        match message_type {
-            HciMessageType::Command => {
+    fn decode(kind: PacketKind, buf: &'d [u8]) -> Result<HciPacket<'d>, ()> {
+        match kind {
+            PacketKind::Cmd => {
                 unimplemented!()
             }
-            HciMessageType::Data => {
+            PacketKind::AclData => {
                 let acl_packet = AclPacket::read(buf);
-                Ok(HciMessage::Data(acl_packet))
+                Ok(HciPacket::Data(acl_packet))
             }
-            HciMessageType::Event => {
+            PacketKind::Event => {
                 let event = EventType::read(buf);
-                Ok(HciMessage::Event(event))
+                Ok(HciPacket::Event(event))
             }
+            _ => unimplemented!(),
         }
     }
 }
 
 /*
-impl<'d> HciMessage<'d> {
-    fn encode(&self, dest: &mut [u8]) -> Result<(usize, HciMessageType), ()> {
+impl<'d> HciPacket<'d> {
+    fn encode(&self, dest: &mut [u8]) -> Result<(usize, HciPacketType), ()> {
         match self {
-            Self::Command(command) => Ok((command.encode(dest)?, HciMessageType::Command)),
-            Self::Data(acl) => Ok((acl.encode(dest)?, HciMessageType::Data)),
-            Self::Event(event) => Ok((event.encode(dest)?, HciMessageType::Event)),
+            Self::Command(command) => Ok((command.encode(dest)?, HciPacketType::Command)),
+            Self::Data(acl) => Ok((acl.encode(dest)?, HciPacketType::Data)),
+            Self::Event(event) => Ok((event.encode(dest)?, HciPacketType::Event)),
         }
     }
 
-    fn decode(message_type: HciMessageType, buf: &'d [u8]) -> Result<HciMessage<'d>, ()> {
+    fn decode(message_type: HciPacketType, buf: &'d [u8]) -> Result<HciPacket<'d>, ()> {
         match message_type {
-            HciMessageType::Command => {
+            HciPacketType::Command => {
                 unimplemented!()
             }
-            HciMessageType::Data => {
+            HciPacketType::Data => {
                 let acl_packet = AclPacket::read(buf);
                 Ok(acl_packet)
             }
-            HciMessageType::Event => {
+            HciPacketType::Event => {
                 let event = EventType::read(buf);
                 Ok(event)
             }
@@ -335,3 +311,32 @@ impl<'d> HciMessage<'d> {
     }
 }
 */
+
+use crate::portal::Portal;
+
+const PORTAL_NEW: Portal<*const AdapterEvent> = Portal::new();
+pub struct ConnectionManager<const CONN: usize> {
+    portals: [Portal<*const AdapterEvent>; CONN],
+}
+
+impl<const CONN: usize> ConnectionManager<CONN> {
+    pub const fn new() -> Self {
+        Self {
+            portals: [PORTAL_NEW; CONN],
+        }
+    }
+
+    pub fn portal(&self, idx: usize) -> &Portal<*const AdapterEvent> {
+        &self.portals[idx]
+    }
+
+    pub fn dispatch(&self, event: &AdapterEvent) {
+        match event {
+            AdapterEvent::Data { connection, data } => {
+                // TODO use index
+                self.portals[connection.handle as usize].call(event);
+            }
+            _ => {}
+        }
+    }
+}

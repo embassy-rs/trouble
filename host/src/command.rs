@@ -61,8 +61,8 @@ pub enum Command<'a> {
     Reset,
     LeSetAdvertisingParameters,
     LeSetAdvertisingParametersCustom(&'a AdvertisingParameters),
-    LeSetAdvertisingData { data: Data },
-    LeSetScanRspData { data: Data },
+    LeSetAdvertisingData { data: &'d [u8] },
+    LeSetScanRspData { data: &'d [u8] },
     LeSetAdvertiseEnable(bool),
     Disconnect { connection_handle: u16, reason: u8 },
     LeLongTermKeyRequestReply { handle: u16, ltk: u128 },
@@ -86,7 +86,7 @@ impl<'a> Command<'a> {
         }
     }
 
-    pub fn encode(&self) -> Data {
+    pub fn encode(&self, dest: &mut [u8]) -> usize {
         match self {
             Command::Reset => {
                 let mut data = [0u8; 3];

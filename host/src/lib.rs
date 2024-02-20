@@ -5,7 +5,8 @@ use core::cell::RefCell;
 use core::task::{Context, Poll};
 
 use acl::AclPacket;
-use adapter::{AdapterEvent, BleAdapter};
+use ad_structure::AdvertisementDataError;
+use adapter::{AdapterEvent, BleAdapter, BleConnection, HciMessage};
 use command::{
     opcode, Command, INFORMATIONAL_OGF, LONG_TERM_KEY_REQUEST_REPLY_OCF, READ_BD_ADDR_OCF, SET_ADVERTISE_ENABLE_OCF,
     SET_ADVERTISING_DATA_OCF, SET_EVENT_MASK_OCF,
@@ -22,6 +23,7 @@ pub mod adapter;
 pub mod att;
 pub mod driver;
 pub mod l2cap;
+mod portal;
 
 pub mod command;
 pub mod event;
@@ -44,6 +46,7 @@ const TIMEOUT_MILLIS: u64 = 1000;
 #[derive(Debug)]
 pub enum Error<E> {
     Timeout,
+    Advertisement(AdvertisementDataError),
     Failed(u8),
     Driver(E),
     Encode,
@@ -249,6 +252,95 @@ pub struct AdvertisingParameters {
     pub filter_policy: AdvertisingFilterPolicy,
 }
 
+pub struct AdvertiseConfig<'static> {
+    pub params: Option<AdvertisingParameters>,
+    pub data: &'static [AdStructure<'static>],
+}
+
+pub struct BleConfig {
+    pub advertise_config: Option<AdvertiseConfig<'static>>,
+}
+
+impl Default for BleConfig {
+    fn default() -> Self {
+        Self { advertise: None }
+    }
+}
+
+pub struct Ble<'d, T: HciDriver> {
+    adapter: BleAdapter<'d, T>,
+    config: BleConfig,
+}
+
+impl<'d, T: HciDriver> Ble<'d, T> {
+    pub fn new<const CONN: usize>(
+        driver: T,
+        config: BleConfig,
+        mut resources: adapter::AdapterResources<'d, CONN>,
+    ) -> Self {
+        Self {
+            adapter: BleAdapter::new(driver, &mut resources),
+            config,
+        }
+    }
+
+    async fn init(&mut self) -> Result<(), Error<T::Error>> {
+        self.adapter.request(Command::Reset).await?;
+        self.adapter
+            .request(Command::SetEventMask {
+                events: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn start_advertise(&mut self) -> Result<(), Error<T::Error>> {
+        if let Some(ad_config) = &self.config.advertise_config {
+            let data = ad_structure::create_advertising_data(ad_config.data).map_err(Error::Advertisement)?;
+            if let Some(params) = ad_config.params {
+                self.adapter
+                    .request(Command::LeSetAdvertisingParametersCustom(&params))
+                    .await?;
+            } else {
+                self.adapter.request(Command::LeSetAdvertisingParameters).await?;
+            }
+            self.adapter.request(Command::LeSetAdvertisingData { data }).await?;
+            self.adapter.request(Command::LeSetAdvertiseEnable(true)).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn run<F: Fn(AdapterEvent) -> Result<Option<HciMessage<'_>>, Error<T::Error>>>(
+        &self,
+        processor: Option<F>,
+    ) -> Result<(), Error<T::Error>> {
+        self.init().await?;
+        self.start_advertise().await?;
+        loop {
+            let event = self.adapter.recv().await?;
+            if let Some(processor) = processor {
+                if let Ok(Some(outbound)) = processor(event) {
+
+                self.adapter.send(outbound).await?;
+            }
+        }
+    }
+}
+
+pub struct Connection<'d, T: HciDriver> {
+    ble: &'d BleAdapter<'d, T>,
+    handle: BleConnection,
+}
+
+impl<'d, T: HciDriver> Connection<'d, T> {
+    pub async fn accept(ble: &'d Ble<'d, T>) -> Result<Self, Error<T::Error>> {
+        let handle = ble.adapter.accept_connection().await?;
+        Ok(Self {
+            ble: &ble.adapter,
+            handle,
+        })
+    }
+}
 /*
     adapter: BleAdapter<'d, T>,
     millis: fn() -> u64,
