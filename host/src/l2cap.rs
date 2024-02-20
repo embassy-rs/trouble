@@ -1,10 +1,12 @@
-use crate::{acl::AclPacket, Data};
+use crate::byte_reader::ByteReader;
+use crate::byte_writer::ByteWriter;
+use bt_hci::data::AclPacket;
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
-pub struct L2capPacket {
-    pub length: u16,
+pub struct L2capPacket<'d> {
     pub channel: u16,
-    pub payload: Data,
+    pub payload: &'d [u8],
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -13,48 +15,21 @@ pub enum L2capDecodeError {
     Other,
 }
 
-impl L2capPacket {
-    pub fn decode(packet: AclPacket) -> Result<(u16, Self), L2capDecodeError> {
-        let data = packet.data.as_slice();
-        let length = (data[0] as u16) + ((data[1] as u16) << 8);
-        let channel = (data[2] as u16) + ((data[3] as u16) << 8);
-        let payload = Data::new(&data[4..]);
+impl<'d> L2capPacket<'d> {
+    pub fn decode(packet: AclPacket<'d>) -> Result<(bt_hci::param::ConnHandle, L2capPacket<'d>), L2capDecodeError> {
+        let handle = packet.handle();
+        let mut r = ByteReader::new(packet.consume());
+        let length = r.read_u16_le();
+        let channel = r.read_u16_le();
+        let payload = r.read_slice(length as usize);
 
-        Ok((
-            packet.handle,
-            L2capPacket {
-                length,
-                channel,
-                payload,
-            },
-        ))
+        Ok((handle, L2capPacket { channel, payload }))
     }
 
-    pub fn encode(att_data: Data) -> Data {
-        let mut data = Data::new(&[
-            0, 0, // len set later
-            0x04, 0x00, // channel
-        ]);
-        data.append(att_data.as_slice());
-
-        let len = data.len - 4;
-        data.set(0, (len & 0xff) as u8);
-        data.set(1, ((len >> 8) & 0xff) as u8);
-
-        data
-    }
-
-    pub fn encode_sm(att_data: Data) -> Data {
-        let mut data = Data::new(&[
-            0, 0, // len set later
-            0x06, 0x00, // channel
-        ]);
-        data.append(att_data.as_slice());
-
-        let len = data.len - 4;
-        data.set(0, (len & 0xff) as u8);
-        data.set(1, ((len >> 8) & 0xff) as u8);
-
-        data
+    pub fn encode(&self, dest: &mut [u8]) {
+        let mut w = ByteWriter::new(dest);
+        w.write_u16_le(self.payload.len() as u16);
+        w.write_u16_le(self.channel);
+        w.append(self.payload);
     }
 }

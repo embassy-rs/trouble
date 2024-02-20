@@ -1,9 +1,6 @@
 use core::{fmt, mem::size_of, slice};
 
-use crate::{
-    att::{AttErrorCode, Uuid},
-    Data,
-};
+use crate::att::{AttErrorCode, Uuid};
 
 pub trait AttData {
     fn readable(&self) -> bool {
@@ -280,6 +277,7 @@ impl<'a> Attribute<'a> {
         }
     }
 
+    /*
     pub(crate) fn value(&mut self) -> Result<Data, AttErrorCode> {
         let mut data = Data::default();
         if self.data.readable() {
@@ -287,5 +285,5 @@ impl<'a> Attribute<'a> {
             data.append_len(len);
         }
         Ok(data)
-    }
+    }*/
 }

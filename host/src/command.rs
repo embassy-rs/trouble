@@ -87,84 +87,63 @@ impl<'a> Command<'a> {
     }
 
     pub fn encode(&self, dest: &mut [u8]) -> usize {
+        let w = ByteWriter::new(dest);
         match self {
             Command::Reset => {
-                let mut data = [0u8; 3];
-                CommandHeader::from_ogf_ocf(CONTROLLER_OGF, RESET_OCF, 0x00).write_into(&mut data[..]);
-                Data::new(&data)
+                CommandHeader::from_ogf_ocf(CONTROLLER_OGF, RESET_OCF, 0x00).write_into(w.slice(3));
             }
             Command::LeSetAdvertisingParameters => {
                 let mut data = [0u8; 3 + 0xf];
-                CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISING_PARAMETERS_OCF, 0x0f).write_into(&mut data[..]);
-                data[3..].copy_from_slice(&[0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0]);
-                Data::new(&data)
+                CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISING_PARAMETERS_OCF, 0x0f).write_into(w.slice(3));
+                w.append(&[0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0]);
             }
             Command::LeSetAdvertisingParametersCustom(params) => {
-                let mut data = [0u8; 3 + 0xf];
-                CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISING_PARAMETERS_OCF, 0x0f).write_into(&mut data[..]);
+                CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISING_PARAMETERS_OCF, 0x0f).write_into(w.slice(3));
 
-                let mut adv_params = Data::new(&[]);
-                adv_params.append(&params.advertising_interval_min.to_be_bytes());
-                adv_params.append(&params.advertising_interval_max.to_be_bytes());
-                adv_params.append(&[params.advertising_type as u8]);
-                adv_params.append(&[params.own_address_type as u8]);
-                adv_params.append(&[params.peer_address_type as u8]);
-                adv_params.append(&params.peer_address);
-                adv_params.append(&[params.advertising_channel_map]);
-                adv_params.append(&[params.filter_policy as u8]);
-
-                data[3..].copy_from_slice(adv_params.as_slice());
-                Data::new(&data)
+                w.append(&params.advertising_interval_min.to_be_bytes());
+                w.append(&params.advertising_interval_max.to_be_bytes());
+                w.append(&[params.advertising_type as u8]);
+                w.append(&[params.own_address_type as u8]);
+                w.append(&[params.peer_address_type as u8]);
+                w.append(&params.peer_address);
+                w.append(&[params.advertising_channel_map]);
+                w.append(&[params.filter_policy as u8]);
             }
             Command::LeSetAdvertisingData { ref data } => {
-                let mut header = [0u8; 3];
-                CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISING_DATA_OCF, data.len as u8)
-                    .write_into(&mut header[..]);
-                let mut res = Data::new(&header);
-                res.append(data.as_slice());
-                res
+                CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISING_DATA_OCF, data.len as u8).write_into(w.slice(3));
+                w.append(data.as_slice());
             }
             Command::LeSetScanRspData { ref data } => {
-                let mut header = [0u8; 3];
-                CommandHeader::from_ogf_ocf(LE_OGF, SET_SCAN_RSP_DATA_OCF, data.len as u8).write_into(&mut header[..]);
-                let mut res = Data::new(&header);
-                res.append(data.as_slice());
-                res
+                CommandHeader::from_ogf_ocf(LE_OGF, SET_SCAN_RSP_DATA_OCF, data.len as u8).write_into(w.slice(3));
+                w.append(data.as_slice());
             }
             Command::LeSetAdvertiseEnable(enable) => {
-                let mut data = [0u8; 4];
-                CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISE_ENABLE_OCF, 0x01).write_into(&mut data[..]);
-                data[3] = if *enable { 1 } else { 0 };
-                Data::new(&data)
+                CommandHeader::from_ogf_ocf(LE_OGF, SET_ADVERTISE_ENABLE_OCF, 0x01).write_into(w.slice(3));
+                w.write_u8(if *enable { 1 } else { 0 });
             }
             Command::Disconnect {
                 connection_handle,
                 reason,
             } => {
-                let mut data = [0u8; 6];
-                CommandHeader::from_ogf_ocf(LINK_CONTROL_OGF, DISCONNECT_OCF, 0x03).write_into(&mut data[..]);
-                data[3..][..2].copy_from_slice(&connection_handle.to_le_bytes());
-                data[5] = *reason;
-                Data::new(&data)
+                CommandHeader::from_ogf_ocf(LINK_CONTROL_OGF, DISCONNECT_OCF, 0x03).write_into(w.slice(3));
+                w.write_u16_le(connection_handle);
+                w.write_u8(*reason);
             }
             Command::LeLongTermKeyRequestReply { handle, ltk } => {
                 let mut data = [0u8; 21];
-                CommandHeader::from_ogf_ocf(LE_OGF, LONG_TERM_KEY_REQUEST_REPLY_OCF, 18).write_into(&mut data[..]);
-                data[3..][..2].copy_from_slice(&handle.to_le_bytes());
-                data[5..].copy_from_slice(&ltk.to_le_bytes());
-                Data::new(&data)
+                CommandHeader::from_ogf_ocf(LE_OGF, LONG_TERM_KEY_REQUEST_REPLY_OCF, 18).write_into(w.slice(3));
+                w.write_u16_le(handle);
+                w.append(&ltk.to_le_bytes());
             }
             Command::ReadBrAddr => {
                 let mut data = [0u8; 3];
-                CommandHeader::from_ogf_ocf(INFORMATIONAL_OGF, READ_BD_ADDR_OCF, 0x00).write_into(&mut data[..]);
-                Data::new(&data)
+                CommandHeader::from_ogf_ocf(INFORMATIONAL_OGF, READ_BD_ADDR_OCF, 0x00).write_into(w.slice(3));
             }
             Command::SetEventMask { events } => {
-                let mut data = [0u8; 11];
-                CommandHeader::from_ogf_ocf(CONTROLLER_OGF, SET_EVENT_MASK_OCF, 0x08).write_into(&mut data[..]);
-                data[3..].copy_from_slice(events);
-                Data::new(&data)
+                CommandHeader::from_ogf_ocf(CONTROLLER_OGF, SET_EVENT_MASK_OCF, 0x08).write_into(w.slice(3));
+                w.append(events);
             }
         }
+        w.len()
     }
 }
