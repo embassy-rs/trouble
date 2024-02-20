@@ -84,35 +84,20 @@ impl NotificationData {
     }
 }
 
-pub struct AttributeServer<'a, R: CryptoRng + RngCore> {
+pub struct AttributeServer<'a> {
     pub(crate) mtu: u16,
     pub(crate) attributes: &'a mut [Attribute<'a>],
-
-    #[cfg(feature = "crypto")]
-    pub(crate) security_manager: SecurityManager<'a, Ble<T>, R>,
-
-    #[cfg(feature = "crypto")]
-    pub(crate) pin_callback: Option<&'a mut dyn FnMut(u32)>,
-
-    #[cfg(not(feature = "crypto"))]
-    phantom: PhantomData<R>,
 }
 
-impl<'a, R: CryptoRng + RngCore> AttributeServer<'a, R> {
+impl<'a> AttributeServer<'a> {
     /// Create a new instance of the AttributeServer
     ///
     /// When _NOT_ using the `crypto` feature you can pass a mutual reference to `bleps::no_rng::NoRng`
-    pub fn new(attributes: &'a mut [Attribute<'a>], rng: &'a mut R) -> AttributeServer<'a, R> {
-        AttributeServer::new_with_ltk(attributes, Addr::from_le_bytes(false, [0u8; 6]), None, rng)
+    pub fn new(attributes: &'a mut [Attribute<'a>]) -> AttributeServer<'a> {
+        AttributeServer::new_inner(attributes)
     }
 
-    /// Create a new instance, optionally provide an LTK
-    pub fn new_with_ltk(
-        attributes: &'a mut [Attribute<'a>],
-        _local_addr: Addr,
-        _ltk: Option<u128>,
-        _rng: &'a mut R,
-    ) -> AttributeServer<'a, R> {
+    fn new_inner(attributes: &'a mut [Attribute<'a>]) -> AttributeServer<'a> {
         for (i, attr) in attributes.iter_mut().enumerate() {
             attr.handle = i as u16 + 1;
         }
@@ -128,36 +113,10 @@ impl<'a, R: CryptoRng + RngCore> AttributeServer<'a, R> {
 
         trace!("{:#x}", &attributes);
 
-        #[cfg(feature = "crypto")]
-        let mut security_manager = AsyncSecurityManager::new(_rng);
-        #[cfg(feature = "crypto")]
-        {
-            security_manager.local_address = Some(_local_addr);
-            security_manager.ltk = _ltk;
-        }
-
         AttributeServer {
             mtu: BASE_MTU,
             attributes,
-
-            #[cfg(feature = "crypto")]
-            security_manager,
-
-            #[cfg(feature = "crypto")]
-            pin_callback: None,
-
-            #[cfg(not(feature = "crypto"))]
-            phantom: PhantomData::default(),
         }
-    }
-
-    /// Get the current LTK
-    pub fn get_ltk(&self) -> Option<u128> {
-        #[cfg(feature = "crypto")]
-        return self.security_manager.ltk;
-
-        #[cfg(not(feature = "crypto"))]
-        None
     }
 
     pub fn get_characteristic_value(&mut self, handle: u16, offset: u16, buffer: &mut [u8]) -> Option<usize> {
@@ -460,7 +419,7 @@ impl<'a, R: CryptoRng + RngCore> AttributeServer<'a, R> {
     }
 
     /// Process an adapter event and produce a response if necessary
-    pub fn process(&mut self, event: &AdapterEvent) -> Result<Option<HciMessage<'_>>, AttributeServerError> {
+    pub fn process(&mut self, att: &Att) -> Result<Option<HciMessage<'_>>, AttributeServerError> {
         match event {
             AdapterEvent::Data { connection, data } => {
                 let (src_handle, l2cap_packet) = L2capPacket::decode(*data)?;
