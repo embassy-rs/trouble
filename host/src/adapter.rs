@@ -1,13 +1,15 @@
+use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
 use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::attribute::Attribute;
-use crate::driver::HciDriver;
+use crate::byte_writer::ByteWriter;
 use crate::Addr;
 use crate::{AdvertisingParameters, Error};
-use bt_hci::cmd::Cmd;
+use bt_hci::cmd::{Cmd, SyncCmd};
 use bt_hci::data::AclPacket;
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
+use bt_hci::Controller;
 use bt_hci::ControllerToHostPacket;
 use bt_hci::PacketKind;
 use core::cell::RefCell;
@@ -57,9 +59,8 @@ pub struct BleConnection {
 
 pub struct BleStack<'d, T>
 where
-    T: HciDriver,
+    T: Controller,
 {
-    driver: T,
     connections: &'d mut [ConnectionStorage<'d>],
 }
 
@@ -71,7 +72,7 @@ impl<E: crate::driver::Error> From<E> for Error<E> {
 
 impl<'d, T> BleStack<'d, T>
 where
-    T: HciDriver,
+    T: Controller,
 {
     pub fn new(driver: T, connections: &'d mut [ConnectionStorage<'d>]) -> BleStack<'d, T> {
         Self { driver, connections }
@@ -120,93 +121,57 @@ where
     }
 }
 
+use crate::ad_structure::AdStructure;
+
+pub struct AdvertiseConfig<'d> {
+    pub params: Option<LeSetAdvParams>,
+    pub data: &'d [AdStructure<'d>],
+}
+
+pub struct Config<'d> {
+    pub advertise: Option<AdvertiseConfig<'d>>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { advertise: None }
+    }
+}
+
 pub struct BleAdapter<'d, T>
 where
-    T: HciDriver,
+    T: Controller,
 {
-    stack: RefCell<BleStack<'d, T>>,
+    controller: T,
+    config: Config<'d>,
 }
 
 impl<'d, T> BleAdapter<'d, T>
 where
-    T: HciDriver,
+    T: Controller,
 {
-    pub fn new<const CONN: usize>(driver: T, resources: &'d mut AdapterResources<'d, CONN>) -> BleAdapter<'d, T> {
-        let stack = BleStack::new(driver, &mut resources.connections);
-        Self {
-            stack: RefCell::new(stack),
+    pub fn new(controller: T, config: Config<'d>) -> BleAdapter<'d, T> {
+        //let stack = BleStack::new(driver, &mut resources.connections);
+        Self { controller, config }
+    }
+
+    pub async fn run(&self) -> Result<(), Error<T::Error>> {
+        if let Some(adv) = &self.config.advertise {
+            if let Some(params) = &adv.params {
+                params.exec(&self.controller).await?
+            }
+
+            let mut data = [0; 31];
+            let mut w = ByteWriter::new(&mut data[..]);
+            for item in adv.data.iter() {
+                item.encode(&mut w);
+            }
+            let len = w.len();
+            drop(w);
+            LeSetAdvData::new(len, data).exec(&self.controller).await?;
+            LeSetAdvEnable::new(true).exec(&self.controller).await?;
         }
     }
-
-    /*
-    fn try_send(&self, message: &HciPacket<'_>) -> Result<Option<()>, Error<T::Error>> {
-        let s = &mut *self.stack.borrow_mut();
-        if s.try_write(&message)? == 0 {
-            Ok(None)
-        } else {
-            Ok(Some(()))
-        }
-    }
-
-    fn try_recv(&mut self) -> Result<Option<AdapterEvent>, Error<T::Error>> {
-        let s = &mut *self.stack.borrow_mut();
-        s.do_work()
-    }
-
-    pub async fn send(&self, message: HciPacket<'_>) -> Result<(), Error<T::Error>> {
-        poll_fn(|cx| {
-            let s = &mut *self.stack.borrow_mut();
-            match s.try_write(&message) {
-                Ok(0) => {
-                    s.register_write_waker(cx.waker());
-                    Poll::Pending
-                }
-                Ok(_) => Poll::Ready(Ok(())),
-                Err(e) => Poll::Ready(Err(e)),
-            }
-        })
-        .await
-    }*/
-
-    pub async fn recv(&mut self) -> Result<(), Error<T::Error>> {
-        poll_fn(|cx| {
-            let s = &mut *self.stack.borrow_mut();
-            let mut buffer = [0; 259];
-            match s.do_work(&mut buffer) {
-                Ok(Some(event)) => {
-                    info!("Event: {:?}", event);
-                    Poll::Ready(Ok(()))
-                }
-                Ok(_) => {
-                    s.register_read_waker(cx.waker());
-                    Poll::Pending
-                }
-                Err(e) => Poll::Ready(Err(e)),
-            }
-        })
-        .await
-    }
-
-    /*
-    pub async fn request(&mut self, command: Command<'_>) -> Result<(), Error<T::Error>> {
-        let (ogf, ocf) = command.opcode();
-        self.send(HciPacket::Command(command)).await?;
-        poll_fn(|cx| {
-            let s = &mut *self.stack.borrow_mut();
-            match s.do_work() {
-                Ok(Some(AdapterEvent::Control {
-                    event: EventType::CommandComplete { opcode: code, .. },
-                })) if code == opcode(ogf, ocf) => Poll::Ready(Ok(())),
-                Ok(_) => {
-                    s.register_read_waker(cx.waker());
-                    Poll::Pending
-                }
-                Err(e) => Poll::Ready(Err(e)),
-            }
-        })
-        .await?;
-        Ok(())
-    }*/
 }
 
 #[derive(Debug)]
