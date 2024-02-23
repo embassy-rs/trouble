@@ -18,7 +18,9 @@ pub enum L2capDecodeError {
 impl<'d> L2capPacket<'d> {
     pub fn decode(packet: AclPacket<'d>) -> Result<(bt_hci::param::ConnHandle, L2capPacket<'d>), L2capDecodeError> {
         let handle = packet.handle();
-        let mut r = ByteReader::new(packet.consume());
+        let data = packet.data();
+        drop(packet);
+        let mut r = ByteReader::new(data);
         let length = r.read_u16_le();
         let channel = r.read_u16_le();
         let payload = r.read_slice(length as usize);
