@@ -14,6 +14,10 @@ impl<'d> ByteWriter<'d> {
         self.buf.len() - self.pos
     }
 
+    pub fn get(&mut self, offset: usize) -> u8 {
+        self.buf[offset]
+    }
+
     pub fn set(&mut self, offset: usize, value: u8) {
         self.buf[offset] = value;
     }
@@ -64,12 +68,12 @@ impl<'d> ByteWriter<'d> {
 
     pub fn append_uuid(&mut self, uuid: &Uuid) {
         match uuid {
-            Uuid::Uuid16(value) => {
-                let mut slice = self.slice(2);
+            Uuid::Uuid16(_) => {
+                let slice = self.slice(2);
                 uuid.bytes(slice);
             }
             Uuid::Uuid128(value) => {
-                let mut slice = self.slice(value.len());
+                let slice = self.slice(value.len());
                 uuid.bytes(slice);
             }
         }
@@ -77,6 +81,10 @@ impl<'d> ByteWriter<'d> {
 
     pub fn len(&self) -> usize {
         self.pos
+    }
+
+    pub fn truncate(&mut self, pos: usize) {
+        self.pos = pos;
     }
 
     pub fn done(self) -> &'d mut [u8] {
