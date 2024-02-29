@@ -17,21 +17,27 @@ pub mod l2cap;
 pub mod ad_structure;
 
 pub mod attribute;
-//pub mod attribute_server;
+pub mod attribute_server;
 
 #[derive(Debug)]
 pub enum Error<E> {
     Timeout,
     Advertisement(AdvertisementDataError),
     Failed(u8),
-    Driver(E),
-    Encode,
+    Controller(E),
+    Encode(bt_hci::param::Error),
     Decode(FromHciBytesError),
 }
 
 impl<E> From<FromHciBytesError> for Error<E> {
     fn from(error: FromHciBytesError) -> Self {
         Self::Decode(error)
+    }
+}
+
+impl<E> From<bt_hci::param::Error> for Error<E> {
+    fn from(error: bt_hci::param::Error) -> Self {
+        Self::Encode(error)
     }
 }
 
@@ -42,7 +48,7 @@ where
 {
     fn format(&self, fmt: defmt::Formatter) {
         match self {
-            Error::Encode => {
+            Error::Encode(_) => {
                 defmt::write!(fmt, "Encode")
             }
             Error::Decode(_) => {
@@ -54,8 +60,8 @@ where
             Error::Failed(value) => {
                 defmt::write!(fmt, "Failed({})", value)
             }
-            Error::Driver(value) => {
-                defmt::write!(fmt, "Driver({})", value)
+            Error::Controller(value) => {
+                defmt::write!(fmt, "Controller({})", value)
             }
             Error::Advertisement(value) => {
                 defmt::write!(fmt, "Advertisement({})", value)
