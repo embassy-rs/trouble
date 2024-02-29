@@ -47,7 +47,7 @@ impl<'d> ByteReader<'d> {
         b
     }
 
-    pub fn consume(mut self) -> &'d [u8] {
+    pub fn consume(self) -> &'d [u8] {
         &self.buf[self.pos..]
     }
 

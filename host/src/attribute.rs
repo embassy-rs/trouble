@@ -317,13 +317,13 @@ impl<'d> AttributeData<'d> {
     pub fn readable(&self) -> bool {
         match self {
             Self::Ref(d) => d.readable(),
-            Self::Slice(d) => true,
+            Self::Slice(_) => true,
             Self::CharDeclaration(_, _, _) => true,
             Self::Service(_) => true,
         }
     }
 
-    pub fn read(&mut self, mut offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+    pub fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         match self {
             Self::Ref(d) => d.read(offset, data),
             Self::Slice(val) => {
@@ -363,6 +363,7 @@ impl<'d> AttributeData<'d> {
                 }
 
                 let to_write = w.available().min(val.len());
+
                 if to_write > 0 {
                     w.append(&val[..to_write]);
                 }
@@ -492,7 +493,7 @@ impl<'a, 'b, const N: usize> ServiceBuilder<'a, 'b, N> {
         Self { attributes }
     }
 
-    pub fn add_characteristic(mut self, uuid: Uuid, props: &[CharacteristicProp], value: &'a mut impl AttData) -> Self {
+    pub fn add_characteristic(self, uuid: Uuid, props: &[CharacteristicProp], value: &'a mut impl AttData) -> Self {
         let mut prop = 0u8;
         for p in props {
             prop |= *p as u8
@@ -506,7 +507,7 @@ impl<'a, 'b, const N: usize> ServiceBuilder<'a, 'b, N> {
         self
     }
 
-    pub fn done(mut self) {
+    pub fn done(self) {
         self.attributes.finish_group();
     }
 }
