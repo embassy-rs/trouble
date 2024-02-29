@@ -3,40 +3,40 @@ use crate::l2cap::L2capPacket;
 use core::convert::TryInto;
 
 pub const ATT_READ_BY_GROUP_TYPE_REQUEST_OPCODE: u8 = 0x10;
-const ATT_READ_BY_GROUP_TYPE_RESPONSE_OPCODE: u8 = 0x11;
-const ATT_ERROR_RESPONSE_OPCODE: u8 = 0x01;
+pub const ATT_READ_BY_GROUP_TYPE_RESPONSE_OPCODE: u8 = 0x11;
+pub const ATT_ERROR_RESPONSE_OPCODE: u8 = 0x01;
 pub const ATT_READ_BY_TYPE_REQUEST_OPCODE: u8 = 0x08;
-const ATT_READ_BY_TYPE_RESPONSE_OPCODE: u8 = 0x09;
+pub const ATT_READ_BY_TYPE_RESPONSE_OPCODE: u8 = 0x09;
 pub const ATT_READ_REQUEST_OPCODE: u8 = 0x0a;
-const ATT_READ_RESPONSE_OPCODE: u8 = 0x0b;
+pub const ATT_READ_RESPONSE_OPCODE: u8 = 0x0b;
 pub const ATT_WRITE_REQUEST_OPCODE: u8 = 0x12;
 pub const ATT_WRITE_CMD_OPCODE: u8 = 0x52;
-const ATT_WRITE_RESPONSE_OPCODE: u8 = 0x13;
+pub const ATT_WRITE_RESPONSE_OPCODE: u8 = 0x13;
 pub const ATT_EXCHANGE_MTU_REQUEST_OPCODE: u8 = 0x02;
-const ATT_EXCHANGE_MTU_RESPONSE_OPCODE: u8 = 0x03;
+pub const ATT_EXCHANGE_MTU_RESPONSE_OPCODE: u8 = 0x03;
 pub const ATT_FIND_BY_TYPE_VALUE_REQUEST_OPCODE: u8 = 0x06;
 //const ATT_FIND_BY_TYPE_VALUE_RESPONSE_OPCODE: u8 = 0x07;
 pub const ATT_FIND_INFORMATION_REQ_OPCODE: u8 = 0x04;
-const ATT_FIND_INFORMATION_RSP_OPCODE: u8 = 0x05;
+pub const ATT_FIND_INFORMATION_RSP_OPCODE: u8 = 0x05;
 pub const ATT_PREPARE_WRITE_REQ_OPCODE: u8 = 0x16;
-const ATT_PREPARE_WRITE_RESP_OPCODE: u8 = 0x17;
+pub const ATT_PREPARE_WRITE_RESP_OPCODE: u8 = 0x17;
 pub const ATT_EXECUTE_WRITE_REQ_OPCODE: u8 = 0x18;
-const ATT_EXECUTE_WRITE_RESP_OPCODE: u8 = 0x19;
+pub const ATT_EXECUTE_WRITE_RESP_OPCODE: u8 = 0x19;
 pub const ATT_READ_BLOB_REQ_OPCODE: u8 = 0x0c;
-const ATT_READ_BLOB_RESP_OPCODE: u8 = 0x0d;
-const ATT_HANDLE_VALUE_NTF_OPTCODE: u8 = 0x1b;
+pub const ATT_READ_BLOB_RESP_OPCODE: u8 = 0x0d;
+pub const ATT_HANDLE_VALUE_NTF_OPTCODE: u8 = 0x1b;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Uuid {
-    Uuid16(u16),
+    Uuid16([u8; 2]),
     Uuid128([u8; 16]),
 }
 
 impl Uuid {
     pub fn bytes(&self, data: &mut [u8]) {
         match self {
-            Uuid::Uuid16(uuid) => data.copy_from_slice(&uuid.to_be_bytes()),
+            Uuid::Uuid16(uuid) => data.copy_from_slice(uuid),
             Uuid::Uuid128(uuid) => data.copy_from_slice(uuid),
         }
     }
@@ -54,12 +54,25 @@ impl Uuid {
             Uuid::Uuid128(_) => 20,
         }
     }
+
+    pub fn as_raw(&self) -> &[u8] {
+        match self {
+            Uuid::Uuid16(uuid) => uuid,
+            Uuid::Uuid128(uuid) => uuid,
+        }
+    }
+}
+
+impl From<u16> for Uuid {
+    fn from(data: u16) -> Self {
+        Uuid::Uuid16(data.to_le_bytes())
+    }
 }
 
 impl From<&[u8]> for Uuid {
     fn from(data: &[u8]) -> Self {
         match data.len() {
-            2 => Uuid::Uuid16(u16::from_le_bytes(data.try_into().unwrap())),
+            2 => Uuid::Uuid16(data.try_into().unwrap()),
             16 => {
                 let bytes: [u8; 16] = data.try_into().unwrap();
                 Uuid::Uuid128(bytes)
@@ -168,8 +181,8 @@ pub enum AttDecodeError {
 }
 
 impl<'d> Att<'d> {
-    pub fn decode(packet: L2capPacket<'d>) -> Result<Att<'d>, AttDecodeError> {
-        let mut r = ByteReader::new(packet.payload);
+    pub fn decode(packet: &'d [u8]) -> Result<Att<'d>, AttDecodeError> {
+        let mut r = ByteReader::new(packet);
         let opcode = r.read_u8();
         let payload = r.consume();
 
@@ -179,7 +192,7 @@ impl<'d> Att<'d> {
                 let end_handle = (payload[2] as u16) + ((payload[3] as u16) << 8);
 
                 let group_type = if payload.len() == 6 {
-                    Uuid::Uuid16((payload[4] as u16) + ((payload[5] as u16) << 8))
+                    Uuid::Uuid16([payload[4], payload[5]])
                 } else if payload.len() == 20 {
                     let uuid = payload[4..21].try_into().map_err(|_| AttDecodeError::Other)?;
                     Uuid::Uuid128(uuid)
@@ -198,7 +211,7 @@ impl<'d> Att<'d> {
                 let end_handle = (payload[2] as u16) + ((payload[3] as u16) << 8);
 
                 let attribute_type = if payload.len() == 6 {
-                    Uuid::Uuid16((payload[4] as u16) + ((payload[5] as u16) << 8))
+                    Uuid::Uuid16([payload[4], payload[5]])
                 } else if payload.len() == 20 {
                     let uuid = payload[4..21].try_into().map_err(|_| AttDecodeError::Other)?;
                     Uuid::Uuid128(uuid)

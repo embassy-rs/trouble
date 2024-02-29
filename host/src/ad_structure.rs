@@ -84,7 +84,7 @@ impl<'d> AdStructure<'d> {
             }
             AdStructure::ServiceData16 { uuid, data } => {
                 w.append(&[(data.len() + 3) as u8, 0x16]);
-                w.append_value(*uuid);
+                w.write_u16_le(*uuid);
                 w.append(data);
             }
             AdStructure::ManufacturerSpecificData {
@@ -92,7 +92,7 @@ impl<'d> AdStructure<'d> {
                 payload,
             } => {
                 w.append(&[(payload.len() + 3) as u8, 0xff]);
-                w.append_value(*company_identifier);
+                w.write_u16_le(*company_identifier);
                 w.append(payload);
             }
             AdStructure::Unknown { ty, data } => {
@@ -101,26 +101,4 @@ impl<'d> AdStructure<'d> {
             }
         }
     }
-}
-
-pub fn create_advertising_data(ad: &[AdStructure]) -> Result<Data, AdvertisementDataError> {
-    let mut data = Data::default();
-    data.append(&[0]);
-
-    for item in ad.iter() {
-        data.append_ad_structure(&item);
-    }
-
-    let len = data.len - 1;
-    data.set(0, len as u8);
-
-    if len > 31 {
-        return Err(AdvertisementDataError::TooLong);
-    }
-
-    for _ in 0..(31 - len) {
-        data.append(&[0]);
-    }
-
-    Ok(data)
 }

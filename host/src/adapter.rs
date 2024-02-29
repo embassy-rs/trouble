@@ -1,47 +1,72 @@
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
+use bt_hci::param::{BdAddr, ConnHandle};
+use bt_hci::{ControllerCmdSync, FromHciBytesError};
+use embassy_futures::select::{select, Either};
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSendFuture, DynamicSender, Receiver, Sender};
 use embassy_sync::waitqueue::WakerRegistration;
 
+use crate::att::Att;
+//use crate::attribute::Attribute;
+//use crate::attribute_server::AttributeServer;
+use crate::ad_structure::AdStructure;
 use crate::attribute::Attribute;
+use crate::attribute_server::AttributeServer;
 use crate::byte_writer::ByteWriter;
+use crate::l2cap::{L2capPacket, L2capState, RXQ, TXQ};
 use crate::Addr;
-use crate::{AdvertisingParameters, Error};
+use crate::Error;
 use bt_hci::cmd::{Cmd, SyncCmd};
-use bt_hci::data::AclPacket;
+use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary, AclPacketHeader};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::Controller;
+
 use bt_hci::ControllerToHostPacket;
 use bt_hci::PacketKind;
 use core::cell::RefCell;
 use core::future::poll_fn;
 use core::marker::PhantomData;
 use core::task::{Poll, Waker};
+use heapless::Vec;
 
-pub struct AdapterResources<'d, const CONN: usize> {
-    attributes: &'d mut [Attribute<'d>],
-    connections: [ConnectionStorage<'d>; CONN],
+const ATT_MTU: usize = 23;
+const L2CAP_MTU: usize = 247;
+
+pub struct AdapterResources<M: RawMutex, const CONNS: usize, const CHANNELS: usize> {
+    connections: [ConnectionStorage; CONNS],
+    channels: [ChannelStorage<M>; CHANNELS],
+    att: L2capState<M, ATT_MTU>,
 }
 
-impl<'d, const CONN: usize> AdapterResources<'d, CONN> {
-    pub fn new(attributes: &'d mut [Attribute<'d>]) -> Self {
+impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize> AdapterResources<M, CONNS, CHANNELS> {
+    pub fn new() -> Self {
         Self {
-            attributes,
-            connections: [ConnectionStorage::EMPTY; CONN],
+            connections: [ConnectionStorage::EMPTY; CONNS],
+            channels: [ChannelStorage::EMPTY; CHANNELS],
+            att: L2capState::new(),
         }
     }
 }
 
-struct ConnectionStorage<'d> {
-    state: Option<ConnectionState<'d>>,
+struct ConnectionStorage {
+    state: Option<ConnectionState>,
 }
 
-impl<'d> ConnectionStorage<'d> {
+impl ConnectionStorage {
     const EMPTY: Self = Self { state: None };
 }
 
-pub struct ConnectionState<'d> {
+struct ChannelStorage<M: RawMutex> {
+    state: Option<L2capState<M, L2CAP_MTU>>,
+}
+
+impl<M: RawMutex> ChannelStorage<M> {
+    const EMPTY: Self = Self { state: None };
+}
+
+pub struct ConnectionState {
     handle: u16,
-    _p: PhantomData<&'d u8>,
     status: u8,
     role: u8,
     peer_address: Addr,
@@ -51,115 +76,138 @@ pub struct ConnectionState<'d> {
     waker: WakerRegistration,
 }
 
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct BleConnection {
-    handle: u16,
+#[derive(Clone)]
+pub struct Connection<'d> {
+    handle: ConnHandle,
+    tx: DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
 }
 
-pub struct BleStack<'d, T>
-where
-    T: Controller,
-{
-    connections: &'d mut [ConnectionStorage<'d>],
-}
-
-impl<E: crate::driver::Error> From<E> for Error<E> {
-    fn from(e: E) -> Error<E> {
-        Error::Driver(e)
+impl<'d> Connection<'d> {
+    pub async fn accept<M: RawMutex, T: Controller>(
+        adapter: &'d Adapter<'d, M, T>,
+    ) -> Result<Connection<'d>, Error<T::Error>> {
+        adapter.accept().await
     }
 }
 
-impl<'d, T> BleStack<'d, T>
-where
-    T: Controller,
-{
-    pub fn new(driver: T, connections: &'d mut [ConnectionStorage<'d>]) -> BleStack<'d, T> {
-        Self { driver, connections }
-    }
+pub struct GattServer<'a, 'd> {
+    server: AttributeServer<'a, 'd>,
+    rx: DynamicReceiver<'d, (ConnHandle, Vec<u8, ATT_MTU>)>,
+    tx: DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
+}
 
-    fn register_read_waker(&mut self, waker: &Waker) {
-        self.driver.register_read_waker(waker);
-    }
-
-    fn register_write_waker(&mut self, waker: &Waker) {
-        self.driver.register_write_waker(waker);
-    }
-
-    fn do_work<'m>(&mut self, buffer: &'m mut [u8]) -> Result<Option<ControllerToHostPacket<'m>>, Error<T::Error>> {
-        match self.driver.try_read(buffer)? {
-            None => Ok(None),
-            Some(kind) => match ControllerToHostPacket::from_hci_bytes_with_kind(kind, buffer)? {
-                (p @ ControllerToHostPacket::Event(Event::Le(LeEvent::LeConnectionComplete(_))), _) => {
-                    info!("Connection established!");
-                    /*
-                    for conn in self.connections.iter_mut() {
-                        if conn.state.is_none() {
-                            conn.state.replace(ConnectionState {
-                                _p: PhantomData,
-                                status,
-                                handle,
-                                role,
-                                peer_address,
-                                interval,
-                                latency,
-                                timeout,
-                                waker: WakerRegistration::new(),
-                            });
-                            return Ok(Some(AdapterEvent::Connected {
-                                connection: BleConnection { handle },
-                            }));
-                        }
-                    }
-                    panic!("no sockets left");
-                    */
-                    Ok(Some(p))
-                }
-                (packet, _) => Ok(Some(packet)),
-            },
+impl<'a, 'd> GattServer<'a, 'd> {
+    pub fn new<M: RawMutex, T: Controller>(
+        adapter: &'d Adapter<'d, M, T>,
+        attributes: &'a mut [Attribute<'d>],
+    ) -> Self {
+        Self {
+            server: AttributeServer::new(attributes),
+            rx: adapter.att.receiver().into(),
+            tx: adapter.outbound.sender().into(),
         }
     }
+
+    pub async fn next(&mut self) -> Option<GattEvent<'d>> {
+        let (handle, pdu) = self.rx.receive().await;
+        match Att::decode(&pdu[..]) {
+            Ok(att) => match self.server.process(att) {
+                Ok(Some(payload)) => {
+                    let mut pdu = [0u8; L2CAP_MTU];
+                    let packet = L2capPacket { channel: 4, payload };
+                    let len = packet.encode(&mut pdu);
+                    self.tx.send((handle, Vec::from_slice(&pdu[..len]).unwrap())).await;
+                }
+                Ok(None) => {
+                    debug!("No response sent");
+                }
+                Err(e) => {
+                    warn!("Error processing attribute: {:?}", e);
+                }
+            },
+            Err(e) => {
+                warn!("Error decoding attribute request: {:?}", e);
+            }
+        }
+        None
+    }
 }
 
-use crate::ad_structure::AdStructure;
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
+pub enum GattEvent<'d> {
+    Written(Attribute<'d>),
+}
 
 pub struct AdvertiseConfig<'d> {
     pub params: Option<LeSetAdvParams>,
     pub data: &'d [AdStructure<'d>],
 }
 
-pub struct Config<'d> {
-    pub advertise: Option<AdvertiseConfig<'d>>,
+pub struct Config<'a> {
+    pub advertise: Option<AdvertiseConfig<'a>>,
 }
 
-impl Default for Config {
+impl<'a> Default for Config<'a> {
     fn default() -> Self {
         Self { advertise: None }
     }
 }
 
-pub struct BleAdapter<'d, T>
+pub struct Adapter<'d, M, T>
 where
+    M: RawMutex,
     T: Controller,
 {
     controller: T,
-    config: Config<'d>,
+    connections: &'d mut [ConnectionStorage],
+    channels: &'d mut [ChannelStorage<M>],
+    att: &'d mut L2capState<M, ATT_MTU>,
+    outbound: Channel<M, (ConnHandle, Vec<u8, L2CAP_MTU>), TXQ>,
 }
 
-impl<'d, T> BleAdapter<'d, T>
+impl<'d, M, T> Adapter<'d, M, T>
 where
+    M: RawMutex,
     T: Controller,
 {
-    pub fn new(controller: T, config: Config<'d>) -> BleAdapter<'d, T> {
-        //let stack = BleStack::new(driver, &mut resources.connections);
-        Self { controller, config }
+    pub fn new<const CONN: usize, const CHANNEL_PER_CONN: usize>(
+        controller: T,
+        resources: &'d mut AdapterResources<M, CONN, CHANNEL_PER_CONN>,
+    ) -> Adapter<'d, M, T> {
+        Self {
+            controller,
+            connections: &mut resources.connections,
+            channels: &mut resources.channels,
+            att: &mut resources.att,
+            outbound: Channel::new(),
+        }
     }
 
-    pub async fn run(&self) -> Result<(), Error<T::Error>> {
-        if let Some(adv) = &self.config.advertise {
-            if let Some(params) = &adv.params {
-                params.exec(&self.controller).await?
-            }
+    async fn accept(&self) -> Result<Connection<'d>, Error<T::Error>> {
+        todo!()
+    }
+}
+
+impl<'d, M, T> Adapter<'d, M, T>
+where
+    M: RawMutex,
+    T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
+{
+    pub async fn run(&self, config: Config<'_>) -> Result<(), Error<T::Error>> {
+        if let Some(adv) = &config.advertise {
+            let params = &adv.params.unwrap_or(LeSetAdvParams::new(
+                bt_hci::param::Duration::from_millis(1280),
+                bt_hci::param::Duration::from_millis(1280),
+                bt_hci::param::AdvKind::AdvInd,
+                bt_hci::param::AddrKind::PUBLIC,
+                bt_hci::param::AddrKind::PUBLIC,
+                BdAddr::default(),
+                bt_hci::param::AdvChannelMap::ALL,
+                bt_hci::param::AdvFilterPolicy::default(),
+            ));
+
+            params.exec(&self.controller).await?;
 
             let mut data = [0; 31];
             let mut w = ByteWriter::new(&mut data[..]);
@@ -168,15 +216,105 @@ where
             }
             let len = w.len();
             drop(w);
-            LeSetAdvData::new(len, data).exec(&self.controller).await?;
+            LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
             LeSetAdvEnable::new(true).exec(&self.controller).await?;
+        }
+
+        // let server = if let Some(mut attr) = config.attributes.as_mut() {
+        //     Some(AttributeServer::new(&mut attr))
+        // } else {
+        //     None
+        // };
+        let mut runner = BleRunner {
+            outbound: self.outbound.receiver(),
+            att: self.att.sender(),
+        };
+
+        runner.run(&self.controller).await;
+        Ok(())
+    }
+}
+
+struct BleRunner<'a, M: RawMutex> {
+    outbound: Receiver<'a, M, (ConnHandle, Vec<u8, L2CAP_MTU>), TXQ>,
+    att: Sender<'a, M, (ConnHandle, Vec<u8, ATT_MTU>), RXQ>,
+}
+
+impl<'a, M: RawMutex> BleRunner<'a, M> {
+    async fn handle_acl(&mut self, packet: AclPacket<'_>) -> Result<(), FromHciBytesError> {
+        let (conn, packet) = L2capPacket::decode(packet)?;
+        if packet.channel == 4 {
+            self.att.send((conn, Vec::from_slice(packet.payload).unwrap())).await;
+        }
+        Ok(())
+    }
+
+    async fn run<T: Controller>(&mut self, controller: &T) {
+        loop {
+            let mut rx = [0u8; 512];
+            match select(controller.read(&mut rx), self.outbound.receive()).await {
+                Either::First(result) => match result {
+                    Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
+                        Ok(_) => {
+                            //info!("Got ACL packet: {:?}", acl);
+                        }
+                        Err(e) => {
+                            info!("Error processing ACL packet: {:?}", e);
+                        }
+                    },
+                    Ok(ControllerToHostPacket::Event(event)) => match event {
+                        Event::Le(event) => match event {
+                            LeEvent::LeConnectionComplete(_) => {
+                                info!("Connection complete!");
+                            }
+                            _ => {
+                                warn!("Unknown event: {:?}", event);
+                            }
+                        },
+                        Event::NumberOfCompletedPackets(_) => {}
+                        _ => {
+                            warn!("Unknown event: {:?}", event);
+                        }
+                    },
+                    Ok(p) => {
+                        //info!("Ignoring packet: {:?}", p);
+                    }
+                    Err(e) => {
+                        info!("Error receiving packet: {:?}", e);
+                        panic!(":(");
+                    }
+                },
+                Either::Second((handle, pdu)) => {
+                    let acl = AclPacket::new(
+                        handle,
+                        AclPacketBoundary::FirstNonFlushable,
+                        AclBroadcastFlag::PointToPoint,
+                        &pdu[..],
+                    );
+                    //                    info!("Outbound ACL packet: {}", acl);
+                    match controller.write_acl_data(&acl).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Error writing some ACL data to controller: {:?}", e);
+                            panic!(":(");
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AdapterEvent {
-    Connected { connection: BleConnection },
-    Disconnected { connection: BleConnection },
+pub struct L2capChannel<'d> {
+    rx: DynamicReceiver<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
+    tx: DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
+}
+
+impl<'d> L2capChannel<'d> {
+    pub async fn create<M: RawMutex, T: Controller>(
+        connection: Connection<'d>,
+        adapter: &'d Adapter<'d, M, T>,
+    ) -> Result<(), Error<T::Error>> {
+        Ok(())
+    }
 }
