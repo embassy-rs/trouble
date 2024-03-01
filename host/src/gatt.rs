@@ -12,15 +12,15 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{DynamicReceiver, DynamicSender};
 use heapless::Vec;
 
-pub struct GattServer<'a, 'd> {
+pub struct GattServer<'a, 'b, 'd> {
     server: AttributeServer<'a, 'd>,
-    rx: DynamicReceiver<'d, (ConnHandle, Vec<u8, ATT_MTU>)>,
-    tx: DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
+    rx: DynamicReceiver<'b, (ConnHandle, Vec<u8, ATT_MTU>)>,
+    tx: DynamicSender<'b, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
 }
 
-impl<'a, 'd> GattServer<'a, 'd> {
-    pub fn new<M: RawMutex, T: Controller>(
-        adapter: &'d Adapter<'d, M, T>,
+impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
+    pub fn new<M: RawMutex, T: Controller + 'd>(
+        adapter: &'b Adapter<'d, M, T>,
         attributes: &'a mut [Attribute<'d>],
     ) -> Self {
         Self {
