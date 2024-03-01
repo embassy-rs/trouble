@@ -1,0 +1,51 @@
+[package]
+name = "trouble-nrf-sdc-examples"
+version = "0.1.0"
+
+[dependencies]
+embassy-executor = { version = "0.5", features = ["nightly", "arch-cortex-m", "executor-thread", "defmt", "integrated-timers", "executor-interrupt"] }
+embassy-time = { version = "0.3.0", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-nrf = { version = "0.1.0", features = ["defmt", "nrf52833", "time-driver-rtc1", "gpiote", "unstable-pac"] }
+embassy-futures = "0.1.1"
+embassy-sync = "0.5"
+
+futures = { version = "0.3", default-features = false, features = ["async-await"]}
+nrf-sdc = { version = "0.1.0", features = ["defmt", "nrf52833", "peripheral"] }
+nrf-mpsl = { version = "0.1.0", features = ["defmt", "critical-section-impl"] }
+bt-hci = { version = "0.1.0" }
+
+defmt = "0.3"
+defmt-rtt = "0.4.0"
+
+cortex-m = { version = "0.7.6" }
+cortex-m-rt = "0.7.0"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+static_cell = "2"
+
+[profile.release]
+debug = 2
+
+[patch.crates-io]
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", branch = "main" }
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", branch = "main" }
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git" }
+
+#embassy-executor = {path = "../embassy/embassy-executor"}
+#embassy-nrf = {path = "../embassy/embassy-nrf"}
+#embassy-sync = {path = "../embassy/embassy-sync"}
+#embassy-futures = {path = "../embassy/embassy-futures"}
+#embassy-time = {path = "../embassy/embassy-time"}
+#embassy-time-driver = {path = "../embassy/embassy-time-driver"}
+#embassy-embedded-hal = {path = "../embassy/embassy-embedded-hal"}
+#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
+#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
+
+#[patch."https://github.com/alexmoon/bt-hci.git"]
+#bt-hci = { path = "../bt-hci" }

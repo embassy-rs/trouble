@@ -1,8 +1,6 @@
-use bt_hci::data::AclPacket;
-
 use crate::{
     att::{self, Att, AttDecodeError, AttErrorCode, Uuid},
-    attribute::{Attribute, PRIMARY_SERVICE_UUID16},
+    attribute::Attribute,
     byte_writer::ByteWriter,
 };
 
@@ -36,23 +34,6 @@ impl From<AttDecodeError> for AttributeServerError {
         AttributeServerError::AttError(err)
     }
 }
-
-/*
-#[derive(Debug)]
-pub struct NotificationData {
-    pub(crate) handle: u16,
-    pub(crate) data: Data,
-}
-
-impl NotificationData {
-    pub fn new(handle: u16, data: &[u8]) -> Self {
-        Self {
-            handle,
-            data: Data::new(data),
-        }
-    }
-}
-*/
 
 pub struct AttributeServer<'a, 'd> {
     pub(crate) buf: [u8; MTU as usize],
@@ -424,11 +405,6 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
                 att_type,
                 att_value,
             } => Ok(self.handle_find_type_value(start_handle, end_handle, att_type, att_value)?),
-
-            Att::FindInformation {
-                start_handle,
-                end_handle,
-            } => Ok(self.handle_find_information(start_handle, end_handle)?),
 
             Att::PrepareWriteReq { handle, offset, value } => Ok(self.handle_prepare_write(handle, offset, value)?),
 

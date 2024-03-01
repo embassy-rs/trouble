@@ -15,8 +15,6 @@ categories = [
 resolver = "2"
 
 [dependencies]
-# trouble-core = { version = "0.1.0", path = "../core"}
-
 bt-hci = { path = "../../bt-hci", default-features = false, features = ["defmt"] }
 embedded-io-async = { version = "0.6" }
 embassy-sync = "0.5"
@@ -27,11 +25,6 @@ critical-section = { version = "1.1" }
 rand_core = "0.6.4"
 heapless = "0.8"
 
-# Optional crypto
-p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arithmetic"], optional = true }
-aes = { version = "0.8.2", optional = true }
-cmac = { version = "0.7.2", optional = true }
-
 # Logging
 log = { version = "0.4.16", optional = true }
 defmt = {version = "0.3", optional = true }
@@ -41,7 +34,4 @@ env_logger = "0.10.0"
 p256 = { version = "0.13.2", default-features = true }
 
 [features]
-crypto = [ "dep:p256", "dep:aes", "dep:cmac" ]
 defmt = [ "dep:defmt" ]
-mtu128 = []
-mtu256 = []
