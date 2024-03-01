@@ -33,6 +33,14 @@ pub enum Uuid {
 }
 
 impl Uuid {
+    pub const fn new_short(val: u16) -> Self {
+        Self::Uuid16(val.to_le_bytes())
+    }
+
+    pub const fn new_long(val: [u8; 16]) -> Self {
+        Self::Uuid128(val)
+    }
+
     pub fn bytes(&self, data: &mut [u8]) {
         match self {
             Uuid::Uuid16(uuid) => data.copy_from_slice(uuid),

@@ -25,8 +25,8 @@ impl<'a, 'd> GattServer<'a, 'd> {
     ) -> Self {
         Self {
             server: AttributeServer::new(attributes),
-            rx: adapter.att_receiver(),
-            tx: adapter.outbound_sender(),
+            rx: adapter.att_receiver().into(),
+            tx: adapter.outbound_sender().into(),
         }
     }
 
@@ -57,6 +57,6 @@ impl<'a, 'd> GattServer<'a, 'd> {
 }
 
 #[derive(Clone)]
-pub enum GattEvent<'d> {
-    Write(Connection<'d>, &'d Attribute<'d>),
+pub enum GattEvent<'a> {
+    Write(Connection<'a>, &'a Attribute<'a>),
 }
