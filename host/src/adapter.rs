@@ -98,7 +98,7 @@ impl<'a> Default for Config<'a> {
 
 pub struct Inner<'d, M>
 where
-    M: RawMutex,
+    M: RawMutex + 'd,
 {
     connections: &'d mut [ConnectionStorage],
     channels: &'d mut [ChannelStorage<M>],
@@ -106,7 +106,7 @@ where
 
 pub struct Adapter<'d, M, T>
 where
-    M: RawMutex,
+    M: RawMutex + 'd,
     T: Controller,
 {
     controller: T,
@@ -117,13 +117,13 @@ where
 
 impl<'d, M, T> Adapter<'d, M, T>
 where
-    M: RawMutex,
-    T: Controller,
+    M: RawMutex + 'd,
+    T: Controller + 'd,
 {
     pub fn new<const CONN: usize, const CHANNEL_PER_CONN: usize>(
         controller: T,
         resources: &'d mut AdapterResources<M, CONN, CHANNEL_PER_CONN>,
-    ) -> Adapter<'d, M, T> {
+    ) -> Self {
         Self {
             controller,
             att: &mut resources.att,
@@ -150,7 +150,7 @@ where
 
 impl<'d, M, T> Adapter<'d, M, T>
 where
-    M: RawMutex,
+    M: RawMutex + 'd,
     T: ControllerCmdSync<LeSetAdvData>
         + ControllerCmdSync<LeSetAdvEnable>
         + ControllerCmdSync<LeSetAdvParams>

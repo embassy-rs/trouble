@@ -94,24 +94,17 @@ async fn main(spawner: Spawner) {
         p.PPI_CH24, p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
     );
 
-    static POOL: StaticCell<[u8; 256]> = StaticCell::new();
-    let pool = POOL.init([0; 256]);
+    let mut pool = [0; 256];
+    let rng = sdc::rng_pool::RngPool::new(p.RNG, Irqs, &mut pool, 64);
 
-    static RNG: StaticCell<RngPool<'static>> = StaticCell::new();
-    let rng = RNG.init(RngPool::new(p.RNG, Irqs, pool, 64));
-
-    static SDC_MEM: StaticCell<sdc::Mem<1672>> = StaticCell::new();
-    let sdc_mem = SDC_MEM.init(sdc::Mem::new());
-    let sdc = unwrap!(build_sdc(sdc_p, rng, mpsl, sdc_mem));
+    let mut sdc_mem = sdc::Mem::<1672>::new();
+    let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    static RESOURCES: StaticCell<AdapterResources<NoopRawMutex, 1, 1>> = StaticCell::new();
-    let resources = RESOURCES.init(AdapterResources::new());
-
-    static ADAPTER: StaticCell<Adapter<'static>> = StaticCell::new();
-    let adapter = ADAPTER.init(Adapter::new(sdc, resources));
+    let mut resources: AdapterResources<NoopRawMutex, 1, 1> = AdapterResources::new();
+    let adapter = Adapter::new(sdc, &mut resources);
 
     let config = BleConfig {
         advertise: Some(AdvertiseConfig {
@@ -131,10 +124,10 @@ async fn main(spawner: Spawner) {
         .add_characteristic(0x2a19.into(), &[CharacteristicProp::Read], data)
         .done();
     let mut attributes = attributes.build();
-    let mut server = GattServer::new(adapter, &mut attributes[..]);
+    let mut server = GattServer::new(&adapter, &mut attributes[..]);
 
     info!("Starting advertising and GATT service");
-    let _ = join(adapter.run(config), async move {
+    let _ = join(async { adapter.run(config).await }, async {
         loop {
             match server.next().await {
                 GattEvent::Write(_conn, attribute) => {
