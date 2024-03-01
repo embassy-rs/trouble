@@ -1,5 +1,6 @@
 use crate::byte_reader::ByteReader;
 use crate::byte_writer::ByteWriter;
+use crate::L2CAP_RXQ;
 use bt_hci::data::AclPacket;
 use bt_hci::param::ConnHandle;
 use bt_hci::FromHciBytesError;
@@ -18,7 +19,6 @@ impl<'d> L2capPacket<'d> {
     pub fn decode(packet: AclPacket<'_>) -> Result<(bt_hci::param::ConnHandle, L2capPacket), FromHciBytesError> {
         let handle = packet.handle();
         let data = packet.data();
-        drop(packet);
         let mut r = ByteReader::new(data);
         let length = r.read_u16_le();
         let channel = r.read_u16_le();
@@ -36,12 +36,9 @@ impl<'d> L2capPacket<'d> {
     }
 }
 
-pub const TXQ: usize = 3;
-pub const RXQ: usize = 3;
-
 pub struct L2capState<M: RawMutex, const MTU: usize> {
     cid: u16,
-    rx: Channel<M, (ConnHandle, Vec<u8, MTU>), RXQ>,
+    rx: Channel<M, (ConnHandle, Vec<u8, MTU>), L2CAP_RXQ>,
 }
 
 impl<M: RawMutex, const MTU: usize> L2capState<M, MTU> {
@@ -52,11 +49,11 @@ impl<M: RawMutex, const MTU: usize> L2capState<M, MTU> {
         }
     }
 
-    pub fn receiver(&self) -> Receiver<'_, M, (ConnHandle, Vec<u8, MTU>), RXQ> {
+    pub fn receiver(&self) -> Receiver<'_, M, (ConnHandle, Vec<u8, MTU>), L2CAP_RXQ> {
         self.rx.receiver()
     }
 
-    pub fn sender(&self) -> Sender<'_, M, (ConnHandle, Vec<u8, MTU>), RXQ> {
+    pub fn sender(&self) -> Sender<'_, M, (ConnHandle, Vec<u8, MTU>), L2CAP_RXQ> {
         self.rx.sender()
     }
 }

@@ -1,5 +1,4 @@
 use crate::byte_reader::ByteReader;
-use crate::l2cap::L2capPacket;
 use core::convert::TryInto;
 
 pub const ATT_READ_BY_GROUP_TYPE_REQUEST_OPCODE: u8 = 0x10;

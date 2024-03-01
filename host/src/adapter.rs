@@ -1,37 +1,28 @@
-use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
-use bt_hci::param::{BdAddr, ConnHandle};
-use bt_hci::{ControllerCmdSync, FromHciBytesError};
-use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
-use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSendFuture, DynamicSender, Receiver, Sender};
-use embassy_sync::waitqueue::WakerRegistration;
-
-use crate::att::Att;
-//use crate::attribute::Attribute;
-//use crate::attribute_server::AttributeServer;
 use crate::ad_structure::AdStructure;
+use crate::att::Att;
 use crate::attribute::Attribute;
 use crate::attribute_server::AttributeServer;
 use crate::byte_writer::ByteWriter;
-use crate::l2cap::{L2capPacket, L2capState, RXQ, TXQ};
-use crate::Addr;
+use crate::l2cap::{L2capPacket, L2capState};
 use crate::Error;
-use bt_hci::cmd::{Cmd, SyncCmd};
-use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary, AclPacketHeader};
+use crate::ATT_MTU;
+use crate::L2CAP_MTU;
+use crate::L2CAP_RXQ;
+use crate::L2CAP_TXQ;
+use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
+use bt_hci::cmd::SyncCmd;
+use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
+use bt_hci::param::{BdAddr, ConnHandle};
 use bt_hci::Controller;
-
 use bt_hci::ControllerToHostPacket;
-use bt_hci::PacketKind;
-use core::cell::RefCell;
-use core::future::poll_fn;
-use core::marker::PhantomData;
-use core::task::{Poll, Waker};
+use bt_hci::{ControllerCmdSync, FromHciBytesError};
+use embassy_futures::select::{select, Either};
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender, Receiver, Sender};
+use embassy_sync::waitqueue::WakerRegistration;
 use heapless::Vec;
-
-const ATT_MTU: usize = 23;
-const L2CAP_MTU: usize = 247;
 
 pub struct AdapterResources<M: RawMutex, const CONNS: usize, const CHANNELS: usize> {
     connections: [ConnectionStorage; CONNS],
@@ -69,7 +60,7 @@ pub struct ConnectionState {
     handle: u16,
     status: u8,
     role: u8,
-    peer_address: Addr,
+    peer_address: BdAddr,
     interval: u16,
     latency: u16,
     timeout: u16,
@@ -163,7 +154,7 @@ where
     connections: &'d mut [ConnectionStorage],
     channels: &'d mut [ChannelStorage<M>],
     att: &'d mut L2capState<M, ATT_MTU>,
-    outbound: Channel<M, (ConnHandle, Vec<u8, L2CAP_MTU>), TXQ>,
+    outbound: Channel<M, (ConnHandle, Vec<u8, L2CAP_MTU>), L2CAP_TXQ>,
 }
 
 impl<'d, M, T> Adapter<'d, M, T>
@@ -236,8 +227,8 @@ where
 }
 
 struct BleRunner<'a, M: RawMutex> {
-    outbound: Receiver<'a, M, (ConnHandle, Vec<u8, L2CAP_MTU>), TXQ>,
-    att: Sender<'a, M, (ConnHandle, Vec<u8, ATT_MTU>), RXQ>,
+    outbound: Receiver<'a, M, (ConnHandle, Vec<u8, L2CAP_MTU>), L2CAP_TXQ>,
+    att: Sender<'a, M, (ConnHandle, Vec<u8, ATT_MTU>), L2CAP_RXQ>,
 }
 
 impl<'a, M: RawMutex> BleRunner<'a, M> {
