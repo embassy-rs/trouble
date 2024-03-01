@@ -458,13 +458,10 @@ impl<'a, const N: usize> AttributesBuilder<'a, N> {
         for att in self.attributes.iter_mut() {
             if att.last_handle_in_group == 0 {
                 att.last_handle_in_group = self.handle;
-                info!("Assiging last handle {:x}", att.last_handle_in_group);
             }
         }
         // Jump to next 0x10 aligned handle
-        info!("Bumping handle from {:x}", self.handle);
         self.handle = self.handle + (0x10 - (self.handle % 0x10));
-        info!("Next {:x}", self.handle);
     }
 
     pub fn push(&mut self, uuid: Uuid, data: AttributeData<'a>) {
