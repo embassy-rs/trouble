@@ -2,20 +2,8 @@ use crate::{
     att::{self, Att, AttDecodeError, AttErrorCode, Uuid},
     attribute::Attribute,
     byte_writer::ByteWriter,
+    ATT_MTU,
 };
-
-/// The default value of MTU, which can be upgraded through negotiation
-/// with the client.
-pub const BASE_MTU: u16 = 23;
-
-#[cfg(feature = "mtu128")]
-pub const MTU: u16 = 128;
-
-#[cfg(feature = "mtu256")]
-pub const MTU: u16 = 256;
-
-#[cfg(not(any(feature = "mtu128", feature = "mtu256")))]
-pub const MTU: u16 = 23;
 
 #[derive(Debug, PartialEq)]
 pub enum WorkResult {
@@ -36,7 +24,7 @@ impl From<AttDecodeError> for AttributeServerError {
 }
 
 pub struct AttributeServer<'a, 'd> {
-    pub(crate) buf: [u8; MTU as usize],
+    pub(crate) buf: [u8; ATT_MTU],
     pub(crate) mtu: u16,
     pub(crate) attributes: &'a mut [Attribute<'d>],
 }
@@ -50,12 +38,12 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
     }
 
     fn new_inner(attributes: &'a mut [Attribute<'d>]) -> AttributeServer<'a, 'd> {
-        trace!("{:#x}", &attributes);
+        // trace!("{:#x}", &attributes);
 
         AttributeServer {
-            mtu: BASE_MTU,
+            mtu: ATT_MTU as u16,
             attributes,
-            buf: [0; MTU as usize],
+            buf: [0; ATT_MTU],
         }
     }
 
@@ -251,7 +239,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
     }
 
     fn handle_exchange_mtu(&mut self, mtu: u16) -> Result<Option<&[u8]>, AttributeServerError> {
-        self.mtu = mtu.min(MTU);
+        self.mtu = mtu.min(ATT_MTU as u16);
         debug!("Requested MTU {}, returning {}", mtu, self.mtu);
         let mut b = ByteWriter::new(&mut self.buf);
         b.write_u8(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE);

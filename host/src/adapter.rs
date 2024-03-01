@@ -1,3 +1,5 @@
+use core::cell::RefCell;
+
 use crate::ad_structure::AdStructure;
 use crate::byte_writer::ByteWriter;
 use crate::l2cap::{L2capPacket, L2capState};
@@ -6,12 +8,13 @@ use crate::ATT_MTU;
 use crate::L2CAP_MTU;
 use crate::L2CAP_RXQ;
 use crate::L2CAP_TXQ;
+use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
 use bt_hci::cmd::SyncCmd;
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{BdAddr, ConnHandle};
+use bt_hci::param::{BdAddr, ConnHandle, EventMask};
 use bt_hci::Controller;
 use bt_hci::ControllerToHostPacket;
 use bt_hci::{ControllerCmdSync, FromHciBytesError};
@@ -93,14 +96,21 @@ impl<'a> Default for Config<'a> {
     }
 }
 
+pub struct Inner<'d, M>
+where
+    M: RawMutex,
+{
+    connections: &'d mut [ConnectionStorage],
+    channels: &'d mut [ChannelStorage<M>],
+}
+
 pub struct Adapter<'d, M, T>
 where
     M: RawMutex,
     T: Controller,
 {
     controller: T,
-    connections: &'d mut [ConnectionStorage],
-    channels: &'d mut [ChannelStorage<M>],
+    inner: RefCell<Inner<'d, M>>,
     att: &'d mut L2capState<M, ATT_MTU>,
     outbound: Channel<M, (ConnHandle, Vec<u8, L2CAP_MTU>), L2CAP_TXQ>,
 }
@@ -116,19 +126,21 @@ where
     ) -> Adapter<'d, M, T> {
         Self {
             controller,
-            connections: &mut resources.connections,
-            channels: &mut resources.channels,
             att: &mut resources.att,
+            inner: RefCell::new(Inner {
+                connections: &mut resources.connections,
+                channels: &mut resources.channels,
+            }),
             outbound: Channel::new(),
         }
     }
 
-    pub(crate) fn att_receiver(&'d self) -> DynamicReceiver<'d, (ConnHandle, Vec<u8, ATT_MTU>)> {
-        self.att.receiver().into()
+    pub(crate) fn att_receiver(&self) -> Receiver<'_, M, (ConnHandle, Vec<u8, ATT_MTU>), L2CAP_RXQ> {
+        self.att.receiver()
     }
 
-    pub(crate) fn outbound_sender(&'d self) -> DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)> {
-        self.outbound.sender().into()
+    pub(crate) fn outbound_sender(&self) -> Sender<'_, M, (ConnHandle, Vec<u8, L2CAP_MTU>), L2CAP_TXQ> {
+        self.outbound.sender()
     }
 
     async fn accept(&self) -> Result<Connection<'d>, Error<T::Error>> {
@@ -139,7 +151,10 @@ where
 impl<'d, M, T> Adapter<'d, M, T>
 where
     M: RawMutex,
-    T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
+    T: ControllerCmdSync<LeSetAdvData>
+        + ControllerCmdSync<LeSetAdvEnable>
+        + ControllerCmdSync<LeSetAdvParams>
+        + ControllerCmdSync<SetEventMask>,
 {
     pub async fn run(&self, config: Config<'_>) -> Result<(), Error<T::Error>> {
         if let Some(adv) = &config.advertise {
@@ -167,11 +182,19 @@ where
             LeSetAdvEnable::new(true).exec(&self.controller).await?;
         }
 
-        // let server = if let Some(mut attr) = config.attributes.as_mut() {
-        //     Some(AttributeServer::new(&mut attr))
-        // } else {
-        //     None
-        // };
+        SetEventMask::new(
+            EventMask::new()
+                .enable_le_meta(true)
+                .enable_conn_request(true)
+                .enable_conn_complete(true)
+                .enable_hardware_error(true)
+                .enable_link_key_kind_changed(true)
+                .enable_link_key_notification(true)
+                .enable_disconnection_complete(true),
+        )
+        .exec(&self.controller)
+        .await?;
+
         let mut runner = BleRunner {
             outbound: self.outbound.receiver(),
             att: self.att.sender(),
@@ -192,6 +215,8 @@ impl<'a, M: RawMutex> BleRunner<'a, M> {
         let (conn, packet) = L2capPacket::decode(packet)?;
         if packet.channel == 4 {
             self.att.send((conn, Vec::from_slice(packet.payload).unwrap())).await;
+        } else {
+            info!("Got ACL packet not for GATT: {:?}", packet);
         }
         Ok(())
     }
@@ -202,9 +227,7 @@ impl<'a, M: RawMutex> BleRunner<'a, M> {
             match select(controller.read(&mut rx), self.outbound.receive()).await {
                 Either::First(result) => match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
-                        Ok(_) => {
-                            //info!("Got ACL packet: {:?}", acl);
-                        }
+                        Ok(_) => {}
                         Err(e) => {
                             info!("Error processing ACL packet: {:?}", e);
                         }
@@ -218,13 +241,15 @@ impl<'a, M: RawMutex> BleRunner<'a, M> {
                                 warn!("Unknown event: {:?}", event);
                             }
                         },
-                        Event::NumberOfCompletedPackets(_) => {}
+                        Event::NumberOfCompletedPackets(c) => {
+                            info!("Completed packets: {:?}", c)
+                        }
                         _ => {
                             warn!("Unknown event: {:?}", event);
                         }
                     },
                     Ok(p) => {
-                        //info!("Ignoring packet: {:?}", p);
+                        info!("Ignoring packet: {:?}", p);
                     }
                     Err(e) => {
                         info!("Error receiving packet: {:?}", e);
@@ -238,7 +263,6 @@ impl<'a, M: RawMutex> BleRunner<'a, M> {
                         AclBroadcastFlag::PointToPoint,
                         &pdu[..],
                     );
-                    //                    info!("Outbound ACL packet: {}", acl);
                     match controller.write_acl_data(&acl).await {
                         Ok(_) => {}
                         Err(e) => {
