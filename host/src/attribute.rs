@@ -1,6 +1,7 @@
 use core::{fmt, mem::size_of, slice};
 
-use crate::att::{AttErrorCode, Uuid};
+use crate::att::AttErrorCode;
+pub use crate::att::Uuid;
 use crate::byte_writer::ByteWriter;
 
 pub const GENERIC_ACCESS_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1800u16.to_le_bytes());

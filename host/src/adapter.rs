@@ -1,7 +1,4 @@
 use crate::ad_structure::AdStructure;
-use crate::att::Att;
-use crate::attribute::Attribute;
-use crate::attribute_server::AttributeServer;
 use crate::byte_writer::ByteWriter;
 use crate::l2cap::{L2capPacket, L2capState};
 use crate::Error;
@@ -81,55 +78,6 @@ impl<'d> Connection<'d> {
     }
 }
 
-pub struct GattServer<'a, 'd> {
-    server: AttributeServer<'a, 'd>,
-    rx: DynamicReceiver<'d, (ConnHandle, Vec<u8, ATT_MTU>)>,
-    tx: DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
-}
-
-impl<'a, 'd> GattServer<'a, 'd> {
-    pub fn new<M: RawMutex, T: Controller>(
-        adapter: &'d Adapter<'d, M, T>,
-        attributes: &'a mut [Attribute<'d>],
-    ) -> Self {
-        Self {
-            server: AttributeServer::new(attributes),
-            rx: adapter.att.receiver().into(),
-            tx: adapter.outbound.sender().into(),
-        }
-    }
-
-    pub async fn next(&mut self) -> Option<GattEvent<'d>> {
-        let (handle, pdu) = self.rx.receive().await;
-        match Att::decode(&pdu[..]) {
-            Ok(att) => match self.server.process(att) {
-                Ok(Some(payload)) => {
-                    let mut pdu = [0u8; L2CAP_MTU];
-                    let packet = L2capPacket { channel: 4, payload };
-                    let len = packet.encode(&mut pdu);
-                    self.tx.send((handle, Vec::from_slice(&pdu[..len]).unwrap())).await;
-                }
-                Ok(None) => {
-                    debug!("No response sent");
-                }
-                Err(e) => {
-                    warn!("Error processing attribute: {:?}", e);
-                }
-            },
-            Err(e) => {
-                warn!("Error decoding attribute request: {:?}", e);
-            }
-        }
-        None
-    }
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug)]
-pub enum GattEvent<'d> {
-    Written(Attribute<'d>),
-}
-
 pub struct AdvertiseConfig<'d> {
     pub params: Option<LeSetAdvParams>,
     pub data: &'d [AdStructure<'d>],
@@ -173,6 +121,14 @@ where
             att: &mut resources.att,
             outbound: Channel::new(),
         }
+    }
+
+    pub(crate) fn att_receiver(&'d self) -> DynamicReceiver<'d, (ConnHandle, Vec<u8, ATT_MTU>)> {
+        self.att.receiver().into()
+    }
+
+    pub(crate) fn outbound_sender(&'d self) -> DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)> {
+        self.outbound.sender().into()
     }
 
     async fn accept(&self) -> Result<Connection<'d>, Error<T::Error>> {

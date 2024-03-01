@@ -16,17 +16,18 @@ pub(crate) const L2CAP_TXQ: usize = 3;
 
 mod fmt;
 
+mod att;
 mod byte_reader;
 mod byte_writer;
 
 pub mod adapter;
-pub mod att;
+pub mod gatt;
 pub mod l2cap;
 
 pub mod ad_structure;
 
 pub mod attribute;
-pub mod attribute_server;
+mod attribute_server;
 
 #[derive(Debug)]
 pub enum Error<E> {
