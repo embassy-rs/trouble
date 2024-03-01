@@ -18,9 +18,9 @@ use trouble_host::{
     ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     adapter::AdvertiseConfig,
     adapter::Config as BleConfig,
-    adapter::{Adapter as BleAdapter, AdapterResources, GattServer},
-    att::Uuid,
-    attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder},
+    adapter::{Adapter as BleAdapter, AdapterResources},
+    attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
+    gatt::{GattEvent, GattServer},
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -103,10 +103,7 @@ async fn main(spawner: Spawner) {
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    //static RESOURCES: StaticCell<AdapterResources<NoopRawMutex, 20, 2>> = StaticCell::new();
-    //static ADAPTER: StaticCell<Adapter> = StaticCell::new();
-
-    let mut resources: AdapterResources<NoopRawMutex, 20, 20> = AdapterResources::new();
+    let mut resources: AdapterResources<NoopRawMutex, 1, 1> = AdapterResources::new();
     let adapter = Adapter::new(sdc, &mut resources);
 
     let config = BleConfig {
@@ -132,7 +129,11 @@ async fn main(spawner: Spawner) {
     info!("Starting advertising and GATT service");
     let _ = join(adapter.run(config), async {
         loop {
-            let _evt = server.next().await;
+            match server.next().await {
+                GattEvent::Write(_conn, attribute) => {
+                    info!("Attribute was written: {:?}", attribute);
+                }
+            }
         }
     })
     .await;
