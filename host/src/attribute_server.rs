@@ -60,7 +60,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         start: u16,
         end: u16,
         attribute_type: Uuid,
-    ) -> Result<Option<&[u8]>, AttributeServerError> {
+    ) -> Result<usize, AttributeServerError> {
         let mut handle = start;
         let mut data = WriteCursor::new(&mut self.buf);
         let mut err = Err(AttErrorCode::AttributeNotFound);
@@ -80,7 +80,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
                     }
                 }
 
-                //                debug!("found! {:x} {}", att.uuid, att.handle);
+                //debug!("found! {:x} {}", att.uuid, att.handle);
                 break;
             }
         }
@@ -89,7 +89,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
             Ok(len) => {
                 header.write(att::ATT_READ_BY_TYPE_RESPONSE_OPCODE)?;
                 header.write(2 + len as u8)?;
-                Ok(Some(data.finish()))
+                Ok(header.len() + body.len())
             }
             Err(e) => Ok(Self::error_response(
                 data,
@@ -105,7 +105,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         start: u16,
         end: u16,
         group_type: Uuid,
-    ) -> Result<Option<&[u8]>, AttributeServerError> {
+    ) -> Result<usize, AttributeServerError> {
         // TODO respond with all finds - not just one
         let mut handle = start;
         let mut data = WriteCursor::new(&mut self.buf);
@@ -115,7 +115,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         for att in self.attributes.iter_mut() {
             //            trace!("Check attribute {:x} {}", att.uuid, att.handle);
             if att.uuid == group_type && att.handle >= start && att.handle <= end {
-                //                debug!("found! {:x} {}", att.uuid, att.handle);
+                //debug!("found! {:x} {}", att.uuid, att.handle);
                 handle = att.handle;
 
                 body.write(att.handle)?;
@@ -136,7 +136,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
             Ok(len) => {
                 header.write(att::ATT_READ_BY_GROUP_TYPE_RESPONSE_OPCODE)?;
                 header.write(4 + len as u8)?;
-                Ok(Some(data.finish()))
+                Ok(header.len() + body.len())
             }
             Err(e) => Ok(Self::error_response(
                 data,
@@ -182,7 +182,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         Ok(EventType::Unknown)
     }*/
 
-    fn handle_read_req(&mut self, handle: u16) -> Result<Option<&[u8]>, AttributeServerError> {
+    fn handle_read_req(&mut self, handle: u16) -> Result<usize, AttributeServerError> {
         let mut data = WriteCursor::new(&mut self.buf);
         let mut err = Err(AttErrorCode::AttributeNotFound);
 
@@ -204,13 +204,13 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         match err {
             Ok(_) => {
                 data.truncate(self.mtu as usize)?;
-                Ok(Some(data.finish()))
+                Ok(data.len())
             }
             Err(e) => Ok(Self::error_response(data, att::ATT_READ_REQUEST_OPCODE, handle, e)?),
         }
     }
 
-    fn handle_write_cmd(&mut self, handle: u16, data: &[u8]) -> Result<Option<&[u8]>, AttributeServerError> {
+    fn handle_write_cmd(&mut self, handle: u16, data: &[u8]) -> Result<usize, AttributeServerError> {
         // TODO: Generate event
         for att in self.attributes.iter_mut() {
             if att.handle == handle {
@@ -221,10 +221,10 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
                 break;
             }
         }
-        Ok(None)
+        Ok(0)
     }
 
-    fn handle_write_req(&mut self, handle: u16, data: &[u8]) -> Result<Option<&[u8]>, AttributeServerError> {
+    fn handle_write_req(&mut self, handle: u16, data: &[u8]) -> Result<usize, AttributeServerError> {
         let mut err = Err(AttErrorCode::AttributeNotFound);
         for att in self.attributes.iter_mut() {
             if att.handle == handle {
@@ -235,24 +235,23 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
             }
         }
 
+        let mut w = WriteCursor::new(&mut self.buf);
+
         match err {
-            Ok(()) => Ok(Some(&[att::ATT_WRITE_RESPONSE_OPCODE])),
-            Err(e) => Ok(Self::error_response(
-                WriteCursor::new(&mut self.buf),
-                att::ATT_WRITE_REQUEST_OPCODE,
-                handle,
-                e,
-            )?),
+            Ok(()) => {
+                w.write(att::ATT_WRITE_RESPONSE_OPCODE)?;
+                Ok(w.len())
+            }
+            Err(e) => Ok(Self::error_response(w, att::ATT_WRITE_REQUEST_OPCODE, handle, e)?),
         }
     }
 
-    fn handle_exchange_mtu(&mut self, mtu: u16) -> Result<Option<&[u8]>, AttributeServerError> {
+    fn handle_exchange_mtu(&mut self, mtu: u16) -> Result<usize, AttributeServerError> {
         self.mtu = mtu.min(ATT_MTU as u16);
-        debug!("Requested MTU {}, returning {}", mtu, self.mtu);
         let mut b = WriteCursor::new(&mut self.buf);
         b.write(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE)?;
         b.write(self.mtu)?;
-        Ok(Some(b.finish()))
+        Ok(b.len())
     }
 
     fn handle_find_type_value(
@@ -261,7 +260,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         _end: u16,
         _attr_type: u16,
         _attr_value: u16,
-    ) -> Result<Option<&[u8]>, AttributeServerError> {
+    ) -> Result<usize, AttributeServerError> {
         // TODO for now just return an error
 
         // respond with error
@@ -273,10 +272,12 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         )?)
     }
 
-    fn handle_find_information(&mut self, start: u16, end: u16) -> Result<Option<&[u8]>, AttributeServerError> {
+    fn handle_find_information(&mut self, start: u16, end: u16) -> Result<usize, AttributeServerError> {
         let mut w = WriteCursor::new(&mut self.buf);
-        w.write(att::ATT_FIND_INFORMATION_RSP_OPCODE)?;
-        let (mut header, mut body) = w.split(1)?;
+
+        let (mut header, mut body) = w.split(2)?;
+
+        header.write(att::ATT_FIND_INFORMATION_RSP_OPCODE)?;
         let mut t = 0;
 
         for att in self.attributes.iter_mut() {
@@ -293,7 +294,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         header.write(t)?;
 
         if body.len() > 2 {
-            Ok(Some(w.finish()))
+            Ok(header.len() + body.len())
         } else {
             Ok(Self::error_response(
                 w,
@@ -309,21 +310,16 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         opcode: u8,
         handle: u16,
         code: AttErrorCode,
-    ) -> Result<Option<&'m [u8]>, codec::Error> {
+    ) -> Result<usize, codec::Error> {
         w.reset();
         w.write(att::ATT_ERROR_RESPONSE_OPCODE)?;
         w.write(opcode)?;
         w.write(handle)?;
         w.write(code as u8)?;
-        Ok(Some(w.finish()))
+        Ok(w.len())
     }
 
-    fn handle_prepare_write(
-        &mut self,
-        handle: u16,
-        offset: u16,
-        value: &[u8],
-    ) -> Result<Option<&[u8]>, AttributeServerError> {
+    fn handle_prepare_write(&mut self, handle: u16, offset: u16, value: &[u8]) -> Result<usize, AttributeServerError> {
         let mut w = WriteCursor::new(&mut self.buf);
         w.write(att::ATT_PREPARE_WRITE_RESP_OPCODE)?;
         w.write(handle)?;
@@ -341,16 +337,18 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         }
 
         match err {
-            Ok(()) => Ok(Some(w.finish())),
+            Ok(()) => Ok(w.len()),
             Err(e) => Ok(Self::error_response(w, att::ATT_PREPARE_WRITE_REQ_OPCODE, handle, e)?),
         }
     }
 
-    fn handle_execute_write(&mut self, _flags: u8) -> Result<Option<&[u8]>, AttributeServerError> {
-        Ok(Some(&[att::ATT_EXECUTE_WRITE_RESP_OPCODE]))
+    fn handle_execute_write(&mut self, _flags: u8) -> Result<usize, AttributeServerError> {
+        let mut w = WriteCursor::new(&mut self.buf);
+        w.write(att::ATT_EXECUTE_WRITE_RESP_OPCODE)?;
+        Ok(w.len())
     }
 
-    fn handle_read_blob(&mut self, handle: u16, offset: u16) -> Result<Option<&[u8]>, AttributeServerError> {
+    fn handle_read_blob(&mut self, handle: u16, offset: u16) -> Result<usize, AttributeServerError> {
         let mut w = WriteCursor::new(&mut self.buf);
         w.write(att::ATT_READ_BLOB_RESP_OPCODE)?;
         let mut err = Err(AttErrorCode::AttributeNotFound);
@@ -369,51 +367,56 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         }
 
         match err {
-            Ok(_) => Ok(Some(w.finish())),
+            Ok(_) => Ok(w.len()),
             Err(e) => Ok(Self::error_response(w, att::ATT_READ_BLOB_REQ_OPCODE, handle, e)?),
         }
     }
 
     /// Process an adapter event and produce a response if necessary
     pub fn process(&mut self, packet: Att) -> Result<Option<&[u8]>, AttributeServerError> {
-        match packet {
+        let len = match packet {
             Att::ReadByTypeReq {
                 start,
                 end,
                 attribute_type,
-            } => Ok(self.handle_read_by_type_req(start, end, attribute_type)?),
+            } => self.handle_read_by_type_req(start, end, attribute_type)?,
 
             Att::ReadByGroupTypeReq { start, end, group_type } => {
-                Ok(self.handle_read_by_group_type_req(start, end, group_type)?)
+                self.handle_read_by_group_type_req(start, end, group_type)?
             }
             Att::FindInformation {
                 start_handle,
                 end_handle,
-            } => Ok(self.handle_find_information(start_handle, end_handle)?),
+            } => self.handle_find_information(start_handle, end_handle)?,
 
-            Att::ReadReq { handle } => Ok(self.handle_read_req(handle)?),
+            Att::ReadReq { handle } => self.handle_read_req(handle)?,
 
             Att::WriteCmd { handle, data } => {
                 self.handle_write_cmd(handle, data)?;
-                Ok(None)
+                0
             }
 
-            Att::WriteReq { handle, data } => Ok(self.handle_write_req(handle, data)?),
+            Att::WriteReq { handle, data } => self.handle_write_req(handle, data)?,
 
-            Att::ExchangeMtu { mtu } => Ok(self.handle_exchange_mtu(mtu)?),
+            Att::ExchangeMtu { mtu } => self.handle_exchange_mtu(mtu)?,
 
             Att::FindByTypeValue {
                 start_handle,
                 end_handle,
                 att_type,
                 att_value,
-            } => Ok(self.handle_find_type_value(start_handle, end_handle, att_type, att_value)?),
+            } => self.handle_find_type_value(start_handle, end_handle, att_type, att_value)?,
 
-            Att::PrepareWriteReq { handle, offset, value } => Ok(self.handle_prepare_write(handle, offset, value)?),
+            Att::PrepareWriteReq { handle, offset, value } => self.handle_prepare_write(handle, offset, value)?,
 
-            Att::ExecuteWriteReq { flags } => Ok(self.handle_execute_write(flags)?),
+            Att::ExecuteWriteReq { flags } => self.handle_execute_write(flags)?,
 
-            Att::ReadBlobReq { handle, offset } => Ok(self.handle_read_blob(handle, offset)?),
+            Att::ReadBlobReq { handle, offset } => self.handle_read_blob(handle, offset)?,
+        };
+        if len > 0 {
+            Ok(Some(&self.buf[..len]))
+        } else {
+            Ok(None)
         }
     }
 }
