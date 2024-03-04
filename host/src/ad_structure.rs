@@ -1,4 +1,4 @@
-use crate::{att::Uuid, byte_writer::ByteWriter};
+use crate::{codec, cursor::WriteCursor, types::uuid::Uuid};
 
 pub const AD_FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0b00000001;
 pub const LE_GENERAL_DISCOVERABLE: u8 = 0b00000010;
@@ -57,48 +57,49 @@ pub enum AdStructure<'a> {
 }
 
 impl<'d> AdStructure<'d> {
-    pub fn encode(&self, w: &mut ByteWriter<'_>) {
+    pub fn encode(&self, w: &mut WriteCursor<'_>) -> Result<(), codec::Error> {
         match self {
             AdStructure::Flags(flags) => {
-                w.append(&[0x02, 0x01, *flags]);
+                w.append(&[0x02, 0x01, *flags])?;
             }
             AdStructure::ServiceUuids16(uuids) => {
-                w.append(&[(uuids.len() * 2 + 1) as u8, 0x02]);
+                w.append(&[(uuids.len() * 2 + 1) as u8, 0x02])?;
                 for uuid in uuids.iter() {
-                    w.append_uuid(uuid);
+                    w.write(*uuid)?;
                 }
             }
             AdStructure::ServiceUuids128(uuids) => {
-                w.append(&[(uuids.len() * 16 + 1) as u8, 0x07]);
+                w.append(&[(uuids.len() * 16 + 1) as u8, 0x07])?;
                 for uuid in uuids.iter() {
-                    w.append_uuid(uuid);
+                    w.write(*uuid)?;
                 }
             }
             AdStructure::ShortenedLocalName(name) => {
-                w.append(&[(name.len() + 1) as u8, 0x08]);
-                w.append(name.as_bytes());
+                w.append(&[(name.len() + 1) as u8, 0x08])?;
+                w.append(name.as_bytes())?;
             }
             AdStructure::CompleteLocalName(name) => {
-                w.append(&[(name.len() + 1) as u8, 0x09]);
-                w.append(name.as_bytes());
+                w.append(&[(name.len() + 1) as u8, 0x09])?;
+                w.append(name.as_bytes())?;
             }
             AdStructure::ServiceData16 { uuid, data } => {
-                w.append(&[(data.len() + 3) as u8, 0x16]);
-                w.write_u16_le(*uuid);
-                w.append(data);
+                w.append(&[(data.len() + 3) as u8, 0x16])?;
+                w.write(*uuid)?;
+                w.append(data)?;
             }
             AdStructure::ManufacturerSpecificData {
                 company_identifier,
                 payload,
             } => {
-                w.append(&[(payload.len() + 3) as u8, 0xff]);
-                w.write_u16_le(*company_identifier);
-                w.append(payload);
+                w.append(&[(payload.len() + 3) as u8, 0xff])?;
+                w.write(*company_identifier)?;
+                w.append(payload)?;
             }
             AdStructure::Unknown { ty, data } => {
-                w.append(&[(data.len() + 1) as u8, *ty]);
-                w.append(data);
+                w.append(&[(data.len() + 1) as u8, *ty])?;
+                w.append(data)?;
             }
         }
+        Ok(())
     }
 }

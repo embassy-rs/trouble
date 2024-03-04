@@ -1,4 +1,6 @@
-use crate::byte_reader::ByteReader;
+use crate::codec;
+use crate::cursor::ReadCursor;
+use crate::types::uuid::*;
 use core::convert::TryInto;
 
 pub const ATT_READ_BY_GROUP_TYPE_REQUEST_OPCODE: u8 = 0x10;
@@ -24,70 +26,6 @@ pub const ATT_EXECUTE_WRITE_RESP_OPCODE: u8 = 0x19;
 pub const ATT_READ_BLOB_REQ_OPCODE: u8 = 0x0c;
 pub const ATT_READ_BLOB_RESP_OPCODE: u8 = 0x0d;
 pub const ATT_HANDLE_VALUE_NTF_OPTCODE: u8 = 0x1b;
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Uuid {
-    Uuid16([u8; 2]),
-    Uuid128([u8; 16]),
-}
-
-impl Uuid {
-    pub const fn new_short(val: u16) -> Self {
-        Self::Uuid16(val.to_le_bytes())
-    }
-
-    pub const fn new_long(val: [u8; 16]) -> Self {
-        Self::Uuid128(val)
-    }
-
-    pub fn bytes(&self, data: &mut [u8]) {
-        match self {
-            Uuid::Uuid16(uuid) => data.copy_from_slice(uuid),
-            Uuid::Uuid128(uuid) => data.copy_from_slice(uuid),
-        }
-    }
-
-    pub fn get_type(&self) -> u8 {
-        match self {
-            Uuid::Uuid16(_) => 0x01,
-            Uuid::Uuid128(_) => 0x02,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            Uuid::Uuid16(_) => 6,
-            Uuid::Uuid128(_) => 20,
-        }
-    }
-
-    pub fn as_raw(&self) -> &[u8] {
-        match self {
-            Uuid::Uuid16(uuid) => uuid,
-            Uuid::Uuid128(uuid) => uuid,
-        }
-    }
-}
-
-impl From<u16> for Uuid {
-    fn from(data: u16) -> Self {
-        Uuid::Uuid16(data.to_le_bytes())
-    }
-}
-
-impl From<&[u8]> for Uuid {
-    fn from(data: &[u8]) -> Self {
-        match data.len() {
-            2 => Uuid::Uuid16(data.try_into().unwrap()),
-            16 => {
-                let bytes: [u8; 16] = data.try_into().unwrap();
-                Uuid::Uuid128(bytes)
-            }
-            _ => panic!(),
-        }
-    }
-}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
@@ -183,15 +121,28 @@ pub enum Att<'d> {
 #[derive(Debug)]
 pub enum AttDecodeError {
     Other,
+    Codec(codec::Error),
     UnknownOpcode(u8),
     UnexpectedPayload,
 }
 
+impl From<codec::Error> for AttDecodeError {
+    fn from(e: codec::Error) -> Self {
+        AttDecodeError::Codec(e)
+    }
+}
+
+impl From<codec::Error> for AttErrorCode {
+    fn from(e: codec::Error) -> Self {
+        AttErrorCode::InvalidPdu
+    }
+}
+
 impl<'d> Att<'d> {
     pub fn decode(packet: &'d [u8]) -> Result<Att<'d>, AttDecodeError> {
-        let mut r = ByteReader::new(packet);
-        let opcode = r.read_u8();
-        let payload = r.consume();
+        let mut r = ReadCursor::new(packet);
+        let opcode: u8 = r.read()?;
+        let payload = r.remaining();
 
         match opcode {
             ATT_READ_BY_GROUP_TYPE_REQUEST_OPCODE => {

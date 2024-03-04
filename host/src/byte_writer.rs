@@ -22,7 +22,7 @@ impl<'d> ByteWriter<'d> {
         self.buf[offset] = value;
     }
 
-    pub fn reserve(&mut self, n: usize) {
+    pub fn reserve(&mut self, n: usize) -> usize {
         self.pos += n;
     }
 

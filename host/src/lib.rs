@@ -17,8 +17,9 @@ pub(crate) const L2CAP_TXQ: usize = 3;
 mod fmt;
 
 mod att;
-mod byte_reader;
-mod byte_writer;
+mod codec;
+mod cursor;
+pub(crate) mod types;
 
 pub mod adapter;
 pub mod gatt;
@@ -37,6 +38,7 @@ pub enum Error<E> {
     Controller(E),
     Encode(bt_hci::param::Error),
     Decode(FromHciBytesError),
+    Codec(codec::Error),
 }
 
 impl<E> From<FromHciBytesError> for Error<E> {
@@ -48,6 +50,12 @@ impl<E> From<FromHciBytesError> for Error<E> {
 impl<E> From<bt_hci::param::Error> for Error<E> {
     fn from(error: bt_hci::param::Error) -> Self {
         Self::Encode(error)
+    }
+}
+
+impl<E> From<codec::Error> for Error<E> {
+    fn from(error: codec::Error) -> Self {
+        Self::Codec(error)
     }
 }
 
@@ -63,6 +71,9 @@ where
             }
             Error::Decode(_) => {
                 defmt::write!(fmt, "Decode")
+            }
+            Error::Codec(_) => {
+                defmt::write!(fmt, "Codec")
             }
             Error::Timeout => {
                 defmt::write!(fmt, "Timeout")
