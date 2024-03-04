@@ -30,6 +30,7 @@ impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
         }
     }
 
+    // TODO: Actually return events
     pub async fn next(&mut self) -> GattEvent<'d> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
@@ -38,7 +39,7 @@ impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
                     Ok(Some(payload)) => {
                         let mut pdu = [0u8; L2CAP_MTU];
                         let packet = L2capPacket { channel: 4, payload };
-                        let len = packet.encode(&mut pdu);
+                        let len = packet.encode(&mut pdu).unwrap();
                         self.tx.send((handle, Vec::from_slice(&pdu[..len]).unwrap())).await;
                     }
                     Ok(None) => {

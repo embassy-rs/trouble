@@ -1,7 +1,9 @@
 use crate::{
-    att::{self, Att, AttDecodeError, AttErrorCode, Uuid},
+    att::{self, Att, AttDecodeError, AttErrorCode},
     attribute::Attribute,
-    byte_writer::ByteWriter,
+    codec,
+    cursor::WriteCursor,
+    types::uuid::Uuid,
     ATT_MTU,
 };
 
@@ -20,6 +22,12 @@ pub enum AttributeServerError {
 impl From<AttDecodeError> for AttributeServerError {
     fn from(err: AttDecodeError) -> Self {
         AttributeServerError::AttError(err)
+    }
+}
+
+impl From<codec::Error> for AttributeServerError {
+    fn from(err: codec::Error) -> Self {
+        AttributeServerError::AttError(err.into())
     }
 }
 
@@ -54,21 +62,21 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         attribute_type: Uuid,
     ) -> Result<Option<&[u8]>, AttributeServerError> {
         let mut handle = start;
-        let mut data = ByteWriter::new(&mut self.buf);
+        let mut data = WriteCursor::new(&mut self.buf);
         let mut err = Err(AttErrorCode::AttributeNotFound);
 
-        data.reserve(2);
+        let (mut header, mut body) = data.split(2)?;
         for att in self.attributes.iter_mut() {
             //            trace!("Check attribute {:x} {}", att.uuid, att.handle);
             if att.uuid == attribute_type && att.handle >= start && att.handle <= end {
-                data.write_u16_le(att.handle);
+                body.write(att.handle)?;
                 handle = att.handle;
 
                 if att.data.readable() {
-                    let mut writer = data.prepare();
+                    let mut writer = body.write_buf();
                     err = att.data.read(0, writer.as_mut());
                     if let Ok(len) = &err {
-                        writer.commit(*len);
+                        writer.finish(*len)?;
                     }
                 }
 
@@ -79,16 +87,16 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
 
         match err {
             Ok(len) => {
-                data.set(0, att::ATT_READ_BY_TYPE_RESPONSE_OPCODE);
-                data.set(1, 2 + len as u8);
-                Ok(Some(data.done()))
+                header.write(att::ATT_READ_BY_TYPE_RESPONSE_OPCODE)?;
+                header.write(2 + len as u8)?;
+                Ok(Some(data.finish()))
             }
             Err(e) => Ok(Self::error_response(
                 data,
                 att::ATT_READ_BY_TYPE_REQUEST_OPCODE,
                 handle,
                 e,
-            )),
+            )?),
         }
     }
 
@@ -100,24 +108,24 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
     ) -> Result<Option<&[u8]>, AttributeServerError> {
         // TODO respond with all finds - not just one
         let mut handle = start;
-        let mut data = ByteWriter::new(&mut self.buf);
+        let mut data = WriteCursor::new(&mut self.buf);
         let mut err = Err(AttErrorCode::AttributeNotFound);
 
-        data.reserve(2);
+        let (mut header, mut body) = data.split(2)?;
         for att in self.attributes.iter_mut() {
             //            trace!("Check attribute {:x} {}", att.uuid, att.handle);
             if att.uuid == group_type && att.handle >= start && att.handle <= end {
                 //                debug!("found! {:x} {}", att.uuid, att.handle);
                 handle = att.handle;
 
-                data.write_u16_le(att.handle);
-                data.write_u16_le(att.last_handle_in_group);
+                body.write(att.handle)?;
+                body.write(att.last_handle_in_group)?;
 
                 if att.data.readable() {
-                    let mut writer = data.prepare();
+                    let mut writer = body.write_buf();
                     err = att.data.read(0, writer.as_mut());
                     if let Ok(len) = &err {
-                        writer.commit(*len);
+                        writer.finish(*len)?;
                     }
                 }
                 break;
@@ -126,16 +134,16 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
 
         match err {
             Ok(len) => {
-                data.set(0, att::ATT_READ_BY_GROUP_TYPE_RESPONSE_OPCODE);
-                data.set(1, 4 + len as u8);
-                Ok(Some(data.done()))
+                header.write(att::ATT_READ_BY_GROUP_TYPE_RESPONSE_OPCODE)?;
+                header.write(4 + len as u8)?;
+                Ok(Some(data.finish()))
             }
             Err(e) => Ok(Self::error_response(
                 data,
                 att::ATT_READ_BY_GROUP_TYPE_REQUEST_OPCODE,
                 handle,
                 e,
-            )),
+            )?),
         }
     }
 
@@ -175,18 +183,18 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
     }*/
 
     fn handle_read_req(&mut self, handle: u16) -> Result<Option<&[u8]>, AttributeServerError> {
-        let mut data = ByteWriter::new(&mut self.buf);
+        let mut data = WriteCursor::new(&mut self.buf);
         let mut err = Err(AttErrorCode::AttributeNotFound);
 
-        data.write_u8(att::ATT_READ_RESPONSE_OPCODE);
+        data.write(att::ATT_READ_RESPONSE_OPCODE)?;
 
         for att in self.attributes.iter_mut() {
             if att.handle == handle {
                 if att.data.readable() {
-                    let mut b = data.prepare();
+                    let mut b = data.write_buf();
                     err = att.data.read(0, b.as_mut());
                     if let Ok(len) = err {
-                        b.commit(len);
+                        b.finish(len)?;
                     }
                 }
                 break;
@@ -195,10 +203,10 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
 
         match err {
             Ok(_) => {
-                data.truncate(self.mtu as usize);
-                Ok(Some(data.done()))
+                data.truncate(self.mtu as usize)?;
+                Ok(Some(data.finish()))
             }
-            Err(e) => Ok(Self::error_response(data, att::ATT_READ_REQUEST_OPCODE, handle, e)),
+            Err(e) => Ok(Self::error_response(data, att::ATT_READ_REQUEST_OPCODE, handle, e)?),
         }
     }
 
@@ -230,21 +238,21 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         match err {
             Ok(()) => Ok(Some(&[att::ATT_WRITE_RESPONSE_OPCODE])),
             Err(e) => Ok(Self::error_response(
-                ByteWriter::new(&mut self.buf),
+                WriteCursor::new(&mut self.buf),
                 att::ATT_WRITE_REQUEST_OPCODE,
                 handle,
                 e,
-            )),
+            )?),
         }
     }
 
     fn handle_exchange_mtu(&mut self, mtu: u16) -> Result<Option<&[u8]>, AttributeServerError> {
         self.mtu = mtu.min(ATT_MTU as u16);
         debug!("Requested MTU {}, returning {}", mtu, self.mtu);
-        let mut b = ByteWriter::new(&mut self.buf);
-        b.write_u8(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE);
-        b.write_u16_le(self.mtu);
-        Ok(Some(b.done()))
+        let mut b = WriteCursor::new(&mut self.buf);
+        b.write(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE)?;
+        b.write(self.mtu)?;
+        Ok(Some(b.finish()))
     }
 
     fn handle_find_type_value(
@@ -258,49 +266,56 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
 
         // respond with error
         Ok(Self::error_response(
-            ByteWriter::new(&mut self.buf),
+            WriteCursor::new(&mut self.buf),
             att::ATT_FIND_BY_TYPE_VALUE_REQUEST_OPCODE,
             start,
             AttErrorCode::AttributeNotFound,
-        ))
+        )?)
     }
 
     fn handle_find_information(&mut self, start: u16, end: u16) -> Result<Option<&[u8]>, AttributeServerError> {
-        let mut w = ByteWriter::new(&mut self.buf);
-        w.write_u8(att::ATT_FIND_INFORMATION_RSP_OPCODE);
-        w.write_u8(0);
+        let mut w = WriteCursor::new(&mut self.buf);
+        w.write(att::ATT_FIND_INFORMATION_RSP_OPCODE)?;
+        let (mut header, mut body) = w.split(1)?;
+        let mut t = 0;
 
         for att in self.attributes.iter_mut() {
             if att.handle >= start && att.handle <= end {
-                if w.get(1) == 0 {
-                    w.set(1, att.uuid.get_type());
-                } else if w.get(1) != att.uuid.get_type() {
+                if t == 0 {
+                    t = att.uuid.get_type();
+                } else if t != att.uuid.get_type() {
                     break;
                 }
-                w.write_u16_le(att.handle);
-                w.append_uuid(&att.uuid);
+                body.write(att.handle)?;
+                body.append(att.uuid.as_raw())?;
             }
         }
+        header.write(t)?;
 
-        if w.len() > 2 {
-            Ok(Some(w.done()))
+        if body.len() > 2 {
+            Ok(Some(w.finish()))
         } else {
             Ok(Self::error_response(
                 w,
                 att::ATT_FIND_INFORMATION_REQ_OPCODE,
                 start,
                 AttErrorCode::AttributeNotFound,
-            ))
+            )?)
         }
     }
 
-    fn error_response<'m>(mut w: ByteWriter<'m>, opcode: u8, handle: u16, code: AttErrorCode) -> Option<&'m [u8]> {
-        w.truncate(0);
-        w.write_u8(att::ATT_ERROR_RESPONSE_OPCODE);
-        w.write_u8(opcode);
-        w.write_u16_le(handle);
-        w.write_u8(code as u8);
-        Some(w.done())
+    fn error_response<'m>(
+        mut w: WriteCursor<'m>,
+        opcode: u8,
+        handle: u16,
+        code: AttErrorCode,
+    ) -> Result<Option<&'m [u8]>, codec::Error> {
+        w.reset();
+        w.write(att::ATT_ERROR_RESPONSE_OPCODE)?;
+        w.write(opcode)?;
+        w.write(handle)?;
+        w.write(code as u8)?;
+        Ok(Some(w.finish()))
     }
 
     fn handle_prepare_write(
@@ -309,10 +324,10 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         offset: u16,
         value: &[u8],
     ) -> Result<Option<&[u8]>, AttributeServerError> {
-        let mut w = ByteWriter::new(&mut self.buf);
-        w.write_u8(att::ATT_PREPARE_WRITE_RESP_OPCODE);
-        w.write_u16_le(handle);
-        w.write_u16_le(offset);
+        let mut w = WriteCursor::new(&mut self.buf);
+        w.write(att::ATT_PREPARE_WRITE_RESP_OPCODE)?;
+        w.write(handle)?;
+        w.write(offset)?;
 
         let mut err = Err(AttErrorCode::AttributeNotFound);
         for att in self.attributes.iter_mut() {
@@ -320,14 +335,14 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
                 if att.data.writable() {
                     err = att.data.write(offset as usize, value);
                 }
-                w.append(value);
+                w.append(value)?;
                 break;
             }
         }
 
         match err {
-            Ok(()) => Ok(Some(w.done())),
-            Err(e) => Ok(Self::error_response(w, att::ATT_PREPARE_WRITE_REQ_OPCODE, handle, e)),
+            Ok(()) => Ok(Some(w.finish())),
+            Err(e) => Ok(Self::error_response(w, att::ATT_PREPARE_WRITE_REQ_OPCODE, handle, e)?),
         }
     }
 
@@ -336,17 +351,17 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
     }
 
     fn handle_read_blob(&mut self, handle: u16, offset: u16) -> Result<Option<&[u8]>, AttributeServerError> {
-        let mut w = ByteWriter::new(&mut self.buf);
-        w.write_u8(att::ATT_READ_BLOB_RESP_OPCODE);
+        let mut w = WriteCursor::new(&mut self.buf);
+        w.write(att::ATT_READ_BLOB_RESP_OPCODE)?;
         let mut err = Err(AttErrorCode::AttributeNotFound);
 
         for att in self.attributes.iter_mut() {
             if att.handle == handle {
                 if att.data.readable() {
-                    let mut buf = w.prepare();
+                    let mut buf = w.write_buf();
                     err = att.data.read(offset as usize, buf.as_mut());
                     if let Ok(n) = &err {
-                        buf.commit(*n);
+                        buf.finish(*n)?;
                     }
                 }
                 break;
@@ -354,8 +369,8 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         }
 
         match err {
-            Ok(_) => Ok(Some(w.done())),
-            Err(e) => Ok(Self::error_response(w, att::ATT_READ_BLOB_REQ_OPCODE, handle, e)),
+            Ok(_) => Ok(Some(w.finish())),
+            Err(e) => Ok(Self::error_response(w, att::ATT_READ_BLOB_REQ_OPCODE, handle, e)?),
         }
     }
 

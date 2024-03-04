@@ -1,8 +1,7 @@
 use core::{fmt, mem::size_of, slice};
 
-use crate::att::AttErrorCode;
-pub use crate::att::Uuid;
-use crate::byte_writer::ByteWriter;
+pub use crate::types::uuid::Uuid;
+use crate::{att::AttErrorCode, cursor::WriteCursor};
 
 pub const GENERIC_ACCESS_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1800u16.to_le_bytes());
 pub const CHARACTERISTIC_DEVICE_NAME_UUID16: Uuid = Uuid::Uuid16(0x2A00u16.to_le_bytes());
@@ -353,20 +352,20 @@ impl<'d> AttributeData<'d> {
                 if offset > val.len() + 3 {
                     return Ok(0);
                 }
-                let mut w = ByteWriter::new(data);
+                let mut w = WriteCursor::new(data);
                 if offset == 0 {
-                    w.write_u8(*props);
-                    w.write_u16_le(*handle);
+                    w.write(*props)?;
+                    w.write(*handle)?;
                 } else if offset == 1 {
-                    w.write_u16_le(*handle);
+                    w.write(*handle)?;
                 } else if offset == 2 {
-                    w.write_u8(handle.to_le_bytes()[1]);
+                    w.write(handle.to_le_bytes()[1] as u8)?;
                 }
 
                 let to_write = w.available().min(val.len());
 
                 if to_write > 0 {
-                    w.append(&val[..to_write]);
+                    w.append(&val[..to_write])?;
                 }
                 Ok(w.len())
             }

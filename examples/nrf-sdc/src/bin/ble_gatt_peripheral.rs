@@ -6,7 +6,7 @@ use bt_hci::cmd::SyncCmd;
 use bt_hci::param::BdAddr;
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
+use embassy_futures::join::join3 as join;
 use embassy_nrf::{bind_interrupts, pac};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
@@ -127,14 +127,23 @@ async fn main(spawner: Spawner) {
     let mut server = GattServer::new(&adapter, &mut attributes[..]);
 
     info!("Starting advertising and GATT service");
-    let _ = join(async { adapter.run(config).await }, async {
-        loop {
-            match server.next().await {
-                GattEvent::Write(_conn, attribute) => {
-                    info!("Attribute was written: {:?}", attribute);
+    let _ = join(
+        adapter.run(config),
+        async {
+            loop {
+                match server.next().await {
+                    GattEvent::Write(_conn, attribute) => {
+                        info!("Attribute was written: {:?}", attribute);
+                    }
                 }
             }
-        }
-    })
+        },
+        async {
+            loop {
+                let mut _conn = unwrap!(adapter.accept().await);
+                info!("New connection accepted!");
+            }
+        },
+    )
     .await;
 }

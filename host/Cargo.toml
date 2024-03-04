@@ -21,6 +21,7 @@ embassy-sync = "0.5"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.8"
+trouble-host-macros = { version = "0.1.0", path = "../host-macros" }
 
 # Logging
 log = { version = "0.4.16", optional = true }
