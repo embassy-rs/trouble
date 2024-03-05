@@ -18,13 +18,8 @@ impl<'d> WriteCursor<'d> {
         self.pos = 0;
     }
 
-    pub fn truncate(&mut self, npos: usize) -> Result<(), Error> {
-        if npos < self.data.len() {
-            self.pos = npos;
-            Ok(())
-        } else {
-            Err(Error::InsufficientSpace)
-        }
+    pub fn truncate(&mut self, npos: usize) {
+        self.pos = self.pos.min(npos);
     }
 
     // Split into two cursors

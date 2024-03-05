@@ -2,6 +2,9 @@ use core::cell::RefCell;
 
 use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
 
+// Generic client ID used by ATT PDU
+pub(crate) const POOL_ATT_CLIENT_ID: usize = 0;
+
 struct PacketBuf<const MTU: usize> {
     buf: [u8; MTU],
     free: bool,
@@ -32,7 +35,6 @@ pub enum Qos {
 struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
     packets: [PacketBuf<MTU>; N],
     usage: [usize; CLIENTS],
-    clients: usize,
 }
 
 impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIENTS> {
@@ -40,7 +42,6 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
         Self {
             packets: [PacketBuf::NEW; N],
             usage: [0; CLIENTS],
-            clients: 0,
         }
     }
 
@@ -61,33 +62,20 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
 /// and free'd.
 ///
 /// The pool has a concept QoS where it
-struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> {
+pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> {
     state: Mutex<M, RefCell<State<MTU, N, CLIENTS>>>,
     qos: Qos,
 }
 
 impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> PacketPool<M, MTU, N, CLIENTS> {
-    pub fn new(qos: Qos) -> Self {
+    pub const fn new(qos: Qos) -> Self {
         Self {
             state: Mutex::new(RefCell::new(State::new())),
             qos,
         }
     }
 
-    /// Register a client for allocating packets. A client cannot be unregistered.
-    pub fn register<'d>(&'d self) -> Option<PacketPoolClient<'d>> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            if state.clients < CLIENTS {
-                let id = state.clients;
-                state.clients += 1;
-                return Some(PacketPoolClient { id, pool: self });
-            }
-            None
-        })
-    }
-
-    fn alloc(&self, id: usize) -> Option<PacketRef> {
+    fn alloc(&self, id: usize) -> Option<Packet> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
 
@@ -101,10 +89,10 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
                     packet.free = true;
                     let buf = unsafe { core::mem::transmute(&mut packet.buf[..]) };
                     state.usage[id] += 1;
-                    return Some(PacketRef {
-                        idx,
-                        packet: buf,
-                        len: 0,
+                    return Some(Packet {
+                        pool: self,
+                        client: id,
+                        p_ref: Some(PacketRef { idx, buf }),
                     });
                 }
             }
@@ -112,10 +100,10 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
         })
     }
 
-    fn free(&self, id: usize, packet_ref: PacketRef) {
+    fn free(&self, id: usize, p_ref: PacketRef) {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
-            state.packets[packet_ref.idx].free = true;
+            state.packets[p_ref.idx].free = true;
             state.usage[id] -= 1;
         });
     }
@@ -129,7 +117,7 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
 }
 
 pub trait DynamicPacketPool<'d> {
-    fn alloc(&'d self, id: usize) -> Option<PacketRef<'d>>;
+    fn alloc(&'d self, id: usize) -> Option<Packet<'d>>;
     fn free(&'d self, id: usize, r: PacketRef<'d>);
     fn available(&self, id: usize) -> usize;
 }
@@ -137,7 +125,7 @@ pub trait DynamicPacketPool<'d> {
 impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> DynamicPacketPool<'d>
     for PacketPool<M, MTU, N, CLIENTS>
 {
-    fn alloc(&'d self, id: usize) -> Option<PacketRef<'d>> {
+    fn alloc(&'d self, id: usize) -> Option<Packet<'d>> {
         PacketPool::alloc(self, id)
     }
 
@@ -152,46 +140,33 @@ impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Dy
 
 pub struct PacketRef<'d> {
     idx: usize,
-    packet: &'d mut [u8],
-    len: usize,
+    buf: &'d mut [u8],
 }
 
 pub struct Packet<'d> {
     client: usize,
-    packet_ref: Option<PacketRef<'d>>,
+    p_ref: Option<PacketRef<'d>>,
     pool: &'d dyn DynamicPacketPool<'d>,
 }
 
 impl<'d> Drop for Packet<'d> {
     fn drop(&mut self) {
-        if let Some(r) = self.packet_ref.take() {
+        if let Some(r) = self.p_ref.take() {
             self.pool.free(self.client, r);
         }
     }
 }
 
-pub struct PacketPoolClient<'d> {
-    id: usize,
-    pool: &'d dyn DynamicPacketPool<'d>,
+impl<'d> AsRef<[u8]> for Packet<'d> {
+    fn as_ref(&self) -> &[u8] {
+        let p = self.p_ref.as_ref().unwrap();
+        &p.buf[..]
+    }
 }
 
-impl<'d> PacketPoolClient<'d> {
-    fn free(&self, packet_ref: PacketRef<'d>) {
-        self.pool.free(self.id, packet_ref);
-    }
-
-    pub fn alloc(&self) -> Option<Packet<'d>> {
-        if let Some(packet_ref) = self.pool.alloc(self.id) {
-            Some(Packet {
-                client: self.id,
-                packet_ref: Some(packet_ref),
-                pool: self.pool,
-            })
-        } else {
-            None
-        }
-    }
-    pub fn available(&self) -> usize {
-        self.pool.available(self.id)
+impl<'d> AsMut<[u8]> for Packet<'d> {
+    fn as_mut(&mut self) -> &mut [u8] {
+        let p = self.p_ref.as_mut().unwrap();
+        &mut p.buf[..]
     }
 }
