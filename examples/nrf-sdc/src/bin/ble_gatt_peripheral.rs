@@ -34,7 +34,7 @@ bind_interrupts!(struct Irqs {
     RTC0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
 });
 
-type Adapter<'a> = BleAdapter<'a, NoopRawMutex, SoftdeviceController<'a>>;
+type Adapter<'a> = BleAdapter<'a, NoopRawMutex>;
 
 #[embassy_executor::task]
 async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
@@ -103,8 +103,8 @@ async fn main(spawner: Spawner) {
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    let mut resources: AdapterResources<NoopRawMutex, 1, 1> = AdapterResources::new();
-    let adapter = Adapter::new(sdc, &mut resources);
+    let mut resources: AdapterResources<NoopRawMutex, 1, 1, 32> = AdapterResources::new();
+    let adapter = Adapter::new(&mut resources);
 
     let config = BleConfig {
         advertise: Some(AdvertiseConfig {
@@ -124,11 +124,16 @@ async fn main(spawner: Spawner) {
         .add_characteristic(0x2a19.into(), &[CharacteristicProp::Read], data)
         .done();
     let mut attributes = attributes.build();
-    let mut server = GattServer::new(&adapter, &mut attributes[..]);
+
+    // TODO: Figure out these lifetimes
+    let adapter: &'static Adapter<'static> = unsafe { core::mem::transmute(&adapter) };
+    let mut server = adapter.gatt(&mut attributes[..]);
+
+    unwrap!(adapter.advertise(&sdc, config).await);
 
     info!("Starting advertising and GATT service");
     let _ = join(
-        adapter.run(config),
+        adapter.run(&sdc),
         async {
             loop {
                 match server.next().await {
@@ -140,7 +145,7 @@ async fn main(spawner: Spawner) {
         },
         async {
             loop {
-                let mut _conn = unwrap!(adapter.accept().await);
+                let mut _conn = adapter.accept().await;
                 info!("New connection accepted!");
             }
         },

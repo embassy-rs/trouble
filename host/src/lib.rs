@@ -7,7 +7,7 @@ use ad_structure::AdvertisementDataError;
 use bt_hci::FromHciBytesError;
 
 // TODO: Make these configurable
-pub(crate) const ATT_MTU: usize = 23;
+pub(crate) const ATT_MTU: usize = 64;
 pub(crate) const L2CAP_MTU: usize = 247;
 
 pub(crate) const L2CAP_RXQ: usize = 3;
@@ -19,6 +19,7 @@ mod fmt;
 mod att;
 mod codec;
 mod cursor;
+mod packet_pool;
 pub(crate) mod types;
 
 pub mod adapter;
@@ -31,14 +32,15 @@ pub mod attribute;
 mod attribute_server;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
-    Timeout,
-    Advertisement(AdvertisementDataError),
-    Failed(u8),
     Controller(E),
     Encode(bt_hci::param::Error),
     Decode(FromHciBytesError),
     Codec(codec::Error),
+    Timeout,
+    Advertisement(AdvertisementDataError),
+    Failed(u8),
 }
 
 impl<E> From<FromHciBytesError> for Error<E> {
@@ -56,37 +58,5 @@ impl<E> From<bt_hci::param::Error> for Error<E> {
 impl<E> From<codec::Error> for Error<E> {
     fn from(error: codec::Error) -> Self {
         Self::Codec(error)
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl<E> defmt::Format for Error<E>
-where
-    E: defmt::Format,
-{
-    fn format(&self, fmt: defmt::Formatter) {
-        match self {
-            Error::Encode(_) => {
-                defmt::write!(fmt, "Encode")
-            }
-            Error::Decode(_) => {
-                defmt::write!(fmt, "Decode")
-            }
-            Error::Codec(_) => {
-                defmt::write!(fmt, "Codec")
-            }
-            Error::Timeout => {
-                defmt::write!(fmt, "Timeout")
-            }
-            Error::Failed(value) => {
-                defmt::write!(fmt, "Failed({})", value)
-            }
-            Error::Controller(value) => {
-                defmt::write!(fmt, "Controller({})", value)
-            }
-            Error::Advertisement(value) => {
-                defmt::write!(fmt, "Advertisement({})", value)
-            }
-        }
     }
 }
