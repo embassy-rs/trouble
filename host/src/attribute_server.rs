@@ -203,7 +203,7 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
 
         match err {
             Ok(_) => {
-                data.truncate(self.mtu as usize)?;
+                data.truncate(self.mtu as usize);
                 Ok(data.len())
             }
             Err(e) => Ok(Self::error_response(data, att::ATT_READ_REQUEST_OPCODE, handle, e)?),

@@ -1,12 +1,14 @@
 use core::cell::RefCell;
 
 use crate::ad_structure::AdStructure;
+use crate::attribute::Attribute;
+use crate::attribute_server::AttributeServer;
 use crate::cursor::WriteCursor;
+use crate::gatt::GattServer;
 use crate::l2cap::{L2capPacket, L2capState}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
+use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, POOL_ATT_CLIENT_ID};
 use crate::Error;
-use crate::ATT_MTU;
 use crate::L2CAP_MTU;
-use crate::L2CAP_RXQ;
 use crate::L2CAP_TXQ;
 use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
@@ -16,28 +18,50 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask, LeConnRole, Status};
-use bt_hci::Controller;
 use bt_hci::ControllerCmdSync;
 use bt_hci::ControllerToHostPacket;
 use embassy_futures::select::{select3, Either3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender, Receiver, Sender};
-use embassy_sync::signal::Signal;
-use heapless::Vec;
+use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
 
-pub struct AdapterResources<M: RawMutex, const CONNS: usize, const CHANNELS: usize> {
+pub struct AdapterResources<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize> {
     connections: [ConnectionStorage; CONNS],
     channels: [ChannelStorage<M>; CHANNELS],
-    att: L2capState<M, ATT_MTU>,
+    pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
 }
 
-impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize> AdapterResources<M, CONNS, CHANNELS> {
+impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize>
+    AdapterResources<M, CONNS, CHANNELS, PACKETS>
+{
     pub fn new() -> Self {
         Self {
             connections: [ConnectionStorage::EMPTY; CONNS],
             channels: [ChannelStorage::EMPTY; CHANNELS],
-            att: L2capState::new(),
+            pool: PacketPool::new(crate::packet_pool::Qos::None),
         }
+    }
+}
+
+pub struct Pdu<'d> {
+    pub packet: Packet<'d>,
+    pub len: usize,
+}
+
+impl<'d> Pdu<'d> {
+    pub fn new(packet: Packet<'d>, len: usize) -> Self {
+        Self { packet, len }
+    }
+}
+
+impl<'d> AsRef<[u8]> for Pdu<'d> {
+    fn as_ref(&self) -> &[u8] {
+        &self.packet.as_ref()[..self.len]
+    }
+}
+
+impl<'d> AsMut<[u8]> for Pdu<'d> {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.packet.as_mut()[..self.len]
     }
 }
 
@@ -70,7 +94,7 @@ pub struct ConnectionState {
 #[derive(Clone)]
 pub struct Connection<'d> {
     handle: ConnHandle,
-    tx: DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
+    tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
     control: DynamicSender<'d, ControlCommand>,
 }
 
@@ -131,77 +155,77 @@ where
     //}
 }
 
-pub struct Adapter<'d, M, T>
+pub struct AdapterState<'d, M>
 where
     M: RawMutex + 'd,
-    T: Controller,
 {
-    controller: T,
-    inner: RefCell<Inner<'d, M>>,
-    att: &'d mut L2capState<M, ATT_MTU>,
-    outbound: Channel<M, (ConnHandle, Vec<u8, L2CAP_MTU>), L2CAP_TXQ>,
+    connections: &'d mut [ConnectionStorage],
+    channels: &'d mut [ChannelStorage<M>],
+}
+
+pub struct Adapter<'d, M>
+where
+    M: RawMutex + 'd,
+{
+    state: RefCell<AdapterState<'d, M>>,
+    att: Channel<M, (ConnHandle, Pdu<'d>), 1>,
+    outbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_TXQ>,
     control: Channel<M, ControlCommand, 1>,
-    acceptor: Signal<M, ConnHandle>,
+    acceptor: Channel<M, ConnHandle, 1>,
+    pool: &'d dyn DynamicPacketPool<'d>,
 }
 
 enum ControlCommand {
     Disconnect(DisconnectParams),
 }
 
-impl<'d, M, T> Adapter<'d, M, T>
+impl<'d, M> Adapter<'d, M>
 where
     M: RawMutex + 'd,
-    T: Controller + 'd,
 {
-    pub fn new<const CONN: usize, const CHANNEL_PER_CONN: usize>(
-        controller: T,
-        resources: &'d mut AdapterResources<M, CONN, CHANNEL_PER_CONN>,
+    pub fn new<const CONN: usize, const CHANNELS: usize, const PACKETS: usize>(
+        resources: &'d mut AdapterResources<M, CONN, CHANNELS, PACKETS>,
     ) -> Self {
         Self {
-            controller,
-            att: &mut resources.att,
-            inner: RefCell::new(Inner {
+            state: RefCell::new(AdapterState {
                 connections: &mut resources.connections,
                 channels: &mut resources.channels,
             }),
+
+            pool: &resources.pool,
+            att: Channel::new(),
             outbound: Channel::new(),
             control: Channel::new(),
-            acceptor: Signal::new(),
+            acceptor: Channel::new(),
         }
     }
 
-    pub(crate) fn att_receiver(&self) -> Receiver<'_, M, (ConnHandle, Vec<u8, ATT_MTU>), L2CAP_RXQ> {
-        self.att.receiver()
+    pub fn gatt<'a, 'b>(&'d self, attributes: &'a mut [Attribute<'b>]) -> GattServer<'a, 'd, 'b> {
+        GattServer {
+            server: AttributeServer::new(attributes),
+            rx: self.att.receiver().into(),
+            tx: self.outbound.sender().into(),
+        }
     }
 
-    pub(crate) fn outbound_sender(&self) -> Sender<'_, M, (ConnHandle, Vec<u8, L2CAP_MTU>), L2CAP_TXQ> {
-        self.outbound.sender()
-    }
-
-    pub async fn accept(&self) -> Result<Connection<'_>, Error<T::Error>> {
-        let handle = self.acceptor.wait().await;
-        Ok(Connection {
+    pub async fn accept(&'d self) -> Connection<'_> {
+        let handle = self.acceptor.receive().await;
+        Connection {
             handle,
             tx: self.outbound.sender().into(),
             control: self.control.sender().into(),
-        })
-    }
-
-    async fn l2cap_connect(&self) -> Result<Connection<'_>, Error<T::Error>> {
-        todo!()
+        }
     }
 }
 
-impl<'d, M, T> Adapter<'d, M, T>
+impl<'d, M> Adapter<'d, M>
 where
     M: RawMutex + 'd,
-    T: ControllerCmdSync<LeSetAdvData>
-        + ControllerCmdSync<LeSetAdvEnable>
-        + ControllerCmdSync<LeSetAdvParams>
-        + ControllerCmdSync<Disconnect>
-        + ControllerCmdSync<SetEventMask>,
 {
-    pub async fn run(&self, config: Config<'_>) -> Result<(), Error<T::Error>> {
+    pub async fn advertise<T>(&self, controller: &T, config: Config<'_>) -> Result<(), Error<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
+    {
         if let Some(adv) = &config.advertise {
             let params = &adv.params.unwrap_or(LeSetAdvParams::new(
                 bt_hci::param::Duration::from_millis(1280),
@@ -214,7 +238,7 @@ where
                 bt_hci::param::AdvFilterPolicy::default(),
             ));
 
-            params.exec(&self.controller).await?;
+            params.exec(controller).await?;
 
             let mut data = [0; 31];
             let mut w = WriteCursor::new(&mut data[..]);
@@ -223,52 +247,60 @@ where
             }
             let len = w.len();
             drop(w);
-            LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
-            LeSetAdvEnable::new(true).exec(&self.controller).await?;
+            LeSetAdvData::new(len as u8, data).exec(controller).await?;
+            LeSetAdvEnable::new(true).exec(controller).await?;
         }
+        Ok(())
+    }
 
-        SetEventMask::new(
-            EventMask::new()
-                .enable_le_meta(true)
-                .enable_conn_request(true)
-                .enable_conn_complete(true)
-                .enable_hardware_error(true)
-                .enable_disconnection_complete(true),
-        )
-        .exec(&self.controller)
-        .await?;
-
-        let mut runner = BleRunner {
-            outbound: self.outbound.receiver(),
-            control: self.control.receiver(),
-            att: self.att.sender(),
-            inner: &self.inner,
-            acceptor: &self.acceptor,
+    pub async fn run<T>(&'d self, controller: &T) -> Result<(), Error<T::Error>>
+    where
+        T: ControllerCmdSync<Disconnect> + ControllerCmdSync<SetEventMask>,
+    {
+        let mut runner = AdapterRunner {
+            state: &self.state,
+            att: self.att.sender().into(),
+            outbound: self.outbound.receiver().into(),
+            control: self.control.receiver().into(),
+            acceptor: self.acceptor.sender().into(),
+            pool: self.pool,
         };
 
-        runner.run(&self.controller).await;
+        runner.run(controller).await?;
         Ok(())
     }
 }
 
-struct BleRunner<'a, 'b, M: RawMutex> {
-    outbound: Receiver<'a, M, (ConnHandle, Vec<u8, L2CAP_MTU>), L2CAP_TXQ>,
-    control: Receiver<'a, M, ControlCommand, 1>,
-    att: Sender<'a, M, (ConnHandle, Vec<u8, ATT_MTU>), L2CAP_RXQ>,
-    inner: &'a RefCell<Inner<'b, M>>,
-    acceptor: &'a Signal<M, ConnHandle>,
+pub struct AdapterRunner<'a, 'd, M>
+where
+    M: RawMutex + 'd,
+{
+    state: &'a RefCell<AdapterState<'d, M>>,
+    att: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
+    outbound: DynamicReceiver<'d, (ConnHandle, Pdu<'d>)>,
+    control: DynamicReceiver<'d, ControlCommand>,
+    acceptor: DynamicSender<'d, ConnHandle>,
+    pool: &'d dyn DynamicPacketPool<'d>,
 }
 
 const L2CAP_CID_ATT: u16 = 0x0004;
 const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
 const L2CAP_CID_DYN_START: u16 = 0x0040;
-
-impl<'a, 'b, M: RawMutex> BleRunner<'a, 'b, M> {
+impl<'a, 'd, M> AdapterRunner<'a, 'd, M>
+where
+    M: RawMutex + 'd,
+{
     async fn handle_acl(&mut self, packet: AclPacket<'_>) -> Result<(), crate::codec::Error> {
         let (conn, packet) = L2capPacket::decode(packet)?;
         match packet.channel {
             L2CAP_CID_ATT => {
-                self.att.send((conn, Vec::from_slice(packet.payload).unwrap())).await;
+                if let Some(mut p) = self.pool.alloc(POOL_ATT_CLIENT_ID) {
+                    let len = packet.payload.len();
+                    p.as_mut()[..len].copy_from_slice(packet.payload);
+                    self.att.send((conn, Pdu { packet: p, len })).await;
+                } else {
+                    // TODO: Signal back
+                }
             }
             L2CAP_CID_LE_U_SIGNAL => {
                 // let signal = L2capLeSignal::decode(packet)?;
@@ -298,14 +330,20 @@ impl<'a, 'b, M: RawMutex> BleRunner<'a, 'b, M> {
         Ok(())
     }
 
-    async fn run<T>(&mut self, controller: &T)
+    pub async fn run<T>(&mut self, controller: &T) -> Result<(), Error<T::Error>>
     where
-        T: ControllerCmdSync<LeSetAdvData>
-            + ControllerCmdSync<LeSetAdvEnable>
-            + ControllerCmdSync<LeSetAdvParams>
-            + ControllerCmdSync<Disconnect>
-            + ControllerCmdSync<SetEventMask>,
+        T: ControllerCmdSync<Disconnect> + ControllerCmdSync<SetEventMask>,
     {
+        SetEventMask::new(
+            EventMask::new()
+                .enable_le_meta(true)
+                .enable_conn_request(true)
+                .enable_conn_complete(true)
+                .enable_hardware_error(true)
+                .enable_disconnection_complete(true),
+        )
+        .exec(controller)
+        .await?;
         loop {
             let mut rx = [0u8; 259];
             match select3(
@@ -326,7 +364,7 @@ impl<'a, 'b, M: RawMutex> BleRunner<'a, 'b, M> {
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => {
                                 info!("Connection complete: {:?}!", e);
-                                let mut inner = self.inner.borrow_mut();
+                                let mut inner = self.state.borrow_mut();
                                 for conn in inner.connections.iter_mut() {
                                     if conn.state.is_none() {
                                         conn.state.replace(ConnectionState {
@@ -338,7 +376,8 @@ impl<'a, 'b, M: RawMutex> BleRunner<'a, 'b, M> {
                                             latency: e.peripheral_latency,
                                             timeout: e.supervision_timeout.as_u16(),
                                         });
-                                        self.acceptor.signal(e.handle);
+                                        // TODO:
+                                        self.acceptor.try_send(e.handle).unwrap();
                                         break;
                                     }
                                 }
@@ -349,7 +388,7 @@ impl<'a, 'b, M: RawMutex> BleRunner<'a, 'b, M> {
                         },
                         Event::DisconnectionComplete(e) => {
                             info!("Disconnected: {:?}", e);
-                            let mut inner = self.inner.borrow_mut();
+                            let mut inner = self.state.borrow_mut();
                             for conn in inner.connections.iter_mut() {
                                 if let Some(state) = &mut conn.state {
                                     if state.handle == e.handle {
@@ -376,7 +415,7 @@ impl<'a, 'b, M: RawMutex> BleRunner<'a, 'b, M> {
                         handle,
                         AclPacketBoundary::FirstNonFlushable,
                         AclBroadcastFlag::PointToPoint,
-                        &pdu[..],
+                        pdu.as_ref(),
                     );
                     match controller.write_acl_data(&acl).await {
                         Ok(_) => {}
@@ -400,37 +439,6 @@ impl<'a, 'b, M: RawMutex> BleRunner<'a, 'b, M> {
 }
 
 pub struct L2capChannel<'d> {
-    rx: DynamicReceiver<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
-    tx: DynamicSender<'d, (ConnHandle, Vec<u8, L2CAP_MTU>)>,
-}
-
-impl<'d> L2capChannel<'d> {
-    pub async fn connect<M: RawMutex, T: Controller>(
-        connection: Connection<'d>,
-        adapter: &'d Adapter<'d, M, T>,
-    ) -> Result<(), Error<T::Error>> {
-        //        let mut packet: [u8; L2CAP_MTU] = [0; L2CAP_MTU];
-        //        let req = LeCreditConnReq {
-        //            psm: 0,  // TODO: Make configurable?
-        //            scid: 1, // TODO: Check available
-        //            mtu: L2CAP_MTU as u16,
-        //            mps: L2CAP_MTU as u16 - 6, // TODO: What is this vs. mtu?
-        //            credits: 1,                // TODO: Make configurable
-        //        };
-        //
-        //        let pdu = L2capLeSignal {
-        //            code: SignalCode::LeCreditConnReq,
-        //            id: 1, // TODO: Muxing
-        //            data: l2cap::L2capLeSignalData::CreditConnReq(req),
-        //        };
-        //
-        //        let mut w = ByteWriter::new(&mut packet);
-        //        let lpos = w.reserve(2);
-        //        w.append(&L2CAP_CID_LE_U_SIGNAL.to_le_bytes());
-        //
-        //        w.set(lpos, &012_u16.to_le_bytes());
-        //        w.write_u16_le(L2CAP_CID_LE_U_SIGNAL);
-        //        pdu.encode(&mut w);
-        Ok(())
-    }
+    rx: DynamicReceiver<'d, (ConnHandle, Packet<'d>)>,
+    tx: DynamicSender<'d, (ConnHandle, Packet<'d>)>,
 }
