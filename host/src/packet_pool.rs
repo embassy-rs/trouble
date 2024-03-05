@@ -87,7 +87,6 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
             let mut state = state.borrow_mut();
 
             let available = state.available(self.qos, id);
-            println!("AVAILABLE: {}", available);
             if available == 0 {
                 return None;
             }

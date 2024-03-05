@@ -1,3 +1,4 @@
+#![no_std]
 #![allow(async_fn_in_trait)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
