@@ -27,7 +27,7 @@ pub enum Qos {
     /// Distribute evenly among client
     Fair,
     /// Reserve at least N packets for each client
-    Guaranteed(u8),
+    Guaranteed(usize),
     /// No guarantees
     None,
 }
@@ -46,15 +46,22 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
     }
 
     fn available(&self, qos: Qos, client: usize) -> usize {
-        // Max quota available to a new client.
-        let max = match qos {
-            Qos::None => N,
-            Qos::Fair => N / CLIENTS,
-            Qos::Guaranteed(n) => N - (CLIENTS - 1),
-        };
-
-        // Subtract actual usage of client
-        max.checked_sub(self.usage[client]).unwrap_or(0)
+        match qos {
+            Qos::None => N.checked_sub(self.usage.iter().sum()).unwrap_or(0),
+            Qos::Fair => (N / CLIENTS).checked_sub(self.usage[client]).unwrap_or(0),
+            Qos::Guaranteed(n) => {
+                // Reserved for clients that should have minimum
+                let reserved = n * self.usage.iter().filter(|c| **c == 0).count();
+                let reserved = reserved
+                    - if self.usage[client] < n {
+                        n - self.usage[client]
+                    } else {
+                        0
+                    };
+                let usage = reserved + self.usage.iter().sum::<usize>();
+                N.checked_sub(usage).unwrap_or(0)
+            }
+        }
     }
 }
 
@@ -80,6 +87,7 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
             let mut state = state.borrow_mut();
 
             let available = state.available(self.qos, id);
+            println!("AVAILABLE: {}", available);
             if available == 0 {
                 return None;
             }
@@ -168,5 +176,88 @@ impl<'d> AsMut<[u8]> for Packet<'d> {
     fn as_mut(&mut self) -> &mut [u8] {
         let p = self.p_ref.as_mut().unwrap();
         &mut p.buf[..]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    use super::*;
+
+    #[test]
+    fn test_fair_qos() {
+        let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::Fair);
+
+        let a1 = pool.alloc(0);
+        assert!(a1.is_some());
+        let a2 = pool.alloc(0);
+        assert!(a2.is_some());
+        assert!(pool.alloc(0).is_none());
+        drop(a2);
+        let a3 = pool.alloc(0);
+        assert!(a3.is_some());
+
+        let b1 = pool.alloc(1);
+        assert!(b1.is_some());
+
+        let c1 = pool.alloc(2);
+        assert!(c1.is_some());
+    }
+
+    #[test]
+    fn test_none_qos() {
+        let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::None);
+
+        let a1 = pool.alloc(0);
+        assert!(a1.is_some());
+        let a2 = pool.alloc(0);
+        assert!(a2.is_some());
+        let a3 = pool.alloc(0);
+        assert!(a3.is_some());
+        let a4 = pool.alloc(0);
+        assert!(a4.is_some());
+        let a5 = pool.alloc(0);
+        assert!(a5.is_some());
+        let a6 = pool.alloc(0);
+        assert!(a6.is_some());
+        let a7 = pool.alloc(0);
+        assert!(a7.is_some());
+
+        let b1 = pool.alloc(1);
+        assert!(b1.is_some());
+
+        let b2 = pool.alloc(1);
+        assert!(b2.is_none());
+    }
+
+    #[test]
+    fn test_guaranteed_qos() {
+        let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::Guaranteed(1));
+
+        let a1 = pool.alloc(0);
+        assert!(a1.is_some());
+        let a2 = pool.alloc(0);
+        assert!(a2.is_some());
+        let a3 = pool.alloc(0);
+        assert!(a3.is_some());
+        let a4 = pool.alloc(0);
+        assert!(a4.is_some());
+        let a5 = pool.alloc(0);
+        assert!(a5.is_some());
+        // Needs at least 3 for the other clients
+        assert!(pool.alloc(0).is_none());
+
+        let b1 = pool.alloc(1);
+        assert!(b1.is_some());
+        assert!(pool.alloc(1).is_none());
+
+        let c1 = pool.alloc(2);
+        assert!(c1.is_some());
+        assert!(pool.alloc(2).is_none());
+
+        let d1 = pool.alloc(3);
+        assert!(d1.is_some());
+        assert!(pool.alloc(3).is_none());
     }
 }
