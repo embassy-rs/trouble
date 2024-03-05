@@ -125,6 +125,7 @@ async fn main(spawner: Spawner) {
         .done();
     let mut attributes = attributes.build();
 
+    // TODO: Figure out these lifetimes
     let adapter: &'static Adapter<'static> = unsafe { core::mem::transmute(&adapter) };
     let mut server = adapter.gatt(&mut attributes[..]);
 
