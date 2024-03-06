@@ -74,7 +74,7 @@ impl ConnectionStorage {
 }
 
 struct ChannelStorage<M: RawMutex> {
-    state: Option<L2capState<M, L2CAP_MTU>>,
+    state: Option<L2capState<M>>,
 }
 
 impl<M: RawMutex> ChannelStorage<M> {
@@ -438,7 +438,11 @@ where
     }
 }
 
-pub struct L2capChannel<'d> {
-    rx: DynamicReceiver<'d, (ConnHandle, Packet<'d>)>,
+pub struct L2capChannel<'d, M, const RXQ: usize>
+where
+    M: RawMutex,
+{
+    conn: ConnHandle,
+    rx: Channel<M, Packet<'d>, RXQ>,
     tx: DynamicSender<'d, (ConnHandle, Packet<'d>)>,
 }
