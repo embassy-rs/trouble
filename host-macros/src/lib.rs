@@ -1,7 +1,7 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, parse_quote, Data, DeriveInput, Fields};
+use syn::{parse_quote, Data, DeriveInput, Fields};
 
 #[proc_macro_derive(Codec)]
 pub fn derive_codec_fn(item: TokenStream) -> TokenStream {
