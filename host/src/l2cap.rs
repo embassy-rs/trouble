@@ -1,11 +1,6 @@
 use crate::codec;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::L2CAP_RXQ;
 use bt_hci::data::AclPacket;
-use bt_hci::param::ConnHandle;
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{Channel, DynamicSender, Receiver, Sender};
-use heapless::Vec;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]

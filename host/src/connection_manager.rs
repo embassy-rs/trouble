@@ -14,12 +14,47 @@ impl<'d, M: RawMutex> ConnectionManager<'d, M> {
         }
     }
 
-    pub fn update<F: FnOnce(&mut ConnectionState)>(&self, f: F) {
-        todo!()
+    pub fn update<F: FnOnce(&mut ConnectionState)>(&self, handle: ConnHandle, f: F) -> Result<(), ()> {
+        self.connections.lock(|connections| {
+            let mut connections = connections.borrow_mut();
+            for storage in connections.iter_mut() {
+                if let Some(stored) = storage.state.as_mut() {
+                    if stored.handle == handle {
+                        f(stored);
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        })
     }
 
-    pub fn create(&self, handle: ConnHandle, state: &ConnectionState) -> Result<(), ()> {
-        todo!()
+    pub fn delete(&self, handle: ConnHandle) -> Result<(), ()> {
+        self.connections.lock(|connections| {
+            let mut connections = connections.borrow_mut();
+            for storage in connections.iter_mut() {
+                if let Some(stored) = &storage.state {
+                    if stored.handle == handle {
+                        storage.state.take();
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub fn create(&self, handle: ConnHandle, state: ConnectionState) -> Result<(), ()> {
+        self.connections.lock(|connections| {
+            let mut connections = connections.borrow_mut();
+            for storage in connections.iter_mut() {
+                if storage.state.is_none() {
+                    storage.state.replace(state);
+                    return Ok(());
+                }
+            }
+            Err(())
+        })
     }
 }
 
@@ -33,11 +68,11 @@ impl ConnectionStorage {
 
 #[derive(Clone)]
 pub struct ConnectionState {
-    handle: ConnHandle,
-    status: Status,
-    role: LeConnRole,
-    peer_address: BdAddr,
-    interval: u16,
-    latency: u16,
-    timeout: u16,
+    pub(crate) handle: ConnHandle,
+    pub(crate) status: Status,
+    pub(crate) role: LeConnRole,
+    pub(crate) peer_address: BdAddr,
+    pub(crate) interval: u16,
+    pub(crate) latency: u16,
+    pub(crate) timeout: u16,
 }
