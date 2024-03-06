@@ -23,11 +23,13 @@ mod codec;
 mod connection_manager;
 mod cursor;
 mod packet_pool;
-pub(crate) mod types;
+mod pdu;
+pub mod types;
 
 pub use packet_pool::Qos as PacketQos;
 
 pub mod adapter;
+pub mod connection;
 pub mod gatt;
 pub mod l2cap;
 

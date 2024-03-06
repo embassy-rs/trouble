@@ -1,6 +1,10 @@
 use crate::codec;
 use crate::cursor::{ReadCursor, WriteCursor};
+use crate::pdu::Pdu;
 use bt_hci::data::AclPacket;
+use bt_hci::param::ConnHandle;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
@@ -28,4 +32,10 @@ impl<'d> L2capPacket<'d> {
         w.append(&self.payload[..])?;
         Ok(w.len())
     }
+}
+
+pub struct L2capChannel<'d> {
+    conn: ConnHandle,
+    rx: DynamicReceiver<'d, Pdu<'d>>,
+    tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
 }

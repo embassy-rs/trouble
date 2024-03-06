@@ -4,6 +4,7 @@ use crate::connection_manager::{ConnectionManager, ConnectionState, ConnectionSt
 use crate::cursor::WriteCursor;
 use crate::l2cap::{self, L2capPacket}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
 use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, Qos, POOL_ATT_CLIENT_ID};
+use crate::pdu::Pdu;
 use crate::Error;
 use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
@@ -64,58 +65,6 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             control: Channel::new(),
             acceptor: Channel::new(),
         }
-    }
-}
-
-pub struct Pdu<'d> {
-    pub packet: Packet<'d>,
-    pub len: usize,
-}
-
-impl<'d> Pdu<'d> {
-    pub fn new(packet: Packet<'d>, len: usize) -> Self {
-        Self { packet, len }
-    }
-}
-
-impl<'d> AsRef<[u8]> for Pdu<'d> {
-    fn as_ref(&self) -> &[u8] {
-        &self.packet.as_ref()[..self.len]
-    }
-}
-
-impl<'d> AsMut<[u8]> for Pdu<'d> {
-    fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.packet.as_mut()[..self.len]
-    }
-}
-
-#[derive(Clone)]
-pub struct Connection<'d> {
-    handle: ConnHandle,
-    tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
-    control: DynamicSender<'d, ControlCommand>,
-}
-
-impl<'d> Connection<'d> {
-    pub async fn accept<M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
-        resources: &'d AdapterResources<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Self {
-        let handle = resources.acceptor.receive().await;
-        Connection {
-            handle,
-            tx: resources.outbound.sender().into(),
-            control: resources.control.sender().into(),
-        }
-    }
-
-    pub async fn disconnect(&mut self) {
-        self.control
-            .send(ControlCommand::Disconnect(DisconnectParams {
-                handle: self.handle,
-                reason: DisconnectReason::RemoteUserTerminatedConn,
-            }))
-            .await;
     }
 }
 
@@ -362,13 +311,4 @@ where
             }
         }
     }
-}
-
-pub struct L2capChannel<'d, M, const RXQ: usize>
-where
-    M: RawMutex,
-{
-    conn: ConnHandle,
-    rx: Channel<M, Packet<'d>, RXQ>,
-    tx: DynamicSender<'d, (ConnHandle, Packet<'d>)>,
 }
