@@ -18,8 +18,9 @@ use trouble_host::{
     ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     adapter::AdvertiseConfig,
     adapter::Config as BleConfig,
-    adapter::{Adapter, AdapterResources, Connection, HostResources},
+    adapter::{Adapter, AdapterResources, HostResources},
     attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
+    connection::Connection,
     gatt::{GattEvent, GattServer},
     PacketQos,
 };

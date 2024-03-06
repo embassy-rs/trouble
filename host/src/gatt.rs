@@ -1,10 +1,10 @@
 use crate::adapter::AdapterResources;
-use crate::adapter::Connection;
-use crate::adapter::Pdu;
 use crate::att::Att;
 use crate::attribute::Attribute;
 use crate::attribute_server::AttributeServer;
+use crate::connection::Connection;
 use crate::l2cap::L2capPacket;
+use crate::pdu::Pdu;
 use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{DynamicReceiver, DynamicSender};
