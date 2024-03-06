@@ -1,12 +1,7 @@
-use core::cell::RefCell;
-
 use crate::ad_structure::AdStructure;
-use crate::attribute::Attribute;
-use crate::attribute_server::AttributeServer;
 use crate::channel_manager::{ChannelManager, ChannelStorage};
-use crate::connection_manager::{ConnectionManager, ConnectionStorage};
+use crate::connection_manager::{ConnectionManager, ConnectionState, ConnectionStorage};
 use crate::cursor::WriteCursor;
-use crate::gatt::GattServer;
 use crate::l2cap::{self, L2capPacket}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
 use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, Qos, POOL_ATT_CLIENT_ID};
 use crate::Error;
@@ -301,24 +296,26 @@ where
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => {
                                 info!("Connection complete: {:?}!", e);
-                                /*
-                                let mut inner = self.state.borrow_mut();
-                                for conn in inner.connections.iter_mut() {
-                                    if conn.state.is_none() {
-                                        conn.state.replace(ConnectionState {
-                                            handle: e.handle,
-                                            status: e.status,
-                                            role: e.role,
-                                            peer_address: e.peer_addr,
-                                            interval: e.conn_interval.as_u16(),
-                                            latency: e.peripheral_latency,
-                                            timeout: e.supervision_timeout.as_u16(),
-                                        });
-                                        // TODO:
-                                        self.acceptor.try_send(e.handle).unwrap();
-                                        break;
-                                    }
-                                }*/
+                                if let Ok(_) = self.connections.create(
+                                    e.handle,
+                                    ConnectionState {
+                                        handle: e.handle,
+                                        status: e.status,
+                                        role: e.role,
+                                        peer_address: e.peer_addr,
+                                        interval: e.conn_interval.as_u16(),
+                                        latency: e.peripheral_latency,
+                                        timeout: e.supervision_timeout.as_u16(),
+                                    },
+                                ) {
+                                    // TODO:
+                                    self.acceptor.try_send(e.handle).unwrap();
+                                } else {
+                                    Disconnect::new(e.handle, DisconnectReason::RemoteDeviceTerminatedConnLowResources)
+                                        .exec(controller)
+                                        .await
+                                        .unwrap();
+                                }
                             }
                             _ => {
                                 warn!("Unknown event: {:?}", event);
@@ -326,16 +323,8 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             info!("Disconnected: {:?}", e);
-                            /*
-                            let mut inner = self.state.borrow_mut();
-                            for conn in inner.connections.iter_mut() {
-                                if let Some(state) = &mut conn.state {
-                                    if state.handle == e.handle {
-                                        conn.state.take();
-                                    }
-                                    break;
-                                }
-                            }*/
+                            // TODO:
+                            self.connections.delete(e.handle).unwrap();
                         }
                         Event::NumberOfCompletedPackets(c) => {}
                         _ => {

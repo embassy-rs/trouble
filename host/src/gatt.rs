@@ -1,5 +1,3 @@
-use core::borrow::BorrowMut;
-
 use crate::adapter::AdapterResources;
 use crate::adapter::Connection;
 use crate::adapter::Pdu;
