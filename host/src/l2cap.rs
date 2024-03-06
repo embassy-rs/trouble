@@ -34,14 +34,3 @@ impl<'d> L2capPacket<'d> {
         Ok(w.len())
     }
 }
-
-pub struct L2capState<'d> {
-    conn: ConnHandle,
-    mtu: u16,
-
-    cid: u16,
-    peer_cid: u16,
-    rx: DynamicSender<'d, Pdu<'d>>,
-}
-
-impl<M: RawMutex> L2capState<M> {}

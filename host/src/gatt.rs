@@ -1,3 +1,6 @@
+use core::borrow::BorrowMut;
+
+use crate::adapter::AdapterResources;
 use crate::adapter::Connection;
 use crate::adapter::Pdu;
 use crate::att::Att;
@@ -5,17 +8,29 @@ use crate::attribute::Attribute;
 use crate::attribute_server::AttributeServer;
 use crate::l2cap::L2capPacket;
 use bt_hci::param::ConnHandle;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{DynamicReceiver, DynamicSender};
 
 pub struct GattServer<'a, 'b, 'd> {
-    pub(crate) server: AttributeServer<'a, 'd>,
-    pub(crate) rx: DynamicReceiver<'b, (ConnHandle, Pdu<'b>)>,
-    pub(crate) tx: DynamicSender<'b, (ConnHandle, Pdu<'b>)>,
+    server: AttributeServer<'a, 'b>,
+    rx: DynamicReceiver<'d, (ConnHandle, Pdu<'d>)>,
+    tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
 }
 
 impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
+    pub fn new<M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
+        resources: &'d AdapterResources<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        attributes: &'a mut [Attribute<'b>],
+    ) -> Self {
+        Self {
+            server: AttributeServer::new(attributes),
+            rx: resources.att_channel.receiver().into(),
+            tx: resources.outbound.sender().into(),
+        }
+    }
+
     // TODO: Actually return events
-    pub async fn next(&mut self) -> GattEvent<'b> {
+    pub async fn next(&mut self) -> GattEvent<'d> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             match Att::decode(pdu.as_ref()) {

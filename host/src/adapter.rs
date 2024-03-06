@@ -3,13 +3,13 @@ use core::cell::RefCell;
 use crate::ad_structure::AdStructure;
 use crate::attribute::Attribute;
 use crate::attribute_server::AttributeServer;
+use crate::channel_manager::{ChannelManager, ChannelStorage};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
 use crate::gatt::GattServer;
-use crate::l2cap::{L2capPacket, L2capState}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
-use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, POOL_ATT_CLIENT_ID};
+use crate::l2cap::{self, L2capPacket}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
+use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, Qos, POOL_ATT_CLIENT_ID};
 use crate::Error;
-use crate::L2CAP_MTU;
-use crate::L2CAP_TXQ;
 use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
@@ -24,20 +24,50 @@ use embassy_futures::select::{select3, Either3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
 
-pub struct AdapterResources<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize> {
+pub struct HostResources<
+    M: RawMutex,
+    const CONNS: usize,
+    const CHANNELS: usize,
+    const PACKETS: usize,
+    const L2CAP_MTU: usize,
+> {
     connections: [ConnectionStorage; CONNS],
-    channels: [ChannelStorage<M>; CHANNELS],
+    channels: [ChannelStorage; CHANNELS],
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
+    // TODO: Separate ATT pool?
 }
 
-impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize>
-    AdapterResources<M, CONNS, CHANNELS, PACKETS>
+impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
+    HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>
 {
-    pub fn new() -> Self {
+    pub const fn new(qos: Qos) -> Self {
         Self {
-            connections: [ConnectionStorage::EMPTY; CONNS],
-            channels: [ChannelStorage::EMPTY; CHANNELS],
-            pool: PacketPool::new(crate::packet_pool::Qos::None),
+            connections: [ConnectionStorage::UNUSED; CONNS],
+            channels: [ChannelStorage::UNUSED; CHANNELS],
+            pool: PacketPool::new(qos),
+        }
+    }
+}
+
+pub struct AdapterResources<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize> {
+    pub(crate) l2cap_channels: [Channel<M, Pdu<'d>, L2CAP_RXQ>; CHANNELS],
+    pub(crate) att_channel: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
+    pub(crate) outbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_TXQ>,
+    pub(crate) control: Channel<M, ControlCommand, 1>,
+    pub(crate) acceptor: Channel<M, ConnHandle, 1>,
+}
+
+impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
+    AdapterResources<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
+{
+    const NEW_L2CAP: Channel<M, Pdu<'d>, L2CAP_RXQ> = Channel::new();
+    pub const fn new() -> Self {
+        Self {
+            l2cap_channels: [Self::NEW_L2CAP; CHANNELS],
+            att_channel: Channel::new(),
+            outbound: Channel::new(),
+            control: Channel::new(),
+            acceptor: Channel::new(),
         }
     }
 }
@@ -65,32 +95,6 @@ impl<'d> AsMut<[u8]> for Pdu<'d> {
     }
 }
 
-struct ConnectionStorage {
-    state: Option<ConnectionState>,
-}
-
-impl ConnectionStorage {
-    const EMPTY: Self = Self { state: None };
-}
-
-struct ChannelStorage<M: RawMutex> {
-    state: Option<L2capState<M>>,
-}
-
-impl<M: RawMutex> ChannelStorage<M> {
-    const EMPTY: Self = Self { state: None };
-}
-
-pub struct ConnectionState {
-    handle: ConnHandle,
-    status: Status,
-    role: LeConnRole,
-    peer_address: BdAddr,
-    interval: u16,
-    latency: u16,
-    timeout: u16,
-}
-
 #[derive(Clone)]
 pub struct Connection<'d> {
     handle: ConnHandle,
@@ -99,6 +103,17 @@ pub struct Connection<'d> {
 }
 
 impl<'d> Connection<'d> {
+    pub async fn accept<M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
+        resources: &'d AdapterResources<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Self {
+        let handle = resources.acceptor.receive().await;
+        Connection {
+            handle,
+            tx: resources.outbound.sender().into(),
+            control: resources.control.sender().into(),
+        }
+    }
+
     pub async fn disconnect(&mut self) {
         self.control
             .send(ControlCommand::Disconnect(DisconnectParams {
@@ -124,58 +139,22 @@ impl<'a> Default for Config<'a> {
     }
 }
 
-pub struct Inner<'d, M>
-where
-    M: RawMutex + 'd,
-{
-    connections: &'d mut [ConnectionStorage],
-    channels: &'d mut [ChannelStorage<M>],
-}
-
-impl<'d, M> Inner<'d, M>
-where
-    M: RawMutex,
-{
-    //fn alloc_channel(&mut self, conn: ConnHandle, req: LeCreditConnReq) -> Option<&'d mut L2capState<'d, M>> {
-    //    for chan in self.channels.iter_mut() {
-    //        if chan.state.is_none() {
-    //            info!("Found free channel");
-    //            // TODO: Channel id counter
-    //            //    chan.state.replace(L2capState::new(
-    //            //        conn,
-    //            //        0x40,
-    //            //        req.scid,
-    //            //        req.mtu.min(L2CAP_MTU as u16),
-    //            //        req.credits,
-    //            //    ));
-    //            //    return &mut chan.state;
-    //        }
-    //    }
-    //    None
-    //}
-}
-
-pub struct AdapterState<'d, M>
-where
-    M: RawMutex + 'd,
-{
-    connections: &'d mut [ConnectionStorage],
-    channels: &'d mut [ChannelStorage<M>],
-}
-
 pub struct Adapter<'d, M>
 where
     M: RawMutex + 'd,
 {
-    state: RefCell<AdapterState<'d, M>>,
-    att: Channel<M, (ConnHandle, Pdu<'d>), 1>,
-    outbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_TXQ>,
-    control: Channel<M, ControlCommand, 1>,
-    acceptor: Channel<M, ConnHandle, 1>,
+    connections: ConnectionManager<'d, M>,
+    channels: ChannelManager<'d, M>,
     pool: &'d dyn DynamicPacketPool<'d>,
+
+    outbound: DynamicReceiver<'d, (ConnHandle, Pdu<'d>)>,
+    att: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
+    acceptor: DynamicSender<'d, ConnHandle>,
+    control: DynamicReceiver<'d, ControlCommand>,
+    //l2cap: &'d [DynamicReceiver<'d, Pdu<'d>>],
 }
 
-enum ControlCommand {
+pub(crate) enum ControlCommand {
     Disconnect(DisconnectParams),
 }
 
@@ -183,40 +162,35 @@ impl<'d, M> Adapter<'d, M>
 where
     M: RawMutex + 'd,
 {
-    pub fn new<const CONN: usize, const CHANNELS: usize, const PACKETS: usize>(
-        resources: &'d mut AdapterResources<M, CONN, CHANNELS, PACKETS>,
+    pub fn new<
+        const CONN: usize,
+        const CHANNELS: usize,
+        const PACKETS: usize,
+        const L2CAP_MTU: usize,
+        const L2CAP_TXQ: usize,
+        const L2CAP_RXQ: usize,
+    >(
+        host_resources: &'d mut HostResources<M, CONN, CHANNELS, PACKETS, L2CAP_MTU>,
+        adapter_resources: &'d AdapterResources<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
+        let l2cap: &'d [Channel<M, Pdu<'d>, L2CAP_RXQ>] = adapter_resources.l2cap_channels.iter().as_slice();
+        let l2cap: &'d [Channel<M, Pdu<'d>, L2CAP_RXQ>] = adapter_resources.l2cap_channels.iter().as_slice();
         Self {
-            state: RefCell::new(AdapterState {
-                connections: &mut resources.connections,
-                channels: &mut resources.channels,
-            }),
+            connections: ConnectionManager::new(&mut host_resources.connections),
+            channels: ChannelManager::new(&mut host_resources.channels),
+            pool: &host_resources.pool,
 
-            pool: &resources.pool,
-            att: Channel::new(),
-            outbound: Channel::new(),
-            control: Channel::new(),
-            acceptor: Channel::new(),
-        }
-    }
-
-    pub fn gatt<'a, 'b>(&'d self, attributes: &'a mut [Attribute<'b>]) -> GattServer<'a, 'd, 'b> {
-        GattServer {
-            server: AttributeServer::new(attributes),
-            rx: self.att.receiver().into(),
-            tx: self.outbound.sender().into(),
-        }
-    }
-
-    pub async fn accept(&'d self) -> Connection<'_> {
-        let handle = self.acceptor.receive().await;
-        Connection {
-            handle,
-            tx: self.outbound.sender().into(),
-            control: self.control.sender().into(),
+            outbound: adapter_resources.outbound.receiver().into(),
+            att: adapter_resources.att_channel.sender().into(),
+            acceptor: adapter_resources.acceptor.sender().into(),
+            control: adapter_resources.control.receiver().into(),
         }
     }
 }
+
+const L2CAP_CID_ATT: u16 = 0x0004;
+const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
+const L2CAP_CID_DYN_START: u16 = 0x0040;
 
 impl<'d, M> Adapter<'d, M>
 where
@@ -253,43 +227,6 @@ where
         Ok(())
     }
 
-    pub async fn run<T>(&'d self, controller: &T) -> Result<(), Error<T::Error>>
-    where
-        T: ControllerCmdSync<Disconnect> + ControllerCmdSync<SetEventMask>,
-    {
-        let mut runner = AdapterRunner {
-            state: &self.state,
-            att: self.att.sender().into(),
-            outbound: self.outbound.receiver().into(),
-            control: self.control.receiver().into(),
-            acceptor: self.acceptor.sender().into(),
-            pool: self.pool,
-        };
-
-        runner.run(controller).await?;
-        Ok(())
-    }
-}
-
-pub struct AdapterRunner<'a, 'd, M>
-where
-    M: RawMutex + 'd,
-{
-    state: &'a RefCell<AdapterState<'d, M>>,
-    att: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
-    outbound: DynamicReceiver<'d, (ConnHandle, Pdu<'d>)>,
-    control: DynamicReceiver<'d, ControlCommand>,
-    acceptor: DynamicSender<'d, ConnHandle>,
-    pool: &'d dyn DynamicPacketPool<'d>,
-}
-
-const L2CAP_CID_ATT: u16 = 0x0004;
-const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
-const L2CAP_CID_DYN_START: u16 = 0x0040;
-impl<'a, 'd, M> AdapterRunner<'a, 'd, M>
-where
-    M: RawMutex + 'd,
-{
     async fn handle_acl(&mut self, packet: AclPacket<'_>) -> Result<(), crate::codec::Error> {
         let (conn, packet) = L2capPacket::decode(packet)?;
         match packet.channel {
@@ -364,6 +301,7 @@ where
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => {
                                 info!("Connection complete: {:?}!", e);
+                                /*
                                 let mut inner = self.state.borrow_mut();
                                 for conn in inner.connections.iter_mut() {
                                     if conn.state.is_none() {
@@ -380,7 +318,7 @@ where
                                         self.acceptor.try_send(e.handle).unwrap();
                                         break;
                                     }
-                                }
+                                }*/
                             }
                             _ => {
                                 warn!("Unknown event: {:?}", event);
@@ -388,6 +326,7 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             info!("Disconnected: {:?}", e);
+                            /*
                             let mut inner = self.state.borrow_mut();
                             for conn in inner.connections.iter_mut() {
                                 if let Some(state) = &mut conn.state {
@@ -396,7 +335,7 @@ where
                                     }
                                     break;
                                 }
-                            }
+                            }*/
                         }
                         Event::NumberOfCompletedPackets(c) => {}
                         _ => {

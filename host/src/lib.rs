@@ -10,6 +10,7 @@ use bt_hci::FromHciBytesError;
 pub(crate) const ATT_MTU: usize = 64;
 pub(crate) const L2CAP_MTU: usize = 247;
 
+pub(crate) const ATT_RXQ: usize = 3;
 pub(crate) const L2CAP_RXQ: usize = 3;
 // NOTE: This one is actually shared for all connections
 pub(crate) const L2CAP_TXQ: usize = 3;
@@ -17,10 +18,14 @@ pub(crate) const L2CAP_TXQ: usize = 3;
 mod fmt;
 
 mod att;
+mod channel_manager;
 mod codec;
+mod connection_manager;
 mod cursor;
 mod packet_pool;
 pub(crate) mod types;
+
+pub use packet_pool::Qos as PacketQos;
 
 pub mod adapter;
 pub mod gatt;

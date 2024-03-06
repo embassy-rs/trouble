@@ -18,9 +18,10 @@ use trouble_host::{
     ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     adapter::AdvertiseConfig,
     adapter::Config as BleConfig,
-    adapter::{Adapter as BleAdapter, AdapterResources},
+    adapter::{Adapter as BleAdapter, AdapterResources, Connection, HostResources},
     attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
     gatt::{GattEvent, GattServer},
+    PacketQos,
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -103,8 +104,12 @@ async fn main(spawner: Spawner) {
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    let mut resources: AdapterResources<NoopRawMutex, 1, 1, 32> = AdapterResources::new();
-    let adapter = Adapter::new(&mut resources);
+    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 1, 32, 247>> = StaticCell::new();
+    let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
+
+    static ADAPTER_RESOURCES: StaticCell<AdapterResources<NoopRawMutex, 1, 3, 3>> = StaticCell::new();
+    let adapter_resources = ADAPTER_RESOURCES.init(AdapterResources::new());
+    let mut adapter = Adapter::new(host_resources, adapter_resources);
 
     let config = BleConfig {
         advertise: Some(AdvertiseConfig {
@@ -125,9 +130,7 @@ async fn main(spawner: Spawner) {
         .done();
     let mut attributes = attributes.build();
 
-    // TODO: Figure out these lifetimes
-    let adapter: &'static Adapter<'static> = unsafe { core::mem::transmute(&adapter) };
-    let mut server = adapter.gatt(&mut attributes[..]);
+    let mut server = GattServer::new(adapter_resources, &mut attributes[..]);
 
     unwrap!(adapter.advertise(&sdc, config).await);
 
@@ -145,7 +148,7 @@ async fn main(spawner: Spawner) {
         },
         async {
             loop {
-                let mut _conn = adapter.accept().await;
+                let mut _conn = Connection::accept(adapter_resources).await;
                 info!("New connection accepted!");
             }
         },
