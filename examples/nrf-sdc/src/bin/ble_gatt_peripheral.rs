@@ -18,7 +18,7 @@ use trouble_host::{
     ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     adapter::AdvertiseConfig,
     adapter::Config as BleConfig,
-    adapter::{Adapter as BleAdapter, AdapterResources, Connection, HostResources},
+    adapter::{Adapter, AdapterResources, Connection, HostResources},
     attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
     gatt::{GattEvent, GattServer},
     PacketQos,
@@ -34,8 +34,6 @@ bind_interrupts!(struct Irqs {
     TIMER0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
     RTC0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
 });
-
-type Adapter<'a> = BleAdapter<'a, NoopRawMutex>;
 
 #[embassy_executor::task]
 async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {

@@ -134,7 +134,7 @@ impl<'a> Default for Config<'a> {
     }
 }
 
-pub struct Adapter<'d, M>
+pub struct Adapter<'d, M, const L2CAP_RXQ: usize>
 where
     M: RawMutex + 'd,
 {
@@ -146,14 +146,14 @@ where
     att: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
     acceptor: DynamicSender<'d, ConnHandle>,
     control: DynamicReceiver<'d, ControlCommand>,
-    //l2cap: &'d [DynamicReceiver<'d, Pdu<'d>>],
+    l2cap: &'d [Channel<M, Pdu<'d>, L2CAP_RXQ>],
 }
 
 pub(crate) enum ControlCommand {
     Disconnect(DisconnectParams),
 }
 
-impl<'d, M> Adapter<'d, M>
+impl<'d, M, const L2CAP_RXQ: usize> Adapter<'d, M, L2CAP_RXQ>
 where
     M: RawMutex + 'd,
 {
@@ -163,18 +163,16 @@ where
         const PACKETS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
     >(
         host_resources: &'d mut HostResources<M, CONN, CHANNELS, PACKETS, L2CAP_MTU>,
         adapter_resources: &'d AdapterResources<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
-        let l2cap: &'d [Channel<M, Pdu<'d>, L2CAP_RXQ>] = adapter_resources.l2cap_channels.iter().as_slice();
-        let l2cap: &'d [Channel<M, Pdu<'d>, L2CAP_RXQ>] = adapter_resources.l2cap_channels.iter().as_slice();
         Self {
             connections: ConnectionManager::new(&mut host_resources.connections),
             channels: ChannelManager::new(&mut host_resources.channels),
             pool: &host_resources.pool,
 
+            l2cap: &adapter_resources.l2cap_channels,
             outbound: adapter_resources.outbound.receiver().into(),
             att: adapter_resources.att_channel.sender().into(),
             acceptor: adapter_resources.acceptor.sender().into(),
@@ -187,7 +185,7 @@ const L2CAP_CID_ATT: u16 = 0x0004;
 const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
 const L2CAP_CID_DYN_START: u16 = 0x0040;
 
-impl<'d, M> Adapter<'d, M>
+impl<'d, M, const L2CAP_RXQ: usize> Adapter<'d, M, L2CAP_RXQ>
 where
     M: RawMutex + 'd,
 {
