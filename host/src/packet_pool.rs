@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::{RefCell, UnsafeCell};
 
 use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
 
@@ -33,35 +33,54 @@ pub enum Qos {
 }
 
 struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
-    packets: [PacketBuf<MTU>; N],
-    usage: [usize; CLIENTS],
+    packets: UnsafeCell<[PacketBuf<MTU>; N]>,
+    usage: RefCell<[usize; CLIENTS]>,
 }
 
 impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIENTS> {
     pub const fn new() -> Self {
         Self {
-            packets: [PacketBuf::NEW; N],
-            usage: [0; CLIENTS],
+            packets: UnsafeCell::new([PacketBuf::NEW; N]),
+            usage: RefCell::new([0; CLIENTS]),
         }
     }
 
     fn available(&self, qos: Qos, client: usize) -> usize {
+        let usage = self.usage.borrow();
         match qos {
-            Qos::None => N.checked_sub(self.usage.iter().sum()).unwrap_or(0),
-            Qos::Fair => (N / CLIENTS).checked_sub(self.usage[client]).unwrap_or(0),
+            Qos::None => N.checked_sub(usage.iter().sum()).unwrap_or(0),
+            Qos::Fair => (N / CLIENTS).checked_sub(usage[client]).unwrap_or(0),
             Qos::Guaranteed(n) => {
                 // Reserved for clients that should have minimum
-                let reserved = n * self.usage.iter().filter(|c| **c == 0).count();
-                let reserved = reserved
-                    - if self.usage[client] < n {
-                        n - self.usage[client]
-                    } else {
-                        0
-                    };
-                let usage = reserved + self.usage.iter().sum::<usize>();
+                let reserved = n * usage.iter().filter(|c| **c == 0).count();
+                let reserved = reserved - if usage[client] < n { n - usage[client] } else { 0 };
+                let usage = reserved + usage.iter().sum::<usize>();
                 N.checked_sub(usage).unwrap_or(0)
             }
         }
+    }
+
+    fn alloc(&self, id: usize) -> Option<PacketRef> {
+        let mut usage = self.usage.borrow_mut();
+        let packets = unsafe { &mut *self.packets.get() };
+        for (idx, packet) in packets.iter_mut().enumerate() {
+            if packet.free {
+                packet.free = true;
+                usage[id] += 1;
+                return Some(PacketRef {
+                    idx,
+                    buf: &mut packet.buf[..],
+                });
+            }
+        }
+        None
+    }
+
+    fn free(&self, id: usize, p_ref: PacketRef) {
+        let mut usage = self.usage.borrow_mut();
+        let packets = unsafe { &mut *self.packets.get() };
+        packets[p_ref.idx].free = true;
+        usage[id] -= 1;
     }
 }
 
@@ -70,62 +89,47 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
 ///
 /// The pool has a concept QoS where it
 pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> {
-    state: Mutex<M, RefCell<State<MTU, N, CLIENTS>>>,
+    state: Mutex<M, State<MTU, N, CLIENTS>>,
     qos: Qos,
 }
 
 impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> PacketPool<M, MTU, N, CLIENTS> {
     pub const fn new(qos: Qos) -> Self {
         Self {
-            state: Mutex::new(RefCell::new(State::new())),
+            state: Mutex::new(State::new()),
             qos,
         }
     }
 
     fn alloc(&self, id: usize) -> Option<Packet> {
         self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-
             let available = state.available(self.qos, id);
             if available == 0 {
                 return None;
             }
 
-            for (idx, packet) in state.packets.iter_mut().enumerate() {
-                if packet.free {
-                    packet.free = true;
-                    let buf = unsafe { core::mem::transmute(&mut packet.buf[..]) };
-                    state.usage[id] += 1;
-                    return Some(Packet {
-                        pool: self,
-                        client: id,
-                        p_ref: Some(PacketRef { idx, buf }),
-                    });
-                }
-            }
-            panic!("should never happen");
+            return state.alloc(id).map(|p_ref| Packet {
+                client: id,
+                p_ref: Some(p_ref),
+                pool: self,
+            });
         })
     }
 
     fn free(&self, id: usize, p_ref: PacketRef) {
         self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            state.packets[p_ref.idx].free = true;
-            state.usage[id] -= 1;
+            state.free(id, p_ref);
         });
     }
 
     fn available(&self, id: usize) -> usize {
-        self.state.lock(|state| {
-            let state = state.borrow();
-            state.available(self.qos, id)
-        })
+        self.state.lock(|state| state.available(self.qos, id))
     }
 }
 
 pub trait DynamicPacketPool<'d> {
     fn alloc(&'d self, id: usize) -> Option<Packet<'d>>;
-    fn free(&'d self, id: usize, r: PacketRef<'d>);
+    fn free(&self, id: usize, r: PacketRef);
     fn available(&self, id: usize) -> usize;
 }
 
@@ -140,19 +144,19 @@ impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Dy
         PacketPool::available(self, id)
     }
 
-    fn free(&'d self, id: usize, r: PacketRef<'d>) {
+    fn free(&self, id: usize, r: PacketRef) {
         PacketPool::free(self, id, r)
     }
 }
 
-pub struct PacketRef<'d> {
+pub struct PacketRef {
     idx: usize,
-    buf: &'d mut [u8],
+    buf: *mut [u8],
 }
 
 pub struct Packet<'d> {
     client: usize,
-    p_ref: Option<PacketRef<'d>>,
+    p_ref: Option<PacketRef>,
     pool: &'d dyn DynamicPacketPool<'d>,
 }
 
@@ -167,14 +171,14 @@ impl<'d> Drop for Packet<'d> {
 impl<'d> AsRef<[u8]> for Packet<'d> {
     fn as_ref(&self) -> &[u8] {
         let p = self.p_ref.as_ref().unwrap();
-        &p.buf[..]
+        unsafe { &(*p.buf)[..] }
     }
 }
 
 impl<'d> AsMut<[u8]> for Packet<'d> {
     fn as_mut(&mut self) -> &mut [u8] {
         let p = self.p_ref.as_mut().unwrap();
-        &mut p.buf[..]
+        unsafe { &mut (*p.buf)[..] }
     }
 }
 
