@@ -11,8 +11,8 @@ use embassy_nrf::{bind_interrupts, pac};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use nrf_sdc::{self as sdc, mpsl, mpsl::MultiprotocolServiceLayer};
+use sdc::rng_pool::RngPool;
 use sdc::vendor::ZephyrWriteBdAddr;
-use sdc::{rng_pool::RngPool, SoftdeviceController};
 use static_cell::StaticCell;
 use trouble_host::{
     ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
@@ -104,11 +104,11 @@ async fn main(spawner: Spawner) {
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 1, 32, 247>> = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 2, 32, 247>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 1, 3, 3>> = StaticCell::new();
-    let mut adapter = ADAPTER.init(Adapter::new(host_resources));
+    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 3, 3>> = StaticCell::new();
+    let adapter = ADAPTER.init(Adapter::new(host_resources));
 
     let config = BleConfig {
         advertise: Some(AdvertiseConfig {
@@ -147,10 +147,17 @@ async fn main(spawner: Spawner) {
         },
         async {
             loop {
-                let mut _conn = Connection::accept(adapter).await;
+                let conn = Connection::accept(adapter).await;
                 info!("New connection accepted!");
 
-                //let mut chan = unwrap!(L2capChannel::create(adapter, conn).await);
+                let _ch1 = L2capChannel::accept(adapter, &conn).await;
+
+                info!("New l2cap channel created by remote!");
+
+                let _ch2 = unwrap!(L2capChannel::create(adapter, &conn).await);
+
+                info!("New l2cap channel created by us!");
+                Timer::after(Duration::from_secs(60)).await;
             }
         },
     )

@@ -1,13 +1,13 @@
 use crate::ad_structure::AdStructure;
-use crate::channel_manager::{ChannelManager, ChannelState, ChannelStorage};
+use crate::channel_manager::{ChannelManager, ChannelState, UnboundChannel};
 use crate::connection::ConnEvent;
 use crate::connection_manager::{ConnectionManager, ConnectionState, ConnectionStorage};
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::l2cap::{self, L2capPacket}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
-use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, Qos, POOL_ATT_CLIENT_ID};
+use crate::l2cap::{self, L2capPacket, L2CAP_CID_DYN_START}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
+use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, SignalCode};
-use crate::Error;
+use crate::{codec, Error};
 use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
@@ -32,7 +32,7 @@ pub struct HostResources<
     connections: [ConnectionStorage; CONNS],
     events: [Channel<M, ConnEvent, 1>; CONNS],
 
-    channels: [ChannelStorage; CHANNELS],
+    channels: [ChannelState; CHANNELS],
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
 }
 
@@ -40,11 +40,12 @@ impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usiz
     HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>
 {
     const EVENT_CHAN: Channel<M, ConnEvent, 1> = Channel::new();
+    const FREE_CHAN: ChannelState = ChannelState::Free;
     pub const fn new(qos: Qos) -> Self {
         Self {
             connections: [ConnectionStorage::UNUSED; CONNS],
             events: [Self::EVENT_CHAN; CONNS],
-            channels: [ChannelStorage::UNUSED; CHANNELS],
+            channels: [Self::FREE_CHAN; CHANNELS],
             pool: PacketPool::new(qos),
         }
     }
@@ -74,6 +75,7 @@ pub struct Adapter<'d, M, const CHANNELS: usize, const L2CAP_TXQ: usize, const L
 where
     M: RawMutex + 'd,
 {
+    l2cap_mtu: usize,
     pub(crate) connections: ConnectionManager<'d, M>,
     pub(crate) channels: ChannelManager<'d, M>,
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
@@ -87,6 +89,19 @@ where
 
 pub(crate) enum ControlCommand {
     Disconnect(DisconnectParams),
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum HandleError {
+    Codec(codec::Error),
+    Other,
+}
+
+impl From<codec::Error> for HandleError {
+    fn from(e: codec::Error) -> Self {
+        Self::Codec(e)
+    }
 }
 
 impl<'d, M, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
@@ -104,6 +119,7 @@ where
             pool: &host_resources.pool,
 
             l2cap_channels: [Self::NEW_L2CAP; CHANNELS],
+            l2cap_mtu: L2CAP_MTU,
             att_channel: Channel::new(),
             outbound: Channel::new(),
             control: Channel::new(),
@@ -111,10 +127,6 @@ where
         }
     }
 }
-
-const L2CAP_CID_ATT: u16 = 0x0004;
-const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
-const L2CAP_CID_DYN_START: u16 = 0x0040;
 
 impl<'d, M, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
     Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
@@ -152,38 +164,62 @@ where
         Ok(())
     }
 
-    async fn handle_l2cap_le(&self, conn: ConnHandle, packet: L2capPacket<'_>) -> Result<(), crate::codec::Error> {
+    async fn handle_l2cap_le(&self, conn: ConnHandle, packet: L2capPacket<'_>) -> Result<(), HandleError> {
         let mut r = ReadCursor::new(packet.payload);
         let signal: L2capLeSignal = r.read()?;
         info!("l2cap signalling: {:?}", signal);
         match signal.data {
             L2capLeSignalData::CreditConnReq(req) => {
-                info!("Creating LE connection");
-                // TODO:
-                let mtu = req.mtu.min(247);
-                let cid = self
-                    .channels
-                    .bind(
+                info!("[req] Creating LE connection");
+                let mtu = req.mtu.min(self.l2cap_mtu as u16);
+                let cid = self.channels.alloc(signal.id).map_err(|_| HandleError::Other)?;
+                match self.channels.bind(
+                    signal.id,
+                    UnboundChannel {
                         conn,
-                        ChannelState {
-                            conn,
-                            scid: req.scid,
-                            credits: req.credits,
-                            cid: 0, // Set by channel manager
-                        },
-                    )
-                    .unwrap();
-                todo!()
+                        scid: req.scid,
+                        credits: req.credits,
+                    },
+                ) {
+                    Ok(bound) => {
+                        self.connections
+                            .notify(conn, ConnEvent::Bound(bound))
+                            .await
+                            .map_err(|_| HandleError::Other)?;
+                        Ok(())
+                    }
+                    Err(_) => Err(HandleError::Other),
+                }
+            }
+            L2capLeSignalData::CreditConnRes(req) => {
+                // Must be a response of a previous request which should already by allocated a channel for
+                match self.channels.bind(
+                    signal.id,
+                    UnboundChannel {
+                        conn,
+                        scid: req.dcid,
+                        credits: req.credits,
+                    },
+                ) {
+                    Ok(bound) => {
+                        self.connections
+                            .notify(conn, ConnEvent::Bound(bound))
+                            .await
+                            .map_err(|_| HandleError::Other)?;
+                        Ok(())
+                    }
+                    Err(_) => Err(HandleError::Other),
+                }
             }
             _ => unimplemented!(),
         }
     }
 
-    async fn handle_acl(&self, packet: AclPacket<'_>) -> Result<(), crate::codec::Error> {
+    async fn handle_acl(&self, packet: AclPacket<'_>) -> Result<(), HandleError> {
         let (conn, packet) = L2capPacket::decode(packet)?;
         match packet.channel {
             L2CAP_CID_ATT => {
-                if let Some(mut p) = self.pool.alloc(POOL_ATT_CLIENT_ID) {
+                if let Some(mut p) = self.pool.alloc(ATT_ID) {
                     let len = packet.payload.len();
                     p.as_mut()[..len].copy_from_slice(packet.payload);
                     self.att_channel.send((conn, Pdu { packet: p, len })).await;
