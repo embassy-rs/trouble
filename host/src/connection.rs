@@ -9,7 +9,7 @@ use embassy_sync::{
 
 use crate::{
     adapter::{Adapter, ControlCommand},
-    channel_manager::{BoundChannel, ChannelState},
+    channel_manager::BoundChannel,
     pdu::Pdu,
 };
 
@@ -23,8 +23,8 @@ pub struct Connection<'d> {
 
 // An event related to this connection
 pub(crate) enum ConnEvent {
-    Bound(BoundChannel),
-    Unbound(u16),
+    Bound(u8, BoundChannel),
+    Unbound(u16, u16),
 }
 
 impl<'d> Connection<'d> {

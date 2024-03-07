@@ -1,16 +1,15 @@
-use crate::adapter::{self, Adapter};
+use crate::adapter::Adapter;
 use crate::channel_manager::ChannelManager;
 use crate::codec;
 use crate::connection::{ConnEvent, Connection};
-use crate::connection_manager::ConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::{AllocId, DynamicPacketPool, L2CAP_SIGNAL_ID};
 use crate::pdu::Pdu;
-use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, LeCreditConnReq};
+use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode};
 use bt_hci::data::AclPacket;
 use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
+use embassy_sync::channel::{DynamicReceiver, DynamicSender};
 
 pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
 pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
@@ -93,14 +92,14 @@ impl<'d, M: RawMutex, const MTU: usize> L2capChannel<'d, M, MTU> {
         adapter: &'d Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection<'d>,
         psm: u16,
-    ) -> Self {
+    ) -> Result<Self, ()> {
         let connections = &adapter.connections;
         let channels = &adapter.channels;
         let events = connection.event_receiver();
         loop {
             match events.receive().await {
-                ConnEvent::Bound(state) if state.psm == psm => {
-                    return Self {
+                ConnEvent::Bound(request_id, state) if state.psm == psm => {
+                    let m = Self {
                         mgr: &adapter.channels,
                         cid: state.cid,
                         pool: adapter.pool,
@@ -108,6 +107,42 @@ impl<'d, M: RawMutex, const MTU: usize> L2capChannel<'d, M, MTU> {
                         tx: adapter.outbound.sender().into(),
                         rx: adapter.l2cap_channels[state.idx].receiver().into(),
                     };
+
+                    let mtu = state.remote_mtu.min(MTU as u16);
+                    let mut packet = adapter.pool.alloc(L2CAP_SIGNAL_ID).unwrap();
+
+                    let response = L2capLeSignal::new(
+                        request_id,
+                        L2capLeSignalData::LeCreditConnRes(LeCreditConnRes {
+                            mps: state.mps,
+                            dcid: state.cid,
+                            mtu,
+                            credits: 10,
+                            result: LeCreditConnResultCode::Success,
+                        }),
+                    );
+                    info!("Channel open response: {:02x}", response);
+
+                    let mut w = WriteCursor::new(packet.as_mut());
+                    let (mut header, mut body) = w.split(4).map_err(|_| ())?;
+
+                    body.write(response).map_err(|_| ())?;
+
+                    // TODO: Move into l2cap packet type
+                    header.write(body.len() as u16).map_err(|_| ())?;
+                    header.write(L2CAP_CID_LE_U_SIGNAL).map_err(|_| ())?;
+                    let len = header.len() + body.len();
+
+                    header.finish();
+                    body.finish();
+                    w.finish();
+
+                    adapter
+                        .outbound
+                        .send((connection.handle(), Pdu::new(packet, len)))
+                        .await;
+
+                    return Ok(m);
                 }
                 _ => {
                     todo!()
@@ -122,20 +157,23 @@ impl<'d, M: RawMutex, const MTU: usize> L2capChannel<'d, M, MTU> {
         psm: u16,
     ) -> Result<Self, ()> {
         // TODO: Use unique signal ID to ensure no collision of signal messages
-        let cid = adapter.channels.alloc(0, psm)?;
+        let req_id = 42;
+        let cid = adapter.channels.alloc(req_id, psm)?;
+
         // TODO: error
         let mut packet = adapter.pool.alloc(L2CAP_SIGNAL_ID).unwrap();
 
         let mut w = WriteCursor::new(packet.as_mut());
         let (mut header, mut body) = w.split(4).map_err(|_| ())?;
+
         body.write(L2capLeSignal::new(
             0,
-            L2capLeSignalData::CreditConnReq(LeCreditConnReq {
+            L2capLeSignalData::LeCreditConnReq(LeCreditConnReq {
                 psm,
                 mps: adapter.l2cap_mtu as u16,
                 scid: cid,
                 mtu: MTU as u16,
-                credits: 1,
+                credits: 0,
             }),
         ))
         .map_err(|_| ())?;
@@ -144,6 +182,7 @@ impl<'d, M: RawMutex, const MTU: usize> L2capChannel<'d, M, MTU> {
         header.write(body.len() as u16).map_err(|_| ())?;
         header.write(L2CAP_CID_LE_U_SIGNAL).map_err(|_| ())?;
         let len = header.len() + body.len();
+
         header.finish();
         body.finish();
         w.finish();
@@ -158,7 +197,7 @@ impl<'d, M: RawMutex, const MTU: usize> L2capChannel<'d, M, MTU> {
         let events = connection.event_receiver();
         loop {
             match events.receive().await {
-                ConnEvent::Bound(state) => {
+                ConnEvent::Bound(request_id, state) if request_id == req_id => {
                     // TODO: Send flow with available credits on this channel!
                     let c = Self {
                         mgr: &adapter.channels,

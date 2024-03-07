@@ -3,10 +3,10 @@ use crate::channel_manager::{ChannelManager, ChannelState, UnboundChannel};
 use crate::connection::ConnEvent;
 use crate::connection_manager::{ConnectionManager, ConnectionState, ConnectionStorage};
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::l2cap::{self, L2capPacket, L2CAP_CID_DYN_START}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
-use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, Qos, ATT_ID};
+use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
+use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
-use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, LeCreditConnResultCode, SignalCode};
+use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, LeCreditConnResultCode};
 use crate::{codec, Error};
 use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
@@ -15,12 +15,12 @@ use bt_hci::cmd::SyncCmd;
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask, LeConnRole, Status};
+use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
 use bt_hci::ControllerCmdSync;
 use bt_hci::ControllerToHostPacket;
 use embassy_futures::select::{select3, Either3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
+use embassy_sync::channel::{Channel, DynamicReceiver};
 
 pub struct HostResources<
     M: RawMutex,
@@ -139,8 +139,8 @@ where
     {
         if let Some(adv) = &config.advertise {
             let params = &adv.params.unwrap_or(LeSetAdvParams::new(
-                bt_hci::param::Duration::from_millis(1280),
-                bt_hci::param::Duration::from_millis(1280),
+                bt_hci::param::Duration::from_millis(400),
+                bt_hci::param::Duration::from_millis(400),
                 bt_hci::param::AdvKind::AdvInd,
                 bt_hci::param::AddrKind::PUBLIC,
                 bt_hci::param::AddrKind::PUBLIC,
@@ -167,11 +167,10 @@ where
     async fn handle_l2cap_le(&self, conn: ConnHandle, packet: L2capPacket<'_>) -> Result<(), HandleError> {
         let mut r = ReadCursor::new(packet.payload);
         let signal: L2capLeSignal = r.read()?;
-        info!("l2cap signalling: {:?}", signal);
         match signal.data {
-            L2capLeSignalData::CreditConnReq(req) => {
-                info!("[req] Creating LE connection");
-                let mtu = req.mtu.min(self.l2cap_mtu as u16);
+            L2capLeSignalData::LeCreditConnReq(req) => {
+                info!("[req] Accepting LE connection: {:?}", req);
+                let mps = req.mps.min(self.l2cap_mtu as u16);
                 let cid = self
                     .channels
                     .alloc(signal.id, req.psm)
@@ -180,13 +179,15 @@ where
                     signal.id,
                     UnboundChannel {
                         conn,
+                        mtu: req.mtu,
                         scid: req.scid,
                         credits: req.credits,
+                        mps,
                     },
                 ) {
                     Ok(bound) => {
                         self.connections
-                            .notify(conn, ConnEvent::Bound(bound))
+                            .notify(conn, ConnEvent::Bound(signal.id, bound))
                             .await
                             .map_err(|_| HandleError::Other)?;
                         Ok(())
@@ -194,7 +195,7 @@ where
                     Err(_) => Err(HandleError::Other),
                 }
             }
-            L2capLeSignalData::CreditConnRes(res) => {
+            L2capLeSignalData::LeCreditConnRes(res) => {
                 match res.result {
                     LeCreditConnResultCode::Success => {
                         // Must be a response of a previous request which should already by allocated a channel for
@@ -202,13 +203,15 @@ where
                             signal.id,
                             UnboundChannel {
                                 conn,
+                                mtu: res.mtu,
                                 scid: res.dcid,
                                 credits: res.credits,
+                                mps: res.mps,
                             },
                         ) {
                             Ok(bound) => {
                                 self.connections
-                                    .notify(conn, ConnEvent::Bound(bound))
+                                    .notify(conn, ConnEvent::Bound(signal.id, bound))
                                     .await
                                     .map_err(|_| HandleError::Other)?;
                                 Ok(())
@@ -219,12 +222,15 @@ where
                     _ => Err(HandleError::Other),
                 }
             }
-            _ => unimplemented!(),
+            L2capLeSignalData::CommandRejectRes(reject) => {
+                warn!("Rejected: {:02x}", reject);
+                Ok(())
+            }
         }
     }
 
-    async fn handle_acl(&self, packet: AclPacket<'_>) -> Result<(), HandleError> {
-        let (conn, packet) = L2capPacket::decode(packet)?;
+    async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), HandleError> {
+        let (conn, packet) = L2capPacket::decode(acl)?;
         match packet.channel {
             L2CAP_CID_ATT => {
                 if let Some(mut p) = self.pool.alloc(ATT_ID) {
@@ -237,7 +243,18 @@ where
             }
             L2CAP_CID_LE_U_SIGNAL => self.handle_l2cap_le(conn, packet).await?,
             other if other >= L2CAP_CID_DYN_START => {
-                info!("Got data on dynamic channel {}", other);
+                let idx = self
+                    .channels
+                    .update(packet.channel, |chan| {})
+                    .map_err(|_| HandleError::Other)?;
+                if let Some(mut p) = self.pool.alloc(AllocId::dynamic(idx)) {
+                    let len = packet.payload.len();
+                    p.as_mut()[..len].copy_from_slice(packet.payload);
+                    info!("Sent {} bytes to channel {}", len, packet.channel);
+                    self.l2cap_channels[idx].send(Pdu::new(p, len)).await;
+                } else {
+                    warn!("No memory for channel {}", packet.channel);
+                }
             }
             _ => {
                 unimplemented!()
@@ -323,7 +340,7 @@ where
                         info!("Ignoring packet: {:?}", p);
                     }
                     Err(e) => {
-                        info!("Error receiving packet: {:?}", e);
+                        info!("Error from controller: {:?}", e);
                     }
                 },
                 Either3::Second((handle, pdu)) => {
@@ -333,6 +350,7 @@ where
                         AclBroadcastFlag::PointToPoint,
                         pdu.as_ref(),
                     );
+                    info!("Sent packet to host");
                     match controller.write_acl_data(&acl).await {
                         Ok(_) => {}
                         Err(e) => {
