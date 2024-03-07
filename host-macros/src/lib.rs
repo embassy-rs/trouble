@@ -33,7 +33,7 @@ pub fn derive_codec_fn(item: TokenStream) -> TokenStream {
                     offsets.push(fsize.clone());
 
                     field_encoders.push(quote! {
-                        if #offset + #fsize < dest.len() {
+                        if #offset + #fsize <= dest.len() {
                             self.#fname.encode(&mut dest[#offset..#offset + #fsize])?;
                         } else {
                             return Err(Error::InsufficientSpace);
@@ -41,7 +41,7 @@ pub fn derive_codec_fn(item: TokenStream) -> TokenStream {
                     });
 
                     field_decoders.push(quote! {
-                        #fname : if #offset + #fsize < src.len() {
+                        #fname : if #offset + #fsize <= src.len() {
                             <#ftype as Decode>::decode(&src[#offset..#offset + #fsize])?
                         } else {
                             return Err(Error::InsufficientSpace);

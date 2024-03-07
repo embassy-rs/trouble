@@ -16,19 +16,20 @@ impl<'d, M: RawMutex> ChannelManager<'d, M> {
         }
     }
 
-    pub fn update<F: FnOnce(&mut ChannelState)>(&self, c_id: u16, f: F) -> Result<(), ()> {
+    pub fn update<F: FnOnce(&mut ChannelState)>(&self, c_id: u16, f: F) -> Result<usize, ()> {
         self.channels.lock(|channels| {
             let mut channels = channels.borrow_mut();
             for storage in channels.iter_mut() {
                 match storage {
-                    ChannelState::Bound(BoundChannel { cid, .. }) if *cid == c_id => {
+                    ChannelState::Bound(BoundChannel { cid, idx, .. }) if *cid == c_id => {
+                        let idx = *idx;
                         f(storage);
-                        break;
+                        return Ok(idx);
                     }
                     _ => {}
                 }
             }
-            Ok(())
+            Err(())
         })
     }
 
@@ -75,10 +76,12 @@ impl<'d, M: RawMutex> ChannelManager<'d, M> {
                             conn: state.conn,
                             cid,
                             idx,
+                            mps: state.mps,
                             psm: *psm,
                             credits: 1,
                             remote_cid: state.scid,
                             remote_credits: state.credits,
+                            remote_mtu: state.mtu,
                         };
                         *storage = ChannelState::Bound(state.clone());
                         return Ok(state);
@@ -103,6 +106,8 @@ pub struct UnboundChannel {
     pub(crate) conn: ConnHandle,
     pub(crate) scid: u16,
     pub(crate) credits: u16,
+    pub(crate) mps: u16,
+    pub(crate) mtu: u16,
 }
 
 #[derive(Clone)]
@@ -111,8 +116,10 @@ pub struct BoundChannel {
     pub(crate) cid: u16,
     pub(crate) idx: usize,
     pub(crate) psm: u16,
+    pub(crate) mps: u16,
 
     pub(crate) credits: u16,
     pub(crate) remote_cid: u16,
     pub(crate) remote_credits: u16,
+    pub(crate) remote_mtu: u16,
 }

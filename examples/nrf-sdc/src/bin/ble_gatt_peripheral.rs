@@ -150,7 +150,7 @@ async fn main(spawner: Spawner) {
                 let conn = Connection::accept(adapter).await;
                 info!("New connection accepted!");
 
-                let _ch1: L2capChannel<'_, _, 27> = L2capChannel::accept(adapter, &conn, 0x1001).await;
+                let ch1: L2capChannel<'_, _, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
 
                 info!("New l2cap channel created by remote!");
 

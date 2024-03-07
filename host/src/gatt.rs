@@ -47,7 +47,7 @@ impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
                     }
                 },
                 Err(e) => {
-                    warn!("Error decoding attribute request: {:?}", e);
+                    warn!("Error decoding attribute request: {:02x}", e);
                 }
             }
         }

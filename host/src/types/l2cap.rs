@@ -80,26 +80,30 @@ impl Decode for SignalCode {
 #[derive(Debug)]
 pub struct L2capLeSignal {
     pub id: u8,
-    len: u16,
     pub data: L2capLeSignalData,
 }
 
 impl L2capLeSignal {
     pub fn new(id: u8, data: L2capLeSignalData) -> Self {
-        Self { id, len: 0, data }
+        Self { id, data }
     }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum L2capLeSignalData {
-    CreditConnReq(LeCreditConnReq),
-    CreditConnRes(LeCreditConnRes),
+    CommandRejectRes(CommandRejectRes),
+    LeCreditConnReq(LeCreditConnReq),
+    LeCreditConnRes(LeCreditConnRes),
 }
 
 impl Type for L2capLeSignal {
     fn size(&self) -> usize {
-        4 + self.len as usize
+        4 + match &self.data {
+            L2capLeSignalData::CommandRejectRes(r) => r.size(),
+            L2capLeSignalData::LeCreditConnReq(r) => r.size(),
+            L2capLeSignalData::LeCreditConnRes(r) => r.size(),
+        }
     }
 }
 
@@ -108,13 +112,17 @@ impl Encode for L2capLeSignal {
         let mut w = WriteCursor::new(dest);
         let (mut header, mut data) = w.split(4)?;
         let (code, len) = match &self.data {
-            L2capLeSignalData::CreditConnReq(r) => {
+            L2capLeSignalData::LeCreditConnReq(r) => {
                 data.write_ref(r)?;
-                (SignalCode::CreditConnReq, r.size())
+                (SignalCode::LeCreditConnReq, r.size())
             }
-            L2capLeSignalData::CreditConnRes(r) => {
+            L2capLeSignalData::LeCreditConnRes(r) => {
                 data.write_ref(r)?;
-                (SignalCode::CreditConnRes, r.size())
+                (SignalCode::LeCreditConnRes, r.size())
+            }
+            L2capLeSignalData::CommandRejectRes(r) => {
+                data.write_ref(r)?;
+                (SignalCode::CommandRejectRes, r.size())
             }
         };
         header.write(code)?;
@@ -131,20 +139,26 @@ impl Decode for L2capLeSignal {
         let code: SignalCode = r.read()?;
         let id: u8 = r.read()?;
         let len: u16 = r.read()?;
+        assert!(len <= r.available() as u16);
         let data = match code {
-            SignalCode::CreditConnReq => {
+            SignalCode::LeCreditConnReq => {
                 let req = r.read()?;
-                L2capLeSignalData::CreditConnReq(req)
+                L2capLeSignalData::LeCreditConnReq(req)
             }
-            SignalCode::CreditConnRes => {
+            SignalCode::LeCreditConnRes => {
                 let res = r.read()?;
-                L2capLeSignalData::CreditConnRes(res)
+                L2capLeSignalData::LeCreditConnRes(res)
             }
-            _ => {
-                unimplemented!()
+            SignalCode::CommandRejectRes => {
+                let res = r.read()?;
+                L2capLeSignalData::CommandRejectRes(res)
+            }
+            code => {
+                warn!("Unimplemented signal code: {:02x}", code);
+                panic!();
             }
         };
-        Ok(Self { id, len, data })
+        Ok(Self { id, data })
     }
 }
 
@@ -224,4 +238,11 @@ pub struct LeCreditConnRes {
 pub struct LeCreditFlowInd {
     pub cid: u16,
     pub credits: u16,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Codec)]
+pub struct CommandRejectRes {
+    pub reason: u16,
+    // TODO: Optional fields pub data: u16,
 }

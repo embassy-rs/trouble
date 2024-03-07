@@ -23,6 +23,8 @@ pub const ATT_PREPARE_WRITE_REQ_OPCODE: u8 = 0x16;
 pub const ATT_PREPARE_WRITE_RESP_OPCODE: u8 = 0x17;
 pub const ATT_EXECUTE_WRITE_REQ_OPCODE: u8 = 0x18;
 pub const ATT_EXECUTE_WRITE_RESP_OPCODE: u8 = 0x19;
+pub const ATT_READ_MULTIPLE_REQ_OPCODE: u8 = 0x20;
+pub const ATT_READ_MULTIPLE_RES_OPCODE: u8 = 0x21;
 pub const ATT_READ_BLOB_REQ_OPCODE: u8 = 0x0c;
 pub const ATT_READ_BLOB_RESP_OPCODE: u8 = 0x0d;
 pub const ATT_HANDLE_VALUE_NTF_OPTCODE: u8 = 0x1b;
@@ -110,6 +112,9 @@ pub enum Att<'d> {
     },
     ExecuteWriteReq {
         flags: u8,
+    },
+    ReadMultipleReq {
+        handles: &'d [u8],
     },
     ReadBlobReq {
         handle: u16,
@@ -239,6 +244,7 @@ impl<'d> Att<'d> {
                 let flags = payload[0];
                 Ok(Self::ExecuteWriteReq { flags })
             }
+            ATT_READ_MULTIPLE_REQ_OPCODE => Ok(Self::ReadMultipleReq { handles: payload }),
             ATT_READ_BLOB_REQ_OPCODE => {
                 let handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
                 let offset = (payload[2] as u16) + ((payload[3] as u16) << 8);

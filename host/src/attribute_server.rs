@@ -372,6 +372,16 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
         }
     }
 
+    fn handle_read_multiple(&mut self, handles: &[u8]) -> Result<usize, AttributeServerError> {
+        let w = WriteCursor::new(&mut self.buf);
+        Ok(Self::error_response(
+            w,
+            att::ATT_READ_MULTIPLE_REQ_OPCODE,
+            u16::from_le_bytes([handles[0], handles[1]]),
+            AttErrorCode::AttributeNotFound,
+        )?)
+    }
+
     /// Process an adapter event and produce a response if necessary
     pub fn process(&mut self, packet: Att) -> Result<Option<&[u8]>, AttributeServerError> {
         let len = match packet {
@@ -412,6 +422,8 @@ impl<'a, 'd> AttributeServer<'a, 'd> {
             Att::ExecuteWriteReq { flags } => self.handle_execute_write(flags)?,
 
             Att::ReadBlobReq { handle, offset } => self.handle_read_blob(handle, offset)?,
+
+            Att::ReadMultipleReq { handles } => self.handle_read_multiple(handles)?,
         };
         if len > 0 {
             Ok(Some(&self.buf[..len]))
