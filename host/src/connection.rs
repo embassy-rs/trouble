@@ -2,10 +2,13 @@ use bt_hci::{
     cmd::link_control::DisconnectParams,
     param::{ConnHandle, DisconnectReason},
 };
-use embassy_sync::{blocking_mutex::raw::RawMutex, channel::DynamicSender};
+use embassy_sync::{
+    blocking_mutex::raw::RawMutex,
+    channel::{DynamicReceiver, DynamicSender},
+};
 
 use crate::{
-    adapter::{AdapterResources, ControlCommand},
+    adapter::{Adapter, ControlCommand},
     pdu::Pdu,
 };
 
@@ -14,17 +17,25 @@ pub struct Connection<'d> {
     handle: ConnHandle,
     tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
     control: DynamicSender<'d, ControlCommand>,
+    event: DynamicReceiver<'d, ConnEvent>,
+}
+
+// An event related to this connection
+pub(crate) enum ConnEvent {
+    Bound(ConnHandle, u16),
+    Unbound(ConnHandle, u16),
 }
 
 impl<'d> Connection<'d> {
     pub async fn accept<M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
-        resources: &'d AdapterResources<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &'d Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
-        let handle = resources.acceptor.receive().await;
+        let event = adapter.acceptor.receive().await;
         Connection {
-            handle,
-            tx: resources.outbound.sender().into(),
-            control: resources.control.sender().into(),
+            handle: event.handle,
+            tx: adapter.outbound.sender().into(),
+            control: adapter.control.sender().into(),
+            event: event.events,
         }
     }
 

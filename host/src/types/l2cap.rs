@@ -1,4 +1,7 @@
-use crate::codec::{Decode, Encode, Error, FixedSize};
+use crate::{
+    codec::{Decode, Encode, Error, FixedSize, Type},
+    cursor::{ReadCursor, WriteCursor},
+};
 use trouble_host_macros::*;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -75,10 +78,10 @@ impl Decode for SignalCode {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
-pub struct L2capLeSignal<'d> {
-    pub code: SignalCode,
+pub struct L2capLeSignal {
     pub id: u8,
-    pub data: &'d [u8],
+    len: u16,
+    pub data: L2capLeSignalData,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -86,6 +89,57 @@ pub struct L2capLeSignal<'d> {
 pub enum L2capLeSignalData {
     CreditConnReq(LeCreditConnReq),
     CreditConnRes(LeCreditConnRes),
+}
+
+impl Type for L2capLeSignal {
+    fn size(&self) -> usize {
+        4 + self.len as usize
+    }
+}
+
+impl Encode for L2capLeSignal {
+    fn encode(&self, dest: &mut [u8]) -> Result<(), Error> {
+        let mut w = WriteCursor::new(dest);
+        let (mut header, mut data) = w.split(4)?;
+        let (code, len) = match &self.data {
+            L2capLeSignalData::CreditConnReq(r) => {
+                data.write_ref(r)?;
+                (SignalCode::CreditConnReq, r.size())
+            }
+            L2capLeSignalData::CreditConnRes(r) => {
+                data.write_ref(r)?;
+                (SignalCode::CreditConnRes, r.size())
+            }
+        };
+        header.write(code)?;
+        header.write(self.id)?;
+        header.write(len as u16)?;
+
+        Ok(())
+    }
+}
+
+impl Decode for L2capLeSignal {
+    fn decode(src: &[u8]) -> Result<Self, Error> {
+        let mut r = ReadCursor::new(src);
+        let code: SignalCode = r.read()?;
+        let id: u8 = r.read()?;
+        let len: u16 = r.read()?;
+        let data = match code {
+            SignalCode::CreditConnReq => {
+                let req = r.read()?;
+                L2capLeSignalData::CreditConnReq(req)
+            }
+            SignalCode::CreditConnRes => {
+                let res = r.read()?;
+                L2capLeSignalData::CreditConnRes(res)
+            }
+            _ => {
+                unimplemented!()
+            }
+        };
+        Ok(Self { id, len, data })
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -160,7 +214,6 @@ pub struct LeCreditConnRes {
     pub result: LeCreditConnResultCode,
 }
 
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Codec)]
 pub struct LeCreditFlowInd {
     pub cid: u16,

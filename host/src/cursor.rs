@@ -57,6 +57,16 @@ impl<'d> WriteCursor<'d> {
         }
     }
 
+    pub fn write_ref<E: Encode>(&mut self, data: &E) -> Result<(), Error> {
+        if self.available() < data.size() {
+            Err(Error::InsufficientSpace)
+        } else {
+            data.encode(&mut self.data[self.pos..self.pos + data.size()])?;
+            self.pos += data.size();
+            Ok(())
+        }
+    }
+
     // Reserve a spot for a slice of data and return it
     pub fn write_buf<'m>(&'m mut self) -> SliceWriter<'m, 'd> {
         SliceWriter { writer: self }
