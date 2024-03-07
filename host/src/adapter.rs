@@ -6,7 +6,7 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::l2cap::{self, L2capPacket, L2CAP_CID_DYN_START}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
 use crate::packet_pool::{DynamicPacketPool, Packet, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
-use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, SignalCode};
+use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, LeCreditConnResultCode, SignalCode};
 use crate::{codec, Error};
 use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
@@ -75,7 +75,7 @@ pub struct Adapter<'d, M, const CHANNELS: usize, const L2CAP_TXQ: usize, const L
 where
     M: RawMutex + 'd,
 {
-    l2cap_mtu: usize,
+    pub(crate) l2cap_mtu: usize,
     pub(crate) connections: ConnectionManager<'d, M>,
     pub(crate) channels: ChannelManager<'d, M>,
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
@@ -172,7 +172,10 @@ where
             L2capLeSignalData::CreditConnReq(req) => {
                 info!("[req] Creating LE connection");
                 let mtu = req.mtu.min(self.l2cap_mtu as u16);
-                let cid = self.channels.alloc(signal.id).map_err(|_| HandleError::Other)?;
+                let cid = self
+                    .channels
+                    .alloc(signal.id, req.psm)
+                    .map_err(|_| HandleError::Other)?;
                 match self.channels.bind(
                     signal.id,
                     UnboundChannel {
@@ -191,24 +194,29 @@ where
                     Err(_) => Err(HandleError::Other),
                 }
             }
-            L2capLeSignalData::CreditConnRes(req) => {
-                // Must be a response of a previous request which should already by allocated a channel for
-                match self.channels.bind(
-                    signal.id,
-                    UnboundChannel {
-                        conn,
-                        scid: req.dcid,
-                        credits: req.credits,
-                    },
-                ) {
-                    Ok(bound) => {
-                        self.connections
-                            .notify(conn, ConnEvent::Bound(bound))
-                            .await
-                            .map_err(|_| HandleError::Other)?;
-                        Ok(())
+            L2capLeSignalData::CreditConnRes(res) => {
+                match res.result {
+                    LeCreditConnResultCode::Success => {
+                        // Must be a response of a previous request which should already by allocated a channel for
+                        match self.channels.bind(
+                            signal.id,
+                            UnboundChannel {
+                                conn,
+                                scid: res.dcid,
+                                credits: res.credits,
+                            },
+                        ) {
+                            Ok(bound) => {
+                                self.connections
+                                    .notify(conn, ConnEvent::Bound(bound))
+                                    .await
+                                    .map_err(|_| HandleError::Other)?;
+                                Ok(())
+                            }
+                            Err(_) => Err(HandleError::Other),
+                        }
                     }
-                    Err(_) => Err(HandleError::Other),
+                    _ => Err(HandleError::Other),
                 }
             }
             _ => unimplemented!(),

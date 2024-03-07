@@ -49,13 +49,13 @@ impl<'d, M: RawMutex> ChannelManager<'d, M> {
         })
     }
 
-    pub fn alloc(&self, id: u8) -> Result<u16, ()> {
+    pub fn alloc(&self, id: u8, psm: u16) -> Result<u16, ()> {
         self.channels.lock(|channels| {
             let mut channels = channels.borrow_mut();
             for (idx, storage) in channels.iter_mut().enumerate() {
                 if let ChannelState::Free = storage {
                     let cid: u16 = BASE_ID + idx as u16;
-                    *storage = ChannelState::Reserved(id, cid);
+                    *storage = ChannelState::Reserved(id, cid, psm);
                     return Ok(cid);
                 }
             }
@@ -69,12 +69,13 @@ impl<'d, M: RawMutex> ChannelManager<'d, M> {
             let mut channels = channels.borrow_mut();
             for (idx, storage) in channels.iter_mut().enumerate() {
                 match storage {
-                    ChannelState::Reserved(rid, cid) if *rid == id => {
+                    ChannelState::Reserved(rid, cid, psm) if *rid == id => {
                         let cid: u16 = BASE_ID + idx as u16;
                         let state = BoundChannel {
                             conn: state.conn,
                             cid,
                             idx,
+                            psm: *psm,
                             credits: 1,
                             remote_cid: state.scid,
                             remote_credits: state.credits,
@@ -93,7 +94,7 @@ impl<'d, M: RawMutex> ChannelManager<'d, M> {
 #[derive(Clone)]
 pub enum ChannelState {
     Free,
-    Reserved(u8, u16),
+    Reserved(u8, u16, u16),
     Bound(BoundChannel),
 }
 
@@ -109,6 +110,7 @@ pub struct BoundChannel {
     pub(crate) conn: ConnHandle,
     pub(crate) cid: u16,
     pub(crate) idx: usize,
+    pub(crate) psm: u16,
 
     pub(crate) credits: u16,
     pub(crate) remote_cid: u16,
