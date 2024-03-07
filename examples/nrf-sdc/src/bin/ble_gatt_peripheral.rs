@@ -101,10 +101,11 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<1672>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
+    info!("Advertising as {:02x}", bd_addr());
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 2, 32, 27>> = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 3, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
     static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 3, 3>> = StaticCell::new();
