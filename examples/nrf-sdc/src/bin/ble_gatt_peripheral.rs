@@ -108,7 +108,7 @@ async fn main(spawner: Spawner) {
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 3, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 3, 3>> = StaticCell::new();
+    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 3, 3, 3>> = StaticCell::new();
     let adapter = ADAPTER.init(Adapter::new(host_resources));
 
     let config = BleConfig {

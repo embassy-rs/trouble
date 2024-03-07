@@ -41,7 +41,7 @@ impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usiz
 {
     const EVENT_CHAN: Channel<M, ConnEvent, 1> = Channel::new();
     const FREE_CHAN: ChannelState = ChannelState::Free;
-    pub const fn new(qos: Qos) -> Self {
+    pub fn new(qos: Qos) -> Self {
         Self {
             connections: [ConnectionStorage::UNUSED; CONNS],
             events: [Self::EVENT_CHAN; CONNS],
@@ -80,8 +80,8 @@ where
     pub(crate) channels: ChannelManager<'d, M>,
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
 
-    pub(crate) l2cap_channels: [Channel<M, Pdu<'d>, L2CAP_RXQ>; CHANNELS],
-    pub(crate) att_channel: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
+    pub(crate) l2cap: [Channel<M, Pdu<'d>, L2CAP_RXQ>; CHANNELS],
+    pub(crate) att: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
     pub(crate) outbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_TXQ>,
     pub(crate) control: Channel<M, ControlCommand, 1>,
     pub(crate) acceptor: Channel<M, ConnectedEvent<'d>, 1>,
@@ -118,9 +118,9 @@ where
             channels: ChannelManager::new(&mut host_resources.channels),
             pool: &host_resources.pool,
 
-            l2cap_channels: [Self::NEW_L2CAP; CHANNELS],
+            l2cap: [Self::NEW_L2CAP; CHANNELS],
             l2cap_mtu: L2CAP_MTU,
-            att_channel: Channel::new(),
+            att: Channel::new(),
             outbound: Channel::new(),
             control: Channel::new(),
             acceptor: Channel::new(),
@@ -236,7 +236,7 @@ where
                 if let Some(mut p) = self.pool.alloc(ATT_ID) {
                     let len = packet.payload.len();
                     p.as_mut()[..len].copy_from_slice(packet.payload);
-                    self.att_channel.send((conn, Pdu { packet: p, len })).await;
+                    self.att.send((conn, Pdu { packet: p, len })).await;
                 } else {
                     // TODO: Signal back
                 }
@@ -251,7 +251,7 @@ where
                     let len = packet.payload.len();
                     p.as_mut()[..len].copy_from_slice(packet.payload);
                     info!("Sent {} bytes to channel {}", len, packet.channel);
-                    self.l2cap_channels[idx].send(Pdu::new(p, len)).await;
+                    self.l2cap[idx].send(Pdu::new(p, len)).await;
                 } else {
                     warn!("No memory for channel {}", packet.channel);
                 }

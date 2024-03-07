@@ -105,7 +105,7 @@ impl<'d, M: RawMutex, const MTU: usize> L2capChannel<'d, M, MTU> {
                         pool: adapter.pool,
                         pool_id: AllocId::dynamic(state.idx),
                         tx: adapter.outbound.sender().into(),
-                        rx: adapter.l2cap_channels[state.idx].receiver().into(),
+                        rx: adapter.l2cap[state.idx].receiver().into(),
                     };
 
                     let mtu = state.remote_mtu.min(MTU as u16);
@@ -205,7 +205,7 @@ impl<'d, M: RawMutex, const MTU: usize> L2capChannel<'d, M, MTU> {
                         pool: adapter.pool,
                         pool_id: AllocId::dynamic(state.idx),
                         tx: adapter.outbound.sender().into(),
-                        rx: adapter.l2cap_channels[state.idx].receiver().into(),
+                        rx: adapter.l2cap[state.idx].receiver().into(),
                     };
 
                     let _available = adapter.pool.available(c.pool_id);
