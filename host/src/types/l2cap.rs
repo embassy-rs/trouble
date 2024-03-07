@@ -84,6 +84,12 @@ pub struct L2capLeSignal {
     pub data: L2capLeSignalData,
 }
 
+impl L2capLeSignal {
+    pub fn new(id: u8, data: L2capLeSignalData) -> Self {
+        Self { id, len: 0, data }
+    }
+}
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum L2capLeSignalData {

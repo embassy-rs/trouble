@@ -9,6 +9,7 @@ use embassy_sync::{
 
 use crate::{
     adapter::{Adapter, ControlCommand},
+    channel_manager::{BoundChannel, ChannelState},
     pdu::Pdu,
 };
 
@@ -22,11 +23,15 @@ pub struct Connection<'d> {
 
 // An event related to this connection
 pub(crate) enum ConnEvent {
-    Bound(ConnHandle, u16),
-    Unbound(ConnHandle, u16),
+    Bound(BoundChannel),
+    Unbound(u16),
 }
 
 impl<'d> Connection<'d> {
+    pub fn handle(&self) -> ConnHandle {
+        self.handle
+    }
+
     pub async fn accept<M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
         adapter: &'d Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
@@ -46,5 +51,9 @@ impl<'d> Connection<'d> {
                 reason: DisconnectReason::RemoteUserTerminatedConn,
             }))
             .await;
+    }
+
+    pub(crate) fn event_receiver(&self) -> DynamicReceiver<'d, ConnEvent> {
+        self.event.clone()
     }
 }

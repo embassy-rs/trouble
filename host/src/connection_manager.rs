@@ -65,6 +65,22 @@ impl<'d, M: RawMutex> ConnectionManager<'d, M> {
             Err(())
         })
     }
+
+    pub async fn notify(&self, handle: ConnHandle, event: ConnEvent) -> Result<(), ()> {
+        let chan = self.connections.lock(|connections| {
+            let mut connections = connections.borrow_mut();
+            for (storage, chan) in connections.iter_mut().zip(self.events) {
+                if let Some(state) = &storage.state {
+                    if state.handle == handle {
+                        return Ok(chan.sender());
+                    }
+                }
+            }
+            Err(())
+        })?;
+        chan.send(event).await;
+        Ok(())
+    }
 }
 
 pub struct ConnectionStorage {
