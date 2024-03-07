@@ -9,6 +9,13 @@ pub(crate) const L2CAP_SIGNAL_ID: AllocId = AllocId(1);
 #[derive(Clone, Copy)]
 pub struct AllocId(usize);
 
+impl AllocId {
+    pub fn dynamic(idx: usize) -> AllocId {
+        // Dynamic range starts at 2
+        AllocId(2 + idx)
+    }
+}
+
 struct PacketBuf<const MTU: usize> {
     buf: [u8; MTU],
     free: bool,

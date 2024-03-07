@@ -104,7 +104,7 @@ async fn main(spawner: Spawner) {
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 2, 32, 247>> = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 2, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
     static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 3, 3>> = StaticCell::new();
@@ -150,11 +150,11 @@ async fn main(spawner: Spawner) {
                 let conn = Connection::accept(adapter).await;
                 info!("New connection accepted!");
 
-                let _ch1 = L2capChannel::accept(adapter, &conn).await;
+                let _ch1: L2capChannel<'_, _, 27> = L2capChannel::accept(adapter, &conn, 0x1001).await;
 
                 info!("New l2cap channel created by remote!");
 
-                let _ch2 = unwrap!(L2capChannel::create(adapter, &conn).await);
+                let _ch2: L2capChannel<'_, _, 27> = unwrap!(L2capChannel::create(adapter, &conn, 0x1003).await);
 
                 info!("New l2cap channel created by us!");
                 Timer::after(Duration::from_secs(60)).await;

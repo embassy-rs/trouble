@@ -4,7 +4,7 @@ use crate::codec;
 use crate::connection::{ConnEvent, Connection};
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::packet_pool::{DynamicPacketPool, L2CAP_SIGNAL_ID};
+use crate::packet_pool::{AllocId, DynamicPacketPool, L2CAP_SIGNAL_ID};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, LeCreditConnReq};
 use bt_hci::data::AclPacket;
@@ -44,16 +44,16 @@ impl<'d> L2capPacket<'d> {
     }
 }
 
-pub struct L2capChannel<'d, M: RawMutex> {
+pub struct L2capChannel<'d, M: RawMutex, const MTU: usize> {
     pool: &'d dyn DynamicPacketPool<'d>,
-    pool_id: usize,
+    pool_id: AllocId,
     cid: u16,
     mgr: &'d ChannelManager<'d, M>,
     rx: DynamicReceiver<'d, Pdu<'d>>,
     tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
 }
 
-impl<'d, M: RawMutex> L2capChannel<'d, M> {
+impl<'d, M: RawMutex, const MTU: usize> L2capChannel<'d, M, MTU> {
     pub async fn send(&mut self, buf: &[u8]) -> Result<(), ()> {
         todo!()
         /*
@@ -92,21 +92,22 @@ impl<'d, M: RawMutex> L2capChannel<'d, M> {
     pub async fn accept<const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
         adapter: &'d Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection<'d>,
+        psm: u16,
     ) -> Self {
         let connections = &adapter.connections;
         let channels = &adapter.channels;
         let events = connection.event_receiver();
         loop {
             match events.receive().await {
-                ConnEvent::Bound(state) => {
+                ConnEvent::Bound(state) if state.psm == psm => {
                     return Self {
                         mgr: &adapter.channels,
                         cid: state.cid,
                         pool: adapter.pool,
-                        pool_id: state.idx,
+                        pool_id: AllocId::dynamic(state.idx),
                         tx: adapter.outbound.sender().into(),
                         rx: adapter.l2cap_channels[state.idx].receiver().into(),
-                    }
+                    };
                 }
                 _ => {
                     todo!()
@@ -118,9 +119,10 @@ impl<'d, M: RawMutex> L2capChannel<'d, M> {
     pub async fn create<const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
         adapter: &'d Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection<'d>,
+        psm: u16,
     ) -> Result<Self, ()> {
         // TODO: Use unique signal ID to ensure no collision of signal messages
-        let cid = adapter.channels.alloc(0)?;
+        let cid = adapter.channels.alloc(0, psm)?;
         // TODO: error
         let mut packet = adapter.pool.alloc(L2CAP_SIGNAL_ID).unwrap();
 
@@ -129,11 +131,11 @@ impl<'d, M: RawMutex> L2capChannel<'d, M> {
         body.write(L2capLeSignal::new(
             0,
             L2capLeSignalData::CreditConnReq(LeCreditConnReq {
-                psm: 0,
-                mps: 10,
+                psm,
+                mps: adapter.l2cap_mtu as u16,
                 scid: cid,
-                mtu: 10,
-                credits: 10,
+                mtu: MTU as u16,
+                credits: 1,
             }),
         ))
         .map_err(|_| ())?;
@@ -157,14 +159,20 @@ impl<'d, M: RawMutex> L2capChannel<'d, M> {
         loop {
             match events.receive().await {
                 ConnEvent::Bound(state) => {
-                    return Ok(Self {
+                    // TODO: Send flow with available credits on this channel!
+                    let c = Self {
                         mgr: &adapter.channels,
                         cid: state.cid,
                         pool: adapter.pool,
-                        pool_id: state.idx,
+                        pool_id: AllocId::dynamic(state.idx),
                         tx: adapter.outbound.sender().into(),
                         rx: adapter.l2cap_channels[state.idx].receiver().into(),
-                    })
+                    };
+
+                    let _available = adapter.pool.available(c.pool_id);
+                    // TODO: Send flow message with available credits!
+
+                    return Ok(c);
                 }
                 _ => {
                     todo!()
