@@ -18,10 +18,11 @@ use trouble_host::{
     ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     adapter::AdvertiseConfig,
     adapter::Config as BleConfig,
-    adapter::{Adapter, AdapterResources, HostResources},
+    adapter::{Adapter, HostResources},
     attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
     connection::Connection,
     gatt::{GattEvent, GattServer},
+    l2cap::L2capChannel,
     PacketQos,
 };
 
@@ -106,9 +107,8 @@ async fn main(spawner: Spawner) {
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 1, 32, 247>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    static ADAPTER_RESOURCES: StaticCell<AdapterResources<NoopRawMutex, 1, 3, 3>> = StaticCell::new();
-    let adapter_resources = ADAPTER_RESOURCES.init(AdapterResources::new());
-    let mut adapter = Adapter::new(host_resources, adapter_resources);
+    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 1, 3, 3>> = StaticCell::new();
+    let mut adapter = ADAPTER.init(Adapter::new(host_resources));
 
     let config = BleConfig {
         advertise: Some(AdvertiseConfig {
@@ -129,7 +129,7 @@ async fn main(spawner: Spawner) {
         .done();
     let mut attributes = attributes.build();
 
-    let mut server = GattServer::new(adapter_resources, &mut attributes[..]);
+    let mut server = GattServer::new(adapter, &mut attributes[..]);
 
     unwrap!(adapter.advertise(&sdc, config).await);
 
@@ -147,8 +147,10 @@ async fn main(spawner: Spawner) {
         },
         async {
             loop {
-                let mut _conn = Connection::accept(adapter_resources).await;
+                let mut _conn = Connection::accept(adapter).await;
                 info!("New connection accepted!");
+
+                //let mut chan = unwrap!(L2capChannel::create(adapter, conn).await);
             }
         },
     )

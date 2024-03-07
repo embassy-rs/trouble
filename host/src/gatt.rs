@@ -1,4 +1,4 @@
-use crate::adapter::AdapterResources;
+use crate::adapter::Adapter;
 use crate::att::Att;
 use crate::attribute::Attribute;
 use crate::attribute_server::AttributeServer;
@@ -17,13 +17,13 @@ pub struct GattServer<'a, 'b, 'd> {
 
 impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
     pub fn new<M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
-        resources: &'d AdapterResources<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &'d Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         attributes: &'a mut [Attribute<'b>],
     ) -> Self {
         Self {
             server: AttributeServer::new(attributes),
-            rx: resources.att_channel.receiver().into(),
-            tx: resources.outbound.sender().into(),
+            rx: adapter.att_channel.receiver().into(),
+            tx: adapter.outbound.sender().into(),
         }
     }
 
