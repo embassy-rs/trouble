@@ -22,7 +22,7 @@ impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
     ) -> Self {
         Self {
             server: AttributeServer::new(attributes),
-            rx: adapter.att_channel.receiver().into(),
+            rx: adapter.att.receiver().into(),
             tx: adapter.outbound.sender().into(),
         }
     }

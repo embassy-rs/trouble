@@ -49,7 +49,7 @@ struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
 }
 
 impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIENTS> {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             packets: UnsafeCell::new([PacketBuf::NEW; N]),
             usage: RefCell::new([0; CLIENTS]),
@@ -105,7 +105,9 @@ pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIEN
 }
 
 impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> PacketPool<M, MTU, N, CLIENTS> {
-    pub const fn new(qos: Qos) -> Self {
+    pub fn new(qos: Qos) -> Self {
+        // Need 1 for l2cap signalling and 1 for gatt
+        assert!(CLIENTS >= 2);
         Self {
             state: Mutex::new(State::new()),
             qos,
