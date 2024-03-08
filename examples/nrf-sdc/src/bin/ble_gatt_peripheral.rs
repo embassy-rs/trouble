@@ -105,10 +105,10 @@ async fn main(spawner: Spawner) {
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 1, 3, 32, 27>> = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 3, 3, 3>> = StaticCell::new();
+    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 3, 3>> = StaticCell::new();
     let adapter = ADAPTER.init(Adapter::new(host_resources));
 
     let config = BleConfig {
@@ -151,11 +151,11 @@ async fn main(spawner: Spawner) {
                 let conn = Connection::accept(adapter).await;
                 info!("New connection accepted!");
 
-                let ch1: L2capChannel<'_, _, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
+                let ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
 
                 info!("New l2cap channel created by remote!");
 
-                let _ch2: L2capChannel<'_, _, 27> = unwrap!(L2capChannel::create(adapter, &conn, 0x1003).await);
+                let _ch2: L2capChannel<'_, 27> = unwrap!(L2capChannel::create(adapter, &conn, 0x1003).await);
 
                 info!("New l2cap channel created by us!");
                 Timer::after(Duration::from_secs(60)).await;

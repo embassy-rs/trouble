@@ -6,6 +6,11 @@ An Rust host BLE stack with a future goal of qualification. Currently the focus 
 
 The `trouble-host` is based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with [`bt-hci`](https://github.com/alexmoon/bt-hci). 
 
+Done:
+* Advertise
+* Basic GATT
+* L2CAP CoC create/accept
+
 ## Example
 
 See `examples` for example applications. Currently there is only one, for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
