@@ -6,7 +6,7 @@ use bt_hci::cmd::SyncCmd;
 use bt_hci::param::BdAddr;
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
-use embassy_futures::join::join2 as join;
+use embassy_futures::join::join;
 use embassy_nrf::{bind_interrupts, pac};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
@@ -20,9 +20,7 @@ use trouble_host::{
     adapter::Config as BleConfig,
     adapter::{Adapter, HostResources},
     attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
-    connection::Connection,
     gatt::{GattEvent, GattServer},
-    l2cap::L2capChannel,
     PacketQos,
 };
 

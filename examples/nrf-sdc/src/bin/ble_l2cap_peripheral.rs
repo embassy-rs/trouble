@@ -160,9 +160,13 @@ async fn main(spawner: Spawner) {
                     info!("Received {} bytes: {:02x}", len, &rx[..len]);
                 }
 
-                let _ch2: L2capChannel<'_, 27> = unwrap!(L2capChannel::create(adapter, &conn, 0x1003).await);
+                info!("Sending bytes pack");
+                for i in 0..10 {
+                    let mut tx = [i; 23];
+                    let len = unwrap!(ch1.send(&mut tx).await);
+                }
+                info!("Bytes sent");
 
-                info!("New l2cap channel created by us!");
                 Timer::after(Duration::from_secs(60)).await;
             }
         },
