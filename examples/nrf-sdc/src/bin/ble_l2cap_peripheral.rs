@@ -6,7 +6,7 @@ use bt_hci::cmd::SyncCmd;
 use bt_hci::param::BdAddr;
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
-use embassy_futures::join::join2 as join;
+use embassy_futures::join::join3 as join;
 use embassy_nrf::{bind_interrupts, pac};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
@@ -135,14 +135,37 @@ async fn main(spawner: Spawner) {
     unwrap!(adapter.advertise(&sdc, config).await);
 
     info!("Starting advertising and GATT service");
-    let _ = join(adapter.run(&sdc), async {
-        loop {
-            match server.next().await {
-                GattEvent::Write(_conn, attribute) => {
-                    info!("Attribute was written: {:?}", attribute);
+    let _ = join(
+        adapter.run(&sdc),
+        async {
+            loop {
+                match server.next().await {
+                    GattEvent::Write(_conn, attribute) => {
+                        info!("Attribute was written: {:?}", attribute);
+                    }
                 }
             }
-        }
-    })
+        },
+        async {
+            loop {
+                let conn = Connection::accept(adapter).await;
+                info!("New connection accepted!");
+
+                let mut ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
+
+                info!("New l2cap channel created by remote!");
+                let mut rx = [0; 23];
+                for i in 0..10 {
+                    let len = unwrap!(ch1.receive(&mut rx).await);
+                    info!("Received {} bytes: {:02x}", len, &rx[..len]);
+                }
+
+                let _ch2: L2capChannel<'_, 27> = unwrap!(L2capChannel::create(adapter, &conn, 0x1003).await);
+
+                info!("New l2cap channel created by us!");
+                Timer::after(Duration::from_secs(60)).await;
+            }
+        },
+    )
     .await;
 }
