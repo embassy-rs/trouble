@@ -144,6 +144,7 @@ pub trait DynamicPacketPool<'d> {
     fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>>;
     fn free(&self, id: AllocId, r: PacketRef);
     fn available(&self, id: AllocId) -> usize;
+    fn mtu(&self) -> usize;
 }
 
 impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> DynamicPacketPool<'d>
@@ -159,6 +160,10 @@ impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Dy
 
     fn free(&self, id: AllocId, r: PacketRef) {
         PacketPool::free(self, id, r)
+    }
+
+    fn mtu(&self) -> usize {
+        MTU
     }
 }
 

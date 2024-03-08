@@ -16,13 +16,19 @@ pub struct GattServer<'a, 'b, 'd> {
 }
 
 impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
-    pub fn new<M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
-        adapter: &'d Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+    pub fn new<
+        M: RawMutex,
+        const CONNS: usize,
+        const CHANNELS: usize,
+        const L2CAP_TXQ: usize,
+        const L2CAP_RXQ: usize,
+    >(
+        adapter: &'d Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         attributes: &'a mut [Attribute<'b>],
     ) -> Self {
         Self {
             server: AttributeServer::new(attributes),
-            rx: adapter.att.receiver().into(),
+            rx: adapter.att_inbound.receiver().into(),
             tx: adapter.outbound.sender().into(),
         }
     }

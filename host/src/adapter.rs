@@ -1,12 +1,11 @@
 use crate::ad_structure::AdStructure;
-use crate::channel_manager::{ChannelManager, ChannelState, UnboundChannel};
-use crate::connection::ConnEvent;
-use crate::connection_manager::{ConnectionManager, ConnectionState, ConnectionStorage};
+use crate::channel_manager::ChannelManager;
+use crate::connection_manager::{ConnectionInfo, ConnectionManager};
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
-use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos, ATT_ID};
+use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
-use crate::types::l2cap::{L2capLeSignal, L2capLeSignalData, LeCreditConnResultCode};
+use crate::types::l2cap::L2capLeSignal;
 use crate::{codec, Error};
 use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
@@ -18,42 +17,22 @@ use bt_hci::event::Event;
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
 use bt_hci::ControllerCmdSync;
 use bt_hci::ControllerToHostPacket;
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{Channel, DynamicReceiver};
+use embassy_sync::channel::Channel;
 
-pub struct HostResources<
-    M: RawMutex,
-    const CONNS: usize,
-    const CHANNELS: usize,
-    const PACKETS: usize,
-    const L2CAP_MTU: usize,
-> {
-    connections: [ConnectionStorage; CONNS],
-    events: [Channel<M, ConnEvent, 1>; CONNS],
-
-    channels: [ChannelState; CHANNELS],
+pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
 }
 
-impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
-    HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>
+impl<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
+    HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>
 {
-    const EVENT_CHAN: Channel<M, ConnEvent, 1> = Channel::new();
-    const FREE_CHAN: ChannelState = ChannelState::Free;
     pub fn new(qos: Qos) -> Self {
         Self {
-            connections: [ConnectionStorage::UNUSED; CONNS],
-            events: [Self::EVENT_CHAN; CONNS],
-            channels: [Self::FREE_CHAN; CHANNELS],
             pool: PacketPool::new(qos),
         }
     }
-}
-
-pub(crate) struct ConnectedEvent<'d> {
-    pub(crate) handle: ConnHandle,
-    pub(crate) events: DynamicReceiver<'d, ConnEvent>,
 }
 
 pub struct AdvertiseConfig<'d> {
@@ -71,20 +50,17 @@ impl<'a> Default for Config<'a> {
     }
 }
 
-pub struct Adapter<'d, M, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
+pub struct Adapter<'d, M, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
 where
     M: RawMutex + 'd,
 {
-    pub(crate) l2cap_mtu: usize,
-    pub(crate) connections: ConnectionManager<'d, M>,
-    pub(crate) channels: ChannelManager<'d, M>,
+    pub(crate) connections: ConnectionManager<M, CONNS>,
+    pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+    pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
 
-    pub(crate) l2cap: [Channel<M, Pdu<'d>, L2CAP_RXQ>; CHANNELS],
-    pub(crate) att: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
     pub(crate) outbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_TXQ>,
     pub(crate) control: Channel<M, ControlCommand, 1>,
-    pub(crate) acceptor: Channel<M, ConnectedEvent<'d>, 1>,
 }
 
 pub(crate) enum ControlCommand {
@@ -104,35 +80,26 @@ impl From<codec::Error> for HandleError {
     }
 }
 
-impl<'d, M, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
-    Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
+impl<'d, M, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
+    Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
 where
     M: RawMutex + 'd,
 {
     const NEW_L2CAP: Channel<M, Pdu<'d>, L2CAP_RXQ> = Channel::new();
-    pub fn new<const CONN: usize, const PACKETS: usize, const L2CAP_MTU: usize>(
-        host_resources: &'d mut HostResources<M, CONN, CHANNELS, PACKETS, L2CAP_MTU>,
+    pub fn new<const PACKETS: usize, const L2CAP_MTU: usize>(
+        host_resources: &'d mut HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
         Self {
-            connections: ConnectionManager::new(&mut host_resources.connections, &host_resources.events),
-            channels: ChannelManager::new(&mut host_resources.channels),
+            connections: ConnectionManager::new(),
+            channels: ChannelManager::new(&host_resources.pool),
             pool: &host_resources.pool,
+            att_inbound: Channel::new(),
 
-            l2cap: [Self::NEW_L2CAP; CHANNELS],
-            l2cap_mtu: L2CAP_MTU,
-            att: Channel::new(),
             outbound: Channel::new(),
             control: Channel::new(),
-            acceptor: Channel::new(),
         }
     }
-}
 
-impl<'d, M, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
-    Adapter<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
-where
-    M: RawMutex + 'd,
-{
     pub async fn advertise<T>(&self, controller: &T, config: Config<'_>) -> Result<(), Error<T::Error>>
     where
         T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
@@ -164,71 +131,6 @@ where
         Ok(())
     }
 
-    async fn handle_l2cap_le(&self, conn: ConnHandle, packet: L2capPacket<'_>) -> Result<(), HandleError> {
-        let mut r = ReadCursor::new(packet.payload);
-        let signal: L2capLeSignal = r.read()?;
-        match signal.data {
-            L2capLeSignalData::LeCreditConnReq(req) => {
-                info!("[req] Accepting LE connection: {:?}", req);
-                let mps = req.mps.min(self.l2cap_mtu as u16);
-                let cid = self
-                    .channels
-                    .alloc(signal.id, req.psm)
-                    .map_err(|_| HandleError::Other)?;
-                match self.channels.bind(
-                    signal.id,
-                    UnboundChannel {
-                        conn,
-                        mtu: req.mtu,
-                        scid: req.scid,
-                        credits: req.credits,
-                        mps,
-                    },
-                ) {
-                    Ok(bound) => {
-                        self.connections
-                            .notify(conn, ConnEvent::Bound(signal.id, bound))
-                            .await
-                            .map_err(|_| HandleError::Other)?;
-                        Ok(())
-                    }
-                    Err(_) => Err(HandleError::Other),
-                }
-            }
-            L2capLeSignalData::LeCreditConnRes(res) => {
-                match res.result {
-                    LeCreditConnResultCode::Success => {
-                        // Must be a response of a previous request which should already by allocated a channel for
-                        match self.channels.bind(
-                            signal.id,
-                            UnboundChannel {
-                                conn,
-                                mtu: res.mtu,
-                                scid: res.dcid,
-                                credits: res.credits,
-                                mps: res.mps,
-                            },
-                        ) {
-                            Ok(bound) => {
-                                self.connections
-                                    .notify(conn, ConnEvent::Bound(signal.id, bound))
-                                    .await
-                                    .map_err(|_| HandleError::Other)?;
-                                Ok(())
-                            }
-                            Err(_) => Err(HandleError::Other),
-                        }
-                    }
-                    _ => Err(HandleError::Other),
-                }
-            }
-            L2capLeSignalData::CommandRejectRes(reject) => {
-                warn!("Rejected: {:02x}", reject);
-                Ok(())
-            }
-        }
-    }
-
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), HandleError> {
         let (conn, packet) = L2capPacket::decode(acl)?;
         match packet.channel {
@@ -236,26 +138,29 @@ where
                 if let Some(mut p) = self.pool.alloc(ATT_ID) {
                     let len = packet.payload.len();
                     p.as_mut()[..len].copy_from_slice(packet.payload);
-                    self.att.send((conn, Pdu { packet: p, len })).await;
+                    self.att_inbound.send((conn, Pdu { packet: p, len })).await;
                 } else {
                     // TODO: Signal back
                 }
             }
-            L2CAP_CID_LE_U_SIGNAL => self.handle_l2cap_le(conn, packet).await?,
-            other if other >= L2CAP_CID_DYN_START => {
-                let idx = self
-                    .channels
-                    .update(packet.channel, |chan| {})
-                    .map_err(|_| HandleError::Other)?;
-                if let Some(mut p) = self.pool.alloc(AllocId::dynamic(idx)) {
-                    let len = packet.payload.len();
-                    p.as_mut()[..len].copy_from_slice(packet.payload);
-                    info!("Sent {} bytes to channel {}", len, packet.channel);
-                    self.l2cap[idx].send(Pdu::new(p, len)).await;
-                } else {
-                    warn!("No memory for channel {}", packet.channel);
+            L2CAP_CID_LE_U_SIGNAL => {
+                let mut r = ReadCursor::new(packet.payload);
+                let signal: L2capLeSignal = r.read()?;
+                match self.channels.control(conn, signal) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Err(HandleError::Other);
+                    }
+                    _ => {}
                 }
             }
+
+            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(packet).await {
+                Ok(_) => {}
+                Err(e) => {
+                    warn!("Error dispatching l2cap packet to channel: {:?}", e);
+                }
+            },
             _ => {
                 unimplemented!()
             }
@@ -277,16 +182,19 @@ where
         )
         .exec(controller)
         .await?;
+
         loop {
             let mut rx = [0u8; 259];
-            match select3(
+            let mut tx = [0u8; 259];
+            match select4(
                 controller.read(&mut rx),
                 self.outbound.receive(),
                 self.control.receive(),
+                self.channels.signal(),
             )
             .await
             {
-                Either3::First(result) => match result {
+                Either4::First(result) => match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
                         Ok(_) => {}
                         Err(e) => {
@@ -296,26 +204,19 @@ where
                     Ok(ControllerToHostPacket::Event(event)) => match event {
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => {
-                                info!("Connection complete: {:?}!", e);
-                                if let Ok(events) = self.connections.create(
+                                if let Err(err) = self.connections.connect(
                                     e.handle,
-                                    ConnectionState::new(
-                                        e.handle,
-                                        e.status,
-                                        e.role,
-                                        e.peer_addr,
-                                        e.conn_interval.as_u16(),
-                                        e.peripheral_latency,
-                                        e.supervision_timeout.as_u16(),
-                                    ),
+                                    ConnectionInfo {
+                                        handle: e.handle,
+                                        status: e.status,
+                                        role: e.role,
+                                        peer_address: e.peer_addr,
+                                        interval: e.conn_interval.as_u16(),
+                                        latency: e.peripheral_latency,
+                                        timeout: e.supervision_timeout.as_u16(),
+                                    },
                                 ) {
-                                    self.acceptor
-                                        .send(ConnectedEvent {
-                                            handle: e.handle,
-                                            events,
-                                        })
-                                        .await;
-                                } else {
+                                    warn!("Error establishing connection: {:?}", err);
                                     Disconnect::new(e.handle, DisconnectReason::RemoteDeviceTerminatedConnLowResources)
                                         .exec(controller)
                                         .await
@@ -328,8 +229,7 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             info!("Disconnected: {:?}", e);
-                            // TODO:
-                            self.connections.delete(e.handle).unwrap();
+                            let _ = self.connections.disconnect(e.handle);
                         }
                         Event::NumberOfCompletedPackets(c) => {}
                         _ => {
@@ -343,7 +243,7 @@ where
                         info!("Error from controller: {:?}", e);
                     }
                 },
-                Either3::Second((handle, pdu)) => {
+                Either4::Second((handle, pdu)) => {
                     let acl = AclPacket::new(
                         handle,
                         AclPacketBoundary::FirstNonFlushable,
@@ -359,7 +259,7 @@ where
                         }
                     }
                 }
-                Either3::Third(command) => match command {
+                Either4::Third(command) => match command {
                     ControlCommand::Disconnect(params) => {
                         Disconnect::new(params.handle, params.reason)
                             .exec(controller)
@@ -367,6 +267,35 @@ where
                             .unwrap();
                     }
                 },
+                Either4::Fourth((handle, response)) => {
+                    let mut w = WriteCursor::new(&mut tx);
+                    let (mut header, mut body) = w.split(4)?;
+
+                    body.write(response)?;
+
+                    // TODO: Move into l2cap packet type
+                    header.write(body.len() as u16)?;
+                    header.write(L2CAP_CID_LE_U_SIGNAL)?;
+                    let len = header.len() + body.len();
+
+                    header.finish();
+                    body.finish();
+                    w.finish();
+
+                    let acl = AclPacket::new(
+                        handle,
+                        AclPacketBoundary::FirstNonFlushable,
+                        AclBroadcastFlag::PointToPoint,
+                        &tx[..len],
+                    );
+                    match controller.write_acl_data(&acl).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Error writing some ACL data to controller: {:?}", e);
+                            panic!(":(");
+                        }
+                    }
+                }
             }
         }
     }
