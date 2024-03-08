@@ -163,7 +163,7 @@ async fn main(spawner: Spawner) {
                 info!("Sending bytes pack");
                 for i in 0..10 {
                     let mut tx = [i; 23];
-                    let len = unwrap!(ch1.send(&mut tx).await);
+                    let _ = unwrap!(ch1.send(&mut tx).await);
                 }
                 info!("Bytes sent");
 

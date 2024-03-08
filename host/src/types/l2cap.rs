@@ -23,7 +23,7 @@ pub enum SignalCode {
     ConnParamUpdateRes = 0x13,
     LeCreditConnReq = 0x14,
     LeCreditConnRes = 0x15,
-    LeCreditFlow = 0x16,
+    LeCreditFlowInd = 0x16,
     CreditConnReq = 0x17,
     CreditConnRes = 0x18,
     CreditConnReconfigReq = 0x19,
@@ -49,7 +49,7 @@ impl TryFrom<u8> for SignalCode {
             0x13 => Self::ConnParamUpdateRes,
             0x14 => Self::LeCreditConnReq,
             0x15 => Self::LeCreditConnRes,
-            0x16 => Self::LeCreditFlow,
+            0x16 => Self::LeCreditFlowInd,
             0x17 => Self::CreditConnReq,
             0x18 => Self::CreditConnRes,
             0x19 => Self::CreditConnReconfigReq,
@@ -95,6 +95,7 @@ pub enum L2capLeSignalData {
     CommandRejectRes(CommandRejectRes),
     LeCreditConnReq(LeCreditConnReq),
     LeCreditConnRes(LeCreditConnRes),
+    LeCreditFlowInd(LeCreditFlowInd),
 }
 
 impl Type for L2capLeSignal {
@@ -103,6 +104,7 @@ impl Type for L2capLeSignal {
             L2capLeSignalData::CommandRejectRes(r) => r.size(),
             L2capLeSignalData::LeCreditConnReq(r) => r.size(),
             L2capLeSignalData::LeCreditConnRes(r) => r.size(),
+            L2capLeSignalData::LeCreditFlowInd(r) => r.size(),
         }
     }
 }
@@ -123,6 +125,10 @@ impl Encode for L2capLeSignal {
             L2capLeSignalData::CommandRejectRes(r) => {
                 data.write_ref(r)?;
                 (SignalCode::CommandRejectRes, r.size())
+            }
+            L2capLeSignalData::LeCreditFlowInd(r) => {
+                data.write_ref(r)?;
+                (SignalCode::LeCreditFlowInd, r.size())
             }
         };
         header.write(code)?;
@@ -152,6 +158,10 @@ impl Decode for L2capLeSignal {
             SignalCode::CommandRejectRes => {
                 let res = r.read()?;
                 L2capLeSignalData::CommandRejectRes(res)
+            }
+            SignalCode::LeCreditFlowInd => {
+                let res = r.read()?;
+                L2capLeSignalData::LeCreditFlowInd(res)
             }
             code => {
                 warn!("Unimplemented signal code: {:02x}", code);
@@ -235,6 +245,7 @@ pub struct LeCreditConnRes {
 }
 
 #[derive(Debug, Codec)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LeCreditFlowInd {
     pub cid: u16,
     pub credits: u16,

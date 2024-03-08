@@ -115,17 +115,30 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         })
     }
 
-    fn connected<F: FnOnce(&ConnectingState) -> ConnectedState>(&self, request_id: u8, f: F) -> Result<(), ()> {
+    fn connected<F: FnOnce(usize, &ConnectingState) -> ConnectedState>(&self, request_id: u8, f: F) -> Result<(), ()> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage {
                     ChannelState::Connecting(req) if request_id == req.request_id => {
-                        let res = f(req);
+                        let res = f(idx, req);
                         *storage = ChannelState::Connected(res);
                         state.create_waker.wake();
                         return Ok(());
                     }
+                    _ => {}
+                }
+            }
+            Err(())
+        })
+    }
+
+    fn remote_credits(&self, cid: u16, credits: u16) -> Result<(), ()> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for storage in state.channels.iter_mut() {
+                match storage {
+                    ChannelState::Connected(req) if req.cid == cid => return Ok(()),
                     _ => {}
                 }
             }
@@ -177,6 +190,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     credits: self.pool.available(AllocId::dynamic(idx)) as u16,
                     peer_credits: req.initial_credits,
                     peer_cid: req.peer_cid,
+                    pool_id: AllocId::dynamic(idx),
                     mps,
                     mtu,
                 }
@@ -298,13 +312,14 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 match res.result {
                     LeCreditConnResultCode::Success => {
                         // Must be a response of a previous request which should already by allocated a channel for
-                        match self.connected(signal.id, |req| ConnectedState {
+                        match self.connected(signal.id, |idx, req| ConnectedState {
                             conn: req.conn,
                             cid: req.cid,
                             psm: req.psm,
                             credits: 0,
                             peer_credits: res.credits,
                             peer_cid: res.dcid,
+                            pool_id: AllocId::dynamic(idx),
                             mps: req.mps.min(res.mps),
                             mtu: req.mtu.min(res.mtu),
                         }) {
@@ -317,6 +332,10 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                         Ok(())
                     }
                 }
+            }
+            L2capLeSignalData::LeCreditFlowInd(req) => {
+                self.remote_credits(req.cid, req.credits)?;
+                Ok(())
             }
             L2capLeSignalData::CommandRejectRes(reject) => {
                 warn!("Rejected: {:02x}", reject);
@@ -357,6 +376,8 @@ pub struct ConnectedState {
 
     pub(crate) peer_cid: u16,
     pub(crate) peer_credits: u16,
+
+    pub(crate) pool_id: AllocId,
 }
 
 pub struct DisconnectingState {

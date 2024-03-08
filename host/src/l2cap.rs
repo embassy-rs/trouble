@@ -43,6 +43,7 @@ impl<'d> L2capPacket<'d> {
 
 pub struct L2capChannel<'d, const MTU: usize> {
     conn: ConnHandle,
+    pool_id: AllocId,
     cid: u16,
     mps: u16,
     pool: &'d dyn DynamicPacketPool<'d>,
@@ -53,12 +54,11 @@ pub struct L2capChannel<'d, const MTU: usize> {
 impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
     pub async fn send(&mut self, buf: &[u8]) -> Result<(), ()> {
         // TODO: Take credit into account!!
-        let pool_id = AllocId::dynamic(self.cid as usize);
 
         // Segment using mps
         let mut first = true;
         for chunk in buf.chunks(self.mps as usize) {
-            if let Some(mut packet) = self.pool.alloc(pool_id) {
+            if let Some(mut packet) = self.pool.alloc(self.pool_id) {
                 let len = {
                     let mut w = WriteCursor::new(packet.as_mut());
                     if first {
@@ -127,6 +127,7 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
             cid: state.cid,
             mps: state.mps,
             pool: adapter.pool,
+            pool_id: state.pool_id,
             tx,
             rx,
         })
@@ -149,6 +150,7 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
 
         Ok(Self {
             conn: connection.handle(),
+            pool_id: state.pool_id,
             cid: state.cid,
             mps: state.mps,
             pool: adapter.pool,
