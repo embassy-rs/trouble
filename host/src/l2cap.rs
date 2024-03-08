@@ -56,20 +56,25 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
         // TODO: Take credit into account!!
 
         // Segment using mps
-        let mut first = true;
-        for chunk in buf.chunks(self.mps as usize) {
+        let (first, remaining) = buf.split_at(self.mps as usize - 2);
+        if let Some(mut packet) = self.pool.alloc(self.pool_id) {
+            let len = {
+                let mut w = WriteCursor::new(packet.as_mut());
+                w.write(2 + first.len() as u16).map_err(|_| ())?;
+                w.write(self.cid as u16).map_err(|_| ())?;
+                w.write(buf.len() as u16).map_err(|_| ())?;
+                w.append(first).map_err(|_| ())?;
+                w.len()
+            };
+            self.tx.send((self.conn, Pdu::new(packet, len))).await;
+        }
+
+        for chunk in remaining.chunks(self.mps as usize) {
             if let Some(mut packet) = self.pool.alloc(self.pool_id) {
                 let len = {
                     let mut w = WriteCursor::new(packet.as_mut());
-                    if first {
-                        w.write(2 + chunk.len() as u16).map_err(|_| ())?;
-                        w.write(self.cid as u16).map_err(|_| ())?;
-                        w.write(buf.len() as u16).map_err(|_| ())?;
-                        first = false;
-                    } else {
-                        w.write(chunk.len() as u16).map_err(|_| ())?;
-                        w.write(self.cid as u16).map_err(|_| ())?;
-                    }
+                    w.write(chunk.len() as u16).map_err(|_| ())?;
+                    w.write(self.cid as u16).map_err(|_| ())?;
                     w.append(chunk).map_err(|_| ())?;
                     w.len()
                 };
