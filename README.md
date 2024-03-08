@@ -9,7 +9,16 @@ The `trouble-host` is based on [`bleps`](https://github.com/bjoernQ/bleps) but h
 Done:
 * Advertise
 * Basic GATT
-* L2CAP CoC create/accept
+* L2CAP CoC 
+
+Missing:
+* Security
+* ACL segmentation & reassembly
+* l2cap CoC credit handling
+* Legacy l2cap
+* Gatt notifications
+* Scanning
+* Gatt client
 
 ## Example
 

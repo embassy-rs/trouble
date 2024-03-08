@@ -151,7 +151,6 @@ where
                     Err(_) => {
                         return Err(HandleError::Other);
                     }
-                    _ => {}
                 }
             }
 

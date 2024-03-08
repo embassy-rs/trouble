@@ -151,9 +151,14 @@ async fn main(spawner: Spawner) {
                 let conn = Connection::accept(adapter).await;
                 info!("New connection accepted!");
 
-                let ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
+                let mut ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
 
                 info!("New l2cap channel created by remote!");
+                let mut rx = [0; 23];
+                for i in 0..10 {
+                    let len = unwrap!(ch1.receive(&mut rx).await);
+                    info!("Received {} bytes: {:02x}", len, &rx[..len]);
+                }
 
                 let _ch2: L2capChannel<'_, 27> = unwrap!(L2capChannel::create(adapter, &conn, 0x1003).await);
 

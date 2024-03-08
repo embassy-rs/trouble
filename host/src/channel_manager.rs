@@ -5,10 +5,9 @@ use core::{
 };
 
 use bt_hci::param::ConnHandle;
-use embassy_futures::select::select_array;
 use embassy_sync::{
     blocking_mutex::{raw::RawMutex, Mutex},
-    channel::{Channel, DynamicReceiver, DynamicSendFuture, DynamicSender, ReceiveFuture, Receiver},
+    channel::{Channel, DynamicReceiver},
     waitqueue::WakerRegistration,
 };
 
@@ -100,7 +99,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         })
     }
 
-    fn connect(&self, mut req: ConnectingState) -> Result<u16, ()> {
+    fn connect(&self, mut req: ConnectingState) -> Result<(usize, u16), ()> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
@@ -109,7 +108,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     req.cid = cid;
                     *storage = ChannelState::Connecting(req);
                     state.accept_waker.wake();
-                    return Ok(cid);
+                    return Ok((idx, cid));
                 }
             }
             Err(())
@@ -134,22 +133,22 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         })
     }
 
-    fn poll_accept<F: FnOnce(&ConnectingState) -> ConnectedState>(
+    fn poll_accept<F: FnOnce(usize, &ConnectingState) -> ConnectedState>(
         &self,
         conn: ConnHandle,
         psm: u16,
         cx: &mut Context<'_>,
         f: F,
-    ) -> Poll<(usize, u16)> {
+    ) -> Poll<(usize, ConnectedState)> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage {
                     ChannelState::Connecting(req) if req.conn == conn && req.psm == psm => {
-                        let state = f(req);
+                        let state = f(idx, req);
                         let cid = state.cid;
-                        *storage = ChannelState::Connected(state);
-                        return Poll::Ready((idx, cid));
+                        *storage = ChannelState::Connected(state.clone());
+                        return Poll::Ready((idx, state));
                     }
                     _ => {}
                 }
@@ -164,19 +163,18 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         conn: ConnHandle,
         psm: u16,
         mut mtu: u16,
-    ) -> Result<(u16, DynamicReceiver<'_, Pdu<'d>>), ()> {
+    ) -> Result<(ConnectedState, DynamicReceiver<'_, Pdu<'d>>), ()> {
         let mut req_id = 0;
-        let mut mps = 0;
-        let (idx, cid) = poll_fn(|cx| {
-            self.poll_accept(conn, psm, cx, |req| {
+        let (idx, state) = poll_fn(|cx| {
+            self.poll_accept(conn, psm, cx, |idx, req| {
                 req_id = req.request_id;
-                mps = req.mps.min(self.pool.mtu() as u16);
+                let mps = req.mps.min(self.pool.mtu() as u16);
                 mtu = req.mtu.min(mtu);
                 ConnectedState {
                     conn: req.conn,
                     cid: req.cid,
                     psm: req.psm,
-                    credits: 0,
+                    credits: self.pool.available(AllocId::dynamic(idx)) as u16,
                     peer_credits: req.initial_credits,
                     peer_cid: req.peer_cid,
                     mps,
@@ -189,17 +187,17 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         let response = L2capLeSignal::new(
             req_id,
             L2capLeSignalData::LeCreditConnRes(LeCreditConnRes {
-                mps,
-                dcid: cid,
+                mps: state.mps,
+                dcid: state.cid,
                 mtu,
-                credits: 0,
+                credits: state.credits,
                 result: LeCreditConnResultCode::Success,
             }),
         );
-        info!("Channel open response: {:02x}", response);
+        info!("Responding with open response: {:02x}", response);
 
         self.signal.send((conn, response)).await;
-        Ok((cid, self.inbound[idx].receiver().into()))
+        Ok((state, self.inbound[idx].receiver().into()))
     }
 
     pub(crate) async fn create(
@@ -207,7 +205,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         conn: ConnHandle,
         psm: u16,
         mtu: u16,
-    ) -> Result<(u16, DynamicReceiver<'_, Pdu<'d>>), ()> {
+    ) -> Result<(ConnectedState, DynamicReceiver<'_, Pdu<'d>>), ()> {
         let state = ConnectingState {
             conn,
             cid: 0,
@@ -218,7 +216,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             mps: self.pool.mtu() as u16,
             mtu,
         };
-        let cid = self.connect(state)?;
+        let (idx, cid) = self.connect(state)?;
 
         let command = L2capLeSignal::new(
             0,
@@ -227,18 +225,18 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 mps: self.pool.mtu() as u16,
                 scid: cid,
                 mtu,
-                credits: 0,
+                credits: self.pool.available(AllocId::dynamic(idx)) as u16,
             }),
         );
         self.signal.send((conn, command)).await;
 
-        let idx = poll_fn(|cx| {
+        let (idx, state) = poll_fn(|cx| {
             self.state.lock(|state| {
                 let mut state = state.borrow_mut();
                 for (idx, storage) in state.channels.iter_mut().enumerate() {
                     match storage {
                         ChannelState::Connected(req) if req.conn == conn && req.cid == cid => {
-                            return Poll::Ready(idx);
+                            return Poll::Ready((idx, req.clone()));
                         }
                         _ => {}
                     }
@@ -252,7 +250,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         // let tx = self.inbound[idx].sender().into();
         let rx = self.inbound[idx].receiver().into();
 
-        Ok((cid, rx))
+        Ok((state, rx))
     }
 
     pub async fn dispatch(&self, packet: L2capPacket<'_>) -> Result<(), ()> {
@@ -348,6 +346,7 @@ pub struct ConnectingState {
     pub(crate) mtu: u16,
 }
 
+#[derive(Clone)]
 pub struct ConnectedState {
     pub(crate) conn: ConnHandle,
     pub(crate) cid: u16,
