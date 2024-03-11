@@ -89,7 +89,9 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
         let packets = unsafe { &mut *self.packets.get() };
         for (idx, packet) in packets.iter_mut().enumerate() {
             if packet.free {
-                packet.free = true;
+                // info!("[alloc] {}", idx);
+                packet.free = false;
+                packet.buf.iter_mut().for_each(|b| *b = 0);
                 usage[id.0] += 1;
                 return Some(PacketRef {
                     idx,
@@ -103,6 +105,7 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
     fn free(&self, id: AllocId, p_ref: PacketRef) {
         let mut usage = self.usage.borrow_mut();
         let packets = unsafe { &mut *self.packets.get() };
+        // info!("[free] {}", p_ref.idx);
         packets[p_ref.idx].free = true;
         usage[id.0] -= 1;
     }
