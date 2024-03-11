@@ -56,17 +56,30 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
         }
     }
 
+    // Guaranteed available
+    fn min_available(&self, qos: Qos, client: AllocId) -> usize {
+        let usage = self.usage.borrow();
+        match qos {
+            Qos::None => 0,
+            Qos::Fair => (N / CLIENTS).saturating_sub(usage[client.0]),
+            Qos::Guaranteed(n) => {
+                let usage = usage[client.0];
+                n.saturating_sub(usage)
+            }
+        }
+    }
+
     fn available(&self, qos: Qos, client: AllocId) -> usize {
         let usage = self.usage.borrow();
         match qos {
-            Qos::None => N.checked_sub(usage.iter().sum()).unwrap_or(0),
-            Qos::Fair => (N / CLIENTS).checked_sub(usage[client.0]).unwrap_or(0),
+            Qos::None => N.saturating_sub(usage.iter().sum()),
+            Qos::Fair => (N / CLIENTS).saturating_sub(usage[client.0]),
             Qos::Guaranteed(n) => {
                 // Reserved for clients that should have minimum
                 let reserved = n * usage.iter().filter(|c| **c == 0).count();
                 let reserved = reserved - if usage[client.0] < n { n - usage[client.0] } else { 0 };
                 let usage = reserved + usage.iter().sum::<usize>();
-                N.checked_sub(usage).unwrap_or(0)
+                N.saturating_sub(usage)
             }
         }
     }
@@ -135,6 +148,10 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
         });
     }
 
+    fn min_available(&self, id: AllocId) -> usize {
+        self.state.lock(|state| state.min_available(self.qos, id))
+    }
+
     fn available(&self, id: AllocId) -> usize {
         self.state.lock(|state| state.available(self.qos, id))
     }
@@ -144,6 +161,7 @@ pub trait DynamicPacketPool<'d> {
     fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>>;
     fn free(&self, id: AllocId, r: PacketRef);
     fn available(&self, id: AllocId) -> usize;
+    fn min_available(&self, id: AllocId) -> usize;
     fn mtu(&self) -> usize;
 }
 
@@ -152,6 +170,10 @@ impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Dy
 {
     fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>> {
         PacketPool::alloc(self, id)
+    }
+
+    fn min_available(&self, id: AllocId) -> usize {
+        PacketPool::min_available(self, id)
     }
 
     fn available(&self, id: AllocId) -> usize {
