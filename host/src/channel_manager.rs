@@ -15,7 +15,9 @@ use crate::{
     l2cap::L2capPacket,
     packet_pool::{AllocId, DynamicPacketPool},
     pdu::Pdu,
-    types::l2cap::{L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode},
+    types::l2cap::{
+        L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
+    },
 };
 
 const BASE_ID: u16 = 0x40;
@@ -31,15 +33,20 @@ pub struct ChannelManager<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TX
     pool: &'d dyn DynamicPacketPool<'d>,
     state: Mutex<M, RefCell<State<CHANNELS>>>,
     signal: Channel<M, (ConnHandle, L2capLeSignal), 1>,
-    inbound: [Channel<M, Pdu<'d>, L2CAP_RXQ>; CHANNELS],
+    inbound: [Channel<M, Option<Pdu<'d>>, L2CAP_RXQ>; CHANNELS],
     //outbound: [Channel<M, Pdu<'d>, L2CAP_TXQ>; CHANNELS],
+}
+
+pub trait DynamicChannelManager {
+    fn request_to_send(&self, cid: u16, credits: usize) -> Result<(), ()>;
+    fn confirm_received(&self, cid: u16, credits: usize) -> Result<(), ()>;
 }
 
 impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
     ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
 {
     const TX_CHANNEL: Channel<M, Pdu<'d>, L2CAP_TXQ> = Channel::new();
-    const RX_CHANNEL: Channel<M, Pdu<'d>, L2CAP_RXQ> = Channel::new();
+    const RX_CHANNEL: Channel<M, Option<Pdu<'d>>, L2CAP_RXQ> = Channel::new();
     const DISCONNECTED: ChannelState = ChannelState::Disconnected;
     pub fn new(pool: &'d dyn DynamicPacketPool<'d>) -> Self {
         Self {
@@ -138,7 +145,10 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             let mut state = state.borrow_mut();
             for storage in state.channels.iter_mut() {
                 match storage {
-                    ChannelState::Connected(req) if req.cid == cid => return Ok(()),
+                    ChannelState::Connected(state) if state.peer_cid == cid => {
+                        state.peer_credits += credits;
+                        return Ok(());
+                    }
                     _ => {}
                 }
             }
@@ -176,18 +186,19 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         conn: ConnHandle,
         psm: u16,
         mut mtu: u16,
-    ) -> Result<(ConnectedState, DynamicReceiver<'_, Pdu<'d>>), ()> {
+    ) -> Result<(ConnectedState, DynamicReceiver<'_, Option<Pdu<'d>>>), ()> {
         let mut req_id = 0;
         let (idx, state) = poll_fn(|cx| {
             self.poll_accept(conn, psm, cx, |idx, req| {
                 req_id = req.request_id;
                 let mps = req.mps.min(self.pool.mtu() as u16);
                 mtu = req.mtu.min(mtu);
+                let credits = self.pool.min_available(AllocId::dynamic(idx)) as u16;
                 ConnectedState {
                     conn: req.conn,
                     cid: req.cid,
                     psm: req.psm,
-                    credits: self.pool.available(AllocId::dynamic(idx)) as u16,
+                    credits: self.pool.min_available(AllocId::dynamic(idx)) as u16,
                     peer_credits: req.initial_credits,
                     peer_cid: req.peer_cid,
                     pool_id: AllocId::dynamic(idx),
@@ -208,7 +219,6 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 result: LeCreditConnResultCode::Success,
             }),
         );
-        info!("Responding with open response: {:02x}", response);
 
         self.signal.send((conn, response)).await;
         Ok((state, self.inbound[idx].receiver().into()))
@@ -219,7 +229,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         conn: ConnHandle,
         psm: u16,
         mtu: u16,
-    ) -> Result<(ConnectedState, DynamicReceiver<'_, Pdu<'d>>), ()> {
+    ) -> Result<(ConnectedState, DynamicReceiver<'_, Option<Pdu<'d>>>), ()> {
         let state = ConnectingState {
             conn,
             cid: 0,
@@ -239,7 +249,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 mps: self.pool.mtu() as u16,
                 scid: cid,
                 mtu,
-                credits: self.pool.available(AllocId::dynamic(idx)) as u16,
+                credits: self.pool.min_available(AllocId::dynamic(idx)) as u16,
             }),
         );
         self.signal.send((conn, command)).await;
@@ -281,7 +291,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         if let Some(mut p) = self.pool.alloc(chan_alloc) {
             let len = packet.payload.len();
             p.as_mut()[..len].copy_from_slice(packet.payload);
-            self.inbound[chan].send(Pdu::new(p, len)).await;
+            self.inbound[chan].send(Some(Pdu::new(p, len))).await;
             Ok(())
         } else {
             warn!("No memory for channel {}", packet.channel);
@@ -292,7 +302,6 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
     pub fn control(&self, conn: ConnHandle, signal: L2capLeSignal) -> Result<(), ()> {
         match signal.data {
             L2capLeSignalData::LeCreditConnReq(req) => {
-                info!("[req] Accepting LE connection: {:?}", req);
                 if let Err(e) = self.connect(ConnectingState {
                     conn,
                     cid: 0,
@@ -341,7 +350,69 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 warn!("Rejected: {:02x}", reject);
                 Ok(())
             }
+            L2capLeSignalData::DisconnectionReq(req) => {
+                warn!("Disconnection requested!");
+                Ok(())
+            }
+            L2capLeSignalData::DisconnectionRes(res) => {
+                warn!("Disconnection result!");
+                Ok(())
+            }
         }
+    }
+}
+
+impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize> DynamicChannelManager
+    for ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
+{
+    fn confirm_received(&self, cid: u16, credits: usize) -> Result<(), ()> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
+                match storage {
+                    ChannelState::Connected(state) if cid == state.cid => {
+                        // Don't set credits higher than what we can promise
+                        let increment = self.pool.min_available(AllocId::dynamic(idx)).min(credits);
+                        state.credits += increment as u16;
+                        self.signal
+                            .try_send((
+                                state.conn,
+                                L2capLeSignal::new(
+                                    (cid % 255) as u8,
+                                    L2capLeSignalData::LeCreditFlowInd(LeCreditFlowInd {
+                                        cid: state.peer_cid,
+                                        credits: increment as u16,
+                                    }),
+                                ),
+                            ))
+                            .map_err(|_| ())?;
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            return Err(());
+        })
+    }
+
+    fn request_to_send(&self, cid: u16, credits: usize) -> Result<(), ()> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for storage in state.channels.iter_mut() {
+                match storage {
+                    ChannelState::Connected(state) if cid == state.cid => {
+                        if credits <= state.peer_credits as usize {
+                            state.peer_credits = state.peer_credits - credits as u16;
+                            return Ok(());
+                        } else {
+                            return Err(());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return Err(());
+        })
     }
 }
 

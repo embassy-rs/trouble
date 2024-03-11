@@ -1,4 +1,5 @@
 use crate::adapter::Adapter;
+use crate::channel_manager::DynamicChannelManager;
 use crate::codec;
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
@@ -45,49 +46,78 @@ pub struct L2capChannel<'d, const MTU: usize> {
     conn: ConnHandle,
     pool_id: AllocId,
     cid: u16,
-    mps: u16,
+    peer_cid: u16,
+    mps: usize,
     pool: &'d dyn DynamicPacketPool<'d>,
-    rx: DynamicReceiver<'d, Pdu<'d>>,
+    manager: &'d dyn DynamicChannelManager,
+    rx: DynamicReceiver<'d, Option<Pdu<'d>>>,
     tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
 }
 
 impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
     pub async fn send(&mut self, buf: &[u8]) -> Result<(), ()> {
-        // TODO: Take credit into account!!
+        // The number of packets we'll need to send for this payload
+        let n_packets = 1 + (buf.len().saturating_sub(self.mps - 2)).div_ceil(self.mps);
+
+        // TODO: We could potentially make this more graceful by sending as much as we can, and wait
+        // for pool to get the available packets back, which would require some poll/async behavior
+        // support for the pool.
+        if self.pool.available(self.pool_id) < n_packets {
+            return Err(());
+        }
+
+        self.manager.request_to_send(self.cid, n_packets)?;
 
         // Segment using mps
-        let (first, remaining) = buf.split_at(self.mps as usize - 2);
+        let (first, remaining) = buf.split_at(self.mps - 2);
         if let Some(mut packet) = self.pool.alloc(self.pool_id) {
             let len = {
                 let mut w = WriteCursor::new(packet.as_mut());
                 w.write(2 + first.len() as u16).map_err(|_| ())?;
-                w.write(self.cid as u16).map_err(|_| ())?;
-                w.write(buf.len() as u16).map_err(|_| ())?;
+                w.write(self.peer_cid as u16).map_err(|_| ())?;
+                let len = buf.len() as u16;
+                w.write(len).map_err(|_| ())?;
                 w.append(first).map_err(|_| ())?;
                 w.len()
             };
-            self.tx.send((self.conn, Pdu::new(packet, len))).await;
+            let pdu = if remaining.is_empty() {
+                Pdu::new(packet, len)
+            } else {
+                Pdu::new(packet, len)
+            };
+            self.tx.send((self.conn, pdu)).await;
         }
 
-        for chunk in remaining.chunks(self.mps as usize) {
+        let chunks = remaining.chunks(self.mps);
+        let num_chunks = chunks.len();
+        for (i, chunk) in chunks.enumerate() {
             if let Some(mut packet) = self.pool.alloc(self.pool_id) {
                 let len = {
                     let mut w = WriteCursor::new(packet.as_mut());
                     w.write(chunk.len() as u16).map_err(|_| ())?;
-                    w.write(self.cid as u16).map_err(|_| ())?;
+                    w.write(self.peer_cid as u16).map_err(|_| ())?;
                     w.append(chunk).map_err(|_| ())?;
                     w.len()
                 };
-                self.tx.send((self.conn, Pdu::new(packet, len))).await;
+                let pdu = if i == num_chunks - 1 {
+                    Pdu::new(packet, len)
+                } else {
+                    Pdu::new(packet, len)
+                };
+                self.tx.send((self.conn, pdu)).await;
             } else {
                 return Err(());
             }
         }
+
+        info!("Sent PDU ({} fragments)", n_packets);
+
         Ok(())
     }
 
     pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
-        let packet = self.rx.receive().await;
+        let mut n_received = 1;
+        let packet = self.rx.receive().await.ok_or(())?;
         let mut r = ReadCursor::new(&packet.as_ref());
         let remaining: u16 = r.read().map_err(|_| ())?;
         let data = r.remaining();
@@ -99,7 +129,8 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
         let mut remaining = remaining as usize - data.len();
         // We have some k-frames to reassemble
         while remaining > 0 {
-            let packet = self.rx.receive().await;
+            let packet = self.rx.receive().await.ok_or(())?;
+            n_received += 1;
             let to_copy = packet.len.min(buf.len() - pos);
             if to_copy > 0 {
                 buf[pos..pos + to_copy].copy_from_slice(&packet.as_ref()[..to_copy]);
@@ -107,7 +138,9 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
             }
             remaining -= packet.len;
         }
-        // TODO: Send more credits back!
+
+        self.manager.confirm_received(self.cid, n_received)?;
+
         Ok(pos)
     }
 
@@ -130,9 +163,11 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
         Ok(Self {
             conn: connection.handle(),
             cid: state.cid,
-            mps: state.mps,
+            peer_cid: state.peer_cid,
+            mps: state.mps as usize,
             pool: adapter.pool,
             pool_id: state.pool_id,
+            manager: &adapter.channels,
             tx,
             rx,
         })
@@ -157,8 +192,10 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
             conn: connection.handle(),
             pool_id: state.pool_id,
             cid: state.cid,
-            mps: state.mps,
+            peer_cid: state.peer_cid,
+            mps: state.mps as usize,
             pool: adapter.pool,
+            manager: &adapter.channels,
             tx,
             rx,
         })

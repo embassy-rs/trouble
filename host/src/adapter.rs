@@ -138,7 +138,16 @@ where
                 if let Some(mut p) = self.pool.alloc(ATT_ID) {
                     let len = packet.payload.len();
                     p.as_mut()[..len].copy_from_slice(packet.payload);
-                    self.att_inbound.send((conn, Pdu { packet: p, len })).await;
+                    self.att_inbound
+                        .send((
+                            conn,
+                            Pdu {
+                                packet: p,
+                                pb: acl.boundary_flag(),
+                                len,
+                            },
+                        ))
+                        .await;
                 } else {
                     // TODO: Signal back
                 }
@@ -243,13 +252,7 @@ where
                     }
                 },
                 Either4::Second((handle, pdu)) => {
-                    let acl = AclPacket::new(
-                        handle,
-                        AclPacketBoundary::FirstNonFlushable,
-                        AclBroadcastFlag::PointToPoint,
-                        pdu.as_ref(),
-                    );
-                    info!("Sent packet to host");
+                    let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
                     match controller.write_acl_data(&acl).await {
                         Ok(_) => {}
                         Err(e) => {
