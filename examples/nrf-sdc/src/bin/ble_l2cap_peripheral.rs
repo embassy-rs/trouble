@@ -61,6 +61,7 @@ fn build_sdc<'d, const N: usize>(
         .support_adv()?
         .support_peripheral()?
         .peripheral_count(1)?
+        .buffer_cfg(27, 27, 20, 20)?
         .build(p, rng, mpsl, mem)
 }
 
@@ -98,7 +99,7 @@ async fn main(spawner: Spawner) {
     let mut pool = [0; 256];
     let rng = sdc::rng_pool::RngPool::new(p.RNG, Irqs, &mut pool, 64);
 
-    let mut sdc_mem = sdc::Mem::<1672>::new();
+    let mut sdc_mem = sdc::Mem::<3128>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
     info!("Advertising as {:02x}", bd_addr());
@@ -108,7 +109,7 @@ async fn main(spawner: Spawner) {
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::Guaranteed(4)));
 
-    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 3, 3>> = StaticCell::new();
+    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 1, 1>> = StaticCell::new();
     let adapter = ADAPTER.init(Adapter::new(host_resources));
 
     let config = BleConfig {
