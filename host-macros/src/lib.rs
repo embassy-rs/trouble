@@ -8,8 +8,8 @@ pub fn derive_codec_fn(item: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(item as DeriveInput);
     let name = &ast.ident;
 
-    if let Data::Struct(data_struct) = &ast.data {
-        match &data_struct.fields {
+    match &ast.data {
+        Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields) => {
                 let mut offsets = Vec::new();
                 let mut field_constants: Vec<_> = Vec::new();
@@ -79,8 +79,9 @@ pub fn derive_codec_fn(item: TokenStream) -> TokenStream {
                 panic!("only standard structs please");
             }
         }
-        .into()
-    } else {
-        panic!("Codec macro can only be used with structs");
+        .into(),
+        _ => {
+            panic!("Codec macro can only be used with structs");
+        }
     }
 }
