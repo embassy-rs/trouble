@@ -1,10 +1,10 @@
 # trouble
 
-*WIP* Basic functionality like creating a GATT server works, but API is likely change a lot for the time being. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE stack.
+*WIP* Basic functionality like creating a GATT server works, l2cap connection with credit flow works, but API is likely change a lot for the time being. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE stack.
 
 An Rust host BLE stack with a future goal of qualification. Currently the focus is on implementing the host on top of a HCI interface.
 
-The `trouble-host` is based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with [`bt-hci`](https://github.com/alexmoon/bt-hci). 
+The `trouble-host` crate is based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with [`bt-hci`](https://github.com/alexmoon/bt-hci). 
 
 Done:
 * Advertise
@@ -12,13 +12,11 @@ Done:
 * L2CAP CoC 
 
 Missing:
-* Security
-* ACL segmentation & reassembly
-* l2cap CoC credit handling
-* Legacy l2cap
+* Security manager
 * Gatt notifications
 * Scanning
 * Gatt client
+* Legacy Bluetooth
 
 ## Example
 
