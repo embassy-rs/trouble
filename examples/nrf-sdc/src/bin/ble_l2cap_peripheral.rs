@@ -106,7 +106,7 @@ async fn main(spawner: Spawner) {
     Timer::after(Duration::from_millis(200)).await;
 
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
+    let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::Guaranteed(4)));
 
     static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 3, 3>> = StaticCell::new();
     let adapter = ADAPTER.init(Adapter::new(host_resources));
@@ -154,15 +154,17 @@ async fn main(spawner: Spawner) {
                 let mut ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
 
                 info!("New l2cap channel created by remote!");
-                let mut rx = [0; 23];
+                let mut rx = [0; 27];
                 for i in 0..10 {
                     let len = unwrap!(ch1.receive(&mut rx).await);
-                    info!("Received {} bytes: {:02x}", len, &rx[..len]);
+                    assert_eq!(len, rx.len());
+                    assert_eq!(rx, [i; 27]);
                 }
 
-                info!("Sending bytes pack");
+                info!("Received successfully! Sending bytes back");
+                Timer::after(Duration::from_secs(1)).await;
                 for i in 0..10 {
-                    let mut tx = [i; 23];
+                    let mut tx = [i; 27];
                     let _ = unwrap!(ch1.send(&mut tx).await);
                 }
                 info!("Bytes sent");
