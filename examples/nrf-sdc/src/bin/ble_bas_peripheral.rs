@@ -17,7 +17,6 @@ use static_cell::StaticCell;
 use trouble_host::{
     ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     adapter::AdvertiseConfig,
-    adapter::Config as BleConfig,
     adapter::{Adapter, HostResources},
     attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
     gatt::{GattEvent, GattServer},
@@ -109,15 +108,13 @@ async fn main(spawner: Spawner) {
     static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 3, 3>> = StaticCell::new();
     let adapter = ADAPTER.init(Adapter::new(host_resources));
 
-    let config = BleConfig {
-        advertise: Some(AdvertiseConfig {
-            params: None,
-            data: &[
-                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-                AdStructure::CompleteLocalName("Trouble"),
-            ],
-        }),
+    let advertise_config = AdvertiseConfig {
+        params: None,
+        data: &[
+            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+            AdStructure::CompleteLocalName("Trouble"),
+        ],
     };
 
     let mut attributes: AttributesBuilder<'_, 10> = AttributesBuilder::new();
@@ -130,7 +127,7 @@ async fn main(spawner: Spawner) {
 
     let mut server = GattServer::new(adapter, &mut attributes[..]);
 
-    unwrap!(adapter.advertise(&sdc, config).await);
+    unwrap!(adapter.advertise(&sdc, advertise_config).await);
 
     info!("Starting advertising and GATT service");
     let _ = join(adapter.run(&sdc), async {

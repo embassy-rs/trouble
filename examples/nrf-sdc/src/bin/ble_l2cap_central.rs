@@ -15,12 +15,10 @@ use sdc::rng_pool::RngPool;
 use sdc::vendor::ZephyrWriteBdAddr;
 use static_cell::StaticCell;
 use trouble_host::{
-    adapter::AdvertiseConfig,
     adapter::ScanConfig,
     adapter::{Adapter, HostResources},
     connection::Connection,
     l2cap::L2capChannel,
-    scanner::Scanner,
     PacketQos,
 };
 
