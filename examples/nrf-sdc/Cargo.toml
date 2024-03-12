@@ -30,25 +30,25 @@ static_cell = "2"
 debug = 2
 
 [patch.crates-io]
-# embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-# embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-# embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-# embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-# embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-# embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-# embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-#nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", branch = "main" }
-#nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", branch = "main" }
-#bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", branch = "main" }
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", branch = "main" }
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
 
-embassy-executor = {path = "../../../embassy/embassy-executor"}
-embassy-nrf = {path = "../../../embassy/embassy-nrf"}
-embassy-sync = {path = "../../../embassy/embassy-sync"}
-embassy-futures = {path = "../../../embassy/embassy-futures"}
-embassy-time = {path = "../../../embassy/embassy-time"}
-embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
-embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
-embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
-nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
-nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-bt-hci = { path = "../../../bt-hci" }
+#embassy-executor = {path = "../../../embassy/embassy-executor"}
+#embassy-nrf = {path = "../../../embassy/embassy-nrf"}
+#embassy-sync = {path = "../../../embassy/embassy-sync"}
+#embassy-futures = {path = "../../../embassy/embassy-futures"}
+#embassy-time = {path = "../../../embassy/embassy-time"}
+#embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
+#embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
+#embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
+#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
+#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
+#bt-hci = { path = "../../../bt-hci" }
