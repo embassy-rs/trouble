@@ -1,6 +1,6 @@
 use bt_hci::{
-    cmd::link_control::DisconnectParams,
-    param::{ConnHandle, DisconnectReason},
+    cmd::{le::LeCreateConnParams, link_control::DisconnectParams},
+    param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, Duration},
 };
 use embassy_sync::{blocking_mutex::raw::RawMutex, channel::DynamicSender};
 
@@ -26,7 +26,7 @@ impl<'d> Connection<'d> {
     >(
         adapter: &'d Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
-        let handle = adapter.connections.accept().await;
+        let handle = adapter.connections.accept(None).await;
         Connection {
             handle,
             control: adapter.control.sender().into(),
@@ -40,5 +40,38 @@ impl<'d> Connection<'d> {
                 reason: DisconnectReason::RemoteUserTerminatedConn,
             }))
             .await;
+    }
+
+    pub async fn connect<
+        M: RawMutex,
+        const CONNS: usize,
+        const CHANNELS: usize,
+        const L2CAP_TXQ: usize,
+        const L2CAP_RXQ: usize,
+    >(
+        adapter: &'d Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        peer_addr: BdAddr,
+    ) -> Self {
+        // TODO: Make this configurable
+        let params = LeCreateConnParams {
+            le_scan_interval: Duration::from_micros(1707500),
+            le_scan_window: Duration::from_micros(312500),
+            use_filter_accept_list: false,
+            peer_addr_kind: AddrKind::PUBLIC,
+            peer_addr,
+            own_addr_kind: AddrKind::PUBLIC,
+            conn_interval_min: Duration::from_millis(25),
+            conn_interval_max: Duration::from_millis(50),
+            max_latency: 0,
+            supervision_timeout: Duration::from_millis(250),
+            min_ce_length: Duration::from_millis(0),
+            max_ce_length: Duration::from_millis(0),
+        };
+        adapter.control.send(ControlCommand::Connect(params)).await;
+        let handle = adapter.connections.accept(Some(params.peer_addr)).await;
+        Connection {
+            handle,
+            control: adapter.control.sender().into(),
+        }
     }
 }

@@ -6,7 +6,7 @@ use bt_hci::cmd::SyncCmd;
 use bt_hci::param::BdAddr;
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
-use embassy_futures::join::join3 as join;
+use embassy_futures::join::join;
 use embassy_nrf::{bind_interrupts, pac};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
@@ -15,13 +15,12 @@ use sdc::rng_pool::RngPool;
 use sdc::vendor::ZephyrWriteBdAddr;
 use static_cell::StaticCell;
 use trouble_host::{
-    ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     adapter::AdvertiseConfig,
+    adapter::ScanConfig,
     adapter::{Adapter, HostResources},
-    attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
     connection::Connection,
-    gatt::{GattEvent, GattServer},
     l2cap::L2capChannel,
+    scanner::Scanner,
     PacketQos,
 };
 
@@ -57,9 +56,9 @@ fn build_sdc<'d, const N: usize>(
     mem: &'d mut sdc::Mem<N>,
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
     sdc::Builder::new()?
-        .support_adv()?
-        .support_peripheral()?
-        .peripheral_count(1)?
+        .support_scan()?
+        .support_central()?
+        .central_count(1)?
         .buffer_cfg(27, 27, 20, 20)?
         .build(p, rng, mpsl, mem)
 }
@@ -98,7 +97,7 @@ async fn main(spawner: Spawner) {
     let mut pool = [0; 256];
     let rng = sdc::rng_pool::RngPool::new(p.RNG, Irqs, &mut pool, 64);
 
-    let mut sdc_mem = sdc::Mem::<6224>::new();
+    let mut sdc_mem = sdc::Mem::<6544>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
     info!("Our address = {:02x}", bd_addr());
@@ -111,66 +110,41 @@ async fn main(spawner: Spawner) {
     static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 1, 1>> = StaticCell::new();
     let adapter = ADAPTER.init(Adapter::new(host_resources));
 
-    let config = AdvertiseConfig {
-        params: None,
-        data: &[
-            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-            AdStructure::CompleteLocalName("Trouble"),
-        ],
-    };
+    let config = ScanConfig { params: None };
+    let mut scanner = unwrap!(adapter.scan(&sdc, config).await);
 
-    let mut attributes: AttributesBuilder<'_, 10> = AttributesBuilder::new();
-    static DATA: StaticCell<[u8; 1]> = StaticCell::new();
-    let data = DATA.init([32; 1]);
-    ServiceBuilder::new(&mut attributes, 0x180f_u16.into())
-        .add_characteristic(0x2a19.into(), &[CharacteristicProp::Read], data)
-        .done();
-    let mut attributes = attributes.build();
+    // NOTE: Modify this to match the address of the peripheral you want to connect to
+    let target: BdAddr = BdAddr::new([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
 
-    let mut server = GattServer::new(adapter, &mut attributes[..]);
-
-    unwrap!(adapter.advertise(&sdc, config).await);
-
-    let _ = join(
-        adapter.run(&sdc),
-        async {
-            loop {
-                match server.next().await {
-                    GattEvent::Write(_conn, attribute) => {
-                        info!("Attribute was written: {:?}", attribute);
+    info!("Scanning for peripheral...");
+    let _ = join(adapter.run(&sdc), async {
+        loop {
+            let reports = scanner.next().await;
+            for report in reports.iter() {
+                let report = report.unwrap();
+                if report.addr == target {
+                    let conn = Connection::connect(adapter, report.addr).await;
+                    info!("Connected, creating l2cap channel");
+                    let mut ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::create(adapter, &conn, 0x2349).await);
+                    info!("New l2cap channel created, sending some data!");
+                    for i in 0..10 {
+                        let mut tx = [i; 27];
+                        let _ = unwrap!(ch1.send(&mut tx).await);
                     }
+                    info!("Sent data, waiting for them to be sent back");
+                    let mut rx = [0; 27];
+                    for i in 0..10 {
+                        let len = unwrap!(ch1.receive(&mut rx).await);
+                        assert_eq!(len, rx.len());
+                        assert_eq!(rx, [i; 27]);
+                    }
+
+                    info!("Received successfully!");
+
+                    Timer::after(Duration::from_secs(60)).await;
                 }
             }
-        },
-        async {
-            loop {
-                info!("Waiting for connection...");
-                let conn = Connection::accept(adapter).await;
-
-                info!("Connection established");
-
-                let mut ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
-
-                info!("L2CAP channel accepted");
-                let mut rx = [0; 27];
-                for i in 0..10 {
-                    let len = unwrap!(ch1.receive(&mut rx).await);
-                    assert_eq!(len, rx.len());
-                    assert_eq!(rx, [i; 27]);
-                }
-
-                info!("L2CAP data received, echoing");
-                Timer::after(Duration::from_secs(1)).await;
-                for i in 0..10 {
-                    let mut tx = [i; 27];
-                    let _ = unwrap!(ch1.send(&mut tx).await);
-                }
-                info!("L2CAP data echoed");
-
-                Timer::after(Duration::from_secs(60)).await;
-            }
-        },
-    )
+        }
+    })
     .await;
 }

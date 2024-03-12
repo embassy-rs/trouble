@@ -31,6 +31,7 @@ pub mod adapter;
 pub mod connection;
 pub mod gatt;
 pub mod l2cap;
+pub mod scanner;
 
 pub mod ad_structure;
 

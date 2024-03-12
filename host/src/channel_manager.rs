@@ -26,6 +26,7 @@ struct State<const CHANNELS: usize> {
     channels: [ChannelState; CHANNELS],
     accept_waker: WakerRegistration,
     create_waker: WakerRegistration,
+    credit_wakers: [WakerRegistration; CHANNELS],
 }
 
 /// Channel manager for L2CAP channels used directly by clients.
@@ -38,7 +39,7 @@ pub struct ChannelManager<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TX
 }
 
 pub trait DynamicChannelManager {
-    fn request_to_send(&self, cid: u16, credits: usize) -> Result<(), ()>;
+    fn poll_request_to_send(&self, cid: u16, credits: usize, cx: &mut Context<'_>) -> Poll<Result<(), ()>>;
     fn confirm_received(&self, cid: u16, credits: usize) -> Result<(), ()>;
 }
 
@@ -48,6 +49,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
     const TX_CHANNEL: Channel<M, Pdu<'d>, L2CAP_TXQ> = Channel::new();
     const RX_CHANNEL: Channel<M, Option<Pdu<'d>>, L2CAP_RXQ> = Channel::new();
     const DISCONNECTED: ChannelState = ChannelState::Disconnected;
+    const CREDIT_WAKER: WakerRegistration = WakerRegistration::new();
     pub fn new(pool: &'d dyn DynamicPacketPool<'d>) -> Self {
         Self {
             pool,
@@ -55,6 +57,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 channels: [Self::DISCONNECTED; CHANNELS],
                 accept_waker: WakerRegistration::new(),
                 create_waker: WakerRegistration::new(),
+                credit_wakers: [Self::CREDIT_WAKER; CHANNELS],
             })),
             signal: Channel::new(),
             inbound: [Self::RX_CHANNEL; CHANNELS],
@@ -143,10 +146,11 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
     fn remote_credits(&self, cid: u16, credits: u16) -> Result<(), ()> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
-            for storage in state.channels.iter_mut() {
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage {
-                    ChannelState::Connected(state) if state.peer_cid == cid => {
-                        state.peer_credits += credits;
+                    ChannelState::Connected(s) if s.peer_cid == cid => {
+                        s.peer_credits += credits;
+                        state.credit_wakers[idx].wake();
                         return Ok(());
                     }
                     _ => {}
@@ -191,7 +195,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         let (idx, state) = poll_fn(|cx| {
             self.poll_accept(conn, psm, cx, |idx, req| {
                 req_id = req.request_id;
-                let mps = req.mps.min(self.pool.mtu() as u16);
+                let mps = req.mps.min(self.pool.mtu() as u16 - 4);
                 mtu = req.mtu.min(mtu);
                 let credits = self.pool.min_available(AllocId::dynamic(idx)) as u16;
                 ConnectedState {
@@ -246,7 +250,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             0,
             L2capLeSignalData::LeCreditConnReq(LeCreditConnReq {
                 psm,
-                mps: self.pool.mtu() as u16,
+                mps: self.pool.mtu() as u16 - 4,
                 scid: cid,
                 mtu,
                 credits: self.pool.min_available(AllocId::dynamic(idx)) as u16,
@@ -300,6 +304,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
     }
 
     pub fn control(&self, conn: ConnHandle, signal: L2capLeSignal) -> Result<(), ()> {
+        // info!("Inbound signal: {:?}", signal);
         match signal.data {
             L2capLeSignalData::LeCreditConnReq(req) => {
                 if let Err(e) = self.connect(ConnectingState {
@@ -395,23 +400,24 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         })
     }
 
-    fn request_to_send(&self, cid: u16, credits: usize) -> Result<(), ()> {
+    fn poll_request_to_send(&self, cid: u16, credits: usize, cx: &mut Context<'_>) -> Poll<Result<(), ()>> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
-            for storage in state.channels.iter_mut() {
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage {
-                    ChannelState::Connected(state) if cid == state.cid => {
-                        if credits <= state.peer_credits as usize {
-                            state.peer_credits = state.peer_credits - credits as u16;
-                            return Ok(());
+                    ChannelState::Connected(s) if cid == s.cid => {
+                        if credits <= s.peer_credits as usize {
+                            s.peer_credits = s.peer_credits - credits as u16;
+                            return Poll::Ready(Ok(()));
                         } else {
-                            return Err(());
+                            state.credit_wakers[idx].register(cx.waker());
+                            return Poll::Pending;
                         }
                     }
                     _ => {}
                 }
             }
-            return Err(());
+            return Poll::Ready(Err(()));
         })
     }
 }

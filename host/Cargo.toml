@@ -18,6 +18,7 @@ resolver = "2"
 bt-hci = { version = "0.1.0" }
 embedded-io-async = { version = "0.6" }
 embassy-sync = "0.5"
+embassy-time = "0.3"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.8"

@@ -65,15 +65,23 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
-    pub fn poll_accept(&self, cx: &mut Context<'_>) -> Poll<ConnHandle> {
+    pub fn poll_accept(&self, peer: Option<BdAddr>, cx: &mut Context<'_>) -> Poll<ConnHandle> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
                 match storage {
                     ConnectionState::Connecting(handle, info) => {
-                        let handle = handle.clone();
-                        *storage = ConnectionState::Connected(handle.clone(), info.clone());
-                        return Poll::Ready(handle);
+                        if let Some(peer) = peer {
+                            if info.peer_address == peer {
+                                let handle = handle.clone();
+                                *storage = ConnectionState::Connected(handle.clone(), info.clone());
+                                return Poll::Ready(handle);
+                            }
+                        } else {
+                            let handle = handle.clone();
+                            *storage = ConnectionState::Connected(handle.clone(), info.clone());
+                            return Poll::Ready(handle);
+                        }
                     }
                     _ => {}
                 }
@@ -83,8 +91,8 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
-    pub async fn accept(&self) -> ConnHandle {
-        poll_fn(move |cx| self.poll_accept(cx)).await
+    pub async fn accept(&self, peer: Option<BdAddr>) -> ConnHandle {
+        poll_fn(move |cx| self.poll_accept(peer, cx)).await
     }
 }
 

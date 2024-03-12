@@ -5,21 +5,26 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
 use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
+use crate::scanner::{ScanReports, Scanner};
 use crate::types::l2cap::L2capLeSignal;
 use crate::{codec, Error};
 use bt_hci::cmd::controller_baseband::SetEventMask;
-use bt_hci::cmd::le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams};
+use bt_hci::cmd::le::{
+    LeCreateConn, LeCreateConnParams, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable,
+    LeSetScanEnableParams, LeSetScanParams,
+};
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
-use bt_hci::cmd::SyncCmd;
+use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
-use bt_hci::ControllerCmdSync;
-use bt_hci::ControllerToHostPacket;
+use bt_hci::{AsHciBytes, ControllerToHostPacket};
+use bt_hci::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
+use heapless::Vec;
 
 pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
@@ -40,14 +45,8 @@ pub struct AdvertiseConfig<'d> {
     pub data: &'d [AdStructure<'d>],
 }
 
-pub struct Config<'a> {
-    pub advertise: Option<AdvertiseConfig<'a>>,
-}
-
-impl<'a> Default for Config<'a> {
-    fn default() -> Self {
-        Self { advertise: None }
-    }
+pub struct ScanConfig {
+    pub params: Option<LeSetScanParams>,
 }
 
 pub struct Adapter<'d, M, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
@@ -61,10 +60,12 @@ where
 
     pub(crate) outbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_TXQ>,
     pub(crate) control: Channel<M, ControlCommand, 1>,
+    pub(crate) scanner: Channel<M, ScanReports, 1>,
 }
 
 pub(crate) enum ControlCommand {
     Disconnect(DisconnectParams),
+    Connect(LeCreateConnParams),
 }
 
 #[derive(Debug)]
@@ -94,40 +95,64 @@ where
             channels: ChannelManager::new(&host_resources.pool),
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
+            scanner: Channel::new(),
 
             outbound: Channel::new(),
             control: Channel::new(),
         }
     }
 
-    pub async fn advertise<T>(&self, controller: &T, config: Config<'_>) -> Result<(), Error<T::Error>>
+    pub async fn stop_scan<T>(&self, controller: &T) -> Result<(), Error<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetScanEnable> + ControllerCmdSync<LeSetScanParams>,
+    {
+        LeSetScanEnable::new(false, false).exec(controller).await?;
+        Ok(())
+    }
+
+    pub async fn scan<T>(&self, controller: &T, scan: ScanConfig) -> Result<Scanner<'_>, Error<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetScanEnable> + ControllerCmdSync<LeSetScanParams>,
+    {
+        let params = &scan.params.unwrap_or(LeSetScanParams::new(
+            bt_hci::param::LeScanKind::Passive,
+            bt_hci::param::Duration::from_millis(1_000),
+            bt_hci::param::Duration::from_millis(1_000),
+            bt_hci::param::AddrKind::PUBLIC,
+            bt_hci::param::ScanningFilterPolicy::BasicUnfiltered,
+        ));
+        params.exec(controller).await?;
+
+        LeSetScanEnable::new(true, true).exec(controller).await?;
+        Ok(Scanner::new(self.scanner.receiver().into()))
+    }
+
+    pub async fn advertise<T>(&self, controller: &T, adv: AdvertiseConfig<'_>) -> Result<(), Error<T::Error>>
     where
         T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
     {
-        if let Some(adv) = &config.advertise {
-            let params = &adv.params.unwrap_or(LeSetAdvParams::new(
-                bt_hci::param::Duration::from_millis(400),
-                bt_hci::param::Duration::from_millis(400),
-                bt_hci::param::AdvKind::AdvInd,
-                bt_hci::param::AddrKind::PUBLIC,
-                bt_hci::param::AddrKind::PUBLIC,
-                BdAddr::default(),
-                bt_hci::param::AdvChannelMap::ALL,
-                bt_hci::param::AdvFilterPolicy::default(),
-            ));
+        let params = &adv.params.unwrap_or(LeSetAdvParams::new(
+            bt_hci::param::Duration::from_millis(400),
+            bt_hci::param::Duration::from_millis(400),
+            bt_hci::param::AdvKind::AdvInd,
+            bt_hci::param::AddrKind::PUBLIC,
+            bt_hci::param::AddrKind::PUBLIC,
+            BdAddr::default(),
+            bt_hci::param::AdvChannelMap::ALL,
+            bt_hci::param::AdvFilterPolicy::default(),
+        ));
 
-            params.exec(controller).await?;
+        params.exec(controller).await?;
 
-            let mut data = [0; 31];
-            let mut w = WriteCursor::new(&mut data[..]);
-            for item in adv.data.iter() {
-                item.encode(&mut w)?;
-            }
-            let len = w.len();
-            drop(w);
-            LeSetAdvData::new(len as u8, data).exec(controller).await?;
-            LeSetAdvEnable::new(true).exec(controller).await?;
+        let mut data = [0; 31];
+        let mut w = WriteCursor::new(&mut data[..]);
+        for item in adv.data.iter() {
+            item.encode(&mut w)?;
         }
+        let len = w.len();
+        drop(w);
+        LeSetAdvData::new(len as u8, data).exec(controller).await?;
+        LeSetAdvEnable::new(true).exec(controller).await?;
         Ok(())
     }
 
@@ -178,7 +203,10 @@ where
 
     pub async fn run<T>(&'d self, controller: &T) -> Result<(), Error<T::Error>>
     where
-        T: ControllerCmdSync<Disconnect> + ControllerCmdSync<SetEventMask>,
+        T: ControllerCmdSync<Disconnect>
+            + ControllerCmdSync<SetEventMask>
+            + ControllerCmdAsync<LeCreateConn>
+            + ControllerCmdSync<LeSetScanEnable>,
     {
         SetEventMask::new(
             EventMask::new()
@@ -194,6 +222,7 @@ where
         loop {
             let mut rx = [0u8; 259];
             let mut tx = [0u8; 259];
+            // info!("Entering select");
             match select4(
                 controller.read(&mut rx),
                 self.outbound.receive(),
@@ -202,74 +231,119 @@ where
             )
             .await
             {
-                Either4::First(result) => match result {
-                    Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            info!("Error processing ACL packet: {:?}", e);
-                        }
-                    },
-                    Ok(ControllerToHostPacket::Event(event)) => match event {
-                        Event::Le(event) => match event {
-                            LeEvent::LeConnectionComplete(e) => {
-                                if let Err(err) = self.connections.connect(
-                                    e.handle,
-                                    ConnectionInfo {
-                                        handle: e.handle,
-                                        status: e.status,
-                                        role: e.role,
-                                        peer_address: e.peer_addr,
-                                        interval: e.conn_interval.as_u16(),
-                                        latency: e.peripheral_latency,
-                                        timeout: e.supervision_timeout.as_u16(),
-                                    },
-                                ) {
-                                    warn!("Error establishing connection: {:?}", err);
-                                    Disconnect::new(e.handle, DisconnectReason::RemoteDeviceTerminatedConnLowResources)
+                Either4::First(result) => {
+                    // info!("Incoming event");
+                    match result {
+                        Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                info!("Error processing ACL packet: {:?}", e);
+                            }
+                        },
+                        Ok(ControllerToHostPacket::Event(event)) => match event {
+                            Event::Le(event) => match event {
+                                LeEvent::LeConnectionComplete(e) => {
+                                    if let Err(err) = self.connections.connect(
+                                        e.handle,
+                                        ConnectionInfo {
+                                            handle: e.handle,
+                                            status: e.status,
+                                            role: e.role,
+                                            peer_address: e.peer_addr,
+                                            interval: e.conn_interval.as_u16(),
+                                            latency: e.peripheral_latency,
+                                            timeout: e.supervision_timeout.as_u16(),
+                                        },
+                                    ) {
+                                        warn!("Error establishing connection: {:?}", err);
+                                        Disconnect::new(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        )
                                         .exec(controller)
                                         .await
                                         .unwrap();
+                                    }
                                 }
+                                LeEvent::LeAdvertisingReport(data) => {
+                                    let mut reports = Vec::new();
+                                    reports.extend_from_slice(&data.reports.bytes).unwrap();
+                                    self.scanner
+                                        .send(ScanReports {
+                                            num_reports: data.reports.num_reports,
+                                            reports,
+                                        })
+                                        .await;
+                                }
+                                _ => {
+                                    warn!("Unknown event: {:?}", event);
+                                }
+                            },
+                            Event::DisconnectionComplete(e) => {
+                                info!("Disconnected: {:?}", e);
+                                let _ = self.connections.disconnect(e.handle);
+                            }
+                            Event::NumberOfCompletedPackets(c) => {
+                                //info!("Confirmed {} packets sent", c.completed_packets.len());
                             }
                             _ => {
                                 warn!("Unknown event: {:?}", event);
                             }
                         },
-                        Event::DisconnectionComplete(e) => {
-                            info!("Disconnected: {:?}", e);
-                            let _ = self.connections.disconnect(e.handle);
+                        Ok(p) => {
+                            info!("Ignoring packet: {:?}", p);
                         }
-                        Event::NumberOfCompletedPackets(c) => {}
-                        _ => {
-                            warn!("Unknown event: {:?}", event);
+                        Err(e) => {
+                            info!("Error from controller: {:?}", e);
                         }
-                    },
-                    Ok(p) => {
-                        info!("Ignoring packet: {:?}", p);
                     }
-                    Err(e) => {
-                        info!("Error from controller: {:?}", e);
-                    }
-                },
-                Either4::Second((handle, pdu)) => {
+                }
+                Either4::Second((handle, mut pdu)) => {
+                    // info!("Outgoing packet");
                     let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
                     match controller.write_acl_data(&acl).await {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            pdu.as_mut().iter_mut().for_each(|b| *b = 0xFF);
+                        }
                         Err(e) => {
                             warn!("Error writing some ACL data to controller: {:?}", e);
                             panic!(":(");
                         }
                     }
                 }
-                Either4::Third(command) => match command {
-                    ControlCommand::Disconnect(params) => {
-                        Disconnect::new(params.handle, params.reason)
+                Either4::Third(command) => {
+                    // info!("Outgoing command");
+                    match command {
+                        ControlCommand::Connect(params) => {
+                            LeSetScanEnable::new(false, false).exec(controller).await.unwrap();
+                            LeCreateConn::new(
+                                params.le_scan_interval,
+                                params.le_scan_window,
+                                params.use_filter_accept_list,
+                                params.peer_addr_kind,
+                                params.peer_addr,
+                                params.own_addr_kind,
+                                params.conn_interval_min,
+                                params.conn_interval_max,
+                                params.max_latency,
+                                params.supervision_timeout,
+                                params.min_ce_length,
+                                params.max_ce_length,
+                            )
                             .exec(controller)
                             .await
                             .unwrap();
+                        }
+                        ControlCommand::Disconnect(params) => {
+                            Disconnect::new(params.handle, params.reason)
+                                .exec(controller)
+                                .await
+                                .unwrap();
+                        }
                     }
-                },
+                }
                 Either4::Fourth((handle, response)) => {
+                    // info!("Outgoing signal: {:?}", response);
                     let mut w = WriteCursor::new(&mut tx);
                     let (mut header, mut body) = w.split(4)?;
 

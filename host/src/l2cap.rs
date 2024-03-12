@@ -1,3 +1,5 @@
+use core::future::poll_fn;
+
 use crate::adapter::Adapter;
 use crate::channel_manager::DynamicChannelManager;
 use crate::codec;
@@ -9,6 +11,7 @@ use bt_hci::data::AclPacket;
 use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{DynamicReceiver, DynamicSender};
+use embassy_time::{Duration, Timer};
 
 pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
 pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
@@ -66,7 +69,7 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
             return Err(());
         }
 
-        self.manager.request_to_send(self.cid, n_packets)?;
+        poll_fn(|cx| self.manager.poll_request_to_send(self.cid, n_packets, cx)).await?;
 
         // Segment using mps
         let (first, remaining) = buf.split_at(self.mps - 2);
@@ -86,6 +89,8 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
                 Pdu::new(packet, len)
             };
             self.tx.send((self.conn, pdu)).await;
+        } else {
+            return Err(());
         }
 
         let chunks = remaining.chunks(self.mps);
@@ -109,8 +114,6 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
                 return Err(());
             }
         }
-
-        info!("Sent PDU ({} fragments)", n_packets);
 
         Ok(())
     }
@@ -159,6 +162,7 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
         let channels = &adapter.channels;
 
         let (state, rx) = channels.accept(connection.handle(), psm, MTU as u16).await?;
+
         let tx = adapter.outbound.sender().into();
         Ok(Self {
             conn: connection.handle(),
@@ -185,7 +189,8 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
         psm: u16,
     ) -> Result<Self, ()> {
         // TODO: Use unique signal ID to ensure no collision of signal messages
-        let (state, rx) = adapter.channels.accept(connection.handle(), psm, MTU as u16).await?;
+        //
+        let (state, rx) = adapter.channels.create(connection.handle(), psm, MTU as u16).await?;
         let tx = adapter.outbound.sender().into();
 
         Ok(Self {
