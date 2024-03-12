@@ -179,7 +179,7 @@ where
             L2CAP_CID_LE_U_SIGNAL => {
                 let mut r = ReadCursor::new(packet.payload);
                 let signal: L2capLeSignal = r.read()?;
-                match self.channels.control(conn, signal) {
+                match self.channels.control(conn, signal).await {
                     Ok(_) => {}
                     Err(_) => {
                         return Err(HandleError::Other);
