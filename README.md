@@ -7,16 +7,18 @@ An Rust host BLE stack with a future goal of qualification. Currently the focus 
 The `trouble-host` crate is based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with [`bt-hci`](https://github.com/alexmoon/bt-hci). 
 
 Done:
-* Advertise
 * Basic GATT
 * L2CAP CoC 
+* Peripheral role 
+* Central role
 
 Missing:
 * Security manager
 * Gatt notifications
-* Scanning
 * Gatt client
 * Legacy Bluetooth
+* Better error handling
+* Supporting more configuration options
 
 ## Example
 
