@@ -235,19 +235,19 @@ mod tests {
     fn test_fair_qos() {
         let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::Fair);
 
-        let a1 = pool.alloc(0);
+        let a1 = pool.alloc(AllocId(0));
         assert!(a1.is_some());
-        let a2 = pool.alloc(0);
+        let a2 = pool.alloc(AllocId(0));
         assert!(a2.is_some());
-        assert!(pool.alloc(0).is_none());
+        assert!(pool.alloc(AllocId(0)).is_none());
         drop(a2);
-        let a3 = pool.alloc(0);
+        let a3 = pool.alloc(AllocId(0));
         assert!(a3.is_some());
 
-        let b1 = pool.alloc(1);
+        let b1 = pool.alloc(AllocId(1));
         assert!(b1.is_some());
 
-        let c1 = pool.alloc(2);
+        let c1 = pool.alloc(AllocId(2));
         assert!(c1.is_some());
     }
 
@@ -255,25 +255,25 @@ mod tests {
     fn test_none_qos() {
         let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::None);
 
-        let a1 = pool.alloc(0);
+        let a1 = pool.alloc(AllocId(0));
         assert!(a1.is_some());
-        let a2 = pool.alloc(0);
+        let a2 = pool.alloc(AllocId(0));
         assert!(a2.is_some());
-        let a3 = pool.alloc(0);
+        let a3 = pool.alloc(AllocId(0));
         assert!(a3.is_some());
-        let a4 = pool.alloc(0);
+        let a4 = pool.alloc(AllocId(0));
         assert!(a4.is_some());
-        let a5 = pool.alloc(0);
+        let a5 = pool.alloc(AllocId(0));
         assert!(a5.is_some());
-        let a6 = pool.alloc(0);
+        let a6 = pool.alloc(AllocId(0));
         assert!(a6.is_some());
-        let a7 = pool.alloc(0);
+        let a7 = pool.alloc(AllocId(0));
         assert!(a7.is_some());
 
-        let b1 = pool.alloc(1);
+        let b1 = pool.alloc(AllocId(1));
         assert!(b1.is_some());
 
-        let b2 = pool.alloc(1);
+        let b2 = pool.alloc(AllocId(1));
         assert!(b2.is_none());
     }
 
@@ -281,29 +281,29 @@ mod tests {
     fn test_guaranteed_qos() {
         let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::Guaranteed(1));
 
-        let a1 = pool.alloc(0);
+        let a1 = pool.alloc(AllocId(0));
         assert!(a1.is_some());
-        let a2 = pool.alloc(0);
+        let a2 = pool.alloc(AllocId(0));
         assert!(a2.is_some());
-        let a3 = pool.alloc(0);
+        let a3 = pool.alloc(AllocId(0));
         assert!(a3.is_some());
-        let a4 = pool.alloc(0);
+        let a4 = pool.alloc(AllocId(0));
         assert!(a4.is_some());
-        let a5 = pool.alloc(0);
+        let a5 = pool.alloc(AllocId(0));
         assert!(a5.is_some());
         // Needs at least 3 for the other clients
-        assert!(pool.alloc(0).is_none());
+        assert!(pool.alloc(AllocId(0)).is_none());
 
-        let b1 = pool.alloc(1);
+        let b1 = pool.alloc(AllocId(1));
         assert!(b1.is_some());
-        assert!(pool.alloc(1).is_none());
+        assert!(pool.alloc(AllocId(1)).is_none());
 
-        let c1 = pool.alloc(2);
+        let c1 = pool.alloc(AllocId(2));
         assert!(c1.is_some());
-        assert!(pool.alloc(2).is_none());
+        assert!(pool.alloc(AllocId(2)).is_none());
 
-        let d1 = pool.alloc(3);
+        let d1 = pool.alloc(AllocId(3));
         assert!(d1.is_some());
-        assert!(pool.alloc(3).is_none());
+        assert!(pool.alloc(AllocId(3)).is_none());
     }
 }

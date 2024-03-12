@@ -11,7 +11,6 @@ use bt_hci::data::AclPacket;
 use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{DynamicReceiver, DynamicSender};
-use embassy_time::{Duration, Timer};
 
 pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
 pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;

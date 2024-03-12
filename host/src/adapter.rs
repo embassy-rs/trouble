@@ -2,7 +2,7 @@ use crate::ad_structure::AdStructure;
 use crate::channel_manager::ChannelManager;
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL}; //self, L2capLeSignal, L2capPacket, L2capState, LeCreditConnReq, SignalCode};
+use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
 use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
 use crate::scanner::{ScanReports, Scanner};
@@ -10,8 +10,7 @@ use crate::types::l2cap::L2capLeSignal;
 use crate::{codec, Error};
 use bt_hci::cmd::controller_baseband::SetEventMask;
 use bt_hci::cmd::le::{
-    LeCreateConn, LeCreateConnParams, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable,
-    LeSetScanEnableParams, LeSetScanParams,
+    LeCreateConn, LeCreateConnParams, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable, LeSetScanParams,
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -19,7 +18,7 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
-use bt_hci::{AsHciBytes, ControllerToHostPacket};
+use bt_hci::ControllerToHostPacket;
 use bt_hci::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
