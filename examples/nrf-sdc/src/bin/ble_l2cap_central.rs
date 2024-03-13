@@ -107,7 +107,7 @@ async fn main(spawner: Spawner) {
 
     let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(sdc, host_resources);
 
-    let mut scanner = adapter.scanner(ScanConfig { params: None });
+    let config = ScanConfig { params: None };
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to
     let target: BdAddr = BdAddr::new([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
@@ -115,7 +115,7 @@ async fn main(spawner: Spawner) {
     info!("Scanning for peripheral...");
     let _ = join(adapter.run(), async {
         loop {
-            let reports = unwrap!(scanner.scan(&adapter).await);
+            let reports = unwrap!(adapter.scan(&config).await);
             for report in reports.iter() {
                 let report = report.unwrap();
                 if report.addr == target {

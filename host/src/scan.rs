@@ -1,76 +1,68 @@
-use bt_hci::{
-    cmd::{
-        le::{LeSetScanEnable, LeSetScanParams},
-        SyncCmd,
-    },
-    param::{LeAdvReports, RemainingBytes},
-    ControllerCmdSync, FromHciBytes,
-};
-use embassy_sync::{blocking_mutex::raw::RawMutex, channel::DynamicReceiver};
-use heapless::Vec;
+use core::iter::FusedIterator;
 
-use crate::{adapter::Adapter, Error};
+use bt_hci::{cmd::le::LeSetScanParams, param::LeAdvReport, FromHciBytes, FromHciBytesError};
+use heapless::Vec;
 
 pub struct ScanConfig {
     pub params: Option<LeSetScanParams>,
 }
 
-pub struct Scanner<'d> {
-    config: ScanConfig,
-    data: Vec<u8, 255>,
-    reports: DynamicReceiver<'d, ScanReports>,
+pub struct ScanReport {
+    num_reports: u8,
+    reports: Vec<u8, 255>,
 }
 
-impl<'d> Scanner<'d> {
-    pub(crate) fn new(config: ScanConfig, reports: DynamicReceiver<'d, ScanReports>) -> Self {
+impl ScanReport {
+    pub(crate) fn new(num_reports: u8, reports: &[u8]) -> Self {
         Self {
-            config,
-            data: Vec::new(),
-            reports,
+            num_reports,
+            reports: Vec::from_slice(reports).unwrap(),
         }
     }
 
-    pub async fn scan<
-        'm,
-        M,
-        T,
-        const CONNS: usize,
-        const CHANNELS: usize,
-        const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
-    >(
-        &mut self,
-        adapter: &'m Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<LeAdvReports<'_>, Error<T::Error>>
-    where
-        M: RawMutex,
-        T: ControllerCmdSync<LeSetScanEnable> + ControllerCmdSync<LeSetScanParams>,
-    {
-        let params = &self.config.params.unwrap_or(LeSetScanParams::new(
-            bt_hci::param::LeScanKind::Passive,
-            bt_hci::param::Duration::from_millis(1_000),
-            bt_hci::param::Duration::from_millis(1_000),
-            bt_hci::param::AddrKind::PUBLIC,
-            bt_hci::param::ScanningFilterPolicy::BasicUnfiltered,
-        ));
-        params.exec(&adapter.controller).await?;
-
-        LeSetScanEnable::new(true, true).exec(&adapter.controller).await?;
-
-        let next = self.reports.receive().await;
-        self.data = next.reports;
-        let (bytes, _) = RemainingBytes::from_hci_bytes(&self.data).unwrap();
-        let reports = LeAdvReports {
-            num_reports: next.num_reports,
-            bytes,
-        };
-
-        LeSetScanEnable::new(false, false).exec(&adapter.controller).await?;
-        Ok(reports)
+    pub fn iter(&self) -> ScanReportIter<'_> {
+        ScanReportIter {
+            len: self.num_reports as usize,
+            bytes: &self.reports,
+        }
     }
 }
 
-pub struct ScanReports {
-    pub(crate) num_reports: u8,
-    pub(crate) reports: Vec<u8, 255>,
+pub struct ScanReportIter<'a> {
+    len: usize,
+    bytes: &'a [u8],
 }
+
+impl<'a> Iterator for ScanReportIter<'a> {
+    type Item = Result<LeAdvReport<'a>, FromHciBytesError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.len == 0 {
+            None
+        } else {
+            match LeAdvReport::from_hci_bytes(self.bytes) {
+                Ok((report, rest)) => {
+                    self.bytes = rest;
+                    self.len -= 1;
+                    Some(Ok(report))
+                }
+                Err(err) => {
+                    self.len = 0;
+                    Some(Err(err))
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a> ExactSizeIterator for ScanReportIter<'a> {
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl<'a> FusedIterator for ScanReportIter<'a> {}

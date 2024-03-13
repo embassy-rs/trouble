@@ -17,7 +17,6 @@ use static_cell::StaticCell;
 use trouble_host::{
     adapter::{Adapter, HostResources},
     advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    connection::Connection,
     l2cap::L2capChannel,
     PacketQos,
 };
@@ -107,18 +106,18 @@ async fn main(spawner: Spawner) {
 
     let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(sdc, host_resources);
 
-    let mut advertiser = adapter.advertiser(AdvertiseConfig {
+    let config = AdvertiseConfig {
         params: None,
         data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
             AdStructure::CompleteLocalName("Trouble"),
         ],
-    });
+    };
 
     let _ = join(adapter.run(), async {
         loop {
             info!("Advertising, waiting for connection...");
-            let conn = unwrap!(advertiser.advertise(&adapter).await);
+            let conn = unwrap!(adapter.advertise(&config).await);
 
             info!("Connection established");
 

@@ -1,28 +1,29 @@
-use crate::advertise::{AdvertiseConfig, Advertiser};
+use crate::advertise::AdvertiseConfig;
 use crate::channel_manager::ChannelManager;
+use crate::connection::Connection;
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
 use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
-use crate::scan::ScanConfig;
-use crate::scan::{ScanReports, Scanner};
+use crate::scan::{ScanConfig, ScanReport};
 use crate::types::l2cap::L2capLeSignal;
 use crate::{codec, Error};
 use bt_hci::cmd::controller_baseband::SetEventMask;
-use bt_hci::cmd::le::{LeCreateConn, LeCreateConnParams, LeSetScanEnable};
+use bt_hci::cmd::le::{
+    LeCreateConn, LeCreateConnParams, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable, LeSetScanParams,
+};
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{ConnHandle, DisconnectReason, EventMask};
+use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
 use bt_hci::{Controller, ControllerToHostPacket};
 use bt_hci::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
-use heapless::Vec;
 
 pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
@@ -50,7 +51,7 @@ where
 
     pub(crate) outbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_TXQ>,
     pub(crate) control: Channel<M, ControlCommand, 1>,
-    pub(crate) scanner: Channel<M, ScanReports, 1>,
+    pub(crate) scanner: Channel<M, ScanReport, 1>,
 }
 
 pub(crate) enum ControlCommand {
@@ -78,6 +79,11 @@ where
     T: Controller,
 {
     const NEW_L2CAP: Channel<M, Pdu<'d>, L2CAP_RXQ> = Channel::new();
+
+    /// Create a new instance of the BLE host adapter.
+    ///
+    /// The adapter requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
+    /// a reference to resources that are created outside the adapter but which the adapter is the only accessor of.
     pub fn new<const PACKETS: usize, const L2CAP_MTU: usize>(
         controller: T,
         host_resources: &'d mut HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>,
@@ -95,12 +101,62 @@ where
         }
     }
 
-    pub fn scanner<'m>(&'m self, config: ScanConfig) -> Scanner<'m> {
-        Scanner::new(config, self.scanner.receiver().into())
+    /// Performs a BLE scan, return a report for discovering peripherals.
+    ///
+    /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
+    pub async fn scan(&self, config: &ScanConfig) -> Result<ScanReport, Error<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetScanEnable> + ControllerCmdSync<LeSetScanParams>,
+    {
+        let params = config.params.unwrap_or(LeSetScanParams::new(
+            bt_hci::param::LeScanKind::Passive,
+            bt_hci::param::Duration::from_millis(1_000),
+            bt_hci::param::Duration::from_millis(1_000),
+            bt_hci::param::AddrKind::PUBLIC,
+            bt_hci::param::ScanningFilterPolicy::BasicUnfiltered,
+        ));
+        params.exec(&self.controller).await?;
+
+        LeSetScanEnable::new(true, true).exec(&self.controller).await?;
+
+        let report = self.scanner.receive().await;
+        LeSetScanEnable::new(false, false).exec(&self.controller).await?;
+        Ok(report)
     }
 
-    pub fn advertiser<'m>(&self, adv: AdvertiseConfig<'m>) -> Advertiser<'m> {
-        Advertiser::new(adv)
+    /// Starts sending BLE advertisements according to the provided config.
+    ///
+    /// Advertisements are stopped when a connection is made against this host,
+    /// in which case a handle for the connection is returned.
+    pub async fn advertise<'m>(&'m self, config: &AdvertiseConfig<'_>) -> Result<Connection<'m>, Error<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
+    {
+        let params = &config.params.unwrap_or(LeSetAdvParams::new(
+            bt_hci::param::Duration::from_millis(400),
+            bt_hci::param::Duration::from_millis(400),
+            bt_hci::param::AdvKind::AdvInd,
+            bt_hci::param::AddrKind::PUBLIC,
+            bt_hci::param::AddrKind::PUBLIC,
+            BdAddr::default(),
+            bt_hci::param::AdvChannelMap::ALL,
+            bt_hci::param::AdvFilterPolicy::default(),
+        ));
+
+        params.exec(&self.controller).await?;
+
+        let mut data = [0; 31];
+        let mut w = WriteCursor::new(&mut data[..]);
+        for item in config.data.iter() {
+            item.encode(&mut w)?;
+        }
+        let len = w.len();
+        drop(w);
+        LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
+        LeSetAdvEnable::new(true).exec(&self.controller).await?;
+        let conn = Connection::accept(self).await;
+        LeSetAdvEnable::new(false).exec(&self.controller).await?;
+        Ok(conn)
     }
 
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), HandleError> {
@@ -213,13 +269,8 @@ where
                                     }
                                 }
                                 LeEvent::LeAdvertisingReport(data) => {
-                                    let mut reports = Vec::new();
-                                    reports.extend_from_slice(&data.reports.bytes).unwrap();
                                     self.scanner
-                                        .send(ScanReports {
-                                            num_reports: data.reports.num_reports,
-                                            reports,
-                                        })
+                                        .send(ScanReport::new(data.reports.num_reports, &data.reports.bytes))
                                         .await;
                                 }
                                 _ => {

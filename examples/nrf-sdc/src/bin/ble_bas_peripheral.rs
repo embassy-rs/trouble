@@ -105,14 +105,14 @@ async fn main(spawner: Spawner) {
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
     let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(sdc, host_resources);
-    let mut advertiser = adapter.advertiser(AdvertiseConfig {
+    let config = AdvertiseConfig {
         params: None,
         data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
             AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
             AdStructure::CompleteLocalName("Trouble"),
         ],
-    });
+    };
 
     let mut attributes: AttributesBuilder<'_, 10> = AttributesBuilder::new();
     static DATA: StaticCell<[u8; 1]> = StaticCell::new();
@@ -137,7 +137,7 @@ async fn main(spawner: Spawner) {
             }
         },
         async {
-            let _conn = unwrap!(advertiser.advertise(&adapter).await);
+            let _conn = unwrap!(adapter.advertise(&config).await);
             // Keep connection alive
             loop {
                 Timer::after(Duration::from_secs(60)).await

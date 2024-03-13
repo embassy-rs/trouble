@@ -1,73 +1,9 @@
-use crate::adapter::Adapter;
-use crate::connection::Connection;
-use crate::Error;
 use crate::{codec, cursor::WriteCursor, types::uuid::Uuid};
-use bt_hci::{
-    cmd::{
-        le::{LeSetAdvData, LeSetAdvEnable, LeSetAdvParams},
-        SyncCmd,
-    },
-    param::BdAddr,
-    ControllerCmdSync,
-};
-use embassy_sync::blocking_mutex::raw::RawMutex;
+use bt_hci::cmd::le::LeSetAdvParams;
 
 pub struct AdvertiseConfig<'d> {
     pub params: Option<LeSetAdvParams>,
     pub data: &'d [AdStructure<'d>],
-}
-
-pub struct Advertiser<'d> {
-    config: AdvertiseConfig<'d>,
-}
-
-impl<'d> Advertiser<'d> {
-    pub(crate) fn new(config: AdvertiseConfig<'d>) -> Self {
-        Self { config }
-    }
-
-    pub async fn advertise<
-        'm,
-        M,
-        T,
-        const CONNS: usize,
-        const CHANNELS: usize,
-        const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
-    >(
-        &mut self,
-        adapter: &'m Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<Connection<'m>, Error<T::Error>>
-    where
-        M: RawMutex,
-        T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
-    {
-        let params = &self.config.params.unwrap_or(LeSetAdvParams::new(
-            bt_hci::param::Duration::from_millis(400),
-            bt_hci::param::Duration::from_millis(400),
-            bt_hci::param::AdvKind::AdvInd,
-            bt_hci::param::AddrKind::PUBLIC,
-            bt_hci::param::AddrKind::PUBLIC,
-            BdAddr::default(),
-            bt_hci::param::AdvChannelMap::ALL,
-            bt_hci::param::AdvFilterPolicy::default(),
-        ));
-
-        params.exec(&adapter.controller).await?;
-
-        let mut data = [0; 31];
-        let mut w = WriteCursor::new(&mut data[..]);
-        for item in self.config.data.iter() {
-            item.encode(&mut w)?;
-        }
-        let len = w.len();
-        drop(w);
-        LeSetAdvData::new(len as u8, data).exec(&adapter.controller).await?;
-        LeSetAdvEnable::new(true).exec(&adapter.controller).await?;
-        let conn = Connection::accept(adapter).await;
-        LeSetAdvEnable::new(false).exec(&adapter.controller).await?;
-        Ok(conn)
-    }
 }
 
 pub const AD_FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0b00000001;
