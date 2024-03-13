@@ -15,10 +15,10 @@ use sdc::rng_pool::RngPool;
 use sdc::vendor::ZephyrWriteBdAddr;
 use static_cell::StaticCell;
 use trouble_host::{
-    adapter::ScanConfig,
     adapter::{Adapter, HostResources},
     connection::Connection,
     l2cap::L2capChannel,
+    scan::ScanConfig,
     PacketQos,
 };
 
@@ -105,25 +105,24 @@ async fn main(spawner: Spawner) {
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::Guaranteed(4)));
 
-    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 1, 1>> = StaticCell::new();
-    let adapter = ADAPTER.init(Adapter::new(host_resources));
+    let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(sdc, host_resources);
 
-    let config = ScanConfig { params: None };
-    let mut scanner = unwrap!(adapter.scan(&sdc, config).await);
+    let mut scanner = adapter.scanner(ScanConfig { params: None });
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to
     let target: BdAddr = BdAddr::new([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
 
     info!("Scanning for peripheral...");
-    let _ = join(adapter.run(&sdc), async {
+    let _ = join(adapter.run(), async {
         loop {
-            let reports = scanner.next().await;
+            let reports = unwrap!(scanner.scan(&adapter).await);
             for report in reports.iter() {
                 let report = report.unwrap();
                 if report.addr == target {
-                    let conn = Connection::connect(adapter, report.addr).await;
+                    let conn = Connection::connect(&adapter, report.addr).await;
                     info!("Connected, creating l2cap channel");
-                    let mut ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::create(adapter, &conn, 0x2349).await);
+                    let mut ch1: L2capChannel<'_, '_, 27> =
+                        unwrap!(L2capChannel::create(&adapter, &conn, 0x2349).await);
                     info!("New l2cap channel created, sending some data!");
                     for i in 0..10 {
                         let mut tx = [i; 27];

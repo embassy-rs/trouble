@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-use ad_structure::AdvertisementDataError;
+use advertise::AdvertisementDataError;
 use bt_hci::FromHciBytesError;
 
 // TODO: Make these configurable
@@ -28,12 +28,11 @@ pub mod types;
 pub use packet_pool::Qos as PacketQos;
 
 pub mod adapter;
+pub mod advertise;
 pub mod connection;
 pub mod gatt;
 pub mod l2cap;
-pub mod scanner;
-
-pub mod ad_structure;
+pub mod scan;
 
 pub mod attribute;
 mod attribute_server;

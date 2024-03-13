@@ -19,12 +19,13 @@ impl<'d> Connection<'d> {
 
     pub async fn accept<
         M: RawMutex,
+        T,
         const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &'d Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
         let handle = adapter.connections.accept(None).await;
         Connection {
@@ -44,12 +45,13 @@ impl<'d> Connection<'d> {
 
     pub async fn connect<
         M: RawMutex,
+        T,
         const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &'d Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         peer_addr: BdAddr,
     ) -> Self {
         // TODO: Make this configurable

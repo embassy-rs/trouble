@@ -39,15 +39,11 @@ pub struct AttributeServer<'a, 'd> {
 
 impl<'a, 'd> AttributeServer<'a, 'd> {
     /// Create a new instance of the AttributeServer
-    ///
-    /// When _NOT_ using the `crypto` feature you can pass a mutual reference to `bleps::no_rng::NoRng`
     pub fn new(attributes: &'a mut [Attribute<'d>]) -> AttributeServer<'a, 'd> {
         AttributeServer::new_inner(attributes)
     }
 
     fn new_inner(attributes: &'a mut [Attribute<'d>]) -> AttributeServer<'a, 'd> {
-        // trace!("{:#x}", &attributes);
-
         AttributeServer {
             mtu: ATT_MTU as u16,
             attributes,

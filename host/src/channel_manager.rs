@@ -60,10 +60,10 @@ pub struct ChannelManager<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TX
 pub trait DynamicChannelManager<'d> {
     fn poll_request_to_send(&self, cid: u16, credits: usize, cx: &mut Context<'_>) -> Poll<Result<(), Error>>;
     fn confirm_received(
-        &'d self,
+        &self,
         cid: u16,
         credits: usize,
-    ) -> Result<DynamicSendFuture<'d, (ConnHandle, L2capLeSignal)>, Error>;
+    ) -> Result<DynamicSendFuture<'_, (ConnHandle, L2capLeSignal)>, Error>;
     fn confirm_disconnected(&self, cid: u16) -> Result<(), Error>;
 }
 
@@ -386,6 +386,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             }
             L2capLeSignalData::DisconnectionRes(res) => {
                 warn!("Disconnection result!");
+                self.disconnected(res.dcid)?;
                 Ok(())
             }
         }
@@ -396,10 +397,10 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
     for ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
 {
     fn confirm_received(
-        &'d self,
+        &self,
         cid: u16,
         credits: usize,
-    ) -> Result<DynamicSendFuture<'d, (ConnHandle, L2capLeSignal)>, Error> {
+    ) -> Result<DynamicSendFuture<'_, (ConnHandle, L2capLeSignal)>, Error> {
         let (conn, signal) = self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {

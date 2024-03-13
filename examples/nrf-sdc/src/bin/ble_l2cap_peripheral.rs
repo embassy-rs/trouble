@@ -6,7 +6,7 @@ use bt_hci::cmd::SyncCmd;
 use bt_hci::param::BdAddr;
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
-use embassy_futures::join::join3 as join;
+use embassy_futures::join::join;
 use embassy_nrf::{bind_interrupts, pac};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
@@ -15,12 +15,9 @@ use sdc::rng_pool::RngPool;
 use sdc::vendor::ZephyrWriteBdAddr;
 use static_cell::StaticCell;
 use trouble_host::{
-    ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    adapter::AdvertiseConfig,
     adapter::{Adapter, HostResources},
-    attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
+    advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     connection::Connection,
-    gatt::{GattEvent, GattServer},
     l2cap::L2capChannel,
     PacketQos,
 };
@@ -108,69 +105,43 @@ async fn main(spawner: Spawner) {
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::Guaranteed(4)));
 
-    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 1, 1>> = StaticCell::new();
-    let adapter = ADAPTER.init(Adapter::new(host_resources));
+    let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(sdc, host_resources);
 
-    let config = AdvertiseConfig {
+    let mut advertiser = adapter.advertiser(AdvertiseConfig {
         params: None,
         data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
             AdStructure::CompleteLocalName("Trouble"),
         ],
-    };
+    });
 
-    let mut attributes: AttributesBuilder<'_, 10> = AttributesBuilder::new();
-    static DATA: StaticCell<[u8; 1]> = StaticCell::new();
-    let data = DATA.init([32; 1]);
-    ServiceBuilder::new(&mut attributes, 0x180f_u16.into())
-        .add_characteristic(0x2a19.into(), &[CharacteristicProp::Read], data)
-        .done();
-    let mut attributes = attributes.build();
+    let _ = join(adapter.run(), async {
+        loop {
+            info!("Advertising, waiting for connection...");
+            let conn = unwrap!(advertiser.advertise(&adapter).await);
 
-    let mut server = GattServer::new(adapter, &mut attributes[..]);
+            info!("Connection established");
 
-    unwrap!(adapter.advertise(&sdc, config).await);
+            let mut ch1: L2capChannel<'_, '_, 27> = unwrap!(L2capChannel::accept(&adapter, &conn, 0x2349).await);
 
-    let _ = join(
-        adapter.run(&sdc),
-        async {
-            loop {
-                match server.next().await {
-                    GattEvent::Write(_conn, attribute) => {
-                        info!("Attribute was written: {:?}", attribute);
-                    }
-                }
+            info!("L2CAP channel accepted");
+            let mut rx = [0; 27];
+            for i in 0..10 {
+                let len = unwrap!(ch1.receive(&mut rx).await);
+                assert_eq!(len, rx.len());
+                assert_eq!(rx, [i; 27]);
             }
-        },
-        async {
-            loop {
-                info!("Waiting for connection...");
-                let conn = Connection::accept(adapter).await;
 
-                info!("Connection established");
-
-                let mut ch1: L2capChannel<'_, 27> = unwrap!(L2capChannel::accept(adapter, &conn, 0x2349).await);
-
-                info!("L2CAP channel accepted");
-                let mut rx = [0; 27];
-                for i in 0..10 {
-                    let len = unwrap!(ch1.receive(&mut rx).await);
-                    assert_eq!(len, rx.len());
-                    assert_eq!(rx, [i; 27]);
-                }
-
-                info!("L2CAP data received, echoing");
-                Timer::after(Duration::from_secs(1)).await;
-                for i in 0..10 {
-                    let mut tx = [i; 27];
-                    let _ = unwrap!(ch1.send(&mut tx).await);
-                }
-                info!("L2CAP data echoed");
-
-                Timer::after(Duration::from_secs(60)).await;
+            info!("L2CAP data received, echoing");
+            Timer::after(Duration::from_secs(1)).await;
+            for i in 0..10 {
+                let mut tx = [i; 27];
+                let _ = unwrap!(ch1.send(&mut tx).await);
             }
-        },
-    )
+            info!("L2CAP data echoed");
+
+            Timer::after(Duration::from_secs(60)).await;
+        }
+    })
     .await;
 }

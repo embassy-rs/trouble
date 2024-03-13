@@ -6,7 +6,7 @@ use bt_hci::cmd::SyncCmd;
 use bt_hci::param::BdAddr;
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
+use embassy_futures::join::join3;
 use embassy_nrf::{bind_interrupts, pac};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
@@ -15,9 +15,8 @@ use sdc::rng_pool::RngPool;
 use sdc::vendor::ZephyrWriteBdAddr;
 use static_cell::StaticCell;
 use trouble_host::{
-    ad_structure::{AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    adapter::AdvertiseConfig,
     adapter::{Adapter, HostResources},
+    advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
     gatt::{GattEvent, GattServer},
     PacketQos,
@@ -105,17 +104,15 @@ async fn main(spawner: Spawner) {
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    static ADAPTER: StaticCell<Adapter<NoopRawMutex, 2, 4, 3, 3>> = StaticCell::new();
-    let adapter = ADAPTER.init(Adapter::new(host_resources));
-
-    let advertise_config = AdvertiseConfig {
+    let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(sdc, host_resources);
+    let mut advertiser = adapter.advertiser(AdvertiseConfig {
         params: None,
         data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
             AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
             AdStructure::CompleteLocalName("Trouble"),
         ],
-    };
+    });
 
     let mut attributes: AttributesBuilder<'_, 10> = AttributesBuilder::new();
     static DATA: StaticCell<[u8; 1]> = StaticCell::new();
@@ -125,19 +122,27 @@ async fn main(spawner: Spawner) {
         .done();
     let mut attributes = attributes.build();
 
-    let mut server = GattServer::new(adapter, &mut attributes[..]);
-
-    unwrap!(adapter.advertise(&sdc, advertise_config).await);
+    let mut server = GattServer::new(&adapter, &mut attributes[..]);
 
     info!("Starting advertising and GATT service");
-    let _ = join(adapter.run(&sdc), async {
-        loop {
-            match server.next().await {
-                GattEvent::Write(_conn, attribute) => {
-                    info!("Attribute was written: {:?}", attribute);
+    let _ = join3(
+        adapter.run(),
+        async {
+            loop {
+                match server.next().await {
+                    GattEvent::Write(_conn, attribute) => {
+                        info!("Attribute was written: {:?}", attribute);
+                    }
                 }
             }
-        }
-    })
+        },
+        async {
+            let _conn = unwrap!(advertiser.advertise(&adapter).await);
+            // Keep connection alive
+            loop {
+                Timer::after(Duration::from_secs(60)).await
+            }
+        },
+    )
     .await;
 }

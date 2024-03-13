@@ -46,19 +46,19 @@ impl<'d> L2capPacket<'d> {
     }
 }
 
-pub struct L2capChannel<'d, const MTU: usize> {
+pub struct L2capChannel<'a, 'd, const MTU: usize> {
     conn: ConnHandle,
     pool_id: AllocId,
     cid: u16,
     peer_cid: u16,
     mps: usize,
     pool: &'d dyn DynamicPacketPool<'d>,
-    manager: &'d dyn DynamicChannelManager<'d>,
-    rx: DynamicReceiver<'d, Option<Pdu<'d>>>,
-    tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
+    manager: &'a dyn DynamicChannelManager<'d>,
+    rx: DynamicReceiver<'a, Option<Pdu<'d>>>,
+    tx: DynamicSender<'a, (ConnHandle, Pdu<'d>)>,
 }
 
-impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
+impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
     pub async fn send(&mut self, buf: &[u8]) -> Result<(), Error> {
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + (buf.len().saturating_sub(self.mps - 2)).div_ceil(self.mps);
@@ -160,15 +160,16 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
 
     pub async fn accept<
         M: RawMutex,
+        T,
         const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &'d Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-        connection: &Connection<'d>,
+        adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        connection: &Connection<'a>,
         psm: u16,
-    ) -> Result<Self, Error> {
+    ) -> Result<L2capChannel<'a, 'd, MTU>, Error> {
         let connections = &adapter.connections;
         let channels = &adapter.channels;
 
@@ -190,15 +191,17 @@ impl<'d, const MTU: usize> L2capChannel<'d, MTU> {
 
     pub async fn create<
         M: RawMutex,
+        T,
         const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &'d Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-        connection: &Connection<'d>,
+        adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        connection: &Connection<'a>,
         psm: u16,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, Error>
+where {
         // TODO: Use unique signal ID to ensure no collision of signal messages
         //
         let (state, rx) = adapter.channels.create(connection.handle(), psm, MTU as u16).await?;

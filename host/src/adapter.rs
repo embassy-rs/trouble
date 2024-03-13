@@ -1,24 +1,23 @@
-use crate::ad_structure::AdStructure;
+use crate::advertise::{AdvertiseConfig, Advertiser};
 use crate::channel_manager::ChannelManager;
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
 use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
-use crate::scanner::{ScanReports, Scanner};
+use crate::scan::ScanConfig;
+use crate::scan::{ScanReports, Scanner};
 use crate::types::l2cap::L2capLeSignal;
 use crate::{codec, Error};
 use bt_hci::cmd::controller_baseband::SetEventMask;
-use bt_hci::cmd::le::{
-    LeCreateConn, LeCreateConnParams, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable, LeSetScanParams,
-};
+use bt_hci::cmd::le::{LeCreateConn, LeCreateConnParams, LeSetScanEnable};
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
-use bt_hci::ControllerToHostPacket;
+use bt_hci::param::{ConnHandle, DisconnectReason, EventMask};
+use bt_hci::{Controller, ControllerToHostPacket};
 use bt_hci::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -39,19 +38,11 @@ impl<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: 
     }
 }
 
-pub struct AdvertiseConfig<'d> {
-    pub params: Option<LeSetAdvParams>,
-    pub data: &'d [AdStructure<'d>],
-}
-
-pub struct ScanConfig {
-    pub params: Option<LeSetScanParams>,
-}
-
-pub struct Adapter<'d, M, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
+pub struct Adapter<'d, M, T, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
 where
-    M: RawMutex + 'd,
+    M: RawMutex,
 {
+    pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<M, CONNS>,
     pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
@@ -80,16 +71,19 @@ impl From<codec::Error> for HandleError {
     }
 }
 
-impl<'d, M, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
-    Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
+impl<'d, M, T, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
+    Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
 where
-    M: RawMutex + 'd,
+    M: RawMutex,
+    T: Controller,
 {
     const NEW_L2CAP: Channel<M, Pdu<'d>, L2CAP_RXQ> = Channel::new();
     pub fn new<const PACKETS: usize, const L2CAP_MTU: usize>(
+        controller: T,
         host_resources: &'d mut HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
         Self {
+            controller,
             connections: ConnectionManager::new(),
             channels: ChannelManager::new(&host_resources.pool),
             pool: &host_resources.pool,
@@ -101,58 +95,12 @@ where
         }
     }
 
-    pub async fn stop_scan<T>(&self, controller: &T) -> Result<(), Error<T::Error>>
-    where
-        T: ControllerCmdSync<LeSetScanEnable> + ControllerCmdSync<LeSetScanParams>,
-    {
-        LeSetScanEnable::new(false, false).exec(controller).await?;
-        Ok(())
+    pub fn scanner<'m>(&'m self, config: ScanConfig) -> Scanner<'m> {
+        Scanner::new(config, self.scanner.receiver().into())
     }
 
-    pub async fn scan<T>(&self, controller: &T, scan: ScanConfig) -> Result<Scanner<'_>, Error<T::Error>>
-    where
-        T: ControllerCmdSync<LeSetScanEnable> + ControllerCmdSync<LeSetScanParams>,
-    {
-        let params = &scan.params.unwrap_or(LeSetScanParams::new(
-            bt_hci::param::LeScanKind::Passive,
-            bt_hci::param::Duration::from_millis(1_000),
-            bt_hci::param::Duration::from_millis(1_000),
-            bt_hci::param::AddrKind::PUBLIC,
-            bt_hci::param::ScanningFilterPolicy::BasicUnfiltered,
-        ));
-        params.exec(controller).await?;
-
-        LeSetScanEnable::new(true, true).exec(controller).await?;
-        Ok(Scanner::new(self.scanner.receiver().into()))
-    }
-
-    pub async fn advertise<T>(&self, controller: &T, adv: AdvertiseConfig<'_>) -> Result<(), Error<T::Error>>
-    where
-        T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
-    {
-        let params = &adv.params.unwrap_or(LeSetAdvParams::new(
-            bt_hci::param::Duration::from_millis(400),
-            bt_hci::param::Duration::from_millis(400),
-            bt_hci::param::AdvKind::AdvInd,
-            bt_hci::param::AddrKind::PUBLIC,
-            bt_hci::param::AddrKind::PUBLIC,
-            BdAddr::default(),
-            bt_hci::param::AdvChannelMap::ALL,
-            bt_hci::param::AdvFilterPolicy::default(),
-        ));
-
-        params.exec(controller).await?;
-
-        let mut data = [0; 31];
-        let mut w = WriteCursor::new(&mut data[..]);
-        for item in adv.data.iter() {
-            item.encode(&mut w)?;
-        }
-        let len = w.len();
-        drop(w);
-        LeSetAdvData::new(len as u8, data).exec(controller).await?;
-        LeSetAdvEnable::new(true).exec(controller).await?;
-        Ok(())
+    pub fn advertiser<'m>(&self, adv: AdvertiseConfig<'m>) -> Advertiser<'m> {
+        Advertiser::new(adv)
     }
 
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), HandleError> {
@@ -200,7 +148,7 @@ where
         Ok(())
     }
 
-    pub async fn run<T>(&'d self, controller: &T) -> Result<(), Error<T::Error>>
+    pub async fn run(&self) -> Result<(), Error<T::Error>>
     where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -215,7 +163,7 @@ where
                 .enable_hardware_error(true)
                 .enable_disconnection_complete(true),
         )
-        .exec(controller)
+        .exec(&self.controller)
         .await?;
 
         loop {
@@ -223,7 +171,7 @@ where
             let mut tx = [0u8; 259];
             // info!("Entering select");
             match select4(
-                controller.read(&mut rx),
+                self.controller.read(&mut rx),
                 self.outbound.receive(),
                 self.control.receive(),
                 self.channels.signal(),
@@ -259,7 +207,7 @@ where
                                             e.handle,
                                             DisconnectReason::RemoteDeviceTerminatedConnLowResources,
                                         )
-                                        .exec(controller)
+                                        .exec(&self.controller)
                                         .await
                                         .unwrap();
                                     }
@@ -300,7 +248,7 @@ where
                 Either4::Second((handle, mut pdu)) => {
                     // info!("Outgoing packet");
                     let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
-                    match controller.write_acl_data(&acl).await {
+                    match self.controller.write_acl_data(&acl).await {
                         Ok(_) => {
                             pdu.as_mut().iter_mut().for_each(|b| *b = 0xFF);
                         }
@@ -314,7 +262,7 @@ where
                     // info!("Outgoing command");
                     match command {
                         ControlCommand::Connect(params) => {
-                            LeSetScanEnable::new(false, false).exec(controller).await.unwrap();
+                            LeSetScanEnable::new(false, false).exec(&self.controller).await.unwrap();
                             LeCreateConn::new(
                                 params.le_scan_interval,
                                 params.le_scan_window,
@@ -329,13 +277,14 @@ where
                                 params.min_ce_length,
                                 params.max_ce_length,
                             )
-                            .exec(controller)
+                            .exec(&self.controller)
                             .await
                             .unwrap();
                         }
                         ControlCommand::Disconnect(params) => {
+                            self.connections.disconnect(params.handle).unwrap();
                             Disconnect::new(params.handle, params.reason)
-                                .exec(controller)
+                                .exec(&self.controller)
                                 .await
                                 .unwrap();
                         }
@@ -363,7 +312,7 @@ where
                         AclBroadcastFlag::PointToPoint,
                         &tx[..len],
                     );
-                    match controller.write_acl_data(&acl).await {
+                    match self.controller.write_acl_data(&acl).await {
                         Ok(_) => {}
                         Err(e) => {
                             warn!("Error writing some ACL data to controller: {:?}", e);

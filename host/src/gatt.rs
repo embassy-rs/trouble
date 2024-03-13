@@ -9,21 +9,22 @@ use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{DynamicReceiver, DynamicSender};
 
-pub struct GattServer<'a, 'b, 'd> {
+pub struct GattServer<'a, 'b, 'c, 'd> {
     server: AttributeServer<'a, 'b>,
-    rx: DynamicReceiver<'d, (ConnHandle, Pdu<'d>)>,
-    tx: DynamicSender<'d, (ConnHandle, Pdu<'d>)>,
+    rx: DynamicReceiver<'c, (ConnHandle, Pdu<'d>)>,
+    tx: DynamicSender<'c, (ConnHandle, Pdu<'d>)>,
 }
 
-impl<'a, 'b, 'd> GattServer<'a, 'b, 'd> {
+impl<'a, 'b, 'c, 'd> GattServer<'a, 'b, 'c, 'd> {
     pub fn new<
         M: RawMutex,
+        T,
         const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &'d Adapter<'d, M, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &'c Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         attributes: &'a mut [Attribute<'b>],
     ) -> Self {
         Self {
