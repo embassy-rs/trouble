@@ -1,4 +1,6 @@
-use core::{fmt, mem::size_of, slice};
+use core::{cell::RefCell, fmt};
+
+use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
 
 pub use crate::types::uuid::Uuid;
 use crate::{att::AttErrorCode, cursor::WriteCursor};
@@ -11,6 +13,7 @@ pub const GENERIC_ATTRIBUTE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_
 
 pub const PRIMARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2800u16.to_le_bytes());
 pub const CHARACTERISTIC_UUID16: Uuid = Uuid::Uuid16(0x2803u16.to_le_bytes());
+pub const CHARACTERISTIC_CCCD_UUID16: Uuid = Uuid::Uuid16(0x2902u16.to_le_bytes());
 pub const GENERIC_ATTRIBUTE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
 
 #[derive(Debug, Clone, Copy)]
@@ -26,317 +29,77 @@ pub enum CharacteristicProp {
     Extended = 0x80,
 }
 
-pub trait AttData {
-    fn readable(&self) -> bool {
-        false
-    }
-
-    fn read(&mut self, _offset: usize, _data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        Ok(0)
-    }
-
-    fn writable(&self) -> bool {
-        false
-    }
-
-    fn write(&mut self, _offset: usize, _data: &[u8]) -> Result<(), AttErrorCode> {
-        Ok(())
-    }
-}
-
-impl<const N: usize> AttData for [u8; N] {
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if offset > N {
-            return Ok(0);
-        }
-        let len = data.len().min(N - offset);
-        if len > 0 {
-            data[..len].copy_from_slice(&self[offset..offset + len]);
-        }
-        Ok(len)
-    }
-}
-
-impl<'a, const N: usize> AttData for &'a [u8; N] {
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if offset > N {
-            return Ok(0);
-        }
-        let len = data.len().min(N - offset);
-        if len > 0 {
-            data[..len].copy_from_slice(&self[offset..offset + len]);
-        }
-        Ok(len)
-    }
-}
-
-impl<'a, const N: usize> AttData for &'a mut [u8; N] {
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if offset > N {
-            return Ok(0);
-        }
-        let len = data.len().min(N - offset);
-        if len > 0 {
-            data[..len].copy_from_slice(&self[offset..offset + len]);
-        }
-        Ok(len)
-    }
-
-    fn writable(&self) -> bool {
-        true
-    }
-
-    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        if offset > N {
-            return Ok(());
-        }
-        let len = data.len().min(N - offset);
-        if len > 0 {
-            self[offset..offset + len].copy_from_slice(&data[..len]);
-        }
-        Ok(())
-    }
-}
-
-impl<'a> AttData for &'a [u8] {
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        let len = self.len();
-        if offset > len {
-            return Ok(0);
-        }
-        let len = data.len().min(len - offset);
-        data[..len].copy_from_slice(&self[offset..offset + len]);
-        Ok(len)
-    }
-}
-
-impl<'a> AttData for &'a mut [u8] {
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        let len = self.len();
-        if offset > len {
-            return Ok(0);
-        }
-        let len = data.len().min(len - offset);
-        data[..len].copy_from_slice(&self[offset..offset + len]);
-        Ok(len)
-    }
-
-    fn writable(&self) -> bool {
-        true
-    }
-
-    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        let len = self.len();
-        if offset > len {
-            return Ok(());
-        }
-        let len = data.len().min(len - offset);
-        self[offset..offset + len].copy_from_slice(&data[..len]);
-        Ok(())
-    }
-}
-
-impl<'a, T: Sized + 'static> AttData for &'a (T,) {
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if offset > size_of::<T>() {
-            return Ok(0);
-        }
-        let len = data.len().min(size_of::<T>() - offset);
-        if len > 0 {
-            let slice = unsafe { slice::from_raw_parts(&self.0 as *const T as *const u8, size_of::<T>()) };
-            // TODO: Handle big endian case
-            data[..len].copy_from_slice(&slice[offset..offset + len]);
-        }
-        Ok(len)
-    }
-}
-
-impl AttData for Uuid {
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        let val = self.as_raw();
-        if offset > val.len() {
-            return Ok(0);
-        }
-        let len = data.len().min(val.len() - offset);
-        if len > 0 {
-            data[..len].copy_from_slice(&val[offset..offset + len]);
-        }
-        Ok(len)
-    }
-}
-
-impl<'a, T: Sized + 'static> AttData for &'a mut (T,) {
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if offset > size_of::<T>() {
-            return Ok(0);
-        }
-        let len = data.len().min(size_of::<T>() - offset);
-        if len > 0 {
-            let slice = unsafe { slice::from_raw_parts(&self.0 as *const T as *const u8, size_of::<T>()) };
-            // TODO: Handle big endian case
-            data[..len].copy_from_slice(&slice[offset..offset + len]);
-        }
-        Ok(len)
-    }
-
-    fn writable(&self) -> bool {
-        true
-    }
-
-    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        if offset > size_of::<T>() {
-            return Ok(());
-        }
-        let len = data.len().min(size_of::<T>() - offset);
-        if len > 0 {
-            let slice = unsafe { slice::from_raw_parts_mut(&mut self.0 as *mut T as *mut u8, size_of::<T>()) };
-            // TODO: Handle big endian case
-            slice[offset..offset + len].copy_from_slice(&data[..len]);
-        }
-        Ok(())
-    }
-}
-
-trait IntoResult<T> {
-    fn into_result(self) -> Result<T, AttErrorCode>;
-}
-
-impl<T> IntoResult<T> for T {
-    fn into_result(self) -> Result<T, AttErrorCode> {
-        Ok(self)
-    }
-}
-
-impl<T> IntoResult<T> for Result<T, AttErrorCode> {
-    fn into_result(self) -> Result<T, AttErrorCode> {
-        self
-    }
-}
-
-impl<T, R> AttData for (R, ())
-where
-    T: IntoResult<usize>,
-    R: FnMut(usize, &mut [u8]) -> T,
-{
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        self.0(offset, data).into_result()
-    }
-}
-
-impl<U, W> AttData for ((), W)
-where
-    U: IntoResult<()>,
-    W: FnMut(usize, &[u8]) -> U,
-{
-    fn writable(&self) -> bool {
-        true
-    }
-
-    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        self.1(offset, data).into_result()
-    }
-}
-
-impl<T, U, R, W> AttData for (R, W)
-where
-    T: IntoResult<usize>,
-    U: IntoResult<()>,
-    R: FnMut(usize, &mut [u8]) -> T,
-    W: FnMut(usize, &[u8]) -> U,
-{
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        self.0(offset, data).into_result()
-    }
-
-    fn writable(&self) -> bool {
-        true
-    }
-
-    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        self.1(offset, data).into_result()
-    }
-}
-
-pub const ATT_READABLE: u8 = 0x02;
-pub const ATT_WRITEABLE: u8 = 0x08;
-
 pub struct Attribute<'a> {
     pub uuid: Uuid,
     pub handle: u16,
     pub last_handle_in_group: u16,
     pub data: AttributeData<'a>,
 }
+
+impl<'a> Attribute<'a> {
+    const EMPTY: Option<Attribute<'a>> = None;
+}
+
 pub enum AttributeData<'d> {
-    Service(Uuid),
-    Ref(&'d mut dyn AttData),
-    Slice(&'static [u8]),
-    CharDeclaration(u8, u16, Uuid),
+    Service {
+        uuid: Uuid,
+    },
+    Data {
+        props: CharacteristicProps,
+        value: &'d mut [u8],
+    },
+    Declaration {
+        props: CharacteristicProps,
+        handle: u16,
+        uuid: Uuid,
+    },
+    Cccd {
+        notifications: bool,
+        indications: bool,
+    },
 }
 
 impl<'d> AttributeData<'d> {
     pub fn readable(&self) -> bool {
         match self {
-            Self::Ref(d) => d.readable(),
-            Self::Slice(_) => true,
-            Self::CharDeclaration(_, _, _) => true,
-            Self::Service(_) => true,
+            Self::Data { props, value } => props.0 & (CharacteristicProp::Read as u8) != 0,
+            _ => true,
         }
     }
 
-    pub fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+    pub fn writable(&self) -> bool {
         match self {
-            Self::Ref(d) => d.read(offset, data),
-            Self::Slice(val) => {
-                if offset > val.len() {
+            Self::Data { props, value } => {
+                props.0
+                    & (CharacteristicProp::Write as u8
+                        | CharacteristicProp::WriteWithoutResponse as u8
+                        | CharacteristicProp::AuthenticatedWrite as u8)
+                    != 0
+            }
+            Self::Cccd {
+                notifications,
+                indications,
+            } => true,
+            _ => false,
+        }
+    }
+
+    pub fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        if !self.readable() {
+            return Err(AttErrorCode::ReadNotPermitted);
+        }
+        match self {
+            Self::Data { props, value } => {
+                if offset > value.len() {
                     return Ok(0);
                 }
-                let len = data.len().min(val.len() - offset);
+                let len = data.len().min(value.len() - offset);
                 if len > 0 {
-                    data[..len].copy_from_slice(&val[offset..offset + len]);
+                    data[..len].copy_from_slice(&value[offset..offset + len]);
                 }
                 Ok(len)
             }
-            Self::Service(uuid) => {
+            Self::Service { uuid } => {
                 let val = uuid.as_raw();
                 if offset > val.len() {
                     return Ok(0);
@@ -347,14 +110,35 @@ impl<'d> AttributeData<'d> {
                 }
                 Ok(len)
             }
-            Self::CharDeclaration(props, handle, uuid) => {
+            Self::Cccd {
+                notifications,
+                indications,
+            } => {
+                if offset > 0 {
+                    return Err(AttErrorCode::InvalidOffset);
+                }
+                if data.len() < 2 {
+                    return Err(AttErrorCode::UnlikelyError);
+                }
+                let mut v = 0;
+                if *notifications {
+                    v |= 0x01;
+                }
+
+                if *indications {
+                    v |= 0x02;
+                }
+                data[0] = v;
+                Ok(2)
+            }
+            Self::Declaration { props, handle, uuid } => {
                 let val = uuid.as_raw();
                 if offset > val.len() + 3 {
                     return Ok(0);
                 }
                 let mut w = WriteCursor::new(data);
                 if offset == 0 {
-                    w.write(*props)?;
+                    w.write(props.0)?;
                     w.write(*handle)?;
                 } else if offset == 1 {
                     w.write(*handle)?;
@@ -372,21 +156,40 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub fn writable(&self) -> bool {
-        match self {
-            Self::Ref(d) => d.writable(),
-            Self::Slice(_) => false,
-            Self::CharDeclaration(_, _, _) => false,
-            Self::Service(_) => false,
-        }
-    }
-
     pub fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+        let writable = self.writable();
+
         match self {
-            Self::Ref(d) => d.write(offset, data),
-            Self::Slice(_) => Err(AttErrorCode::WriteNotPermitted),
-            Self::CharDeclaration(_, _, _) => Err(AttErrorCode::WriteNotPermitted),
-            Self::Service(_) => Err(AttErrorCode::WriteNotPermitted),
+            Self::Data { value, props } => {
+                if !writable {
+                    return Err(AttErrorCode::WriteNotPermitted);
+                }
+
+                if offset + data.len() < value.len() {
+                    value[offset..offset + data.len()].copy_from_slice(data);
+                    Ok(())
+                } else {
+                    Err(AttErrorCode::InvalidOffset)
+                }
+            }
+            Self::Cccd {
+                notifications,
+                indications,
+            } => {
+                if offset > 0 {
+                    return Err(AttErrorCode::InvalidOffset);
+                }
+
+                if data.is_empty() {
+                    return Err(AttErrorCode::UnlikelyError);
+                }
+
+                *notifications = data[0] & 0x01 != 0;
+                *indications = data[0] & 0x02 != 0;
+                Ok(())
+            }
+            Self::Declaration { .. } => Err(AttErrorCode::WriteNotPermitted),
+            Self::Service { .. } => Err(AttErrorCode::WriteNotPermitted),
         }
     }
 }
@@ -419,92 +222,281 @@ impl<'a> Attribute<'a> {
             last_handle_in_group: 0xffff,
         }
     }
-
-    /*
-    pub(crate) fn value(&mut self) -> Result<Data, AttErrorCode> {
-        let mut data = Data::default();
-        if self.data.readable() {
-            let len = self.data.read(0, data.as_slice_mut())?;
-            data.append_len(len);
-        }
-        Ok(data)
-    }*/
 }
 
-use heapless::Vec;
-pub struct AttributesBuilder<'a, const N: usize> {
-    attributes: Vec<Attribute<'a>, N>,
+pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
+    inner: Mutex<M, RefCell<InnerTable<'d, MAX>>>,
     handle: u16,
 }
 
-impl<'a, const N: usize> AttributesBuilder<'a, N> {
+pub struct InnerTable<'d, const MAX: usize> {
+    attributes: [Option<Attribute<'d>>; MAX],
+    len: usize,
+}
+
+impl<'d, const MAX: usize> InnerTable<'d, MAX> {
+    fn push(&mut self, attribute: Attribute<'d>) {
+        if self.len == MAX {
+            panic!("no space for more attributes")
+        }
+        self.attributes[self.len].replace(attribute);
+        self.len += 1;
+    }
+}
+
+impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     pub fn new() -> Self {
-        let mut me = Self {
-            attributes: Vec::new(),
+        Self {
             handle: 1,
-        };
-        me.push(
-            PRIMARY_SERVICE_UUID16,
-            AttributeData::Service(GENERIC_ACCESS_SERVICE_UUID16),
-        );
-        me.push(CHARACTERISTIC_DEVICE_NAME_UUID16, AttributeData::Slice(b"Trouble"));
-        me.push(CHARACTERISTIC_APPEARANCE_UUID16, AttributeData::Slice(&[0x02, 0x00]));
-        me.finish_group();
-        me
+            inner: Mutex::new(RefCell::new(InnerTable {
+                len: 0,
+                attributes: [Attribute::EMPTY; MAX],
+            })),
+        }
     }
 
-    fn finish_group(&mut self) {
-        for att in self.attributes.iter_mut() {
-            if att.last_handle_in_group == 0 {
-                att.last_handle_in_group = self.handle;
+    pub fn with_inner<F: Fn(&mut InnerTable<'d, MAX>)>(&self, f: F) {
+        self.inner.lock(|inner| {
+            let mut table = inner.borrow_mut();
+            f(&mut table);
+        })
+    }
+
+    pub fn iterate<F: FnMut(AttributeIterator<'_, 'd>) -> R, R>(&self, mut f: F) -> R {
+        self.inner.lock(|inner| {
+            let mut table = inner.borrow_mut();
+            let len = table.len;
+            let it = AttributeIterator {
+                attributes: &mut table.attributes[..],
+                pos: 0,
+                len,
+            };
+            f(it)
+        })
+    }
+
+    fn push(&mut self, mut attribute: Attribute<'d>) -> u16 {
+        let handle = self.handle;
+        attribute.handle = handle;
+        self.inner.lock(|inner| {
+            let mut inner = inner.borrow_mut();
+            inner.push(attribute);
+        });
+        self.handle += 1;
+        handle
+    }
+
+    pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
+        let len = self.inner.lock(|i| i.borrow().len);
+        self.push(Attribute {
+            uuid: PRIMARY_SERVICE_UUID16,
+            handle: 0,
+            last_handle_in_group: 0,
+            data: AttributeData::Service { uuid: service.uuid },
+        });
+        ServiceBuilder {
+            start: len,
+            table: self,
+        }
+    }
+
+    /// Set the value of a characteristic
+    ///
+    /// The provided data must exactly match the size of the storage for the characteristic,
+    /// otherwise this function will panic.
+    ///
+    /// If the characteristic for the handle cannot be found, an error is returned.
+    pub fn set(&self, handle: CharacteristicHandle, input: &[u8]) -> Result<(), ()> {
+        self.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                if att.handle == handle.handle {
+                    if let AttributeData::Data { props, value } = &mut att.data {
+                        assert_eq!(value.len(), input.len());
+                        value.copy_from_slice(input);
+                        return Ok(());
+                    }
+                }
+            }
+            Err(())
+        })
+    }
+
+    /// Read the value of the characteristic and pass the value to the provided closure.
+    ///
+    /// The return value of the closure is returned in this function and is assumed to be infallible.
+    ///
+    /// If the characteristic for the handle cannot be found, an error is returned.
+    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: CharacteristicHandle, mut f: F) -> Result<T, ()> {
+        self.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                if att.handle == handle.handle {
+                    if let AttributeData::Data { props, value } = &mut att.data {
+                        let v = f(value);
+                        return Ok(v);
+                    }
+                }
+            }
+            Err(())
+        })
+    }
+}
+
+pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
+    start: usize,
+    table: &'r mut AttributeTable<'d, M, MAX>,
+}
+
+impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
+    pub fn add_characteristic(&mut self, c: Characteristic<'d>) -> CharacteristicHandle {
+        // First the characteristic declaration
+        let next = self.table.handle + 1;
+        let cccd = self.table.handle + 2;
+        self.table.push(Attribute {
+            uuid: CHARACTERISTIC_UUID16,
+            handle: 0,
+            last_handle_in_group: 0,
+            data: AttributeData::Declaration {
+                props: c.props,
+                handle: next,
+                uuid: c.uuid,
+            },
+        });
+
+        // Then the value declaration
+        self.table.push(Attribute {
+            uuid: c.uuid,
+            handle: 0,
+            last_handle_in_group: 0,
+            data: AttributeData::Data {
+                props: c.props,
+                value: c.storage,
+            },
+        });
+
+        // Add optional CCCD handle
+        let cccd_handle = if c.props.any(&[CharacteristicProp::Notify, CharacteristicProp::Indicate]) {
+            self.table.push(Attribute {
+                uuid: CHARACTERISTIC_CCCD_UUID16,
+                handle: 0,
+                last_handle_in_group: 0,
+                data: AttributeData::Cccd {
+                    notifications: false,
+                    indications: false,
+                },
+            });
+            Some(cccd)
+        } else {
+            None
+        };
+
+        CharacteristicHandle {
+            handle: next,
+            cccd_handle,
+        }
+    }
+}
+
+impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, MAX> {
+    fn drop(&mut self) {
+        let last_handle = self.table.handle + 1;
+        self.table.with_inner(|inner| {
+            for item in inner.attributes[self.start..inner.len].iter_mut() {
+                item.as_mut().unwrap().last_handle_in_group = last_handle;
+            }
+        });
+
+        // Jump to next 16-aligned
+        self.table.handle = self.table.handle + (0x10 - (self.table.handle % 0x10));
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug)]
+pub struct CharacteristicHandle {
+    pub(crate) cccd_handle: Option<u16>,
+    pub(crate) handle: u16,
+}
+
+pub struct AttributeIterator<'a, 'd> {
+    attributes: &'a mut [Option<Attribute<'d>>],
+    pos: usize,
+    len: usize,
+}
+
+impl<'a, 'd> AttributeIterator<'a, 'd> {
+    pub fn next<'m>(&'m mut self) -> Option<&'m mut Attribute<'d>> {
+        if self.pos < self.len {
+            let i = self.attributes[self.pos].as_mut();
+            self.pos += 1;
+            i
+        } else {
+            None
+        }
+    }
+}
+
+pub struct Service {
+    pub uuid: Uuid,
+}
+
+impl Service {
+    pub fn new<U: Into<Uuid>>(uuid: U) -> Self {
+        Self { uuid: uuid.into() }
+    }
+}
+
+impl<'d> Characteristic<'d> {
+    pub fn new<U: Into<Uuid>>(uuid: U, props: &[CharacteristicProp], storage: &'d mut [u8]) -> Self {
+        Self {
+            uuid: uuid.into(),
+            props: props.into(),
+            storage,
+        }
+    }
+}
+
+pub struct Characteristic<'d> {
+    pub uuid: Uuid,
+    pub props: CharacteristicProps,
+    pub storage: &'d mut [u8],
+}
+
+#[derive(Clone, Copy)]
+pub struct CharacteristicProps(u8);
+
+impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
+    fn from(props: &'a [CharacteristicProp]) -> Self {
+        let mut val: u8 = 0;
+        for prop in props {
+            val |= *prop as u8;
+        }
+        CharacteristicProps(val)
+    }
+}
+
+impl<const T: usize> From<[CharacteristicProp; T]> for CharacteristicProps {
+    fn from(props: [CharacteristicProp; T]) -> Self {
+        let mut val: u8 = 0;
+        for prop in props {
+            val |= prop as u8;
+        }
+        CharacteristicProps(val)
+    }
+}
+
+impl CharacteristicProps {
+    fn any(&self, props: &[CharacteristicProp]) -> bool {
+        for p in props {
+            if (*p as u8) & self.0 != 0 {
+                return true;
             }
         }
-        // Jump to next 0x10 aligned handle
-        self.handle = self.handle + (0x10 - (self.handle % 0x10));
-    }
-
-    pub fn push(&mut self, uuid: Uuid, data: AttributeData<'a>) {
-        self.attributes
-            .push(Attribute {
-                uuid,
-                handle: self.handle,
-                data,
-                last_handle_in_group: 0,
-            })
-            .unwrap();
-        self.handle += 1;
-    }
-
-    pub fn build(self) -> Vec<Attribute<'a>, N> {
-        self.attributes
+        false
     }
 }
 
-pub struct ServiceBuilder<'a, 'b, const N: usize> {
-    attributes: &'b mut AttributesBuilder<'a, N>,
+pub struct AttributeValue<'d, M: RawMutex> {
+    value: Mutex<M, &'d mut [u8]>,
 }
 
-impl<'a, 'b, const N: usize> ServiceBuilder<'a, 'b, N> {
-    pub fn new(attributes: &'b mut AttributesBuilder<'a, N>, uuid: Uuid) -> Self {
-        attributes.push(PRIMARY_SERVICE_UUID16, AttributeData::Service(uuid));
-        Self { attributes }
-    }
-
-    pub fn add_characteristic(self, uuid: Uuid, props: &[CharacteristicProp], value: &'a mut impl AttData) -> Self {
-        let mut prop = 0u8;
-        for p in props {
-            prop |= *p as u8
-        }
-        self.attributes.push(
-            CHARACTERISTIC_UUID16,
-            AttributeData::CharDeclaration(prop, self.attributes.handle + 1, uuid),
-        );
-
-        self.attributes.push(uuid, AttributeData::Ref(value));
-        self
-    }
-
-    pub fn done(self) {
-        self.attributes.finish_group();
-    }
-}
+impl<'d, M: RawMutex> AttributeValue<'d, M> {}

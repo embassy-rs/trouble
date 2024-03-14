@@ -6,14 +6,6 @@
 use advertise::AdvertisementDataError;
 use bt_hci::FromHciBytesError;
 
-// TODO: Make these configurable
-pub(crate) const ATT_MTU: usize = 64;
-
-pub(crate) const ATT_RXQ: usize = 3;
-pub(crate) const L2CAP_RXQ: usize = 3;
-// NOTE: This one is actually shared for all connections
-pub(crate) const L2CAP_TXQ: usize = 3;
-
 mod fmt;
 
 mod att;

@@ -102,6 +102,43 @@ pub enum ConnectionState {
     Connected(ConnHandle, ConnectionInfo),
 }
 
+pub trait DynamicConnectionManager {
+    fn get_att_mtu(&self, conn: ConnHandle) -> u16;
+    fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16;
+}
+
+impl<M: RawMutex, const CONNS: usize> DynamicConnectionManager for ConnectionManager<M, CONNS> {
+    fn get_att_mtu(&self, conn: ConnHandle) -> u16 {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for storage in state.connections.iter_mut() {
+                match storage {
+                    ConnectionState::Connected(handle, info) if *handle == conn => {
+                        return info.att_mtu;
+                    }
+                    _ => {}
+                }
+            }
+            23 // Minimum value
+        })
+    }
+    fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16 {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for storage in state.connections.iter_mut() {
+                match storage {
+                    ConnectionState::Connected(handle, info) if *handle == conn => {
+                        info.att_mtu = info.att_mtu.min(mtu);
+                        return info.att_mtu;
+                    }
+                    _ => {}
+                }
+            }
+            mtu
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct ConnectionInfo {
     pub handle: ConnHandle,
@@ -111,4 +148,5 @@ pub struct ConnectionInfo {
     pub interval: u16,
     pub latency: u16,
     pub timeout: u16,
+    pub att_mtu: u16,
 }

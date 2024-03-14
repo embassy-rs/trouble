@@ -4,7 +4,7 @@
 
 use bt_hci::cmd::SyncCmd;
 use bt_hci::param::BdAddr;
-use defmt::{info, unwrap};
+use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
 use embassy_futures::join::join3;
 use embassy_nrf::{bind_interrupts, pac};
@@ -17,8 +17,7 @@ use static_cell::StaticCell;
 use trouble_host::{
     adapter::{Adapter, HostResources},
     advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    attribute::{AttributesBuilder, CharacteristicProp, ServiceBuilder, Uuid},
-    gatt::{GattEvent, GattServer},
+    attribute::{AttributeTable, Characteristic, CharacteristicProp, Service, Uuid},
     PacketQos,
 };
 
@@ -94,7 +93,7 @@ async fn main(spawner: Spawner) {
     let mut pool = [0; 256];
     let rng = sdc::rng_pool::RngPool::new(p.RNG, Irqs, &mut pool, 64);
 
-    let mut sdc_mem = sdc::Mem::<1672>::new();
+    let mut sdc_mem = sdc::Mem::<3312>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
     info!("Advertising as {:02x}", bd_addr());
@@ -114,15 +113,36 @@ async fn main(spawner: Spawner) {
         ],
     };
 
-    let mut attributes: AttributesBuilder<'_, 10> = AttributesBuilder::new();
-    static DATA: StaticCell<[u8; 1]> = StaticCell::new();
-    let data = DATA.init([32; 1]);
-    ServiceBuilder::new(&mut attributes, 0x180f_u16.into())
-        .add_characteristic(0x2a19.into(), &[CharacteristicProp::Read], data)
-        .done();
-    let mut attributes = attributes.build();
+    let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
-    let mut server = GattServer::new(&adapter, &mut attributes[..]);
+    // Generic Access Service (mandatory)
+    let mut id = [b'T', b'r', b'o', b'u', b'b', b'l', b'e'];
+    let mut appearance = [0x80, 0x07];
+    let mut bat_level = [0; 1];
+    let handle = {
+        let mut svc = table.add_service(Service::new(0x1800));
+        let _ = svc.add_characteristic(Characteristic::new(0x2a00, &[CharacteristicProp::Read], &mut id[..]));
+        let _ = svc.add_characteristic(Characteristic::new(
+            0x2a01,
+            &[CharacteristicProp::Read],
+            &mut appearance[..],
+        ));
+        drop(svc);
+
+        // Generic attribute service (mandatory)
+        table.add_service(Service::new(0x1801));
+
+        // Battery service
+        let mut svc = table.add_service(Service::new(0x180f));
+
+        svc.add_characteristic(Characteristic::new(
+            0x2a19,
+            &[CharacteristicProp::Read, CharacteristicProp::Notify],
+            &mut bat_level,
+        ))
+    };
+
+    let server = adapter.gatt_server(&table);
 
     info!("Starting advertising and GATT service");
     let _ = join3(
@@ -130,17 +150,23 @@ async fn main(spawner: Spawner) {
         async {
             loop {
                 match server.next().await {
-                    GattEvent::Write(_conn, attribute) => {
-                        info!("Attribute was written: {:?}", attribute);
+                    Ok(event) => {
+                        info!("Gatt event: {:?}", event);
+                    }
+                    Err(e) => {
+                        error!("Error processing GATT events: {:?}", e);
                     }
                 }
             }
         },
         async {
-            let _conn = unwrap!(adapter.advertise(&config).await);
+            let conn = unwrap!(adapter.advertise(&config).await);
             // Keep connection alive
+            let mut tick: u8 = 0;
             loop {
-                Timer::after(Duration::from_secs(60)).await
+                Timer::after(Duration::from_secs(10)).await;
+                tick += 1;
+                unwrap!(server.notify(handle, &conn, &[tick]).await);
             }
         },
     )

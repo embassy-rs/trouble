@@ -68,8 +68,17 @@ impl<'d> WriteCursor<'d> {
     }
 
     // Reserve a spot for a slice of data and return it
-    pub fn write_buf<'m>(&'m mut self) -> SliceWriter<'m, 'd> {
-        SliceWriter { writer: self }
+    pub fn write_buf(&mut self) -> &mut [u8] {
+        &mut self.data[self.pos..]
+    }
+
+    pub fn commit(&mut self, len: usize) -> Result<(), Error> {
+        if self.available() < len {
+            Err(Error::InsufficientSpace)
+        } else {
+            self.pos += len;
+            Ok(())
+        }
     }
 
     pub fn available(&self) -> usize {
@@ -82,33 +91,6 @@ impl<'d> WriteCursor<'d> {
 
     pub fn finish(self) -> &'d mut [u8] {
         &mut self.data[..self.pos]
-    }
-}
-
-pub struct SliceWriter<'m, 'd> {
-    writer: &'m mut WriteCursor<'d>,
-}
-
-impl<'m, 'd> SliceWriter<'m, 'd> {
-    pub fn finish(self, len: usize) -> Result<(), Error> {
-        if self.writer.available() < len {
-            Err(Error::InsufficientSpace)
-        } else {
-            self.writer.pos += len;
-            Ok(())
-        }
-    }
-}
-
-impl<'m, 'd> AsRef<[u8]> for SliceWriter<'m, 'd> {
-    fn as_ref(&self) -> &[u8] {
-        &self.writer.data[self.writer.pos..]
-    }
-}
-
-impl<'m, 'd> AsMut<[u8]> for SliceWriter<'m, 'd> {
-    fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.writer.data[self.writer.pos..]
     }
 }
 

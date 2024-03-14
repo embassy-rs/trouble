@@ -1,10 +1,13 @@
 use crate::advertise::AdvertiseConfig;
+use crate::attribute::AttributeTable;
+use crate::attribute_server::AttributeServer;
 use crate::channel_manager::ChannelManager;
 use crate::connection::Connection;
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
 use crate::cursor::{ReadCursor, WriteCursor};
+use crate::gatt::GattServer;
 use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
-use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos, ATT_ID};
+use crate::packet_pool::{self, DynamicPacketPool, PacketPool, Qos, ATT_ID};
 use crate::pdu::Pdu;
 use crate::scan::{ScanConfig, ScanReport};
 use crate::types::l2cap::L2capLeSignal;
@@ -159,6 +162,21 @@ where
         Ok(conn)
     }
 
+    /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
+    pub fn gatt_server<'reference, 'values, const MAX: usize>(
+        &'reference self,
+        table: &'reference AttributeTable<'values, M, MAX>,
+    ) -> GattServer<'reference, 'values, 'd, M, MAX> {
+        GattServer {
+            server: AttributeServer::new(table),
+            pool: self.pool,
+            pool_id: packet_pool::ATT_ID,
+            rx: self.att_inbound.receiver().into(),
+            tx: self.outbound.sender().into(),
+            connections: &self.connections,
+        }
+    }
+
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), HandleError> {
         let (conn, packet) = L2capPacket::decode(acl)?;
         match packet.channel {
@@ -256,6 +274,7 @@ where
                                             interval: e.conn_interval.as_u16(),
                                             latency: e.peripheral_latency,
                                             timeout: e.supervision_timeout.as_u16(),
+                                            att_mtu: 23,
                                         },
                                     ) {
                                         warn!("Error establishing connection: {:?}", err);

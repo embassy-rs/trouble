@@ -1,67 +1,148 @@
-use crate::adapter::Adapter;
-use crate::att::Att;
-use crate::attribute::Attribute;
+use core::fmt;
+
+use crate::att::{self, Att, ATT_HANDLE_VALUE_NTF_OPTCODE};
+use crate::attribute::CharacteristicHandle;
 use crate::attribute_server::AttributeServer;
 use crate::connection::Connection;
-use crate::l2cap::L2capPacket;
+use crate::connection_manager::DynamicConnectionManager;
+use crate::cursor::WriteCursor;
+use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
 use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{DynamicReceiver, DynamicSender};
 
-pub struct GattServer<'a, 'b, 'c, 'd> {
-    server: AttributeServer<'a, 'b>,
-    rx: DynamicReceiver<'c, (ConnHandle, Pdu<'d>)>,
-    tx: DynamicSender<'c, (ConnHandle, Pdu<'d>)>,
+pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, const MAX: usize> {
+    pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
+    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'resources>)>,
+    pub(crate) tx: DynamicSender<'reference, (ConnHandle, Pdu<'resources>)>,
+    pub(crate) pool_id: AllocId,
+    pub(crate) pool: &'resources dyn DynamicPacketPool<'resources>,
+    pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 
-impl<'a, 'b, 'c, 'd> GattServer<'a, 'b, 'c, 'd> {
-    pub fn new<
-        M: RawMutex,
-        T,
-        const CONNS: usize,
-        const CHANNELS: usize,
-        const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
-    >(
-        adapter: &'c Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-        attributes: &'a mut [Attribute<'b>],
-    ) -> Self {
-        Self {
-            server: AttributeServer::new(attributes),
-            rx: adapter.att_inbound.receiver().into(),
-            tx: adapter.outbound.sender().into(),
-        }
-    }
-
-    // TODO: Actually return events
-    pub async fn next(&mut self) -> GattEvent<'d> {
+impl<'reference, 'values, 'resources, M: RawMutex, const MAX: usize>
+    GattServer<'reference, 'values, 'resources, M, MAX>
+{
+    pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, ()> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             match Att::decode(pdu.as_ref()) {
-                Ok(att) => match self.server.process(att) {
-                    Ok(Some(payload)) => {
-                        let mut data = pdu.packet;
-                        let packet = L2capPacket { channel: 4, payload };
-                        let len = packet.encode(data.as_mut()).unwrap();
-                        self.tx.send((handle, Pdu::new(data, len))).await;
+                Ok(att) => {
+                    let Some(mut response) = self.pool.alloc(self.pool_id) else {
+                        return Err(());
+                    };
+                    let mut w = WriteCursor::new(response.as_mut());
+                    let (mut header, mut data) = w.split(4).map_err(|_| ())?;
+
+                    match att {
+                        Att::ExchangeMtu { mtu } => {
+                            let mtu = self.connections.exchange_att_mtu(handle, mtu);
+                            data.write(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE).map_err(|_| ())?;
+                            data.write(mtu).map_err(|_| ())?;
+
+                            header.write(data.len() as u16).map_err(|_| ())?;
+                            header.write(4 as u16).map_err(|_| ())?;
+                            let len = header.len() + data.len();
+                            drop(header);
+                            drop(data);
+                            drop(w);
+                            self.tx.send((handle, Pdu::new(response, len))).await;
+                        }
+                        _ => match self.server.process(handle, att, data.write_buf()) {
+                            Ok(Some(written)) => {
+                                let mtu = self.connections.get_att_mtu(handle);
+                                data.commit(written).map_err(|_| ())?;
+                                data.truncate(mtu as usize);
+                                header.write(written as u16).map_err(|_| ())?;
+                                header.write(4 as u16).map_err(|_| ())?;
+                                let len = header.len() + data.len();
+                                drop(header);
+                                drop(data);
+                                drop(w);
+                                self.tx.send((handle, Pdu::new(response, len))).await;
+                            }
+                            Ok(None) => {
+                                debug!("No response sent");
+                            }
+                            Err(e) => {
+                                warn!("Error processing attribute: {:?}", e);
+                            }
+                        },
                     }
-                    Ok(None) => {
-                        debug!("No response sent");
-                    }
-                    Err(e) => {
-                        warn!("Error processing attribute: {:?}", e);
-                    }
-                },
+                }
                 Err(e) => {
                     warn!("Error decoding attribute request: {:02x}", e);
                 }
             }
         }
     }
+
+    /// Write a value to a characteristic, and notify a connection with the new value of the characteristic.
+    ///
+    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
+    ///
+    /// If the characteristic for the handle cannot be found, an error is returned.
+    pub async fn notify(
+        &self,
+        handle: CharacteristicHandle,
+        connection: &Connection<'_>,
+        value: &[u8],
+    ) -> Result<(), ()> {
+        let conn = connection.handle();
+        self.server.table.set(handle, value).map_err(|_| ())?;
+
+        let cccd_handle = handle.cccd_handle.ok_or(())?;
+
+        if !self.server.should_notify(conn, cccd_handle) {
+            // No reason to fail?
+            return Ok(());
+        }
+
+        let Some(mut packet) = self.pool.alloc(self.pool_id) else {
+            return Err(());
+        };
+        let mut w = WriteCursor::new(packet.as_mut());
+        let (mut header, mut data) = w.split(4).map_err(|_| ())?;
+        data.write(ATT_HANDLE_VALUE_NTF_OPTCODE).map_err(|_| ())?;
+        data.write(handle.handle).map_err(|_| ())?;
+        data.append(value).map_err(|_| ())?;
+
+        header.write(data.len() as u16).map_err(|_| ())?;
+        header.write(4 as u16).map_err(|_| ())?;
+        let total = header.len() + data.len();
+        drop(header);
+        drop(data);
+        drop(w);
+        self.tx.send((conn, Pdu::new(packet, total))).await;
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
-pub enum GattEvent<'a> {
-    Write(Connection<'a>, &'a Attribute<'a>),
+pub enum GattEvent<'reference, 'values> {
+    Write {
+        connection: Connection<'reference>,
+        handle: CharacteristicHandle,
+        value: &'values [u8],
+    },
+}
+
+impl<'reference, 'values> fmt::Debug for GattEvent<'reference, 'values> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Write {
+                connection: _,
+                handle: _,
+                value: _,
+            } => f.debug_struct("GattEvent::Write").finish(),
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'reference, 'values> defmt::Format for GattEvent<'reference, 'values> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{}", defmt::Debug2Format(self))
+    }
 }
