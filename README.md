@@ -25,6 +25,8 @@ Missing:
 
 See `examples` for example applications. Currently there is only one, for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
 
+NOTE: There is also an example `serial-hci` which should in theory work with any serial HCI adapter, but this has not been tested.
+
 ## License
 
 Trouble is licensed under either of
