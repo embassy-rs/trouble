@@ -1,0 +1,31 @@
+[package]
+name = "serial-hci"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serialport = "4.2.0"
+env_logger = "0.10.0"
+log = "0.4"
+crossterm = "0.27.0"
+rand_core = { version = "0.6.4", features = ["std"] }
+embassy-executor = { version = "0.5.0", features = ["task-arena-size-32768", "arch-std", "executor-thread", "log", "integrated-timers"] }
+embedded-io-adapters = { version = "0.6.1", features = ["futures-03"] }
+embedded-io-async = { version = "0.6.1" }
+embassy-time = { version = "0.3.0", features = ["log", "std", ] }
+embassy-sync = { version = "0.5.0", features = ["log"] }
+critical-section = { version = "1.1", features = ["std"] }
+embassy-futures = { version = "0.1" }
+nix = "0.26.2"
+async-io = "1.6.0"
+static_cell = "2"
+futures = { version = "0.3.17" }
+
+bt-hci = { version = "0.1.0", default-features = false } #features = ["log"] }
+trouble-host = { version = "0.1.0", path = "../../host" } #, features = ["log"] }
+
+[patch.crates-io]
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
