@@ -2,21 +2,20 @@
 
 [![CI](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml/badge.svg)](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml)
 
-*WIP* Basic functionality like creating a GATT server works, l2cap connection with credit flow works, but API is likely change a lot for the time being. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE stack.
+*WIP* Basic functionality works, but API is likely to change a bit. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE stack.
 
 An Rust host BLE stack with a future goal of qualification. Currently the focus is on implementing the host on top of a HCI interface.
 
 The `trouble-host` crate is based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with [`bt-hci`](https://github.com/alexmoon/bt-hci). 
 
 Done:
-* Basic GATT
+* Basic GATT write, read, notifications
 * L2CAP CoC 
 * Peripheral role 
 * Central role
 
 Missing:
 * Security manager
-* Gatt notifications
 * Gatt client
 * Legacy Bluetooth
 * Better error handling
