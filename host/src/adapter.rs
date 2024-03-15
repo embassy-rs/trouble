@@ -42,8 +42,15 @@ impl<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: 
     }
 }
 
-pub struct Adapter<'d, M, T, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
-where
+pub struct Adapter<
+    'd,
+    M,
+    T,
+    const CONNS: usize,
+    const CHANNELS: usize,
+    const L2CAP_TXQ: usize = 1,
+    const L2CAP_RXQ: usize = 1,
+> where
     M: RawMutex,
 {
     pub(crate) controller: T,

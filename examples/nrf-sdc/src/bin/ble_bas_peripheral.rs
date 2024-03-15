@@ -46,6 +46,18 @@ fn bd_addr() -> BdAddr {
     }
 }
 
+/// Size of L2CAP packets (ATT MTU is this - 4)
+const L2CAP_MTU: usize = 27;
+
+/// Max number of connections
+const CONNECTIONS_MAX: usize = 1;
+
+/// Max number of L2CAP channels.
+const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
+
+/// Number of packets available in the pool
+const PACKET_POOL_SIZE: usize = 10;
+
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
     rng: &'d RngPool<'d>,
@@ -100,10 +112,11 @@ async fn main(spawner: Spawner) {
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
+        StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(sdc, host_resources);
+    let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = Adapter::new(sdc, host_resources);
     let config = AdvertiseConfig {
         params: None,
         data: &[

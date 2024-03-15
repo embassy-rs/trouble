@@ -47,6 +47,24 @@ fn bd_addr() -> BdAddr {
     }
 }
 
+/// How many outgoing L2CAP buffers per link
+const L2CAP_TXQ: u8 = 20;
+
+/// How many incoming L2CAP buffers per link
+const L2CAP_RXQ: u8 = 20;
+
+/// Size of L2CAP packets
+const L2CAP_MTU: usize = 27;
+
+/// Max number of connections
+const CONNECTIONS_MAX: usize = 1;
+
+/// Max number of L2CAP channels.
+const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
+
+/// Number of packets available in the pool
+const PACKET_POOL_SIZE: usize = (L2CAP_TXQ + L2CAP_RXQ) as usize;
+
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
     rng: &'d RngPool<'d>,
@@ -57,7 +75,7 @@ fn build_sdc<'d, const N: usize>(
         .support_scan()?
         .support_central()?
         .central_count(1)?
-        .buffer_cfg(27, 27, 20, 20)?
+        .buffer_cfg(L2CAP_MTU as u8, L2CAP_MTU as u8, L2CAP_TXQ, L2CAP_RXQ)?
         .build(p, rng, mpsl, mem)
 }
 
@@ -102,10 +120,11 @@ async fn main(spawner: Spawner) {
     unwrap!(ZephyrWriteBdAddr::new(bd_addr()).exec(&sdc).await);
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
+        StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::Guaranteed(4)));
 
-    let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(sdc, host_resources);
+    let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = Adapter::new(sdc, host_resources);
 
     let config = ScanConfig { params: None };
 
@@ -121,19 +140,20 @@ async fn main(spawner: Spawner) {
                 if report.addr == target {
                     let conn = Connection::connect(&adapter, report.addr).await;
                     info!("Connected, creating l2cap channel");
-                    let mut ch1: L2capChannel<'_, '_, 27> =
+                    const PAYLOAD_LEN: usize = 27;
+                    let mut ch1: L2capChannel<'_, '_, PAYLOAD_LEN> =
                         unwrap!(L2capChannel::create(&adapter, &conn, 0x2349).await);
                     info!("New l2cap channel created, sending some data!");
                     for i in 0..10 {
-                        let mut tx = [i; 27];
+                        let mut tx = [i; PAYLOAD_LEN];
                         let _ = unwrap!(ch1.send(&mut tx).await);
                     }
                     info!("Sent data, waiting for them to be sent back");
-                    let mut rx = [0; 27];
+                    let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
                         let len = unwrap!(ch1.receive(&mut rx).await);
                         assert_eq!(len, rx.len());
-                        assert_eq!(rx, [i; 27]);
+                        assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }
 
                     info!("Received successfully!");
