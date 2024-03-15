@@ -29,6 +29,7 @@ Missing:
 * Gatt client
 * Expose more configuration options
 * Legacy Bluetooth (probably won't happen unless it's needed for qualification).*
+* Testing preparing for qualification (see https://github.com/auto-pts/auto-pts which is an automated framework we might be able to use)
 
 ## Example
 
