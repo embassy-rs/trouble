@@ -17,7 +17,7 @@ use static_cell::StaticCell;
 use trouble_host::{
     adapter::{Adapter, HostResources},
     advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    attribute::{AttributeTable, Characteristic, CharacteristicProp, Service, Uuid},
+    attribute::{AttributeTable, CharacteristicProp, Service, Uuid},
     PacketQos,
 };
 
@@ -129,17 +129,13 @@ async fn main(spawner: Spawner) {
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
     // Generic Access Service (mandatory)
-    let mut id = [b'T', b'r', b'o', b'u', b'b', b'l', b'e'];
-    let mut appearance = [0x80, 0x07];
+    let id = b"Trouble";
+    let appearance = [0x80, 0x07];
     let mut bat_level = [0; 1];
     let handle = {
         let mut svc = table.add_service(Service::new(0x1800));
-        let _ = svc.add_characteristic(Characteristic::new(0x2a00, &[CharacteristicProp::Read], &mut id[..]));
-        let _ = svc.add_characteristic(Characteristic::new(
-            0x2a01,
-            &[CharacteristicProp::Read],
-            &mut appearance[..],
-        ));
+        let _ = svc.add_characteristic_ro(0x2a00, id);
+        let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
         drop(svc);
 
         // Generic attribute service (mandatory)
@@ -148,11 +144,11 @@ async fn main(spawner: Spawner) {
         // Battery service
         let mut svc = table.add_service(Service::new(0x180f));
 
-        svc.add_characteristic(Characteristic::new(
+        svc.add_characteristic(
             0x2a19,
             &[CharacteristicProp::Read, CharacteristicProp::Notify],
             &mut bat_level,
-        ))
+        )
     };
 
     let server = adapter.gatt_server(&table);

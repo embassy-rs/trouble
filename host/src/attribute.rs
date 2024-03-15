@@ -44,6 +44,10 @@ pub enum AttributeData<'d> {
     Service {
         uuid: Uuid,
     },
+    ReadOnlyData {
+        props: CharacteristicProps,
+        value: &'d [u8],
+    },
     Data {
         props: CharacteristicProps,
         value: &'d mut [u8],
@@ -89,6 +93,16 @@ impl<'d> AttributeData<'d> {
             return Err(AttErrorCode::ReadNotPermitted);
         }
         match self {
+            Self::ReadOnlyData { props, value } => {
+                if offset > value.len() {
+                    return Ok(0);
+                }
+                let len = data.len().min(value.len() - offset);
+                if len > 0 {
+                    data[..len].copy_from_slice(&value[offset..offset + len]);
+                }
+                Ok(len)
+            }
             Self::Data { props, value } => {
                 if offset > value.len() {
                     return Ok(0);
@@ -188,8 +202,7 @@ impl<'d> AttributeData<'d> {
                 *indications = data[0] & 0x02 != 0;
                 Ok(())
             }
-            Self::Declaration { .. } => Err(AttErrorCode::WriteNotPermitted),
-            Self::Service { .. } => Err(AttErrorCode::WriteNotPermitted),
+            _ => Err(AttErrorCode::WriteNotPermitted),
         }
     }
 }
@@ -347,7 +360,12 @@ pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
 }
 
 impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
-    pub fn add_characteristic(&mut self, c: Characteristic<'d>) -> CharacteristicHandle {
+    fn add_characteristic_internal(
+        &mut self,
+        uuid: Uuid,
+        props: CharacteristicProps,
+        data: AttributeData<'d>,
+    ) -> CharacteristicHandle {
         // First the characteristic declaration
         let next = self.table.handle + 1;
         let cccd = self.table.handle + 2;
@@ -356,25 +374,22 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Declaration {
-                props: c.props,
+                props: props,
                 handle: next,
-                uuid: c.uuid,
+                uuid,
             },
         });
 
         // Then the value declaration
         self.table.push(Attribute {
-            uuid: c.uuid,
+            uuid,
             handle: 0,
             last_handle_in_group: 0,
-            data: AttributeData::Data {
-                props: c.props,
-                value: c.storage,
-            },
+            data,
         });
 
         // Add optional CCCD handle
-        let cccd_handle = if c.props.any(&[CharacteristicProp::Notify, CharacteristicProp::Indicate]) {
+        let cccd_handle = if props.any(&[CharacteristicProp::Notify, CharacteristicProp::Indicate]) {
             self.table.push(Attribute {
                 uuid: CHARACTERISTIC_CCCD_UUID16,
                 handle: 0,
@@ -393,6 +408,21 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             handle: next,
             cccd_handle,
         }
+    }
+
+    pub fn add_characteristic<U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        props: &[CharacteristicProp],
+        storage: &'d mut [u8],
+    ) -> CharacteristicHandle {
+        let props = props.into();
+        self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
+    }
+
+    pub fn add_characteristic_ro<U: Into<Uuid>>(&mut self, uuid: U, value: &'d [u8]) -> CharacteristicHandle {
+        let props = [CharacteristicProp::Read].into();
+        self.add_characteristic_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value })
     }
 }
 
@@ -443,22 +473,6 @@ impl Service {
     pub fn new<U: Into<Uuid>>(uuid: U) -> Self {
         Self { uuid: uuid.into() }
     }
-}
-
-impl<'d> Characteristic<'d> {
-    pub fn new<U: Into<Uuid>>(uuid: U, props: &[CharacteristicProp], storage: &'d mut [u8]) -> Self {
-        Self {
-            uuid: uuid.into(),
-            props: props.into(),
-            storage,
-        }
-    }
-}
-
-pub struct Characteristic<'d> {
-    pub uuid: Uuid,
-    pub props: CharacteristicProps,
-    pub storage: &'d mut [u8],
 }
 
 #[derive(Clone, Copy)]
