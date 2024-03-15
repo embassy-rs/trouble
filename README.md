@@ -2,24 +2,33 @@
 
 [![CI](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml/badge.svg)](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml)
 
-*WIP* Basic functionality works, but API is likely to change a bit. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE stack.
+*WIP* Basic functionality works, but API is likely to change a bit. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE Rust stack for nRF.
 
-An Rust host BLE stack with a future goal of qualification. Currently the focus is on implementing the host on top of a HCI interface.
 
-The `trouble-host` crate is based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with [`bt-hci`](https://github.com/alexmoon/bt-hci). 
+TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification.
+
+The initial implementation was based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with [`bt-hci`](https://github.com/alexmoon/bt-hci), which implements Rust types for the HCI specification as well as an interface
+for a BLE Controller.
+
+### HCI what?
+
+The BLE specification defines the software of a BLE implementation in terms of a `controller` (lower layer) and a `host` (upper layer). These communicate via a standardized protocol called the Host-Controller Interface (HCI), which can operate over different transports such as UART, USB or a custom IPC implementation.
+
+## Current status
+
+The implementation has some basic functionality working.
 
 Done:
-* Basic GATT write, read, notifications
-* L2CAP CoC 
-* Peripheral role 
-* Central role
+* Peripheral role - advertise as a peripheral and accept connections.
+* Central role - scan for devices and establish connections.
+* Basic GATT server supporting write, read, notifications
+* L2CAP CoC (Connection oriented Channels) with credit management (for both central and peripheral)
 
 Missing:
-* Security manager
+* Security manager (i.e. secure pairing)
 * Gatt client
-* Legacy Bluetooth
-* Better error handling
-* Supporting more configuration options
+* Expose more configuration options
+* Legacy Bluetooth (probably won't happen unless it's needed for qualification).*
 
 ## Example
 
