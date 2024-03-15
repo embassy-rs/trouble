@@ -315,13 +315,11 @@ where
                         }
                     }
                 }
-                Either4::Second((handle, mut pdu)) => {
+                Either4::Second((handle, pdu)) => {
                     // info!("Outgoing packet");
                     let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
                     match self.controller.write_acl_data(&acl).await {
-                        Ok(_) => {
-                            pdu.as_mut().iter_mut().for_each(|b| *b = 0xFF);
-                        }
+                        Ok(_) => {}
                         Err(e) => {
                             warn!("Error writing some ACL data to controller: {:?}", e);
                             panic!(":(");
