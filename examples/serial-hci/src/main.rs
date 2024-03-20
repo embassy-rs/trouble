@@ -1,26 +1,10 @@
 // Use with any serial HCI
-use bt_hci::cmd::AsyncCmd;
-use bt_hci::cmd::SyncCmd;
-use bt_hci::data;
-use bt_hci::param;
-use bt_hci::serial::SerialController;
-use bt_hci::Controller;
-use bt_hci::ControllerCmdAsync;
-use bt_hci::ControllerCmdSync;
-use bt_hci::ControllerToHostPacket;
-use bt_hci::ReadHci;
-use bt_hci::WithIndicator;
-use bt_hci::WriteHci;
-use core::future::Future;
-use core::ops::DerefMut;
+use bt_hci::driver::HciController;
+use bt_hci::serial::SerialHciDriver;
 use embassy_futures::join::join3;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex;
-use embedded_io_async::Read;
 use log::*;
-use nix::sys::termios;
 use static_cell::StaticCell;
-use tokio::io::AsyncReadExt;
 use tokio::time::Duration;
 use tokio_serial::SerialStream;
 use tokio_serial::{DataBits, Parity, StopBits};
@@ -69,10 +53,11 @@ async fn main() {
 
     let (reader, writer) = tokio::io::split(port);
 
-    let mut reader = embedded_io_adapters::tokio_1::FromTokio::new(reader);
-    let mut writer = embedded_io_adapters::tokio_1::FromTokio::new(writer);
+    let reader = embedded_io_adapters::tokio_1::FromTokio::new(reader);
+    let writer = embedded_io_adapters::tokio_1::FromTokio::new(writer);
 
-    let controller: SerialController<NoopRawMutex, _, _, 10> = SerialController::new(reader, writer);
+    let driver: SerialHciDriver<NoopRawMutex, _, _> = SerialHciDriver::new(reader, writer);
+    let controller: HciController<_, 10> = HciController::new(driver);
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
