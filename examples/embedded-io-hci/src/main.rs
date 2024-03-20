@@ -1,29 +1,19 @@
-// Use with any serial HCI
-use bt_hci::cmd::AsyncCmd;
+#![no_std]
+#![no_main]
+#![feature(type_alias_impl_trait)]
+
 use bt_hci::cmd::SyncCmd;
-use bt_hci::data;
-use bt_hci::param;
+use bt_hci::param::BdAddr;
 use bt_hci::serial::SerialController;
-use bt_hci::Controller;
-use bt_hci::ControllerCmdAsync;
-use bt_hci::ControllerCmdSync;
-use bt_hci::ControllerToHostPacket;
-use bt_hci::ReadHci;
-use bt_hci::WithIndicator;
-use bt_hci::WriteHci;
-use core::future::Future;
-use core::ops::DerefMut;
+use defmt::{error, info, unwrap};
+use embassy_executor::Spawner;
 use embassy_futures::join::join3;
+use embassy_nrf::peripherals;
+use embassy_nrf::{bind_interrupts, pac};
+use embassy_nrf::{buffered_uarte, uarte};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex;
-use embedded_io_async::Read;
-use log::*;
-use nix::sys::termios;
+use embassy_time::{Duration, Timer};
 use static_cell::StaticCell;
-use tokio::io::AsyncReadExt;
-use tokio::time::Duration;
-use tokio_serial::SerialStream;
-use tokio_serial::{DataBits, Parity, StopBits};
 use trouble_host::{
     adapter::{Adapter, HostResources},
     advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
@@ -31,46 +21,45 @@ use trouble_host::{
     PacketQos,
 };
 
-#[tokio::main]
-async fn main() {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Trace)
-        .format_timestamp_nanos()
-        .init();
+use {defmt_rtt as _, panic_probe as _};
 
-    let baudrate = 1000000;
+bind_interrupts!(struct Irqs {
+    UARTE0_UART0 => buffered_uarte::InterruptHandler<peripherals::UARTE0>;
+});
 
-    if std::env::args().len() != 2 {
-        println!("Provide the serial port as the one and only command line argument.");
-        return;
-    }
+#[embassy_executor::main]
+async fn main(_s: Spawner) {
+    let p = embassy_nrf::init(Default::default());
 
-    let args: Vec<String> = std::env::args().collect();
+    let uart_tx = p.P0_01;
+    let uart_rx = p.P0_17;
+    let uart_cts = p.P0_13;
+    let uart_rts = p.P1_02;
 
-    let mut port = SerialStream::open(
-        &tokio_serial::new(args[1].as_str(), baudrate)
-            .baud_rate(baudrate)
-            .data_bits(DataBits::Eight)
-            .parity(Parity::None)
-            .stop_bits(StopBits::One),
-    )
-    .unwrap();
+    let mut config = uarte::Config::default();
+    config.parity = uarte::Parity::EXCLUDED;
+    config.baudrate = uarte::Baudrate::BAUD115200;
 
-    // Drain input
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    loop {
-        let mut buf = [0; 1];
-        match port.try_read(&mut buf[..]) {
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-            _ => {}
-        }
-    }
-    info!("Ready!");
+    let mut tx_buffer = [0u8; 4096];
+    let mut rx_buffer = [0u8; 4096];
 
-    let (reader, writer) = tokio::io::split(port);
+    let mut u = buffered_uarte::BufferedUarte::new_with_rtscts(
+        p.UARTE0,
+        p.TIMER0,
+        p.PPI_CH0,
+        p.PPI_CH1,
+        p.PPI_GROUP0,
+        Irqs,
+        uart_rx,
+        uart_tx,
+        uart_cts,
+        uart_rts,
+        config,
+        &mut rx_buffer,
+        &mut tx_buffer,
+    );
 
-    let mut reader = embedded_io_adapters::tokio_1::FromTokio::new(reader);
-    let mut writer = embedded_io_adapters::tokio_1::FromTokio::new(writer);
+    let (reader, writer) = u.split();
 
     let controller: SerialController<NoopRawMutex, _, _, 10> = SerialController::new(reader, writer);
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
@@ -82,14 +71,14 @@ async fn main() {
         data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
             AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-            AdStructure::CompleteLocalName("Trouble HCI"),
+            AdStructure::CompleteLocalName("Trouble"),
         ],
     };
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
     // Generic Access Service (mandatory)
-    let id = b"Trouble HCI";
+    let id = b"Trouble";
     let appearance = [0x80, 0x07];
     let mut bat_level = [0; 1];
     let handle = {
@@ -133,7 +122,7 @@ async fn main() {
             // Keep connection alive
             let mut tick: u8 = 0;
             loop {
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                Timer::after(Duration::from_secs(10)).await;
                 tick += 1;
                 server.notify(handle, &conn, &[tick]).await.unwrap();
             }

@@ -1,0 +1,41 @@
+[package]
+name = "serial-hci"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embassy-executor = { version = "0.5", default-features = false, features = ["nightly", "arch-cortex-m", "executor-thread", "defmt", "integrated-timers", "executor-interrupt"] }
+embassy-time = { version = "0.3.0", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-nrf = { version = "0.1.0", default-features = false, features = ["defmt", "nrf52833", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
+embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
+embedded-io = { version = "0.6.1", features = ["defmt-03"] }
+embassy-sync = { version = "0.5.0", features = ["defmt"] }
+embassy-futures = "0.1.1"
+cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.0"
+static_cell = "2"
+defmt = "0.3"
+defmt-rtt = "0.4.0"
+
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+
+bt-hci = { version = "0.1.0", default-features = false, features = ["defmt"] }
+trouble-host = { version = "0.1.0", path = "../../host", features = ["defmt"] }
+
+[patch.crates-io]
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "serial-controller" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+#
+#embassy-executor = { path = "../../../embassy/embassy-executor" }
+#embassy-time = { path = "../../../embassy/embassy-time"}
+#embassy-nrf = { path = "../../../embassy/embassy-nrf"}
+#embassy-sync = { path = "../../../embassy/embassy-sync"}
+#embassy-futures = { path = "../../../embassy/embassy-futures"}
+#bt-hci = { path = "../../../bt-hci" }
+
+[profile.release]
+debug = 2

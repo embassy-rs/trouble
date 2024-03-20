@@ -47,6 +47,16 @@ impl<E> From<FromHciBytesError> for Error<E> {
     }
 }
 
+impl<E> From<bt_hci::CmdError<E>> for Error<E> {
+    fn from(error: bt_hci::CmdError<E>) -> Self {
+        match error {
+            bt_hci::CmdError::Param(p) => Self::Encode(p),
+            bt_hci::CmdError::Controller(p) => Self::Controller(p),
+
+        }
+    }
+}
+
 impl<E> From<bt_hci::param::Error> for Error<E> {
     fn from(error: bt_hci::param::Error) -> Self {
         Self::Encode(error)

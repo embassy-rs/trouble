@@ -377,7 +377,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 Ok(())
             }
             L2capLeSignalData::CommandRejectRes(reject) => {
-                warn!("Rejected: {:02x}", reject);
+                warn!("Rejected: {:?}", reject);
                 Ok(())
             }
             L2capLeSignalData::DisconnectionReq(req) => {

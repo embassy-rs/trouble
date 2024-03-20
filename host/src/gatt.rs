@@ -72,7 +72,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, const MAX: usize>
                     }
                 }
                 Err(e) => {
-                    warn!("Error decoding attribute request: {:02x}", e);
+                    warn!("Error decoding attribute request: {:?}", e);
                 }
             }
         }
