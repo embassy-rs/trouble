@@ -251,6 +251,8 @@ where
                     match self.controller.write_acl_data(&acl).await {
                         Ok(_) => {}
                         Err(e) => {
+                            #[cfg(feature = "defmt")]
+                            let e = defmt::Debug2Format(&e);
                             warn!("Error writing some ACL data to controller: {:?}", e);
                             panic!(":(");
                         }
@@ -329,6 +331,8 @@ where
                     match self.controller.write_acl_data(&acl).await {
                         Ok(_) => {}
                         Err(e) => {
+                            #[cfg(feature = "defmt")]
+                            let e = defmt::Debug2Format(&e);
                             warn!("Error writing some ACL data to controller: {:?}", e);
                             panic!(":(");
                         }
@@ -397,6 +401,8 @@ where
                             info!("Ignoring packet: {:?}", p);
                         }
                         Err(e) => {
+                            #[cfg(feature = "defmt")]
+                            let e = defmt::Debug2Format(&e);
                             info!("Error from controller: {:?}", e);
                         }
                     }
