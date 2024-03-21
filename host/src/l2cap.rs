@@ -85,7 +85,7 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
                 w.len()
             };
             let pdu = Pdu::new(packet, len);
-            self.tx.send(self.conn, pdu).await?;
+            self.tx.send(self.conn, pdu.as_ref()).await?;
         } else {
             return Err(Error::OutOfMemory.into());
         }
@@ -102,7 +102,7 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
                     w.len()
                 };
                 let pdu = Pdu::new(packet, len);
-                self.tx.send(self.conn, pdu).await?;
+                self.tx.send(self.conn, pdu.as_ref()).await?;
             } else {
                 return Err(Error::OutOfMemory.into());
             }
@@ -145,7 +145,8 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
             remaining -= packet.len;
         }
 
-        self.manager.confirm_received(self.cid, n_received)?.await;
+        let (handle, response) = self.manager.confirm_received(self.cid, n_received)?;
+        self.tx.signal(handle, response).await?;
 
         Ok(pos)
     }
@@ -164,7 +165,9 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
         let connections = &adapter.connections;
         let channels = &adapter.channels;
 
-        let (state, rx) = channels.accept(connection.handle(), psm, MTU as u16).await?;
+        let (state, rx) = channels
+            .accept(connection.handle(), psm, MTU as u16, &adapter.hci())
+            .await?;
 
         Ok(Self {
             conn: connection.handle(),
@@ -193,7 +196,10 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
 where {
         // TODO: Use unique signal ID to ensure no collision of signal messages
         //
-        let (state, rx) = adapter.channels.create(connection.handle(), psm, MTU as u16).await?;
+        let (state, rx) = adapter
+            .channels
+            .create(connection.handle(), psm, MTU as u16, &adapter.hci())
+            .await?;
 
         Ok(Self {
             conn: connection.handle(),

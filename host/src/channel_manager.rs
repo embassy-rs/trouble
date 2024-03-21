@@ -4,21 +4,22 @@ use core::{
     task::{Context, Poll},
 };
 
-use bt_hci::param::ConnHandle;
+use bt_hci::{param::ConnHandle, Controller};
 use embassy_sync::{
     blocking_mutex::{raw::RawMutex, Mutex},
-    channel::{Channel, DynamicReceiver, DynamicSendFuture},
+    channel::{Channel, DynamicReceiver},
     waitqueue::WakerRegistration,
 };
 
 use crate::{
+    adapter::HciController,
     l2cap::L2capPacket,
     packet_pool::{AllocId, DynamicPacketPool},
     pdu::Pdu,
     types::l2cap::{
         L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
     },
-    Error,
+    AdapterError, Error,
 };
 
 const BASE_ID: u16 = 0x40;
@@ -34,18 +35,13 @@ struct State<const CHANNELS: usize> {
 pub struct ChannelManager<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize> {
     pool: &'d dyn DynamicPacketPool<'d>,
     state: Mutex<M, RefCell<State<CHANNELS>>>,
-    signal: Channel<M, (ConnHandle, L2capLeSignal), 1>,
     inbound: [Channel<M, Option<Pdu<'d>>, L2CAP_RXQ>; CHANNELS],
     //outbound: [Channel<M, Pdu<'d>, L2CAP_TXQ>; CHANNELS],
 }
 
 pub trait DynamicChannelManager<'d> {
     fn poll_request_to_send(&self, cid: u16, credits: usize, cx: &mut Context<'_>) -> Poll<Result<(), Error>>;
-    fn confirm_received(
-        &self,
-        cid: u16,
-        credits: usize,
-    ) -> Result<DynamicSendFuture<'_, (ConnHandle, L2capLeSignal)>, Error>;
+    fn confirm_received(&self, cid: u16, credits: usize) -> Result<(ConnHandle, L2capLeSignal), Error>;
     fn confirm_disconnected(&self, cid: u16) -> Result<(), Error>;
 }
 
@@ -65,14 +61,8 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 create_waker: WakerRegistration::new(),
                 credit_wakers: [Self::CREDIT_WAKER; CHANNELS],
             })),
-            signal: Channel::new(),
             inbound: [Self::RX_CHANNEL; CHANNELS],
-            //outbound: [Self::TX_CHANNEL; CHANNELS],
         }
-    }
-
-    pub(crate) async fn signal(&self) -> (ConnHandle, L2capLeSignal) {
-        self.signal.receive().await
     }
 
     async fn disconnect(&self, cid: u16) -> Result<(), Error> {
@@ -197,12 +187,13 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         })
     }
 
-    pub(crate) async fn accept(
+    pub(crate) async fn accept<T: Controller>(
         &self,
         conn: ConnHandle,
         psm: u16,
         mut mtu: u16,
-    ) -> Result<(ConnectedState, DynamicReceiver<'_, Option<Pdu<'d>>>), Error> {
+        controller: &HciController<'_, T>,
+    ) -> Result<(ConnectedState, DynamicReceiver<'_, Option<Pdu<'d>>>), AdapterError<T::Error>> {
         let mut req_id = 0;
         let (idx, state) = poll_fn(|cx| {
             self.poll_accept(conn, psm, cx, |idx, req| {
@@ -236,16 +227,17 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             }),
         );
 
-        self.signal.send((conn, response)).await;
+        controller.signal(conn, response).await?;
         Ok((state, self.inbound[idx].receiver().into()))
     }
 
-    pub(crate) async fn create(
+    pub(crate) async fn create<T: Controller>(
         &self,
         conn: ConnHandle,
         psm: u16,
         mtu: u16,
-    ) -> Result<(ConnectedState, DynamicReceiver<'_, Option<Pdu<'d>>>), Error> {
+        controller: &HciController<'_, T>,
+    ) -> Result<(ConnectedState, DynamicReceiver<'_, Option<Pdu<'d>>>), AdapterError<T::Error>> {
         let state = ConnectingState {
             conn,
             cid: 0,
@@ -268,7 +260,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 credits: self.pool.min_available(AllocId::dynamic(idx)) as u16,
             }),
         );
-        self.signal.send((conn, command)).await;
+        controller.signal(conn, command).await?;
 
         let (idx, state) = poll_fn(|cx| {
             self.state.lock(|state| {
@@ -378,11 +370,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
 impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize> DynamicChannelManager<'d>
     for ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
 {
-    fn confirm_received(
-        &self,
-        cid: u16,
-        credits: usize,
-    ) -> Result<DynamicSendFuture<'_, (ConnHandle, L2capLeSignal)>, Error> {
+    fn confirm_received(&self, cid: u16, credits: usize) -> Result<(ConnHandle, L2capLeSignal), Error> {
         let (conn, signal) = self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
@@ -407,8 +395,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             }
             return Err(Error::NotFound);
         })?;
-        let f = self.signal.send((conn, signal));
-        Ok(f.into())
+        Ok((conn, signal))
     }
 
     fn confirm_disconnected(&self, cid: u16) -> Result<(), Error> {

@@ -50,7 +50,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                             drop(header);
                             drop(data);
                             drop(w);
-                            self.tx.send(handle, Pdu::new(response, len)).await?;
+                            self.tx.send(handle, Pdu::new(response, len).as_ref()).await?;
                         }
                         _ => match self.server.process(handle, att, data.write_buf()) {
                             Ok(Some(written)) => {
@@ -63,7 +63,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                                 drop(header);
                                 drop(data);
                                 drop(w);
-                                self.tx.send(handle, Pdu::new(response, len)).await?;
+                                self.tx.send(handle, Pdu::new(response, len).as_ref()).await?;
                             }
                             Ok(None) => {
                                 debug!("No response sent");
@@ -117,7 +117,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
         drop(header);
         drop(data);
         drop(w);
-        self.tx.send(conn, Pdu::new(packet, total)).await?;
+        self.tx.send(conn, Pdu::new(packet, total).as_ref()).await?;
         Ok(())
     }
 }

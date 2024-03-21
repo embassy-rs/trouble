@@ -25,7 +25,7 @@ use bt_hci::event::Event;
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
 use bt_hci::{Controller, ControllerToHostPacket};
 use bt_hci::{ControllerCmdAsync, ControllerCmdSync};
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use futures_intrusive::sync::LocalSemaphore;
@@ -341,49 +341,10 @@ where
                 Ok(())
             };
 
-            // L2cap signal handling
-            // TODO: Could also be done 'directly' rather than going via a channel.
-            let signal_fut = async {
-                let (handle, response) = self.channels.signal().await;
-                // info!("Outgoing signal: {:?}", response);
-                let mut tx = [0; 64];
-                let mut w = WriteCursor::new(&mut tx);
-                let (mut header, mut body) = w.split(4)?;
-
-                body.write(response)?;
-
-                // TODO: Move into l2cap packet type
-                header.write(body.len() as u16)?;
-                header.write(L2CAP_CID_LE_U_SIGNAL)?;
-                let len = header.len() + body.len();
-
-                header.finish();
-                body.finish();
-                w.finish();
-
-                let acl = AclPacket::new(
-                    handle,
-                    AclPacketBoundary::FirstNonFlushable,
-                    AclBroadcastFlag::PointToPoint,
-                    &tx[..len],
-                );
-                self.permits.acquire(1).await.disarm();
-                match self.controller.write_acl_data(&acl).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        #[cfg(feature = "defmt")]
-                        let e = defmt::Debug2Format(&e);
-                        warn!("Error writing some ACL data to controller: {:?}", e);
-                        panic!(":(");
-                    }
-                }
-                Ok(())
-            };
             // info!("Entering select loop");
-            let result: Result<(), AdapterError<T::Error>> = match select3(rx_fut, control_fut, signal_fut).await {
-                Either3::First(result) => result,
-                Either3::Second(result) => result,
-                Either3::Third(result) => result,
+            let result: Result<(), AdapterError<T::Error>> = match select(rx_fut, control_fut).await {
+                Either::First(result) => result,
+                Either::Second(result) => result,
             };
             result?;
         }
@@ -403,18 +364,43 @@ pub struct HciController<'d, T: Controller> {
 }
 
 impl<'d, T: Controller> HciController<'d, T> {
-    pub(crate) async fn send(&self, handle: ConnHandle, pdu: Pdu<'_>) -> Result<(), AdapterError<T::Error>> {
+    pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
         self.permits.acquire(1).await.disarm();
         let acl = AclPacket::new(
             handle,
             AclPacketBoundary::FirstNonFlushable,
             AclBroadcastFlag::PointToPoint,
-            &pdu.as_ref(),
+            pdu,
         );
         self.controller
             .write_acl_data(&acl)
             .await
             .map_err(AdapterError::Controller)?;
+        Ok(())
+    }
+
+    pub(crate) async fn signal(
+        &self,
+        handle: ConnHandle,
+        response: L2capLeSignal,
+    ) -> Result<(), AdapterError<T::Error>> {
+        // TODO: Refactor signal to avoid encode/decode
+        let mut tx = [0; 64];
+        let mut w = WriteCursor::new(&mut tx);
+        let (mut header, mut body) = w.split(4)?;
+
+        body.write(response)?;
+
+        // TODO: Move into l2cap packet type
+        header.write(body.len() as u16)?;
+        header.write(L2CAP_CID_LE_U_SIGNAL)?;
+        let len = header.len() + body.len();
+
+        header.finish();
+        body.finish();
+        w.finish();
+        self.send(handle, &tx[..len]).await?;
+
         Ok(())
     }
 }
