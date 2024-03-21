@@ -12,34 +12,16 @@ use embassy_sync::{
 };
 
 use crate::{
-    codec,
     l2cap::L2capPacket,
     packet_pool::{AllocId, DynamicPacketPool},
     pdu::Pdu,
     types::l2cap::{
         L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
     },
+    Error,
 };
 
 const BASE_ID: u16 = 0x40;
-
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    InvalidChannelId,
-    NoChannelAvailable,
-    ChannelNotFound,
-    OutOfMemory,
-    NotSupported,
-    ChannelClosed,
-    Codec(codec::Error),
-}
-
-impl From<codec::Error> for Error {
-    fn from(e: codec::Error) -> Self {
-        Self::Codec(e)
-    }
-}
 
 struct State<const CHANNELS: usize> {
     channels: [ChannelState; CHANNELS],
@@ -109,7 +91,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            Err(Error::ChannelNotFound)
+            Err(Error::NotFound)
         })?;
         self.inbound[idx].send(None).await;
         Ok(())
@@ -169,7 +151,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            Err(Error::ChannelNotFound)
+            Err(Error::NotFound)
         })
     }
 
@@ -186,7 +168,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            Err(Error::ChannelNotFound)
+            Err(Error::NotFound)
         })
     }
 
@@ -423,7 +405,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            return Err(Error::ChannelNotFound);
+            return Err(Error::NotFound);
         })?;
         let f = self.signal.send((conn, signal));
         Ok(f.into())
@@ -441,7 +423,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            return Err(Error::ChannelNotFound);
+            return Err(Error::NotFound);
         })
     }
 
@@ -462,7 +444,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            return Poll::Ready(Err(Error::ChannelNotFound));
+            return Poll::Ready(Err(Error::NotFound));
         })
     }
 }

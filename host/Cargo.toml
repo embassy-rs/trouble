@@ -23,6 +23,7 @@ embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.8"
 trouble-host-macros = { version = "0.1.0", path = "../host-macros" }
+futures-intrusive = { version = "0.5.0", default-features = false }
 
 # Logging
 log = { version = "0.4.16", optional = true }

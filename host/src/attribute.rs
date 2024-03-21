@@ -3,7 +3,7 @@ use core::{cell::RefCell, fmt};
 use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
 
 pub use crate::types::uuid::Uuid;
-use crate::{att::AttErrorCode, cursor::WriteCursor};
+use crate::{att::AttErrorCode, cursor::WriteCursor, Error};
 
 pub const GENERIC_ACCESS_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1800u16.to_le_bytes());
 pub const CHARACTERISTIC_DEVICE_NAME_UUID16: Uuid = Uuid::Uuid16(0x2A00u16.to_le_bytes());
@@ -319,7 +319,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// otherwise this function will panic.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn set(&self, handle: CharacteristicHandle, input: &[u8]) -> Result<(), ()> {
+    pub fn set(&self, handle: CharacteristicHandle, input: &[u8]) -> Result<(), Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
@@ -330,7 +330,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                     }
                 }
             }
-            Err(())
+            Err(Error::NotFound)
         })
     }
 
@@ -339,7 +339,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: CharacteristicHandle, mut f: F) -> Result<T, ()> {
+    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: CharacteristicHandle, mut f: F) -> Result<T, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
@@ -349,7 +349,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                     }
                 }
             }
-            Err(())
+            Err(Error::NotFound)
         })
     }
 }

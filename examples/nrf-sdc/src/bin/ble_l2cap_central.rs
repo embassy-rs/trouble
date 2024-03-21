@@ -141,7 +141,7 @@ async fn main(spawner: Spawner) {
                     let conn = Connection::connect(&adapter, report.addr).await;
                     info!("Connected, creating l2cap channel");
                     const PAYLOAD_LEN: usize = 27;
-                    let mut ch1: L2capChannel<'_, '_, PAYLOAD_LEN> =
+                    let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
                         unwrap!(L2capChannel::create(&adapter, &conn, 0x2349).await);
                     info!("New l2cap channel created, sending some data!");
                     for i in 0..10 {

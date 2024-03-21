@@ -1,22 +1,22 @@
 use core::future::poll_fn;
 
-use crate::adapter::Adapter;
-use crate::channel_manager::{self, DynamicChannelManager};
+use crate::adapter::{Adapter, HciController};
+use crate::channel_manager::DynamicChannelManager;
 use crate::codec;
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
+use crate::{AdapterError, Error};
 use bt_hci::data::AclPacket;
 use bt_hci::param::ConnHandle;
+use bt_hci::Controller;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{DynamicReceiver, DynamicSender};
+use embassy_sync::channel::DynamicReceiver;
 
 pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
 pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
 pub(crate) const L2CAP_CID_DYN_START: u16 = 0x0040;
-
-pub use channel_manager::Error;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
@@ -46,7 +46,7 @@ impl<'d> L2capPacket<'d> {
     }
 }
 
-pub struct L2capChannel<'a, 'd, const MTU: usize> {
+pub struct L2capChannel<'a, 'd, T: Controller, const MTU: usize> {
     conn: ConnHandle,
     pool_id: AllocId,
     cid: u16,
@@ -55,11 +55,11 @@ pub struct L2capChannel<'a, 'd, const MTU: usize> {
     pool: &'d dyn DynamicPacketPool<'d>,
     manager: &'a dyn DynamicChannelManager<'d>,
     rx: DynamicReceiver<'a, Option<Pdu<'d>>>,
-    tx: DynamicSender<'a, (ConnHandle, Pdu<'d>)>,
+    tx: HciController<'a, T>,
 }
 
-impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
-    pub async fn send(&mut self, buf: &[u8]) -> Result<(), Error> {
+impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
+    pub async fn send(&mut self, buf: &[u8]) -> Result<(), AdapterError<T::Error>> {
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + (buf.len().saturating_sub(self.mps - 2)).div_ceil(self.mps);
 
@@ -67,7 +67,7 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
         // for pool to get the available packets back, which would require some poll/async behavior
         // support for the pool.
         if self.pool.available(self.pool_id) < n_packets {
-            return Err(Error::OutOfMemory);
+            return Err(Error::OutOfMemory.into());
         }
 
         poll_fn(|cx| self.manager.poll_request_to_send(self.cid, n_packets, cx)).await?;
@@ -85,9 +85,9 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
                 w.len()
             };
             let pdu = Pdu::new(packet, len);
-            self.tx.send((self.conn, pdu)).await;
+            self.tx.send(self.conn, pdu).await?;
         } else {
-            return Err(Error::OutOfMemory);
+            return Err(Error::OutOfMemory.into());
         }
 
         let chunks = remaining.chunks(self.mps);
@@ -102,26 +102,26 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
                     w.len()
                 };
                 let pdu = Pdu::new(packet, len);
-                self.tx.send((self.conn, pdu)).await;
+                self.tx.send(self.conn, pdu).await?;
             } else {
-                return Err(Error::OutOfMemory);
+                return Err(Error::OutOfMemory.into());
             }
         }
 
         Ok(())
     }
 
-    async fn receive_pdu(&mut self) -> Result<Pdu<'d>, Error> {
+    async fn receive_pdu(&mut self) -> Result<Pdu<'d>, AdapterError<T::Error>> {
         match self.rx.receive().await {
             Some(pdu) => Ok(pdu),
             None => {
                 self.manager.confirm_disconnected(self.cid)?;
-                Err(Error::ChannelClosed)
+                Err(Error::ChannelClosed.into())
             }
         }
     }
 
-    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, AdapterError<T::Error>> {
         let mut n_received = 1;
         let packet = self.receive_pdu().await?;
         let mut r = ReadCursor::new(&packet.as_ref());
@@ -152,7 +152,6 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
 
     pub async fn accept<
         M: RawMutex,
-        T,
         const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_TXQ: usize,
@@ -161,13 +160,12 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
         adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection<'a>,
         psm: u16,
-    ) -> Result<L2capChannel<'a, 'd, MTU>, Error> {
+    ) -> Result<L2capChannel<'a, 'd, T, MTU>, AdapterError<T::Error>> {
         let connections = &adapter.connections;
         let channels = &adapter.channels;
 
         let (state, rx) = channels.accept(connection.handle(), psm, MTU as u16).await?;
 
-        let tx = adapter.outbound.sender().into();
         Ok(Self {
             conn: connection.handle(),
             cid: state.cid,
@@ -176,14 +174,13 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
             pool: adapter.pool,
             pool_id: state.pool_id,
             manager: &adapter.channels,
-            tx,
+            tx: adapter.hci(),
             rx,
         })
     }
 
     pub async fn create<
         M: RawMutex,
-        T,
         const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_TXQ: usize,
@@ -192,12 +189,11 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
         adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection<'a>,
         psm: u16,
-    ) -> Result<Self, Error>
+    ) -> Result<Self, AdapterError<T::Error>>
 where {
         // TODO: Use unique signal ID to ensure no collision of signal messages
         //
         let (state, rx) = adapter.channels.create(connection.handle(), psm, MTU as u16).await?;
-        let tx = adapter.outbound.sender().into();
 
         Ok(Self {
             conn: connection.handle(),
@@ -207,7 +203,7 @@ where {
             mps: state.mps as usize,
             pool: adapter.pool,
             manager: &adapter.channels,
-            tx,
+            tx: adapter.hci(),
             rx,
         })
     }

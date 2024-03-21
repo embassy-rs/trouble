@@ -1,5 +1,6 @@
 use core::fmt;
 
+use crate::adapter::HciController;
 use crate::att::{self, Att, ATT_HANDLE_VALUE_NTF_OPTCODE};
 use crate::attribute::CharacteristicHandle;
 use crate::attribute_server::AttributeServer;
@@ -8,59 +9,61 @@ use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
+use crate::{AdapterError, Error};
 use bt_hci::param::ConnHandle;
+use bt_hci::Controller;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{DynamicReceiver, DynamicSender};
+use embassy_sync::channel::DynamicReceiver;
 
-pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, const MAX: usize> {
+pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize> {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
     pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'resources>)>,
-    pub(crate) tx: DynamicSender<'reference, (ConnHandle, Pdu<'resources>)>,
+    pub(crate) tx: HciController<'reference, T>,
     pub(crate) pool_id: AllocId,
     pub(crate) pool: &'resources dyn DynamicPacketPool<'resources>,
     pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 
-impl<'reference, 'values, 'resources, M: RawMutex, const MAX: usize>
-    GattServer<'reference, 'values, 'resources, M, MAX>
+impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize>
+    GattServer<'reference, 'values, 'resources, M, T, MAX>
 {
-    pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, ()> {
+    pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, AdapterError<T::Error>> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             match Att::decode(pdu.as_ref()) {
                 Ok(att) => {
                     let Some(mut response) = self.pool.alloc(self.pool_id) else {
-                        return Err(());
+                        return Err(Error::OutOfMemory.into());
                     };
                     let mut w = WriteCursor::new(response.as_mut());
-                    let (mut header, mut data) = w.split(4).map_err(|_| ())?;
+                    let (mut header, mut data) = w.split(4)?;
 
                     match att {
                         Att::ExchangeMtu { mtu } => {
                             let mtu = self.connections.exchange_att_mtu(handle, mtu);
-                            data.write(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE).map_err(|_| ())?;
-                            data.write(mtu).map_err(|_| ())?;
+                            data.write(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE)?;
+                            data.write(mtu)?;
 
-                            header.write(data.len() as u16).map_err(|_| ())?;
-                            header.write(4 as u16).map_err(|_| ())?;
+                            header.write(data.len() as u16)?;
+                            header.write(4 as u16)?;
                             let len = header.len() + data.len();
                             drop(header);
                             drop(data);
                             drop(w);
-                            self.tx.send((handle, Pdu::new(response, len))).await;
+                            self.tx.send(handle, Pdu::new(response, len)).await?;
                         }
                         _ => match self.server.process(handle, att, data.write_buf()) {
                             Ok(Some(written)) => {
                                 let mtu = self.connections.get_att_mtu(handle);
-                                data.commit(written).map_err(|_| ())?;
+                                data.commit(written)?;
                                 data.truncate(mtu as usize);
-                                header.write(written as u16).map_err(|_| ())?;
-                                header.write(4 as u16).map_err(|_| ())?;
+                                header.write(written as u16)?;
+                                header.write(4 as u16)?;
                                 let len = header.len() + data.len();
                                 drop(header);
                                 drop(data);
                                 drop(w);
-                                self.tx.send((handle, Pdu::new(response, len))).await;
+                                self.tx.send(handle, Pdu::new(response, len)).await?;
                             }
                             Ok(None) => {
                                 debug!("No response sent");
@@ -88,11 +91,11 @@ impl<'reference, 'values, 'resources, M: RawMutex, const MAX: usize>
         handle: CharacteristicHandle,
         connection: &Connection<'_>,
         value: &[u8],
-    ) -> Result<(), ()> {
+    ) -> Result<(), AdapterError<T::Error>> {
         let conn = connection.handle();
-        self.server.table.set(handle, value).map_err(|_| ())?;
+        self.server.table.set(handle, value)?;
 
-        let cccd_handle = handle.cccd_handle.ok_or(())?;
+        let cccd_handle = handle.cccd_handle.ok_or(Error::Other)?;
 
         if !self.server.should_notify(conn, cccd_handle) {
             // No reason to fail?
@@ -100,21 +103,21 @@ impl<'reference, 'values, 'resources, M: RawMutex, const MAX: usize>
         }
 
         let Some(mut packet) = self.pool.alloc(self.pool_id) else {
-            return Err(());
+            return Err(Error::OutOfMemory.into());
         };
         let mut w = WriteCursor::new(packet.as_mut());
-        let (mut header, mut data) = w.split(4).map_err(|_| ())?;
-        data.write(ATT_HANDLE_VALUE_NTF_OPTCODE).map_err(|_| ())?;
-        data.write(handle.handle).map_err(|_| ())?;
-        data.append(value).map_err(|_| ())?;
+        let (mut header, mut data) = w.split(4)?;
+        data.write(ATT_HANDLE_VALUE_NTF_OPTCODE)?;
+        data.write(handle.handle)?;
+        data.append(value)?;
 
-        header.write(data.len() as u16).map_err(|_| ())?;
-        header.write(4 as u16).map_err(|_| ())?;
+        header.write(data.len() as u16)?;
+        header.write(4 as u16)?;
         let total = header.len() + data.len();
         drop(header);
         drop(data);
         drop(w);
-        self.tx.send((conn, Pdu::new(packet, total))).await;
+        self.tx.send(conn, Pdu::new(packet, total)).await?;
         Ok(())
     }
 }

@@ -140,7 +140,7 @@ async fn main(spawner: Spawner) {
 
             info!("Connection established");
 
-            let mut ch1: L2capChannel<'_, '_, PAYLOAD_LEN> =
+            let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
                 unwrap!(L2capChannel::accept(&adapter, &conn, 0x2349).await);
 
             info!("L2CAP channel accepted");
