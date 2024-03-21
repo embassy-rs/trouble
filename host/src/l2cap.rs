@@ -84,11 +84,7 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
                 w.append(first)?;
                 w.len()
             };
-            let pdu = if remaining.is_empty() {
-                Pdu::new(packet, len)
-            } else {
-                Pdu::new(packet, len)
-            };
+            let pdu = Pdu::new(packet, len);
             self.tx.send((self.conn, pdu)).await;
         } else {
             return Err(Error::OutOfMemory);
@@ -105,11 +101,7 @@ impl<'a, 'd, const MTU: usize> L2capChannel<'a, 'd, MTU> {
                     w.append(chunk)?;
                     w.len()
                 };
-                let pdu = if i == num_chunks - 1 {
-                    Pdu::new(packet, len)
-                } else {
-                    Pdu::new(packet, len)
-                };
+                let pdu = Pdu::new(packet, len);
                 self.tx.send((self.conn, pdu)).await;
             } else {
                 return Err(Error::OutOfMemory);

@@ -192,16 +192,7 @@ where
                 if let Some(mut p) = self.pool.alloc(ATT_ID) {
                     let len = packet.payload.len();
                     p.as_mut()[..len].copy_from_slice(packet.payload);
-                    self.att_inbound
-                        .send((
-                            conn,
-                            Pdu {
-                                packet: p,
-                                pb: acl.boundary_flag(),
-                                len,
-                            },
-                        ))
-                        .await;
+                    self.att_inbound.send((conn, Pdu { packet: p, len })).await;
                 } else {
                     // TODO: Signal back
                 }
@@ -310,7 +301,12 @@ where
             // Task handling shuffling outbound ACL data.
             let tx_fut = async {
                 let (handle, pdu) = self.outbound.receive().await;
-                let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
+                let acl = AclPacket::new(
+                    handle,
+                    AclPacketBoundary::FirstNonFlushable,
+                    AclBroadcastFlag::PointToPoint,
+                    pdu.as_ref(),
+                );
                 match self.controller.write_acl_data(&acl).await {
                     Ok(_) => {}
                     Err(e) => {

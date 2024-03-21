@@ -1,20 +1,13 @@
-use bt_hci::data::AclPacketBoundary;
-
 use crate::packet_pool::Packet;
 
 pub struct Pdu<'d> {
     pub packet: Packet<'d>,
-    pub pb: AclPacketBoundary,
     pub len: usize,
 }
 
 impl<'d> Pdu<'d> {
     pub fn new(packet: Packet<'d>, len: usize) -> Self {
-        Self {
-            packet,
-            pb: AclPacketBoundary::FirstNonFlushable,
-            len,
-        }
+        Self { packet, len }
     }
 }
 
