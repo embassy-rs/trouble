@@ -241,175 +241,178 @@ where
         self.control.send(ControlCommand::Init).await;
 
         loop {
-            let mut rx = [0u8; 259];
-            let mut tx = [0u8; 259];
-            // info!("Entering select loop");
-            let result: Result<(), Error<T::Error>> = match select4(
-                self.controller.read(&mut rx),
-                async {
-                    let (handle, pdu) = self.outbound.receive().await;
-                    let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
-                    match self.controller.write_acl_data(&acl).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            #[cfg(feature = "defmt")]
-                            let e = defmt::Debug2Format(&e);
-                            warn!("Error writing some ACL data to controller: {:?}", e);
-                            panic!(":(");
-                        }
-                    }
-                    Ok(())
-                },
-                async {
-                    let command = self.control.receive().await;
-                    match command {
-                        ControlCommand::Connect(params) => {
-                            LeSetScanEnable::new(false, false).exec(&self.controller).await.unwrap();
-                            LeCreateConn::new(
-                                params.le_scan_interval,
-                                params.le_scan_window,
-                                params.use_filter_accept_list,
-                                params.peer_addr_kind,
-                                params.peer_addr,
-                                params.own_addr_kind,
-                                params.conn_interval_min,
-                                params.conn_interval_max,
-                                params.max_latency,
-                                params.supervision_timeout,
-                                params.min_ce_length,
-                                params.max_ce_length,
-                            )
-                            .exec(&self.controller)
-                            .await
-                            .unwrap();
-                        }
-                        ControlCommand::Disconnect(params) => {
-                            self.connections.disconnect(params.handle).unwrap();
-                            Disconnect::new(params.handle, params.reason)
-                                .exec(&self.controller)
-                                .await
-                                .unwrap();
-                        }
-                        ControlCommand::Init => {
-                            Reset::new().exec(&self.controller).await.unwrap();
-                            SetEventMask::new(
-                                EventMask::new()
-                                    .enable_le_meta(true)
-                                    .enable_conn_request(true)
-                                    .enable_conn_complete(true)
-                                    .enable_hardware_error(true)
-                                    .enable_disconnection_complete(true),
-                            )
-                            .exec(&self.controller)
-                            .await
-                            .unwrap();
-                        }
-                    }
-                    Ok(())
-                },
-                async {
-                    let (handle, response) = self.channels.signal().await;
-                    // info!("Outgoing signal: {:?}", response);
-                    let mut w = WriteCursor::new(&mut tx);
-                    let (mut header, mut body) = w.split(4)?;
-
-                    body.write(response)?;
-
-                    // TODO: Move into l2cap packet type
-                    header.write(body.len() as u16)?;
-                    header.write(L2CAP_CID_LE_U_SIGNAL)?;
-                    let len = header.len() + body.len();
-
-                    header.finish();
-                    body.finish();
-                    w.finish();
-
-                    let acl = AclPacket::new(
-                        handle,
-                        AclPacketBoundary::FirstNonFlushable,
-                        AclBroadcastFlag::PointToPoint,
-                        &tx[..len],
-                    );
-                    match self.controller.write_acl_data(&acl).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            #[cfg(feature = "defmt")]
-                            let e = defmt::Debug2Format(&e);
-                            warn!("Error writing some ACL data to controller: {:?}", e);
-                            panic!(":(");
-                        }
-                    }
-                    Ok(())
-                },
-            )
-            .await
-            {
-                Either4::First(result) => {
+            // Task handling receiving data from the controller.
+            let rx_fut = async {
+                let mut rx = [0u8; 259];
+                match self.controller.read(&mut rx).await {
                     // info!("Incoming event: {:?}", result);
-                    match result {
-                        Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
-                            Ok(_) => {}
-                            Err(e) => {
-                                info!("Error processing ACL packet: {:?}", e);
-                            }
-                        },
-                        Ok(ControllerToHostPacket::Event(event)) => match event {
-                            Event::Le(event) => match event {
-                                LeEvent::LeConnectionComplete(e) => {
-                                    if let Err(err) = self.connections.connect(
-                                        e.handle,
-                                        ConnectionInfo {
-                                            handle: e.handle,
-                                            status: e.status,
-                                            role: e.role,
-                                            peer_address: e.peer_addr,
-                                            interval: e.conn_interval.as_u16(),
-                                            latency: e.peripheral_latency,
-                                            timeout: e.supervision_timeout.as_u16(),
-                                            att_mtu: 23,
-                                        },
-                                    ) {
-                                        warn!("Error establishing connection: {:?}", err);
-                                        Disconnect::new(
-                                            e.handle,
-                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                        )
+                    Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            info!("Error processing ACL packet: {:?}", e);
+                        }
+                    },
+                    Ok(ControllerToHostPacket::Event(event)) => match event {
+                        Event::Le(event) => match event {
+                            LeEvent::LeConnectionComplete(e) => {
+                                if let Err(err) = self.connections.connect(
+                                    e.handle,
+                                    ConnectionInfo {
+                                        handle: e.handle,
+                                        status: e.status,
+                                        role: e.role,
+                                        peer_address: e.peer_addr,
+                                        interval: e.conn_interval.as_u16(),
+                                        latency: e.peripheral_latency,
+                                        timeout: e.supervision_timeout.as_u16(),
+                                        att_mtu: 23,
+                                    },
+                                ) {
+                                    warn!("Error establishing connection: {:?}", err);
+                                    Disconnect::new(e.handle, DisconnectReason::RemoteDeviceTerminatedConnLowResources)
                                         .exec(&self.controller)
                                         .await
                                         .unwrap();
-                                    }
                                 }
-                                LeEvent::LeAdvertisingReport(data) => {
-                                    self.scanner
-                                        .send(ScanReport::new(data.reports.num_reports, &data.reports.bytes))
-                                        .await;
-                                }
-                                _ => {
-                                    warn!("Unknown event: {:?}", event);
-                                }
-                            },
-                            Event::DisconnectionComplete(e) => {
-                                info!("Disconnected: {:?}", e);
-                                let _ = self.connections.disconnect(e.handle);
                             }
-                            Event::NumberOfCompletedPackets(c) => {
-                                //info!("Confirmed {} packets sent", c.completed_packets.len());
+                            LeEvent::LeAdvertisingReport(data) => {
+                                self.scanner
+                                    .send(ScanReport::new(data.reports.num_reports, &data.reports.bytes))
+                                    .await;
                             }
                             _ => {
                                 warn!("Unknown event: {:?}", event);
                             }
                         },
-                        Ok(p) => {
-                            info!("Ignoring packet: {:?}", p);
+                        Event::DisconnectionComplete(e) => {
+                            info!("Disconnected: {:?}", e);
+                            let _ = self.connections.disconnect(e.handle);
                         }
-                        Err(e) => {
-                            #[cfg(feature = "defmt")]
-                            let e = defmt::Debug2Format(&e);
-                            info!("Error from controller: {:?}", e);
+                        Event::NumberOfCompletedPackets(c) => {
+                            //info!("Confirmed {} packets sent", c.completed_packets.len());
                         }
+                        _ => {
+                            warn!("Unknown event: {:?}", event);
+                        }
+                    },
+                    Ok(p) => {
+                        info!("Ignoring packet: {:?}", p);
                     }
-                    Ok(())
+                    Err(e) => {
+                        #[cfg(feature = "defmt")]
+                        let e = defmt::Debug2Format(&e);
+                        info!("Error from controller: {:?}", e);
+                    }
                 }
+                Ok(())
+            };
+
+            // Task handling shuffling outbound ACL data.
+            let tx_fut = async {
+                let (handle, pdu) = self.outbound.receive().await;
+                let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
+                match self.controller.write_acl_data(&acl).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        #[cfg(feature = "defmt")]
+                        let e = defmt::Debug2Format(&e);
+                        warn!("Error writing some ACL data to controller: {:?}", e);
+                        panic!(":(");
+                    }
+                }
+                Ok(())
+            };
+
+            // Task issuing control.
+            // TODO: This does not necessarily need to go through the channel and could be dispatch directly
+            let control_fut = async {
+                let command = self.control.receive().await;
+                match command {
+                    ControlCommand::Connect(params) => {
+                        LeSetScanEnable::new(false, false).exec(&self.controller).await.unwrap();
+                        LeCreateConn::new(
+                            params.le_scan_interval,
+                            params.le_scan_window,
+                            params.use_filter_accept_list,
+                            params.peer_addr_kind,
+                            params.peer_addr,
+                            params.own_addr_kind,
+                            params.conn_interval_min,
+                            params.conn_interval_max,
+                            params.max_latency,
+                            params.supervision_timeout,
+                            params.min_ce_length,
+                            params.max_ce_length,
+                        )
+                        .exec(&self.controller)
+                        .await
+                        .unwrap();
+                    }
+                    ControlCommand::Disconnect(params) => {
+                        self.connections.disconnect(params.handle).unwrap();
+                        Disconnect::new(params.handle, params.reason)
+                            .exec(&self.controller)
+                            .await
+                            .unwrap();
+                    }
+                    ControlCommand::Init => {
+                        Reset::new().exec(&self.controller).await.unwrap();
+                        SetEventMask::new(
+                            EventMask::new()
+                                .enable_le_meta(true)
+                                .enable_conn_request(true)
+                                .enable_conn_complete(true)
+                                .enable_hardware_error(true)
+                                .enable_disconnection_complete(true),
+                        )
+                        .exec(&self.controller)
+                        .await
+                        .unwrap();
+                    }
+                }
+                Ok(())
+            };
+
+            // L2cap signal handling
+            // TODO: Could also be done 'directly' rather than going via a channel.
+            let signal_fut = async {
+                let (handle, response) = self.channels.signal().await;
+                // info!("Outgoing signal: {:?}", response);
+                let mut tx = [0; 64];
+                let mut w = WriteCursor::new(&mut tx);
+                let (mut header, mut body) = w.split(4)?;
+
+                body.write(response)?;
+
+                // TODO: Move into l2cap packet type
+                header.write(body.len() as u16)?;
+                header.write(L2CAP_CID_LE_U_SIGNAL)?;
+                let len = header.len() + body.len();
+
+                header.finish();
+                body.finish();
+                w.finish();
+
+                let acl = AclPacket::new(
+                    handle,
+                    AclPacketBoundary::FirstNonFlushable,
+                    AclBroadcastFlag::PointToPoint,
+                    &tx[..len],
+                );
+                match self.controller.write_acl_data(&acl).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        #[cfg(feature = "defmt")]
+                        let e = defmt::Debug2Format(&e);
+                        warn!("Error writing some ACL data to controller: {:?}", e);
+                        panic!(":(");
+                    }
+                }
+                Ok(())
+            };
+            // info!("Entering select loop");
+            let result: Result<(), Error<T::Error>> = match select4(rx_fut, tx_fut, control_fut, signal_fut).await {
+                Either4::First(result) => result,
                 Either4::Second(result) => result,
                 Either4::Third(result) => result,
                 Either4::Fourth(result) => result,
