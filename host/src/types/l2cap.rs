@@ -139,7 +139,7 @@ impl L2capLeSignalData {
                 Self::DisconnectionRes(res)
             }
             code => {
-                warn!("Unimplemented signal code: {:02x}", code);
+                warn!("Unimplemented signal code: {:?}", code);
                 panic!();
             }
         })

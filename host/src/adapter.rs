@@ -65,6 +65,7 @@ pub struct Adapter<
 }
 
 pub(crate) enum ControlCommand {
+    Init,
     Disconnect(DisconnectParams),
     Connect(LeCreateConnParams),
 }
@@ -236,31 +237,113 @@ where
             + ControllerCmdAsync<LeCreateConn>
             + ControllerCmdSync<LeSetScanEnable>,
     {
-        SetEventMask::new(
-            EventMask::new()
-                .enable_le_meta(true)
-                .enable_conn_request(true)
-                .enable_conn_complete(true)
-                .enable_hardware_error(true)
-                .enable_disconnection_complete(true),
-        )
-        .exec(&self.controller)
-        .await?;
+        self.control.send(ControlCommand::Init).await;
 
         loop {
             let mut rx = [0u8; 259];
             let mut tx = [0u8; 259];
-            // info!("Entering select");
-            match select4(
+            // info!("Entering select loop");
+            let result: Result<(), Error<T::Error>> = match select4(
                 self.controller.read(&mut rx),
-                self.outbound.receive(),
-                self.control.receive(),
-                self.channels.signal(),
+                async {
+                    let (handle, pdu) = self.outbound.receive().await;
+                    let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
+                    match self.controller.write_acl_data(&acl).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            #[cfg(feature = "defmt")]
+                            let e = defmt::Debug2Format(&e);
+                            warn!("Error writing some ACL data to controller: {:?}", e);
+                            panic!(":(");
+                        }
+                    }
+                    Ok(())
+                },
+                async {
+                    let command = self.control.receive().await;
+                    match command {
+                        ControlCommand::Connect(params) => {
+                            LeSetScanEnable::new(false, false).exec(&self.controller).await.unwrap();
+                            LeCreateConn::new(
+                                params.le_scan_interval,
+                                params.le_scan_window,
+                                params.use_filter_accept_list,
+                                params.peer_addr_kind,
+                                params.peer_addr,
+                                params.own_addr_kind,
+                                params.conn_interval_min,
+                                params.conn_interval_max,
+                                params.max_latency,
+                                params.supervision_timeout,
+                                params.min_ce_length,
+                                params.max_ce_length,
+                            )
+                            .exec(&self.controller)
+                            .await
+                            .unwrap();
+                        }
+                        ControlCommand::Disconnect(params) => {
+                            self.connections.disconnect(params.handle).unwrap();
+                            Disconnect::new(params.handle, params.reason)
+                                .exec(&self.controller)
+                                .await
+                                .unwrap();
+                        }
+                        ControlCommand::Init => {
+                            SetEventMask::new(
+                                EventMask::new()
+                                    .enable_le_meta(true)
+                                    .enable_conn_request(true)
+                                    .enable_conn_complete(true)
+                                    .enable_hardware_error(true)
+                                    .enable_disconnection_complete(true),
+                            )
+                            .exec(&self.controller)
+                            .await
+                            .unwrap();
+                        }
+                    }
+                    Ok(())
+                },
+                async {
+                    let (handle, response) = self.channels.signal().await;
+                    // info!("Outgoing signal: {:?}", response);
+                    let mut w = WriteCursor::new(&mut tx);
+                    let (mut header, mut body) = w.split(4)?;
+
+                    body.write(response)?;
+
+                    // TODO: Move into l2cap packet type
+                    header.write(body.len() as u16)?;
+                    header.write(L2CAP_CID_LE_U_SIGNAL)?;
+                    let len = header.len() + body.len();
+
+                    header.finish();
+                    body.finish();
+                    w.finish();
+
+                    let acl = AclPacket::new(
+                        handle,
+                        AclPacketBoundary::FirstNonFlushable,
+                        AclBroadcastFlag::PointToPoint,
+                        &tx[..len],
+                    );
+                    match self.controller.write_acl_data(&acl).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            #[cfg(feature = "defmt")]
+                            let e = defmt::Debug2Format(&e);
+                            warn!("Error writing some ACL data to controller: {:?}", e);
+                            panic!(":(");
+                        }
+                    }
+                    Ok(())
+                },
             )
             .await
             {
                 Either4::First(result) => {
-                    // info!("Incoming event");
+                    // info!("Incoming event: {:?}", result);
                     match result {
                         Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
                             Ok(_) => {}
@@ -318,84 +401,18 @@ where
                             info!("Ignoring packet: {:?}", p);
                         }
                         Err(e) => {
+                            #[cfg(feature = "defmt")]
+                            let e = defmt::Debug2Format(&e);
                             info!("Error from controller: {:?}", e);
                         }
                     }
+                    Ok(())
                 }
-                Either4::Second((handle, pdu)) => {
-                    // info!("Outgoing packet");
-                    let acl = AclPacket::new(handle, pdu.pb, AclBroadcastFlag::PointToPoint, pdu.as_ref());
-                    match self.controller.write_acl_data(&acl).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!("Error writing some ACL data to controller: {:?}", e);
-                            panic!(":(");
-                        }
-                    }
-                }
-                Either4::Third(command) => {
-                    // info!("Outgoing command");
-                    match command {
-                        ControlCommand::Connect(params) => {
-                            LeSetScanEnable::new(false, false).exec(&self.controller).await.unwrap();
-                            LeCreateConn::new(
-                                params.le_scan_interval,
-                                params.le_scan_window,
-                                params.use_filter_accept_list,
-                                params.peer_addr_kind,
-                                params.peer_addr,
-                                params.own_addr_kind,
-                                params.conn_interval_min,
-                                params.conn_interval_max,
-                                params.max_latency,
-                                params.supervision_timeout,
-                                params.min_ce_length,
-                                params.max_ce_length,
-                            )
-                            .exec(&self.controller)
-                            .await
-                            .unwrap();
-                        }
-                        ControlCommand::Disconnect(params) => {
-                            self.connections.disconnect(params.handle).unwrap();
-                            Disconnect::new(params.handle, params.reason)
-                                .exec(&self.controller)
-                                .await
-                                .unwrap();
-                        }
-                    }
-                }
-                Either4::Fourth((handle, response)) => {
-                    // info!("Outgoing signal: {:?}", response);
-                    let mut w = WriteCursor::new(&mut tx);
-                    let (mut header, mut body) = w.split(4)?;
-
-                    body.write(response)?;
-
-                    // TODO: Move into l2cap packet type
-                    header.write(body.len() as u16)?;
-                    header.write(L2CAP_CID_LE_U_SIGNAL)?;
-                    let len = header.len() + body.len();
-
-                    header.finish();
-                    body.finish();
-                    w.finish();
-
-                    let acl = AclPacket::new(
-                        handle,
-                        AclPacketBoundary::FirstNonFlushable,
-                        AclBroadcastFlag::PointToPoint,
-                        &tx[..len],
-                    );
-                    match self.controller.write_acl_data(&acl).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!("Error writing some ACL data to controller: {:?}", e);
-                            panic!(":(");
-                        }
-                    }
-                }
-            }
+                Either4::Second(result) => result,
+                Either4::Third(result) => result,
+                Either4::Fourth(result) => result,
+            };
+            result?;
         }
     }
 }

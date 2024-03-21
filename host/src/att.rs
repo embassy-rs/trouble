@@ -1,7 +1,6 @@
 use crate::codec;
 use crate::cursor::ReadCursor;
 use crate::types::uuid::*;
-use core::convert::TryInto;
 
 pub const ATT_READ_BY_GROUP_TYPE_REQUEST_OPCODE: u8 = 0x10;
 pub const ATT_READ_BY_GROUP_TYPE_RESPONSE_OPCODE: u8 = 0x11;
