@@ -12,7 +12,7 @@ use crate::pdu::Pdu;
 use crate::scan::{ScanConfig, ScanReport};
 use crate::types::l2cap::L2capLeSignal;
 use crate::{codec, Error};
-use bt_hci::cmd::controller_baseband::SetEventMask;
+use bt_hci::cmd::controller_baseband::{Reset, SetEventMask};
 use bt_hci::cmd::le::{
     LeCreateConn, LeCreateConnParams, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable, LeSetScanParams,
 };
@@ -234,6 +234,7 @@ where
     where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
+            + ControllerCmdSync<Reset>
             + ControllerCmdAsync<LeCreateConn>
             + ControllerCmdSync<LeSetScanEnable>,
     {
@@ -290,6 +291,7 @@ where
                                 .unwrap();
                         }
                         ControlCommand::Init => {
+                            Reset::new().exec(&self.controller).await.unwrap();
                             SetEventMask::new(
                                 EventMask::new()
                                     .enable_le_meta(true)
