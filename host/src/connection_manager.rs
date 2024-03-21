@@ -10,6 +10,8 @@ use embassy_sync::{
     waitqueue::WakerRegistration,
 };
 
+use crate::Error;
+
 struct State<const CONNS: usize> {
     connections: [ConnectionState; CONNS],
     waker: WakerRegistration,
@@ -30,7 +32,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         }
     }
 
-    pub fn disconnect(&self, h: ConnHandle) -> Result<(), ()> {
+    pub fn disconnect(&self, h: ConnHandle) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
@@ -48,7 +50,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
-    pub fn connect(&self, handle: ConnHandle, info: ConnectionInfo) -> Result<(), ()> {
+    pub fn connect(&self, handle: ConnHandle, info: ConnectionInfo) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
@@ -61,7 +63,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                     _ => {}
                 }
             }
-            Err(())
+            Err(Error::NotFound)
         })
     }
 

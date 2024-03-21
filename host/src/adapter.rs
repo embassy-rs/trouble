@@ -251,8 +251,7 @@ where
                                     warn!("Error establishing connection: {:?}", err);
                                     Disconnect::new(e.handle, DisconnectReason::RemoteDeviceTerminatedConnLowResources)
                                         .exec(&self.controller)
-                                        .await
-                                        .unwrap();
+                                        .await?;
                                 }
                             }
                             LeEvent::LeAdvertisingReport(data) => {
@@ -269,7 +268,7 @@ where
                             let _ = self.connections.disconnect(e.handle);
                         }
                         Event::NumberOfCompletedPackets(c) => {
-                            info!("Confirmed {} packets sent", c.completed_packets.len());
+                            // trace!("Confirmed {} packets sent", c.completed_packets.len());
                             self.permits.release(c.completed_packets.len());
                         }
                         _ => {
@@ -312,7 +311,7 @@ where
                         .await?;
                     }
                     ControlCommand::Disconnect(params) => {
-                        self.connections.disconnect(params.handle).unwrap();
+                        self.connections.disconnect(params.handle)?;
                         Disconnect::new(params.handle, params.reason)
                             .exec(&self.controller)
                             .await?;
