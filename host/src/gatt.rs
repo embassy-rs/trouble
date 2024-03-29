@@ -47,9 +47,6 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                             header.write(data.len() as u16)?;
                             header.write(4_u16)?;
                             let len = header.len() + data.len();
-                            drop(header);
-                            drop(data);
-                            drop(w);
                             self.tx.send(handle, Pdu::new(response, len).as_ref()).await?;
                         }
                         _ => match self.server.process(handle, att, data.write_buf()) {
@@ -60,9 +57,6 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                                 header.write(written as u16)?;
                                 header.write(4_u16)?;
                                 let len = header.len() + data.len();
-                                drop(header);
-                                drop(data);
-                                drop(w);
                                 self.tx.send(handle, Pdu::new(response, len).as_ref()).await?;
                             }
                             Ok(None) => {
@@ -114,9 +108,6 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let total = header.len() + data.len();
-        drop(header);
-        drop(data);
-        drop(w);
         self.tx.send(conn, Pdu::new(packet, total).as_ref()).await?;
         Ok(())
     }

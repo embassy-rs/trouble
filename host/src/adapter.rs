@@ -151,7 +151,6 @@ where
             item.encode(&mut w)?;
         }
         let len = w.len();
-        drop(w);
         LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
         LeSetAdvEnable::new(true).exec(&self.controller).await?;
         let conn = Connection::accept(self).await;

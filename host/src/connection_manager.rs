@@ -54,13 +54,10 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
-                match storage {
-                    ConnectionState::Disconnected => {
-                        *storage = ConnectionState::Connecting(handle, info);
-                        state.waker.wake();
-                        return Ok(());
-                    }
-                    _ => {}
+                if let ConnectionState::Disconnected = storage {
+                    *storage = ConnectionState::Connecting(handle, info);
+                    state.waker.wake();
+                    return Ok(());
                 }
             }
             Err(Error::NotFound)
@@ -71,21 +68,18 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
-                match storage {
-                    ConnectionState::Connecting(handle, info) => {
-                        if let Some(peer) = peer {
-                            if info.peer_address == peer {
-                                let handle = *handle;
-                                *storage = ConnectionState::Connected(handle, *info);
-                                return Poll::Ready(handle);
-                            }
-                        } else {
+                if let ConnectionState::Connecting(handle, info) = storage {
+                    if let Some(peer) = peer {
+                        if info.peer_address == peer {
                             let handle = *handle;
                             *storage = ConnectionState::Connected(handle, *info);
                             return Poll::Ready(handle);
                         }
+                    } else {
+                        let handle = *handle;
+                        *storage = ConnectionState::Connected(handle, *info);
+                        return Poll::Ready(handle);
                     }
-                    _ => {}
                 }
             }
             state.waker.register(cx.waker());
