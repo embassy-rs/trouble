@@ -8,9 +8,9 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
 use crate::{AdapterError, Error};
+use bt_hci::controller::Controller;
 use bt_hci::data::AclPacket;
 use bt_hci::param::ConnHandle;
-use bt_hci::Controller;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::DynamicReceiver;
 

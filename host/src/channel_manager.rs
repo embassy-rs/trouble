@@ -4,7 +4,7 @@ use core::{
     task::{Context, Poll},
 };
 
-use bt_hci::{param::ConnHandle, Controller};
+use bt_hci::{controller::Controller, param::ConnHandle};
 use embassy_sync::{
     blocking_mutex::{raw::RawMutex, Mutex},
     channel::{Channel, DynamicReceiver},

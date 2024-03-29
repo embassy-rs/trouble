@@ -65,11 +65,11 @@ impl From<FromHciBytesError> for Error {
     }
 }
 
-impl<E> From<bt_hci::CmdError<E>> for AdapterError<E> {
-    fn from(error: bt_hci::CmdError<E>) -> Self {
+impl<E> From<bt_hci::controller::CmdError<E>> for AdapterError<E> {
+    fn from(error: bt_hci::controller::CmdError<E>) -> Self {
         match error {
-            bt_hci::CmdError::Param(p) => Self::Adapter(Error::HciEncode(p)),
-            bt_hci::CmdError::Controller(p) => Self::Controller(p),
+            bt_hci::controller::CmdError::Hci(p) => Self::Adapter(Error::HciEncode(p)),
+            bt_hci::controller::CmdError::Io(p) => Self::Controller(p),
         }
     }
 }
