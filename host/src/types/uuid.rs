@@ -30,7 +30,7 @@ impl Uuid {
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub fn size(&self) -> usize {
         match self {
             Uuid::Uuid16(_) => 6,
             Uuid::Uuid128(_) => 20,

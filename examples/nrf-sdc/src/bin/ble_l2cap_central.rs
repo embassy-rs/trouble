@@ -145,8 +145,8 @@ async fn main(spawner: Spawner) {
                         unwrap!(L2capChannel::create(&adapter, &conn, 0x2349).await);
                     info!("New l2cap channel created, sending some data!");
                     for i in 0..10 {
-                        let mut tx = [i; PAYLOAD_LEN];
-                        let _ = unwrap!(ch1.send(&mut tx).await);
+                        let tx = [i; PAYLOAD_LEN];
+                        unwrap!(ch1.send(&tx).await);
                     }
                     info!("Sent data, waiting for them to be sent back");
                     let mut rx = [0; PAYLOAD_LEN];

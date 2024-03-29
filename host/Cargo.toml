@@ -33,5 +33,5 @@ defmt = {version = "0.3", optional = true }
 defmt = [ "dep:defmt" ]
 
 [patch.crates-io]
-bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "serial-controller" }
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }

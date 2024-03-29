@@ -19,12 +19,13 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
+use bt_hci::controller::Controller;
+use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
-use bt_hci::{Controller, ControllerToHostPacket};
-use bt_hci::{ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::ControllerToHostPacket;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
@@ -150,7 +151,6 @@ where
             item.encode(&mut w)?;
         }
         let len = w.len();
-        drop(w);
         LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
         LeSetAdvEnable::new(true).exec(&self.controller).await?;
         let conn = Connection::accept(self).await;

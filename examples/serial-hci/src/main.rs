@@ -1,6 +1,6 @@
 // Use with any serial HCI
-use bt_hci::driver::HciController;
-use bt_hci::serial::SerialHciDriver;
+use bt_hci::controller::ExternalController;
+use bt_hci::transport::SerialTransport;
 use embassy_futures::join::join3;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::*;
@@ -56,8 +56,8 @@ async fn main() {
     let reader = embedded_io_adapters::tokio_1::FromTokio::new(reader);
     let writer = embedded_io_adapters::tokio_1::FromTokio::new(writer);
 
-    let driver: SerialHciDriver<NoopRawMutex, _, _> = SerialHciDriver::new(reader, writer);
-    let controller: HciController<_, 10> = HciController::new(driver);
+    let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
+    let controller: ExternalController<_, 10> = ExternalController::new(driver);
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 

@@ -4,7 +4,7 @@ use core::{
     task::{Context, Poll},
 };
 
-use bt_hci::{param::ConnHandle, Controller};
+use bt_hci::{controller::Controller, param::ConnHandle};
 use embassy_sync::{
     blocking_mutex::{raw::RawMutex, Mutex},
     channel::{Channel, DynamicReceiver},
@@ -393,7 +393,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            return Err(Error::NotFound);
+            Err(Error::NotFound)
         })?;
         Ok((conn, signal))
     }
@@ -410,7 +410,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            return Err(Error::NotFound);
+            Err(Error::NotFound)
         })
     }
 
@@ -421,7 +421,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 match storage {
                     ChannelState::Connected(s) if cid == s.cid => {
                         if credits <= s.peer_credits as usize {
-                            s.peer_credits = s.peer_credits - credits as u16;
+                            s.peer_credits -= credits as u16;
                             return Poll::Ready(Ok(()));
                         } else {
                             state.credit_wakers[idx].register(cx.waker());
@@ -431,7 +431,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                     _ => {}
                 }
             }
-            return Poll::Ready(Err(Error::NotFound));
+            Poll::Ready(Err(Error::NotFound))
         })
     }
 }

@@ -157,7 +157,7 @@ impl<'d> AttributeData<'d> {
                 } else if offset == 1 {
                     w.write(*handle)?;
                 } else if offset == 2 {
-                    w.write(handle.to_le_bytes()[1] as u8)?;
+                    w.write(handle.to_le_bytes()[1])?;
                 }
 
                 let to_write = w.available().min(val.len());
@@ -254,6 +254,12 @@ impl<'d, const MAX: usize> InnerTable<'d, MAX> {
         }
         self.attributes[self.len].replace(attribute);
         self.len += 1;
+    }
+}
+
+impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -374,7 +380,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Declaration {
-                props: props,
+                props,
                 handle: next,
                 uuid,
             },

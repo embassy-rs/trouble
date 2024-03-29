@@ -157,8 +157,8 @@ async fn main(spawner: Spawner) {
             info!("L2CAP data received, echoing");
             Timer::after(Duration::from_secs(1)).await;
             for i in 0..10 {
-                let mut tx = [i; PAYLOAD_LEN];
-                let _ = unwrap!(ch1.send(&mut tx).await);
+                let tx = [i; PAYLOAD_LEN];
+                unwrap!(ch1.send(&tx).await);
             }
             info!("L2CAP data echoed");
 

@@ -72,7 +72,7 @@ impl Encode for SignalCode {
 
 impl Decode for SignalCode {
     fn decode(src: &[u8]) -> Result<Self, Error> {
-        Ok(src[0].try_into()?)
+        src[0].try_into()
     }
 }
 
@@ -276,7 +276,7 @@ impl Encode for LeCreditConnResultCode {
 
 impl Decode for LeCreditConnResultCode {
     fn decode(src: &[u8]) -> Result<Self, Error> {
-        Ok(u16::from_le_bytes([src[0], src[1]]).try_into()?)
+        u16::from_le_bytes([src[0], src[1]]).try_into()
     }
 }
 

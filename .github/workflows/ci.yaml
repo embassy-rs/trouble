@@ -18,6 +18,8 @@ jobs:
         run: |
           cd host
           cargo check
+          cargo fmt --check
+          cargo clippy
 
       - name: Test
         run: |
@@ -25,4 +27,4 @@ jobs:
           cargo test -- --nocapture
 
       - name: Build examples
-        run: for i in nrf-sdc; do pushd examples/$i; cargo build --release; popd; done;
+        run: for i in nrf-sdc; do pushd examples/$i; cargo fmt --check && cargo clippy && cargo build --release; popd; done;

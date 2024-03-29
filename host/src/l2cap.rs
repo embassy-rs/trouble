@@ -8,9 +8,9 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
 use crate::{AdapterError, Error};
+use bt_hci::controller::Controller;
 use bt_hci::data::AclPacket;
 use bt_hci::param::ConnHandle;
-use bt_hci::Controller;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::DynamicReceiver;
 
@@ -41,7 +41,7 @@ impl<'d> L2capPacket<'d> {
         let mut w = WriteCursor::new(dest);
         w.write(self.payload.len() as u16)?;
         w.write(self.channel)?;
-        w.append(&self.payload[..])?;
+        w.append(self.payload)?;
         Ok(w.len())
     }
 }
@@ -78,7 +78,7 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
             let len = {
                 let mut w = WriteCursor::new(packet.as_mut());
                 w.write(2 + first.len() as u16)?;
-                w.write(self.peer_cid as u16)?;
+                w.write(self.peer_cid)?;
                 let len = buf.len() as u16;
                 w.write(len)?;
                 w.append(first)?;
@@ -97,7 +97,7 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
                 let len = {
                     let mut w = WriteCursor::new(packet.as_mut());
                     w.write(chunk.len() as u16)?;
-                    w.write(self.peer_cid as u16)?;
+                    w.write(self.peer_cid)?;
                     w.append(chunk)?;
                     w.len()
                 };
@@ -124,7 +124,7 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
     pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, AdapterError<T::Error>> {
         let mut n_received = 1;
         let packet = self.receive_pdu().await?;
-        let mut r = ReadCursor::new(&packet.as_ref());
+        let mut r = ReadCursor::new(packet.as_ref());
         let remaining: u16 = r.read()?;
         let data = r.remaining();
 
