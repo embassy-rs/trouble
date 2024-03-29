@@ -137,11 +137,11 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
                 return None;
             }
 
-            return state.alloc(id).map(|p_ref| Packet {
+            state.alloc(id).map(|p_ref| Packet {
                 client: id,
                 p_ref: Some(p_ref),
                 pool: self,
-            });
+            })
         })
     }
 

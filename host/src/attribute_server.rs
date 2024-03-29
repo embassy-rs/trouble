@@ -245,7 +245,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                 if att.handle == handle {
                     if att.data.writable() {
                         err = att.data.write(0, data);
-                        if let Ok(_) = &err {
+                        if err.is_ok() {
                             if let AttributeData::Cccd {
                                 notifications,
                                 indications,
@@ -326,8 +326,8 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         }
     }
 
-    fn error_response<'m>(
-        mut w: WriteCursor<'m>,
+    fn error_response(
+        mut w: WriteCursor<'_>,
         opcode: u8,
         handle: u16,
         code: AttErrorCode,

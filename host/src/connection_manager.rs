@@ -75,13 +75,13 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                     ConnectionState::Connecting(handle, info) => {
                         if let Some(peer) = peer {
                             if info.peer_address == peer {
-                                let handle = handle.clone();
-                                *storage = ConnectionState::Connected(handle.clone(), info.clone());
+                                let handle = *handle;
+                                *storage = ConnectionState::Connected(handle, *info);
                                 return Poll::Ready(handle);
                             }
                         } else {
-                            let handle = handle.clone();
-                            *storage = ConnectionState::Connected(handle.clone(), info.clone());
+                            let handle = *handle;
+                            *storage = ConnectionState::Connected(handle, *info);
                             return Poll::Ready(handle);
                         }
                     }

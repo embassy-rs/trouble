@@ -45,7 +45,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                             data.write(mtu)?;
 
                             header.write(data.len() as u16)?;
-                            header.write(4 as u16)?;
+                            header.write(4_u16)?;
                             let len = header.len() + data.len();
                             drop(header);
                             drop(data);
@@ -58,7 +58,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                                 data.commit(written)?;
                                 data.truncate(mtu as usize);
                                 header.write(written as u16)?;
-                                header.write(4 as u16)?;
+                                header.write(4_u16)?;
                                 let len = header.len() + data.len();
                                 drop(header);
                                 drop(data);
@@ -112,7 +112,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
         data.append(value)?;
 
         header.write(data.len() as u16)?;
-        header.write(4 as u16)?;
+        header.write(4_u16)?;
         let total = header.len() + data.len();
         drop(header);
         drop(data);
