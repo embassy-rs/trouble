@@ -109,7 +109,7 @@ where
         T: ControllerCmdSync<LeSetScanEnable> + ControllerCmdSync<LeSetScanParams>,
     {
         let params = config.params.unwrap_or(LeSetScanParams::new(
-            bt_hci::param::LeScanKind::Passive,
+            bt_hci::param::LeScanKind::Active,
             bt_hci::param::Duration::from_millis(1_000),
             bt_hci::param::Duration::from_millis(1_000),
             bt_hci::param::AddrKind::PUBLIC,
