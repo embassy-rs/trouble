@@ -42,10 +42,10 @@ pub enum AdStructure<'a> {
     /// Sets the full (unabbreviated) device name.
     ///
     /// This will be shown to the user when this device is found.
-    CompleteLocalName(&'a str),
+    CompleteLocalName(&'a [u8]),
 
     /// Sets the shortened device name.
-    ShortenedLocalName(&'a str),
+    ShortenedLocalName(&'a [u8]),
 
     /// Set manufacturer specific data
     ManufacturerSpecificData {
@@ -82,11 +82,11 @@ impl<'d> AdStructure<'d> {
             }
             AdStructure::ShortenedLocalName(name) => {
                 w.append(&[(name.len() + 1) as u8, 0x08])?;
-                w.append(name.as_bytes())?;
+                w.append(name)?;
             }
             AdStructure::CompleteLocalName(name) => {
                 w.append(&[(name.len() + 1) as u8, 0x09])?;
-                w.append(name.as_bytes())?;
+                w.append(name)?;
             }
             AdStructure::ServiceData16 { uuid, data } => {
                 w.append(&[(data.len() + 3) as u8, 0x16])?;

@@ -129,7 +129,7 @@ async fn main(spawner: Spawner) {
         params: None,
         data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::CompleteLocalName("Trouble"),
+            AdStructure::CompleteLocalName(b"Trouble"),
         ],
     };
 

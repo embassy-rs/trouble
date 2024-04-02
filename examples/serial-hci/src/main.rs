@@ -67,7 +67,7 @@ async fn main() {
         data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
             AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-            AdStructure::CompleteLocalName("Trouble HCI"),
+            AdStructure::CompleteLocalName(b"Trouble HCI"),
         ],
     };
 

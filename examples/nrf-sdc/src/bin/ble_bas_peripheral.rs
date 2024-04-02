@@ -122,7 +122,7 @@ async fn main(spawner: Spawner) {
         data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
             AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-            AdStructure::CompleteLocalName("Trouble"),
+            AdStructure::CompleteLocalName(b"Trouble"),
         ],
     };
 
