@@ -1,12 +1,11 @@
 // Use with any serial HCI
 use bt_hci::controller::ExternalController;
-use bt_hci::param::BdAddr;
 use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_io_adapters::tokio_1::FromTokio;
 use tokio::io::ReadHalf;
 use tokio::io::WriteHalf;
-use tokio::join;
+use tokio::select;
 use tokio::time::Duration;
 use tokio_serial::SerialStream;
 use tokio_serial::{DataBits, Parity, StopBits};
@@ -20,7 +19,7 @@ use trouble_host::{
 };
 
 const CONNECTIONS_MAX: usize = 1;
-const L2CAP_CHANNELS_MAX: usize = 2;
+const L2CAP_CHANNELS_MAX: usize = 3;
 
 async fn create_controller(
     port: &str,
@@ -59,20 +58,15 @@ async fn create_controller(
 
 /// Verify l2cap le connection oriented channels using two HCI adapters attached to the test machine.
 #[tokio::test]
-async fn test_l2cap_connection_oriented_channels() {
-    if std::env::args().len() != 2 {
-        println!("Provide the serial port as the one and only command line argument.");
-        return;
-    }
-
-    let args: Vec<String> = std::env::args().collect();
-    let peripheral = args[2].clone();
-    let central = args[1].clone();
+async fn l2cap_connection_oriented_channels() {
+    let _ = env_logger::try_init();
+    let peripheral = std::env::var("TEST_ADAPTER_ONE").unwrap();
+    let central = std::env::var("TEST_ADAPTER_TWO").unwrap();
 
     let local = tokio::task::LocalSet::new();
 
     // Spawn peripheral
-    local.spawn_local(async move {
+    let peripheral = local.spawn_local(async move {
         let controller_peripheral = create_controller(&peripheral).await;
 
         let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
@@ -85,38 +79,52 @@ async fn test_l2cap_connection_oriented_channels() {
             params: None,
             data: &[
                 AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                AdStructure::CompleteLocalName("Trouble"),
+                AdStructure::CompleteLocalName(b"trouble-l2cap-int"),
             ],
         };
 
-        join!(adapter.run(), async {
-            loop {
-                let conn = adapter.advertise(&config).await.unwrap();
-
-                let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
-                    L2capChannel::accept(&adapter, &conn, 0x2349).await.unwrap();
-
-                // Size of payload we're expecting
-                const PAYLOAD_LEN: usize = 27;
-                let mut rx = [0; PAYLOAD_LEN];
-                for i in 0..10 {
-                    let len = ch1.receive(&mut rx).await.unwrap();
-                    assert_eq!(len, rx.len());
-                    assert_eq!(rx, [i; PAYLOAD_LEN]);
-                }
-
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                for i in 0..10 {
-                    let tx = [i; PAYLOAD_LEN];
-                    ch1.send(&tx).await.unwrap();
-                }
-                return ();
+        select! {
+            r = adapter.run() => {
+                r
             }
-        })
+            r = async {
+                loop {
+                    println!("[peripheral] advertising");
+                    let conn = adapter.advertise(&config).await?;
+                    println!("[peripheral] connected");
+
+                    let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
+                        L2capChannel::accept(&adapter, &conn, 0x2349).await?;
+
+                    println!("[peripheral] channel created");
+
+                    // Size of payload we're expecting
+                    const PAYLOAD_LEN: usize = 27;
+                    let mut rx = [0; PAYLOAD_LEN];
+                    for i in 0..10 {
+                        let len = ch1.receive(&mut rx).await?;
+                        assert_eq!(len, rx.len());
+                        assert_eq!(rx, [i; PAYLOAD_LEN]);
+                    }
+                    println!("[peripheral] data received");
+
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    for i in 0..10 {
+                        let tx = [i; PAYLOAD_LEN];
+                        ch1.send(&tx).await?;
+                    }
+                    println!("[peripheral] data sent");
+                    break;
+                }
+                Ok(())
+            } => {
+                r
+            }
+        }
     });
 
     // Spawn central
-    local.spawn_local(async move {
+    let central = local.spawn_local(async move {
         let controller_central = create_controller(&central).await;
         let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
             HostResources::new(PacketQos::Guaranteed(4));
@@ -126,43 +134,64 @@ async fn test_l2cap_connection_oriented_channels() {
 
         let config = ScanConfig { params: None };
 
-        // NOTE: Modify this to match the address of the peripheral you want to connect to
-        let target: BdAddr = BdAddr::new([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
+        select! {
+            r = adapter.run() => {
+                r
+            }
+            r = async {
+                println!("[central] scanning");
+                loop {
+                    let reports = adapter.scan(&config).await?;
+                    let mut found = None;
+                    for report in reports.iter() {
+                        let report = report.unwrap();
+                        for adv in AdStructure::decode(report.data) {
+                            if let Ok(AdStructure::CompleteLocalName(b"trouble-l2cap-int")) = adv {
+                                found.replace(report.addr);
+                                break;
+                            }
+                        }
+                    }
 
-        join!(adapter.run(), async {
-            loop {
-                let reports = adapter.scan(&config).await.unwrap();
-                for report in reports.iter() {
-                    let report = report.unwrap();
-                    if report.addr == target {
-                        let conn = Connection::connect(&adapter, report.addr).await;
+                    if let Some(target) = found {
+                        println!("[central] connecting");
+                        let conn = Connection::connect(&adapter, target).await;
+                        println!("[central] connected");
                         const PAYLOAD_LEN: usize = 27;
                         let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
-                            L2capChannel::create(&adapter, &conn, 0x2349).await.unwrap();
+                            L2capChannel::create(&adapter, &conn, 0x2349).await?;
+                        println!("[central] channel created");
                         for i in 0..10 {
                             let tx = [i; PAYLOAD_LEN];
-                            ch1.send(&tx).await.unwrap();
+                            ch1.send(&tx).await?;
                         }
+                        println!("[central] data sent");
                         let mut rx = [0; PAYLOAD_LEN];
                         for i in 0..10 {
-                            let len = ch1.receive(&mut rx).await.unwrap();
+                            let len = ch1.receive(&mut rx).await?;
                             assert_eq!(len, rx.len());
                             assert_eq!(rx, [i; PAYLOAD_LEN]);
                         }
-
-                        return ();
+                        println!("[central] data received");
+                        break;
                     }
                 }
+                Ok(())
+            } => {
+                r
             }
-        })
+        }
     });
 
-    match tokio::time::timeout(Duration::from_secs(60), local).await {
+    match tokio::time::timeout(Duration::from_secs(30), local).await {
         Ok(_) => {
+            let _ = central.await.unwrap().unwrap();
+            let _ = peripheral.await.unwrap().unwrap();
             println!("Test completed successfully");
         }
         Err(e) => {
             println!("Test timed out: {:?}", e);
+            assert!(false);
         }
     }
 }
