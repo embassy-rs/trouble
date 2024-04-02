@@ -112,7 +112,7 @@ impl<'d> ReadCursor<'d> {
         Ok(val)
     }
 
-    pub fn slice(&mut self, nbytes: usize) -> Result<&[u8], Error> {
+    pub fn slice(&mut self, nbytes: usize) -> Result<&'d [u8], Error> {
         if self.available() < nbytes {
             Err(Error::InsufficientSpace)
         } else {

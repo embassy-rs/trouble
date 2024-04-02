@@ -1,4 +1,8 @@
-use crate::{codec, cursor::WriteCursor, types::uuid::Uuid};
+use crate::{
+    codec,
+    cursor::{ReadCursor, WriteCursor},
+    types::uuid::Uuid,
+};
 use bt_hci::cmd::le::LeSetAdvParams;
 
 pub struct AdvertiseConfig<'d> {
@@ -107,5 +111,43 @@ impl<'d> AdStructure<'d> {
             }
         }
         Ok(())
+    }
+
+    pub fn decode(data: &[u8]) -> impl Iterator<Item = Result<AdStructure<'_>, codec::Error>> {
+        AdStructureIter {
+            cursor: ReadCursor::new(data),
+        }
+    }
+}
+
+pub struct AdStructureIter<'d> {
+    cursor: ReadCursor<'d>,
+}
+
+impl<'d> AdStructureIter<'d> {
+    fn read(&mut self) -> Result<AdStructure<'d>, codec::Error> {
+        let len: u8 = self.cursor.read()?;
+        let code: u8 = self.cursor.read()?;
+        let data = self.cursor.slice(len as usize - 1)?;
+        match code {
+            0x01 => Ok(AdStructure::Flags(data[0])),
+            // 0x02 => unimplemented!(),
+            // 0x07 => unimplemented!(),
+            0x08 => Ok(AdStructure::ShortenedLocalName(data)),
+            0x09 => Ok(AdStructure::CompleteLocalName(data)),
+            // 0x16 => unimplemented!(),
+            // 0xff => unimplemented!(),
+            ty => Ok(AdStructure::Unknown { ty, data }),
+        }
+    }
+}
+
+impl<'d> Iterator for AdStructureIter<'d> {
+    type Item = Result<AdStructure<'d>, codec::Error>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor.available() == 0 {
+            return None;
+        }
+        Some(self.read())
     }
 }
