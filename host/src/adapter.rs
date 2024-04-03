@@ -233,9 +233,7 @@ where
             }
 
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(packet).await {
-                Ok(_) => {
-                    info!("L2CAP packet dispatched!");
-                }
+                Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
                 }
@@ -273,7 +271,6 @@ where
                     Ok(ControllerToHostPacket::Event(event)) => match event {
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => {
-                                warn!("CONNECTION COMPLET!");
                                 if let Err(err) = self.connections.connect(
                                     e.handle,
                                     ConnectionInfo {
@@ -369,7 +366,7 @@ where
                         .await?;
 
                         let ret = LeReadBufferSize::new().exec(&self.controller).await?;
-                        info!(
+                        trace!(
                             "Setting max flow control packets to {}",
                             ret.total_num_le_acl_data_packets
                         );

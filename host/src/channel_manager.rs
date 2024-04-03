@@ -227,7 +227,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             }),
         );
 
-        info!("Responding to create: {:?}", response);
+        // info!("Responding to create: {:?}", response);
 
         controller.signal(conn, response).await?;
         Ok((state, self.inbound[idx].receiver().into()))
@@ -310,7 +310,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
     }
 
     pub async fn control(&self, conn: ConnHandle, signal: L2capLeSignal) -> Result<(), Error> {
-        info!("Inbound signal: {:?}", signal);
+        // info!("Inbound signal: {:?}", signal);
         match signal.data {
             L2capLeSignalData::LeCreditConnReq(req) => {
                 self.connect(ConnectingState {

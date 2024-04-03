@@ -188,21 +188,21 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
 
         let mut r = ReadCursor::new(packet.as_ref());
         let remaining: u16 = r.read()?;
-        info!("Total expected: {}", remaining);
+        // info!("Total expected: {}", remaining);
 
         let data = r.remaining();
         let to_copy = data.len().min(buf.len());
         buf[..to_copy].copy_from_slice(&data[..to_copy]);
         let mut pos = to_copy;
-        info!("Received {} bytes so far", pos);
+        // info!("Received {} bytes so far", pos);
 
         let mut remaining = remaining as usize - data.len();
-        info!(
-            "Total size of PDU is {}, read buffer size is {} remaining; {}",
-            len,
-            buf.len(),
-            remaining
-        );
+        //info!(
+        //    "Total size of PDU is {}, read buffer size is {} remaining; {}",
+        //    len,
+        //    buf.len(),
+        //    remaining
+        //);
         // We have some k-frames to reassemble
         while remaining > 0 {
             let packet = self.receive_pdu().await?;
@@ -218,7 +218,7 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
         let (handle, response) = self.manager.confirm_received(self.cid, n_received)?;
         self.tx.signal(handle, response).await?;
 
-        info!("Total reserved {} bytes", pos);
+        // info!("Total reserved {} bytes", pos);
         Ok(pos)
     }
 
