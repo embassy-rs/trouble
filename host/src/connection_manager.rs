@@ -64,21 +64,21 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
-    pub fn poll_accept(&self, peer: Option<BdAddr>, cx: &mut Context<'_>) -> Poll<ConnHandle> {
+    pub fn poll_accept(&self, peer: Option<BdAddr>, cx: &mut Context<'_>) -> Poll<ConnectionInfo> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
                 if let ConnectionState::Connecting(handle, info) = storage {
                     if let Some(peer) = peer {
                         if info.peer_address == peer {
-                            let handle = *handle;
-                            *storage = ConnectionState::Connected(handle, *info);
-                            return Poll::Ready(handle);
+                            let i = *info;
+                            *storage = ConnectionState::Connected(*handle, *info);
+                            return Poll::Ready(i);
                         }
                     } else {
-                        let handle = *handle;
-                        *storage = ConnectionState::Connected(handle, *info);
-                        return Poll::Ready(handle);
+                        let i = *info;
+                        *storage = ConnectionState::Connected(*handle, *info);
+                        return Poll::Ready(i);
                     }
                 }
             }
@@ -87,8 +87,22 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
-    pub async fn accept(&self, peer: Option<BdAddr>) -> ConnHandle {
+    pub async fn accept(&self, peer: Option<BdAddr>) -> ConnectionInfo {
         poll_fn(move |cx| self.poll_accept(peer, cx)).await
+    }
+
+    pub fn info(&self, handle: ConnHandle) -> Result<ConnectionInfo, Error> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for storage in state.connections.iter_mut() {
+                if let ConnectionState::Connected(h, info) = storage {
+                    if *h == handle {
+                        return Ok(*info);
+                    }
+                }
+            }
+            Err(Error::NotFound)
+        })
     }
 }
 

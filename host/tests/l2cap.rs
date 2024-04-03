@@ -77,10 +77,11 @@ async fn l2cap_connection_oriented_channels() {
 
         let config = AdvertiseConfig {
             params: None,
-            data: &[
+            adv_data: &[
                 AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
                 AdStructure::CompleteLocalName(b"trouble-l2cap-int"),
             ],
+            scan_data: &[],
         };
 
         select! {
@@ -132,7 +133,10 @@ async fn l2cap_connection_oriented_channels() {
         let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
             Adapter::new(controller_central, &mut host_resources);
 
-        let config = ScanConfig { params: None };
+        let config = ScanConfig {
+            params: None,
+            filter_accept_list: &[],
+        };
 
         select! {
             r = adapter.run() => {

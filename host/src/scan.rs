@@ -1,10 +1,15 @@
 use core::iter::FusedIterator;
 
-use bt_hci::{cmd::le::LeSetScanParams, param::LeAdvReport, FromHciBytes, FromHciBytesError};
+use bt_hci::{
+    cmd::le::LeSetScanParams,
+    param::{AddrKind, BdAddr, LeAdvReport},
+    FromHciBytes, FromHciBytesError,
+};
 use heapless::Vec;
 
-pub struct ScanConfig {
+pub struct ScanConfig<'d> {
     pub params: Option<LeSetScanParams>,
+    pub filter_accept_list: &'d [(AddrKind, &'d BdAddr)],
 }
 
 pub struct ScanReport {

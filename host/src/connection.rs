@@ -1,20 +1,22 @@
 use bt_hci::{
     cmd::{le::LeCreateConnParams, link_control::DisconnectParams},
-    param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, Duration},
+    param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, Duration, LeConnRole},
 };
 use embassy_sync::{blocking_mutex::raw::RawMutex, channel::DynamicSender};
 
 use crate::adapter::{Adapter, ControlCommand};
 
+pub use crate::connection_manager::ConnectionInfo;
+
 #[derive(Clone)]
 pub struct Connection<'d> {
-    handle: ConnHandle,
+    info: ConnectionInfo,
     control: DynamicSender<'d, ControlCommand>,
 }
 
 impl<'d> Connection<'d> {
     pub fn handle(&self) -> ConnHandle {
-        self.handle
+        self.info.handle
     }
 
     pub async fn accept<
@@ -27,9 +29,9 @@ impl<'d> Connection<'d> {
     >(
         adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
-        let handle = adapter.connections.accept(None).await;
+        let info = adapter.connections.accept(None).await;
         Connection {
-            handle,
+            info,
             control: adapter.control.sender().into(),
         }
     }
@@ -37,10 +39,18 @@ impl<'d> Connection<'d> {
     pub async fn disconnect(&mut self) {
         self.control
             .send(ControlCommand::Disconnect(DisconnectParams {
-                handle: self.handle,
+                handle: self.info.handle,
                 reason: DisconnectReason::RemoteUserTerminatedConn,
             }))
             .await;
+    }
+
+    pub fn role(&self) -> LeConnRole {
+        self.info.role
+    }
+
+    pub fn peer_address(&self) -> BdAddr {
+        self.info.peer_address
     }
 
     pub async fn connect<
@@ -58,21 +68,21 @@ impl<'d> Connection<'d> {
         let params = LeCreateConnParams {
             le_scan_interval: Duration::from_micros(1707500),
             le_scan_window: Duration::from_micros(312500),
-            use_filter_accept_list: false,
-            peer_addr_kind: AddrKind::PUBLIC,
+            use_filter_accept_list: true,
+            peer_addr_kind: AddrKind::RANDOM,
             peer_addr,
             own_addr_kind: AddrKind::PUBLIC,
-            conn_interval_min: Duration::from_millis(25),
-            conn_interval_max: Duration::from_millis(50),
+            conn_interval_min: Duration::from_millis(80),
+            conn_interval_max: Duration::from_millis(80),
             max_latency: 0,
-            supervision_timeout: Duration::from_millis(250),
+            supervision_timeout: Duration::from_millis(8000),
             min_ce_length: Duration::from_millis(0),
             max_ce_length: Duration::from_millis(0),
         };
         adapter.control.send(ControlCommand::Connect(params)).await;
-        let handle = adapter.connections.accept(Some(params.peer_addr)).await;
+        let info = adapter.connections.accept(Some(params.peer_addr)).await;
         Connection {
-            handle,
+            info,
             control: adapter.control.sender().into(),
         }
     }

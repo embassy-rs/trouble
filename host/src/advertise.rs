@@ -7,7 +7,8 @@ use bt_hci::cmd::le::LeSetAdvParams;
 
 pub struct AdvertiseConfig<'d> {
     pub params: Option<LeSetAdvParams>,
-    pub data: &'d [AdStructure<'d>],
+    pub adv_data: &'d [AdStructure<'d>],
+    pub scan_data: &'d [AdStructure<'d>],
 }
 
 pub const AD_FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0b00000001;

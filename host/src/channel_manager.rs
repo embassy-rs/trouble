@@ -40,7 +40,7 @@ pub struct ChannelManager<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TX
 }
 
 pub trait DynamicChannelManager<'d> {
-    fn poll_request_to_send(&self, cid: u16, credits: usize, cx: &mut Context<'_>) -> Poll<Result<(), Error>>;
+    fn poll_request_to_send(&self, cid: u16, credits: usize, cx: Option<&mut Context<'_>>) -> Poll<Result<(), Error>>;
     fn confirm_received(&self, cid: u16, credits: usize) -> Result<(ConnHandle, L2capLeSignal), Error>;
     fn confirm_disconnected(&self, cid: u16) -> Result<(), Error>;
 }
@@ -227,6 +227,8 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             }),
         );
 
+        info!("Responding to create: {:?}", response);
+
         controller.signal(conn, response).await?;
         Ok((state, self.inbound[idx].receiver().into()))
     }
@@ -302,13 +304,13 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             self.inbound[chan].send(Some(Pdu::new(p, len))).await;
             Ok(())
         } else {
-            warn!("No memory for channel {}", packet.channel);
+            warn!("No memory for channel {} (id {})", packet.channel, chan);
             Err(Error::OutOfMemory)
         }
     }
 
     pub async fn control(&self, conn: ConnHandle, signal: L2capLeSignal) -> Result<(), Error> {
-        // info!("Inbound signal: {:?}", signal);
+        info!("Inbound signal: {:?}", signal);
         match signal.data {
             L2capLeSignalData::LeCreditConnReq(req) => {
                 self.connect(ConnectingState {
@@ -414,7 +416,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         })
     }
 
-    fn poll_request_to_send(&self, cid: u16, credits: usize, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_request_to_send(&self, cid: u16, credits: usize, cx: Option<&mut Context<'_>>) -> Poll<Result<(), Error>> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
@@ -424,7 +426,9 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                             s.peer_credits -= credits as u16;
                             return Poll::Ready(Ok(()));
                         } else {
-                            state.credit_wakers[idx].register(cx.waker());
+                            if let Some(cx) = cx {
+                                state.credit_wakers[idx].register(cx.waker());
+                            }
                             return Poll::Pending;
                         }
                     }
