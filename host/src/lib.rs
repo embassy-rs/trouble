@@ -50,6 +50,8 @@ pub enum Error {
     OutOfMemory,
     NotSupported,
     ChannelClosed,
+    Busy,
+    Disconnected,
     Other,
 }
 

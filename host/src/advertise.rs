@@ -1,9 +1,14 @@
-use crate::{codec, cursor::WriteCursor, types::uuid::Uuid};
+use crate::{
+    codec,
+    cursor::{ReadCursor, WriteCursor},
+    types::uuid::Uuid,
+};
 use bt_hci::cmd::le::LeSetAdvParams;
 
 pub struct AdvertiseConfig<'d> {
     pub params: Option<LeSetAdvParams>,
-    pub data: &'d [AdStructure<'d>],
+    pub adv_data: &'d [AdStructure<'d>],
+    pub scan_data: &'d [AdStructure<'d>],
 }
 
 pub const AD_FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0b00000001;
@@ -42,10 +47,10 @@ pub enum AdStructure<'a> {
     /// Sets the full (unabbreviated) device name.
     ///
     /// This will be shown to the user when this device is found.
-    CompleteLocalName(&'a str),
+    CompleteLocalName(&'a [u8]),
 
     /// Sets the shortened device name.
-    ShortenedLocalName(&'a str),
+    ShortenedLocalName(&'a [u8]),
 
     /// Set manufacturer specific data
     ManufacturerSpecificData {
@@ -82,11 +87,11 @@ impl<'d> AdStructure<'d> {
             }
             AdStructure::ShortenedLocalName(name) => {
                 w.append(&[(name.len() + 1) as u8, 0x08])?;
-                w.append(name.as_bytes())?;
+                w.append(name)?;
             }
             AdStructure::CompleteLocalName(name) => {
                 w.append(&[(name.len() + 1) as u8, 0x09])?;
-                w.append(name.as_bytes())?;
+                w.append(name)?;
             }
             AdStructure::ServiceData16 { uuid, data } => {
                 w.append(&[(data.len() + 3) as u8, 0x16])?;
@@ -107,5 +112,43 @@ impl<'d> AdStructure<'d> {
             }
         }
         Ok(())
+    }
+
+    pub fn decode(data: &[u8]) -> impl Iterator<Item = Result<AdStructure<'_>, codec::Error>> {
+        AdStructureIter {
+            cursor: ReadCursor::new(data),
+        }
+    }
+}
+
+pub struct AdStructureIter<'d> {
+    cursor: ReadCursor<'d>,
+}
+
+impl<'d> AdStructureIter<'d> {
+    fn read(&mut self) -> Result<AdStructure<'d>, codec::Error> {
+        let len: u8 = self.cursor.read()?;
+        let code: u8 = self.cursor.read()?;
+        let data = self.cursor.slice(len as usize - 1)?;
+        match code {
+            0x01 => Ok(AdStructure::Flags(data[0])),
+            // 0x02 => unimplemented!(),
+            // 0x07 => unimplemented!(),
+            0x08 => Ok(AdStructure::ShortenedLocalName(data)),
+            0x09 => Ok(AdStructure::CompleteLocalName(data)),
+            // 0x16 => unimplemented!(),
+            // 0xff => unimplemented!(),
+            ty => Ok(AdStructure::Unknown { ty, data }),
+        }
+    }
+}
+
+impl<'d> Iterator for AdStructureIter<'d> {
+    type Item = Result<AdStructure<'d>, codec::Error>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor.available() == 0 {
+            return None;
+        }
+        Some(self.read())
     }
 }

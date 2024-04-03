@@ -14,8 +14,8 @@ use crate::types::l2cap::L2capLeSignal;
 use crate::{AdapterError, Error};
 use bt_hci::cmd::controller_baseband::{Reset, SetEventMask};
 use bt_hci::cmd::le::{
-    LeCreateConn, LeCreateConnParams, LeReadBufferSize, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable,
-    LeSetScanParams,
+    LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeCreateConnParams, LeReadBufferSize,
+    LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -26,6 +26,7 @@ use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
 use bt_hci::ControllerToHostPacket;
+use core::task::Poll;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
@@ -104,16 +105,33 @@ where
     /// Performs a BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan(&self, config: &ScanConfig) -> Result<ScanReport, AdapterError<T::Error>>
+    pub async fn scan(&self, config: &ScanConfig<'_>) -> Result<ScanReport, AdapterError<T::Error>>
     where
-        T: ControllerCmdSync<LeSetScanEnable> + ControllerCmdSync<LeSetScanParams>,
+        T: ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetScanParams>
+            + ControllerCmdSync<LeClearFilterAcceptList>
+            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
+        LeClearFilterAcceptList::new().exec(&self.controller).await?;
+
+        if !config.filter_accept_list.is_empty() {
+            for entry in config.filter_accept_list {
+                LeAddDeviceToFilterAcceptList::new(entry.0, *entry.1)
+                    .exec(&self.controller)
+                    .await?;
+            }
+        }
+
         let params = config.params.unwrap_or(LeSetScanParams::new(
-            bt_hci::param::LeScanKind::Passive,
+            bt_hci::param::LeScanKind::Active,
             bt_hci::param::Duration::from_millis(1_000),
             bt_hci::param::Duration::from_millis(1_000),
-            bt_hci::param::AddrKind::PUBLIC,
-            bt_hci::param::ScanningFilterPolicy::BasicUnfiltered,
+            bt_hci::param::AddrKind::RANDOM,
+            if config.filter_accept_list.is_empty() {
+                bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
+            } else {
+                bt_hci::param::ScanningFilterPolicy::BasicFiltered
+            },
         ));
         params.exec(&self.controller).await?;
 
@@ -130,14 +148,17 @@ where
     /// in which case a handle for the connection is returned.
     pub async fn advertise<'m>(&'m self, config: &AdvertiseConfig<'_>) -> Result<Connection<'m>, AdapterError<T::Error>>
     where
-        T: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetAdvEnable> + ControllerCmdSync<LeSetAdvParams>,
+        T: ControllerCmdSync<LeSetAdvData>
+            + ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetAdvParams>
+            + ControllerCmdSync<LeSetScanResponseData>,
     {
         let params = &config.params.unwrap_or(LeSetAdvParams::new(
             bt_hci::param::Duration::from_millis(400),
             bt_hci::param::Duration::from_millis(400),
             bt_hci::param::AdvKind::AdvInd,
-            bt_hci::param::AddrKind::PUBLIC,
-            bt_hci::param::AddrKind::PUBLIC,
+            bt_hci::param::AddrKind::RANDOM,
+            bt_hci::param::AddrKind::RANDOM,
             BdAddr::default(),
             bt_hci::param::AdvChannelMap::ALL,
             bt_hci::param::AdvFilterPolicy::default(),
@@ -145,13 +166,28 @@ where
 
         params.exec(&self.controller).await?;
 
-        let mut data = [0; 31];
-        let mut w = WriteCursor::new(&mut data[..]);
-        for item in config.data.iter() {
-            item.encode(&mut w)?;
+        if !config.adv_data.is_empty() {
+            let mut data = [0; 31];
+            let mut w = WriteCursor::new(&mut data[..]);
+            for item in config.adv_data.iter() {
+                item.encode(&mut w)?;
+            }
+            let len = w.len();
+            LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
         }
-        let len = w.len();
-        LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
+
+        if !config.scan_data.is_empty() {
+            let mut data = [0; 31];
+            let mut w = WriteCursor::new(&mut data[..]);
+            for item in config.scan_data.iter() {
+                item.encode(&mut w)?;
+            }
+            let len = w.len();
+            LeSetScanResponseData::new(len as u8, data)
+                .exec(&self.controller)
+                .await?;
+        }
+
         LeSetAdvEnable::new(true).exec(&self.controller).await?;
         let conn = Connection::accept(self).await;
         LeSetAdvEnable::new(false).exec(&self.controller).await?;
@@ -197,7 +233,9 @@ where
             }
 
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(packet).await {
-                Ok(_) => {}
+                Ok(_) => {
+                    info!("L2CAP packet dispatched!");
+                }
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
                 }
@@ -235,6 +273,7 @@ where
                     Ok(ControllerToHostPacket::Event(event)) => match event {
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => {
+                                warn!("CONNECTION COMPLET!");
                                 if let Err(err) = self.connections.connect(
                                     e.handle,
                                     ConnectionInfo {
@@ -359,11 +398,29 @@ where
 }
 
 pub struct HciController<'d, T: Controller> {
-    controller: &'d T,
-    permits: &'d LocalSemaphore,
+    pub(crate) controller: &'d T,
+    pub(crate) permits: &'d LocalSemaphore,
 }
 
 impl<'d, T: Controller> HciController<'d, T> {
+    pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
+        let permit = self
+            .permits
+            .try_acquire(1)
+            .ok_or::<AdapterError<T::Error>>(Error::Busy.into())?;
+        let acl = AclPacket::new(
+            handle,
+            AclPacketBoundary::FirstNonFlushable,
+            AclBroadcastFlag::PointToPoint,
+            pdu,
+        );
+        let fut = self.controller.write_acl_data(&acl);
+        match embassy_futures::poll_once(fut) {
+            Poll::Ready(result) => result.map_err(AdapterError::Controller),
+            Poll::Pending => Err(Error::Busy.into()),
+        }
+    }
+
     pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
         self.permits.acquire(1).await.disarm();
         let acl = AclPacket::new(

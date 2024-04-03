@@ -64,11 +64,11 @@ async fn main() {
     let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(controller, host_resources);
     let config = AdvertiseConfig {
         params: None,
-        data: &[
+        adv_data: &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
             AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-            AdStructure::CompleteLocalName("Trouble HCI"),
         ],
+        scan_data: &[AdStructure::CompleteLocalName(b"Trouble HCI")],
     };
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
