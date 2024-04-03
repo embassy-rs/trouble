@@ -297,6 +297,23 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             return Err(Error::InvalidChannelId);
         }
 
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
+                match storage {
+                    ChannelState::Connected(state) if packet.channel == state.cid => {
+                        if state.credits > 0 {
+                            state.credits -= 1;
+                        } else {
+                            return Err(Error::OutOfMemory);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(())
+        })?;
+
         let chan_alloc = AllocId::dynamic(chan);
         if let Some(mut p) = self.pool.alloc(chan_alloc) {
             let len = packet.payload.len();
