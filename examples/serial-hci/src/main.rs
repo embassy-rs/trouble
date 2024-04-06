@@ -10,7 +10,7 @@ use tokio_serial::SerialStream;
 use tokio_serial::{DataBits, Parity, StopBits};
 use trouble_host::{
     adapter::{Adapter, HostResources},
-    advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
+    advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     attribute::{AttributeTable, CharacteristicProp, Service, Uuid},
     PacketQos,
 };
@@ -62,14 +62,6 @@ async fn main() {
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
     let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(controller, host_resources);
-    let config = AdvertiseConfig {
-        params: None,
-        adv_data: &[
-            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-        ],
-        scan_data: &[AdStructure::CompleteLocalName(b"Trouble HCI")],
-    };
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
@@ -114,7 +106,19 @@ async fn main() {
             }
         },
         async {
-            let conn = adapter.advertise(&config).await.unwrap();
+            let conn = adapter
+                .advertise(
+                    &Default::default(),
+                    Advertisement::ConnectableScannableUndirected {
+                        adv_data: &[
+                            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+                        ],
+                        scan_data: &[AdStructure::CompleteLocalName(b"Trouble HCI")],
+                    },
+                )
+                .await
+                .unwrap();
             // Keep connection alive
             let mut tick: u8 = 0;
             loop {

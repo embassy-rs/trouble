@@ -1,4 +1,4 @@
-use crate::advertise::{AdvParams, AdvertiseConfig};
+use crate::advertise::{AdvertisementConfig, AdvertisementKind, RawAdvertisement};
 use crate::channel_manager::ChannelManager;
 use crate::connection::Connection;
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
@@ -8,12 +8,13 @@ use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos};
 use crate::pdu::Pdu;
 use crate::scan::{ScanConfig, ScanReport};
 use crate::types::l2cap::L2capLeSignal;
+use crate::Address;
 use crate::{AdapterError, Error};
 use bt_hci::cmd::controller_baseband::{Reset, SetEventMask};
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnParams,
     LeReadBufferSize, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetExtAdvEnable, LeSetExtAdvParams,
-    LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
+    LeSetRandomAddr, LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -22,7 +23,7 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, EventMask};
+use bt_hci::param::{AddrKind, AdvHandle, BdAddr, ConnHandle, DisconnectReason, EventMask};
 use bt_hci::ControllerToHostPacket;
 use core::task::Poll;
 use embassy_futures::select::{select, Either};
@@ -58,6 +59,7 @@ pub struct Adapter<
 > where
     M: RawMutex,
 {
+    pub(crate) address: Option<Address>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<M, CONNS>,
     pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
@@ -92,6 +94,7 @@ where
         host_resources: &'d mut HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
         Self {
+            address: None,
             controller,
             connections: ConnectionManager::new(),
             channels: ChannelManager::new(&host_resources.pool),
@@ -101,6 +104,14 @@ where
             control: Channel::new(),
             permits: LocalSemaphore::new(true, 0),
         }
+    }
+
+    pub async fn set_random_address(&self, address: Address) -> Result<(), AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetRandomAddr>,
+    {
+        LeSetRandomAddr::new(address.addr).exec(&self.controller).await?;
+        Ok(())
     }
 
     /// Performs a BLE scan, return a report for discovering peripherals.
@@ -149,7 +160,8 @@ where
     /// in which case a handle for the connection is returned.
     pub async fn advertise<'m, 'k>(
         &'m self,
-        config: &AdvertiseConfig<'k>,
+        config: &AdvertisementConfig,
+        params: impl Into<RawAdvertisement<'k>>,
     ) -> Result<Connection<'m>, AdapterError<T::Error>>
     where
         T: ControllerCmdSync<LeSetAdvData>
@@ -160,51 +172,72 @@ where
             + ControllerCmdSync<LeSetExtAdvEnable<'k>>
             + ControllerCmdSync<LeSetScanResponseData>,
     {
-        match config.params.as_ref() {
-            Some(AdvParams::Standard(params)) => {
-                // May fail if already disabled
-                let _ = LeSetAdvEnable::new(false).exec(&self.controller).await;
+        // May fail if already disabled
+        let _ = LeSetAdvEnable::new(false).exec(&self.controller).await;
+        let _ = LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await;
+        let _ = LeClearAdvSets::new().exec(&self.controller).await;
 
-                params.exec(&self.controller).await?;
-            }
-            Some(AdvParams::Extended(params)) => {
-                let _ = LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await;
-                let _ = LeClearAdvSets::new().exec(&self.controller).await;
-                params.exec(&self.controller).await?;
-            }
-            None => {
-                // May fail if already disabled
-                let _ = LeSetAdvEnable::new(false).exec(&self.controller).await;
-
+        let params = params.into();
+        match params.kind {
+            AdvertisementKind::Legacy(kind) => {
+                let peer = params.peer.unwrap_or(Address {
+                    kind: AddrKind::RANDOM,
+                    addr: BdAddr::default(),
+                });
                 LeSetAdvParams::new(
-                    bt_hci::param::Duration::from_millis(400),
-                    bt_hci::param::Duration::from_millis(400),
-                    bt_hci::param::AdvKind::AdvInd,
-                    bt_hci::param::AddrKind::RANDOM,
-                    bt_hci::param::AddrKind::RANDOM,
-                    BdAddr::default(),
-                    bt_hci::param::AdvChannelMap::ALL,
-                    bt_hci::param::AdvFilterPolicy::default(),
+                    bt_hci::param::Duration::from_micros(config.interval_min.as_micros()),
+                    bt_hci::param::Duration::from_micros(config.interval_min.as_micros()),
+                    kind,
+                    self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+                    peer.kind,
+                    peer.addr,
+                    config.channel_map,
+                    config.filter_policy,
+                )
+                .exec(&self.controller)
+                .await?;
+            }
+            AdvertisementKind::Extended(props) => {
+                let peer = params.peer.unwrap_or(Address {
+                    kind: AddrKind::RANDOM,
+                    addr: BdAddr::default(),
+                });
+                LeSetExtAdvParams::new(
+                    AdvHandle::new(0),
+                    props,
+                    bt_hci::param::ExtDuration::from_micros(config.interval_min.as_micros()),
+                    bt_hci::param::ExtDuration::from_micros(config.interval_min.as_micros()),
+                    config.channel_map,
+                    self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+                    peer.kind,
+                    peer.addr,
+                    config.filter_policy,
+                    config.tx_power as i8,
+                    config.primary_phy,
+                    0,
+                    config.secondary_phy,
+                    params.set_id,
+                    params.anonymous,
                 )
                 .exec(&self.controller)
                 .await?;
             }
         }
 
-        if !config.adv_data.is_empty() {
+        if !params.adv_data.is_empty() {
             let mut data = [0; 31];
             let mut w = WriteCursor::new(&mut data[..]);
-            for item in config.adv_data.iter() {
+            for item in params.adv_data.iter() {
                 item.encode(&mut w)?;
             }
             let len = w.len();
             LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
         }
 
-        if !config.scan_data.is_empty() {
+        if !params.scan_data.is_empty() {
             let mut data = [0; 31];
             let mut w = WriteCursor::new(&mut data[..]);
-            for item in config.scan_data.iter() {
+            for item in params.scan_data.iter() {
                 item.encode(&mut w)?;
             }
             let len = w.len();
@@ -213,16 +246,19 @@ where
                 .await?;
         }
 
-        if let Some(AdvParams::Extended(_)) = &config.params {
-            LeSetExtAdvEnable::new(true, &[]).exec(&self.controller).await?;
-            let conn = Connection::accept(self).await;
-            LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await?;
-            Ok(conn)
-        } else {
-            LeSetAdvEnable::new(true).exec(&self.controller).await?;
-            let conn = Connection::accept(self).await;
-            LeSetAdvEnable::new(false).exec(&self.controller).await?;
-            Ok(conn)
+        match params.kind {
+            AdvertisementKind::Legacy(_) => {
+                LeSetAdvEnable::new(true).exec(&self.controller).await?;
+                let conn = Connection::accept(self).await;
+                LeSetAdvEnable::new(false).exec(&self.controller).await?;
+                Ok(conn)
+            }
+            AdvertisementKind::Extended(_) => {
+                LeSetExtAdvEnable::new(true, &[]).exec(&self.controller).await?;
+                let conn = Connection::accept(self).await;
+                LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await?;
+                Ok(conn)
+            }
         }
     }
 

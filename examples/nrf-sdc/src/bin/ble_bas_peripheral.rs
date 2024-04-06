@@ -2,9 +2,6 @@
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
 
-use bt_hci::cmd::le::LeSetRandomAddr;
-use bt_hci::cmd::SyncCmd;
-use bt_hci::param::BdAddr;
 use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
 use embassy_futures::join::join3;
@@ -16,9 +13,9 @@ use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
 use trouble_host::{
     adapter::{Adapter, HostResources},
-    advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
+    advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     attribute::{AttributeTable, CharacteristicProp, Service, Uuid},
-    PacketQos,
+    Address, PacketQos,
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -37,12 +34,12 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-fn bd_addr() -> BdAddr {
+fn my_addr() -> Address {
     unsafe {
         let ficr = &*pac::FICR::ptr();
         let high = u64::from((ficr.deviceaddr[1].read().bits() & 0x0000ffff) | 0x0000c000);
         let addr = high << 32 | u64::from(ficr.deviceaddr[0].read().bits());
-        BdAddr::new(unwrap!(addr.to_le_bytes()[..6].try_into()))
+        Address::random(unwrap!(addr.to_le_bytes()[..6].try_into()))
     }
 }
 
@@ -98,8 +95,8 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(mpsl_task(&*mpsl));
 
     let sdc_p = sdc::Peripherals::new(
-        pac_p.ECB, pac_p.AAR, p.NVMC, p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23,
-        p.PPI_CH24, p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
+        pac_p.ECB, pac_p.AAR, p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
+        p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
     );
 
     let mut pool = [0; 256];
@@ -108,8 +105,7 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<3312>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
-    info!("Our address = {:02x}", bd_addr());
-    unwrap!(LeSetRandomAddr::new(bd_addr()).exec(&sdc).await);
+    info!("Our address = {:02x}", my_addr());
     Timer::after(Duration::from_millis(200)).await;
 
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
@@ -117,14 +113,6 @@ async fn main(spawner: Spawner) {
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
     let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = Adapter::new(sdc, host_resources);
-    let config = AdvertiseConfig {
-        params: None,
-        adv_data: &[
-            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-        ],
-        scan_data: &[AdStructure::CompleteLocalName(b"Trouble")],
-    };
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
@@ -152,6 +140,7 @@ async fn main(spawner: Spawner) {
     };
 
     let server = adapter.gatt_server(&table);
+    unwrap!(adapter.set_random_address(my_addr()).await);
 
     info!("Starting advertising and GATT service");
     let _ = join3(
@@ -169,7 +158,20 @@ async fn main(spawner: Spawner) {
             }
         },
         async {
-            let conn = unwrap!(adapter.advertise(&config).await);
+            let conn = unwrap!(
+                adapter
+                    .advertise(
+                        &Default::default(),
+                        Advertisement::ConnectableScannableUndirected {
+                            adv_data: &[
+                                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                                AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+                            ],
+                            scan_data: &[AdStructure::CompleteLocalName(b"Trouble")],
+                        }
+                    )
+                    .await
+            );
             // Keep connection alive
             let mut tick: u8 = 0;
             loop {

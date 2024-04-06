@@ -2,9 +2,6 @@
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
 
-use bt_hci::cmd::le::LeSetRandomAddr;
-use bt_hci::cmd::SyncCmd;
-use bt_hci::param::BdAddr;
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -19,7 +16,7 @@ use trouble_host::{
     connection::Connection,
     l2cap::L2capChannel,
     scan::ScanConfig,
-    PacketQos,
+    Address, PacketQos,
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -38,12 +35,12 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-fn bd_addr() -> BdAddr {
+fn my_addr() -> Address {
     unsafe {
         let ficr = &*pac::FICR::ptr();
         let high = u64::from((ficr.deviceaddr[1].read().bits() & 0x0000ffff) | 0x0000c000);
         let addr = high << 32 | u64::from(ficr.deviceaddr[0].read().bits());
-        BdAddr::new(unwrap!(addr.to_le_bytes()[..6].try_into()))
+        Address::random(unwrap!(addr.to_le_bytes()[..6].try_into()))
     }
 }
 
@@ -106,8 +103,8 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(mpsl_task(&*mpsl));
 
     let sdc_p = sdc::Peripherals::new(
-        pac_p.ECB, pac_p.AAR, p.NVMC, p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23,
-        p.PPI_CH24, p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
+        pac_p.ECB, pac_p.AAR, p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
+        p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
     );
 
     let mut pool = [0; 256];
@@ -116,8 +113,7 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<6544>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
-    info!("Our address = {:02x}", bd_addr());
-    unwrap!(LeSetRandomAddr::new(bd_addr()).exec(&sdc).await);
+    info!("Our address = {:02x}", my_addr());
     Timer::after(Duration::from_millis(200)).await;
 
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
@@ -132,7 +128,8 @@ async fn main(spawner: Spawner) {
     };
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to
-    let target: BdAddr = BdAddr::new([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
+    let target: Address = Address::random([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
+    unwrap!(adapter.set_random_address(my_addr()).await);
 
     info!("Scanning for peripheral...");
     let _ = join(adapter.run(), async {
@@ -140,7 +137,7 @@ async fn main(spawner: Spawner) {
             let reports = unwrap!(adapter.scan(&config).await);
             for report in reports.iter() {
                 let report = report.unwrap();
-                if report.addr == target {
+                if report.addr == target.addr {
                     let conn = Connection::connect(&adapter, report.addr).await;
                     info!("Connected, creating l2cap channel");
                     const PAYLOAD_LEN: usize = 27;

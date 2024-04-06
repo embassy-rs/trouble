@@ -4,7 +4,10 @@
 #![allow(unused_variables)]
 
 use advertise::AdvertisementDataError;
-use bt_hci::FromHciBytesError;
+use bt_hci::{
+    param::{AddrKind, BdAddr},
+    FromHciBytesError,
+};
 
 mod fmt;
 
@@ -31,6 +34,22 @@ pub mod attribute;
 mod attribute_server;
 #[cfg(feature = "gatt")]
 pub mod gatt;
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Address {
+    pub kind: AddrKind,
+    pub addr: BdAddr,
+}
+
+impl Address {
+    pub fn random(val: [u8; 6]) -> Self {
+        Self {
+            kind: AddrKind::RANDOM,
+            addr: BdAddr::new(val),
+        }
+    }
+}
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

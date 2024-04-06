@@ -11,7 +11,7 @@ use tokio_serial::SerialStream;
 use tokio_serial::{DataBits, Parity, StopBits};
 use trouble_host::{
     adapter::{Adapter, HostResources},
-    advertise::{AdStructure, AdvertiseConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
+    advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
     connection::Connection,
     l2cap::L2capChannel,
     scan::ScanConfig,
@@ -75,15 +75,6 @@ async fn l2cap_connection_oriented_channels() {
         let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
             Adapter::new(controller_peripheral, &mut host_resources);
 
-        let config = AdvertiseConfig {
-            params: None,
-            adv_data: &[
-                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                AdStructure::CompleteLocalName(b"trouble-l2cap-int"),
-            ],
-            scan_data: &[],
-        };
-
         select! {
             r = adapter.run() => {
                 r
@@ -91,7 +82,13 @@ async fn l2cap_connection_oriented_channels() {
             r = async {
                 loop {
                     println!("[peripheral] advertising");
-                    let conn = adapter.advertise(&config).await?;
+                    let conn = adapter.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                        adv_data: &[
+                            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                            AdStructure::CompleteLocalName(b"trouble-l2cap-int"),
+                        ],
+                        scan_data: &[],
+                    }).await?;
                     println!("[peripheral] connected");
 
                     let mut ch1: L2capChannel<'_, '_, _, 27> =
@@ -131,7 +128,7 @@ async fn l2cap_connection_oriented_channels() {
             HostResources::new(PacketQos::Guaranteed(4));
 
         let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
-            Adapter::new(controller_central, &mut host_resources);
+            Adapter::new(controller_central, &mut host_resources, None);
 
         let config = ScanConfig {
             params: None,
