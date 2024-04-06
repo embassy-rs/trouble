@@ -39,6 +39,7 @@ critical-section = { version = "1", features = ["std"] }
 
 [features]
 defmt = [ "dep:defmt" ]
+gatt = []
 
 [patch.crates-io]
 bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }

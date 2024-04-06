@@ -1,21 +1,19 @@
-use crate::advertise::AdvertiseConfig;
-use crate::attribute::AttributeTable;
-use crate::attribute_server::AttributeServer;
+use crate::advertise::{AdvParams, AdvertiseConfig};
 use crate::channel_manager::ChannelManager;
 use crate::connection::Connection;
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::gatt::GattServer;
 use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
-use crate::packet_pool::{self, DynamicPacketPool, PacketPool, Qos, ATT_ID};
+use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos};
 use crate::pdu::Pdu;
 use crate::scan::{ScanConfig, ScanReport};
 use crate::types::l2cap::L2capLeSignal;
 use crate::{AdapterError, Error};
 use bt_hci::cmd::controller_baseband::{Reset, SetEventMask};
 use bt_hci::cmd::le::{
-    LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeCreateConnParams, LeReadBufferSize,
-    LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
+    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnParams,
+    LeReadBufferSize, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetExtAdvEnable, LeSetExtAdvParams,
+    LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -31,6 +29,9 @@ use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use futures_intrusive::sync::LocalSemaphore;
+
+#[cfg(feature = "gatt")]
+use crate::{attribute::AttributeTable, gatt::GattServer};
 
 pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
@@ -146,25 +147,49 @@ where
     ///
     /// Advertisements are stopped when a connection is made against this host,
     /// in which case a handle for the connection is returned.
-    pub async fn advertise<'m>(&'m self, config: &AdvertiseConfig<'_>) -> Result<Connection<'m>, AdapterError<T::Error>>
+    pub async fn advertise<'m, 'k>(
+        &'m self,
+        config: &AdvertiseConfig<'k>,
+    ) -> Result<Connection<'m>, AdapterError<T::Error>>
     where
         T: ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeClearAdvSets>
             + ControllerCmdSync<LeSetAdvParams>
+            + ControllerCmdSync<LeSetExtAdvParams>
+            + ControllerCmdSync<LeSetExtAdvEnable<'k>>
             + ControllerCmdSync<LeSetScanResponseData>,
     {
-        let params = &config.params.unwrap_or(LeSetAdvParams::new(
-            bt_hci::param::Duration::from_millis(400),
-            bt_hci::param::Duration::from_millis(400),
-            bt_hci::param::AdvKind::AdvInd,
-            bt_hci::param::AddrKind::RANDOM,
-            bt_hci::param::AddrKind::RANDOM,
-            BdAddr::default(),
-            bt_hci::param::AdvChannelMap::ALL,
-            bt_hci::param::AdvFilterPolicy::default(),
-        ));
+        match config.params.as_ref() {
+            Some(AdvParams::Standard(params)) => {
+                // May fail if already disabled
+                let _ = LeSetAdvEnable::new(false).exec(&self.controller).await;
 
-        params.exec(&self.controller).await?;
+                params.exec(&self.controller).await?;
+            }
+            Some(AdvParams::Extended(params)) => {
+                let _ = LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await;
+                let _ = LeClearAdvSets::new().exec(&self.controller).await;
+                params.exec(&self.controller).await?;
+            }
+            None => {
+                // May fail if already disabled
+                let _ = LeSetAdvEnable::new(false).exec(&self.controller).await;
+
+                LeSetAdvParams::new(
+                    bt_hci::param::Duration::from_millis(400),
+                    bt_hci::param::Duration::from_millis(400),
+                    bt_hci::param::AdvKind::AdvInd,
+                    bt_hci::param::AddrKind::RANDOM,
+                    bt_hci::param::AddrKind::RANDOM,
+                    BdAddr::default(),
+                    bt_hci::param::AdvChannelMap::ALL,
+                    bt_hci::param::AdvFilterPolicy::default(),
+                )
+                .exec(&self.controller)
+                .await?;
+            }
+        }
 
         if !config.adv_data.is_empty() {
             let mut data = [0; 31];
@@ -188,21 +213,30 @@ where
                 .await?;
         }
 
-        LeSetAdvEnable::new(true).exec(&self.controller).await?;
-        let conn = Connection::accept(self).await;
-        LeSetAdvEnable::new(false).exec(&self.controller).await?;
-        Ok(conn)
+        if let Some(AdvParams::Extended(_)) = &config.params {
+            LeSetExtAdvEnable::new(true, &[]).exec(&self.controller).await?;
+            let conn = Connection::accept(self).await;
+            LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await?;
+            Ok(conn)
+        } else {
+            LeSetAdvEnable::new(true).exec(&self.controller).await?;
+            let conn = Connection::accept(self).await;
+            LeSetAdvEnable::new(false).exec(&self.controller).await?;
+            Ok(conn)
+        }
     }
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
+    #[cfg(feature = "gatt")]
     pub fn gatt_server<'reference, 'values, const MAX: usize>(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
     ) -> GattServer<'reference, 'values, 'd, M, T, MAX> {
+        use crate::attribute_server::AttributeServer;
         GattServer {
             server: AttributeServer::new(table),
             pool: self.pool,
-            pool_id: packet_pool::ATT_ID,
+            pool_id: crate::packet_pool::ATT_ID,
             rx: self.att_inbound.receiver().into(),
             tx: self.hci(),
             connections: &self.connections,
@@ -213,13 +247,17 @@ where
         let (conn, packet) = L2capPacket::decode(acl)?;
         match packet.channel {
             L2CAP_CID_ATT => {
-                if let Some(mut p) = self.pool.alloc(ATT_ID) {
+                #[cfg(feature = "gatt")]
+                if let Some(mut p) = self.pool.alloc(crate::packet_pool::ATT_ID) {
                     let len = packet.payload.len();
                     p.as_mut()[..len].copy_from_slice(packet.payload);
                     self.att_inbound.send((conn, Pdu { packet: p, len })).await;
                 } else {
                     // TODO: Signal back
                 }
+
+                #[cfg(not(feature = "gatt"))]
+                return Err(Error::NotSupported);
             }
             L2CAP_CID_LE_U_SIGNAL => {
                 let mut r = ReadCursor::new(packet.payload);
@@ -252,6 +290,8 @@ where
             + ControllerCmdSync<Reset>
             + ControllerCmdAsync<LeCreateConn>
             + ControllerCmdSync<LeSetScanEnable>
+            //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
+            //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
     {
         self.control.send(ControlCommand::Init).await;
@@ -371,6 +411,8 @@ where
                             ret.total_num_le_acl_data_packets
                         );
                         self.permits.release(ret.total_num_le_acl_data_packets as usize);
+
+                        //                        let feats = LeReadLocalSupportedFeatures::new().exec(&self.controller).await?;
                         // TODO: Configure ACL max buffer size as well?
                     }
                 }
@@ -439,7 +481,7 @@ impl<'d, T: Controller> HciController<'d, T> {
         response: L2capLeSignal,
     ) -> Result<(), AdapterError<T::Error>> {
         // TODO: Refactor signal to avoid encode/decode
-        let mut tx = [0; 64];
+        let mut tx = [0; 32];
         let mut w = WriteCursor::new(&mut tx);
         let (mut header, mut body) = w.split(4)?;
 

@@ -51,7 +51,7 @@ impl<'d> L2capPacket<'d> {
     }
 }
 
-pub struct L2capChannel<'a, 'd, T: Controller, const MTU: usize> {
+pub struct L2capChannel<'a, 'd, T: Controller, const L2CAP_MTU: usize = 27> {
     conn: ConnHandle,
     pool_id: AllocId,
     cid: u16,
@@ -64,7 +64,7 @@ pub struct L2capChannel<'a, 'd, T: Controller, const MTU: usize> {
     tx: HciController<'a, T>,
 }
 
-impl<'a, 'd, T: Controller, const MTU: usize> Clone for L2capChannel<'a, 'd, T, MTU> {
+impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> Clone for L2capChannel<'a, 'd, T, L2CAP_MTU> {
     fn clone(&self) -> Self {
         Self {
             conn: self.conn,
@@ -84,70 +84,55 @@ impl<'a, 'd, T: Controller, const MTU: usize> Clone for L2capChannel<'a, 'd, T, 
     }
 }
 
-impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
-    fn encode(&self, data: &[u8], header: Option<u16>) -> Result<Pdu<'d>, Error> {
-        if let Some(mut packet) = self.pool.alloc(self.pool_id) {
-            let mut w = WriteCursor::new(packet.as_mut());
-            if header.is_some() {
-                w.write(2 + data.len() as u16)?;
-            } else {
-                w.write(data.len() as u16)?;
-            }
-            w.write(self.peer_cid)?;
-
-            if let Some(len) = header {
-                w.write(len)?;
-            }
-
-            w.append(data)?;
-            let len = w.len();
-            let pdu = Pdu::new(packet, len);
-            Ok(pdu)
+impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CAP_MTU> {
+    fn encode(&self, data: &[u8], packet: &mut [u8], header: Option<u16>) -> Result<usize, Error> {
+        let mut w = WriteCursor::new(packet.as_mut());
+        if header.is_some() {
+            w.write(2 + data.len() as u16)?;
         } else {
-            Err(Error::OutOfMemory)
+            w.write(data.len() as u16)?;
         }
+        w.write(self.peer_cid)?;
+
+        if let Some(len) = header {
+            w.write(len)?;
+        }
+
+        w.append(data)?;
+        Ok(w.len())
     }
 
     pub async fn send(&mut self, buf: &[u8]) -> Result<(), AdapterError<T::Error>> {
+        let mut p_buf = [0u8; L2CAP_MTU];
+        assert!(p_buf.len() >= self.mps + 4);
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + (buf.len().saturating_sub(self.mps - 2)).div_ceil(self.mps);
-
-        // TODO: We could potentially make this more graceful by sending as much as we can, and wait
-        // for pool to get the available packets back, which would require some poll/async behavior
-        // support for the pool.
-        if self.pool.available(self.pool_id) < n_packets {
-            return Err(Error::OutOfMemory.into());
-        }
 
         poll_fn(|cx| self.manager.poll_request_to_send(self.cid, n_packets, Some(cx))).await?;
 
         // Segment using mps
         let (first, remaining) = buf.split_at(buf.len().min(self.mps - 2));
 
-        let pdu = self.encode(first, Some(buf.len() as u16))?;
-        self.tx.send(self.conn, pdu.as_ref()).await?;
+        let len = self.encode(first, &mut p_buf[..], Some(buf.len() as u16))?;
+        self.tx.send(self.conn, &p_buf[..len]).await?;
 
         let chunks = remaining.chunks(self.mps);
         let num_chunks = chunks.len();
 
         for (i, chunk) in chunks.enumerate() {
-            let pdu = self.encode(chunk, None)?;
-            self.tx.send(self.conn, pdu.as_ref()).await?;
+            let len = self.encode(chunk, &mut p_buf[..], None)?;
+            self.tx.send(self.conn, &p_buf[..len]).await?;
         }
 
         Ok(())
     }
 
     pub fn try_send(&mut self, buf: &[u8]) -> Result<(), AdapterError<T::Error>> {
+        let mut p_buf = [0u8; L2CAP_MTU];
+        assert!(p_buf.len() >= self.mps + 4);
+
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + (buf.len().saturating_sub(self.mps - 2)).div_ceil(self.mps);
-
-        // TODO: We could potentially make this more graceful by sending as much as we can, and wait
-        // for pool to get the available packets back, which would require some poll/async behavior
-        // support for the pool.
-        if self.pool.available(self.pool_id) < n_packets {
-            return Err(Error::OutOfMemory.into());
-        }
 
         match self.manager.poll_request_to_send(self.cid, n_packets, None) {
             Poll::Ready(res) => res?,
@@ -157,15 +142,15 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
         // Segment using mps
         let (first, remaining) = buf.split_at(buf.len().min(self.mps - 2));
 
-        let pdu = self.encode(first, Some(buf.len() as u16))?;
-        self.tx.try_send(self.conn, pdu.as_ref())?;
+        let len = self.encode(first, &mut p_buf[..], Some(buf.len() as u16))?;
+        self.tx.try_send(self.conn, &p_buf[..len])?;
 
         let chunks = remaining.chunks(self.mps);
         let num_chunks = chunks.len();
 
         for (i, chunk) in chunks.enumerate() {
-            let pdu = self.encode(chunk, None)?;
-            self.tx.try_send(self.conn, pdu.as_ref())?;
+            let len = self.encode(chunk, &mut p_buf[..], None)?;
+            self.tx.try_send(self.conn, &p_buf[..len])?;
         }
 
         Ok(())
@@ -194,9 +179,13 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
         let to_copy = data.len().min(buf.len());
         buf[..to_copy].copy_from_slice(&data[..to_copy]);
         let mut pos = to_copy;
+
         // info!("Received {} bytes so far", pos);
 
         let mut remaining = remaining as usize - data.len();
+
+        drop(packet);
+        self.issue_credits(1).await?;
         //info!(
         //    "Total size of PDU is {}, read buffer size is {} remaining; {}",
         //    len,
@@ -213,13 +202,18 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
                 pos += to_copy;
             }
             remaining -= packet.len;
+            drop(packet);
+            self.issue_credits(1).await?;
         }
-
-        let (handle, response) = self.manager.confirm_received(self.cid, n_received)?;
-        self.tx.signal(handle, response).await?;
 
         // info!("Total reserved {} bytes", pos);
         Ok(pos)
+    }
+
+    async fn issue_credits(&mut self, credits: usize) -> Result<(), AdapterError<T::Error>> {
+        let (handle, response) = self.manager.confirm_received(self.cid, credits)?;
+        self.tx.signal(handle, response).await?;
+        Ok(())
     }
 
     pub async fn accept<
@@ -232,13 +226,12 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
         adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection<'a>,
         psm: u16,
-    ) -> Result<L2capChannel<'a, 'd, T, MTU>, AdapterError<T::Error>> {
+        mtu: u16,
+    ) -> Result<L2capChannel<'a, 'd, T, L2CAP_MTU>, AdapterError<T::Error>> {
         let connections = &adapter.connections;
         let channels = &adapter.channels;
 
-        let (state, rx) = channels
-            .accept(connection.handle(), psm, MTU as u16, &adapter.hci())
-            .await?;
+        let (state, rx) = channels.accept(connection.handle(), psm, mtu, &adapter.hci()).await?;
 
         Ok(Self {
             conn: connection.handle(),
@@ -277,13 +270,14 @@ impl<'a, 'd, T: Controller, const MTU: usize> L2capChannel<'a, 'd, T, MTU> {
         adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection<'a>,
         psm: u16,
+        mtu: u16,
     ) -> Result<Self, AdapterError<T::Error>>
 where {
         // TODO: Use unique signal ID to ensure no collision of signal messages
         //
         let (state, rx) = adapter
             .channels
-            .create(connection.handle(), psm, MTU as u16, &adapter.hci())
+            .create(connection.handle(), psm, mtu, &adapter.hci())
             .await?;
 
         Ok(Self {

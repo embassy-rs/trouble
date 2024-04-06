@@ -22,12 +22,15 @@ pub use packet_pool::Qos as PacketQos;
 pub mod adapter;
 pub mod advertise;
 pub mod connection;
-pub mod gatt;
 pub mod l2cap;
 pub mod scan;
 
+#[cfg(feature = "gatt")]
 pub mod attribute;
+#[cfg(feature = "gatt")]
 mod attribute_server;
+#[cfg(feature = "gatt")]
+pub mod gatt;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

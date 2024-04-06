@@ -21,7 +21,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
 
 bt-hci = { version = "0.1.0", default-features = false, features = ["log"] }
-trouble-host = { version = "0.1.0", path = "../../host", features = ["log"] }
+trouble-host = { version = "0.1.0", path = "../../host", features = ["log", "gatt"] }
 
 [patch.crates-io]
 bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }

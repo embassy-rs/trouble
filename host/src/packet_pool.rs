@@ -3,8 +3,8 @@ use core::cell::{RefCell, UnsafeCell};
 use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
 
 // Generic client ID used by ATT PDU
+#[cfg(feature = "gatt")]
 pub(crate) const ATT_ID: AllocId = AllocId(0);
-pub(crate) const L2CAP_SIGNAL_ID: AllocId = AllocId(1);
 
 #[derive(Clone, Copy)]
 pub struct AllocId(usize);
@@ -12,7 +12,10 @@ pub struct AllocId(usize);
 impl AllocId {
     pub fn dynamic(idx: usize) -> AllocId {
         // Dynamic range starts at 2
-        AllocId(2 + idx)
+        #[cfg(feature = "gatt")]
+        return AllocId(1 + idx);
+        #[cfg(not(feature = "gatt"))]
+        return AllocId(idx);
     }
 }
 
@@ -59,19 +62,21 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
     // Guaranteed available
     fn min_available(&self, qos: Qos, client: AllocId) -> usize {
         let usage = self.usage.borrow();
-        match qos {
-            Qos::None => 0,
+        let min = match qos {
+            Qos::None => N.saturating_sub(usage.iter().sum()),
             Qos::Fair => (N / CLIENTS).saturating_sub(usage[client.0]),
             Qos::Guaranteed(n) => {
                 let usage = usage[client.0];
                 n.saturating_sub(usage)
             }
-        }
+        };
+        // info!("Min available for {}: {} (usage: {})", client.0, min, usage[client.0]);
+        min
     }
 
     fn available(&self, qos: Qos, client: AllocId) -> usize {
         let usage = self.usage.borrow();
-        match qos {
+        let available = match qos {
             Qos::None => N.saturating_sub(usage.iter().sum()),
             Qos::Fair => (N / CLIENTS).saturating_sub(usage[client.0]),
             Qos::Guaranteed(n) => {
@@ -81,7 +86,9 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
                 let usage = reserved + usage.iter().sum::<usize>();
                 N.saturating_sub(usage)
             }
-        }
+        };
+        // info!("Available for {}: {} (usage {})", client.0, available, usage[client.0]);
+        available
     }
 
     fn alloc(&self, id: AllocId) -> Option<PacketRef> {
@@ -122,8 +129,9 @@ pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIEN
 
 impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> PacketPool<M, MTU, N, CLIENTS> {
     pub fn new(qos: Qos) -> Self {
-        // Need 1 for l2cap signalling and 1 for gatt
-        assert!(CLIENTS >= 2);
+        // Need at least 1 for gatt
+        #[cfg(feature = "gatt")]
+        assert!(CLIENTS >= 1);
         Self {
             state: Mutex::new(State::new()),
             qos,
@@ -292,6 +300,28 @@ mod tests {
         let a5 = pool.alloc(AllocId(0));
         assert!(a5.is_some());
         // Needs at least 3 for the other clients
+        assert!(pool.alloc(AllocId(0)).is_none());
+
+        let b1 = pool.alloc(AllocId(1));
+        assert!(b1.is_some());
+        assert!(pool.alloc(AllocId(1)).is_none());
+
+        let c1 = pool.alloc(AllocId(2));
+        assert!(c1.is_some());
+        assert!(pool.alloc(AllocId(2)).is_none());
+
+        let d1 = pool.alloc(AllocId(3));
+        assert!(d1.is_some());
+        assert!(pool.alloc(AllocId(3)).is_none());
+    }
+
+    #[test]
+    fn test_guaranteed_qos_many() {
+        let pool: PacketPool<NoopRawMutex, 1, 8, 8> = PacketPool::new(Qos::Guaranteed(1));
+
+        let a1 = pool.alloc(AllocId(0));
+        assert!(a1.is_some());
+        // Needs at least 1 for the other clients
         assert!(pool.alloc(AllocId(0)).is_none());
 
         let b1 = pool.alloc(AllocId(1));

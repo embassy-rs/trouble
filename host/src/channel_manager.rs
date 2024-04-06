@@ -201,6 +201,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 let mps = req.mps.min(self.pool.mtu() as u16 - 4);
                 mtu = req.mtu.min(mtu);
                 let credits = self.pool.min_available(AllocId::dynamic(idx)) as u16;
+                info!("Accept, initial credits: {}", credits);
                 ConnectedState {
                     conn: req.conn,
                     cid: req.cid,
@@ -374,6 +375,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 Ok(())
             }
             L2capLeSignalData::DisconnectionReq(req) => {
+                info!("Disconnect request: {:?}!", req);
                 self.disconnect(req.dcid).await?;
                 Ok(())
             }
@@ -398,6 +400,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                         // Don't set credits higher than what we can promise
                         let increment = self.pool.min_available(AllocId::dynamic(idx)).min(credits);
                         state.credits += increment as u16;
+                        // info!("Credits: {}. Increment {}", state.credits, increment);
                         return Ok((
                             state.conn,
                             L2capLeSignal::new(

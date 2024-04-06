@@ -3,12 +3,31 @@ use crate::{
     cursor::{ReadCursor, WriteCursor},
     types::uuid::Uuid,
 };
-use bt_hci::cmd::le::LeSetAdvParams;
+use bt_hci::cmd::le::{LeSetAdvParams, LeSetExtAdvParams};
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdvertiseConfig<'d> {
-    pub params: Option<LeSetAdvParams>,
+    pub params: Option<AdvParams>,
     pub adv_data: &'d [AdStructure<'d>],
     pub scan_data: &'d [AdStructure<'d>],
+}
+
+impl<'d> Default for AdvertiseConfig<'d> {
+    fn default() -> Self {
+        Self {
+            params: None,
+            adv_data: &[],
+            scan_data: &[],
+        }
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AdvParams {
+    Standard(LeSetAdvParams),
+    Extended(LeSetExtAdvParams),
 }
 
 pub const AD_FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0b00000001;
@@ -24,6 +43,7 @@ pub enum AdvertisementDataError {
 }
 
 #[derive(Debug, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdStructure<'a> {
     /// Device flags and baseband capabilities.
     ///
