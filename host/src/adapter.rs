@@ -1,4 +1,4 @@
-use crate::advertise::{AdvertisementConfig, AdvertisementKind, RawAdvertisement};
+use crate::advertise::{AdvertisementConfig, RawAdvertisement};
 use crate::channel_manager::ChannelManager;
 use crate::connection::Connection;
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
@@ -13,8 +13,8 @@ use crate::{AdapterError, Error};
 use bt_hci::cmd::controller_baseband::{Reset, SetEventMask};
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnParams,
-    LeReadBufferSize, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetExtAdvEnable, LeSetExtAdvParams,
-    LeSetRandomAddr, LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
+    LeReadBufferSize, LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams,
+    LeSetExtScanResponseData, LeSetRandomAddr, LeSetScanEnable, LeSetScanParams,
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -23,7 +23,7 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{AddrKind, AdvHandle, BdAddr, ConnHandle, DisconnectReason, EventMask};
+use bt_hci::param::{AddrKind, AdvHandle, BdAddr, ConnHandle, DisconnectReason, EventMask, Operation};
 use bt_hci::ControllerToHostPacket;
 use core::task::Poll;
 use embassy_futures::select::{select, Either};
@@ -106,11 +106,12 @@ where
         }
     }
 
-    pub async fn set_random_address(&self, address: Address) -> Result<(), AdapterError<T::Error>>
+    pub async fn set_random_address(&mut self, address: Address) -> Result<(), AdapterError<T::Error>>
     where
         T: ControllerCmdSync<LeSetRandomAddr>,
     {
         LeSetRandomAddr::new(address.addr).exec(&self.controller).await?;
+        self.address.replace(address);
         Ok(())
     }
 
@@ -164,102 +165,88 @@ where
         params: impl Into<RawAdvertisement<'k>>,
     ) -> Result<Connection<'m>, AdapterError<T::Error>>
     where
-        T: ControllerCmdSync<LeSetAdvData>
-            + ControllerCmdSync<LeSetAdvEnable>
+        T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
-            + ControllerCmdSync<LeSetAdvParams>
             + ControllerCmdSync<LeSetExtAdvParams>
-            + ControllerCmdSync<LeSetExtAdvEnable<'k>>
-            + ControllerCmdSync<LeSetScanResponseData>,
+            + ControllerCmdSync<LeSetAdvSetRandomAddr>
+            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
         // May fail if already disabled
-        let _ = LeSetAdvEnable::new(false).exec(&self.controller).await;
         let _ = LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await;
         let _ = LeClearAdvSets::new().exec(&self.controller).await;
+        let handle = AdvHandle::new(0); // TODO: Configurable?
 
-        let params = params.into();
-        match params.kind {
-            AdvertisementKind::Legacy(kind) => {
-                let peer = params.peer.unwrap_or(Address {
-                    kind: AddrKind::RANDOM,
-                    addr: BdAddr::default(),
-                });
-                LeSetAdvParams::new(
-                    bt_hci::param::Duration::from_micros(config.interval_min.as_micros()),
-                    bt_hci::param::Duration::from_micros(config.interval_min.as_micros()),
-                    kind,
-                    self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-                    peer.kind,
-                    peer.addr,
-                    config.channel_map,
-                    config.filter_policy,
-                )
+        let mut params = params.into();
+        let timeout = config
+            .timeout
+            .map(|m| bt_hci::param::Duration::from_micros(m.as_micros()))
+            .unwrap_or(bt_hci::param::Duration::from_secs(0));
+        let max_events = config.max_events.unwrap_or(0);
+
+        params.set.duration = timeout;
+        params.set.max_ext_adv_events = max_events;
+
+        let peer = params.peer.unwrap_or(Address {
+            kind: AddrKind::RANDOM,
+            addr: BdAddr::default(),
+        });
+        LeSetExtAdvParams::new(
+            handle,
+            params.props,
+            bt_hci::param::ExtDuration::from_micros(config.interval_min.as_micros()),
+            bt_hci::param::ExtDuration::from_micros(config.interval_min.as_micros()),
+            config.channel_map,
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            peer.kind,
+            peer.addr,
+            config.filter_policy,
+            config.tx_power as i8,
+            config.primary_phy,
+            0,
+            config.secondary_phy,
+            params.set.adv_handle.as_raw(),
+            false,
+        )
+        .exec(&self.controller)
+        .await?;
+
+        if let Some(address) = self.address {
+            LeSetAdvSetRandomAddr::new(handle, address.addr)
                 .exec(&self.controller)
                 .await?;
-            }
-            AdvertisementKind::Extended(props) => {
-                let peer = params.peer.unwrap_or(Address {
-                    kind: AddrKind::RANDOM,
-                    addr: BdAddr::default(),
-                });
-                LeSetExtAdvParams::new(
-                    AdvHandle::new(0),
-                    props,
-                    bt_hci::param::ExtDuration::from_micros(config.interval_min.as_micros()),
-                    bt_hci::param::ExtDuration::from_micros(config.interval_min.as_micros()),
-                    config.channel_map,
-                    self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-                    peer.kind,
-                    peer.addr,
-                    config.filter_policy,
-                    config.tx_power as i8,
-                    config.primary_phy,
-                    0,
-                    config.secondary_phy,
-                    params.set_id,
-                    params.anonymous,
-                )
-                .exec(&self.controller)
-                .await?;
-            }
         }
 
         if !params.adv_data.is_empty() {
-            let mut data = [0; 31];
-            let mut w = WriteCursor::new(&mut data[..]);
-            for item in params.adv_data.iter() {
-                item.encode(&mut w)?;
-            }
-            let len = w.len();
-            LeSetAdvData::new(len as u8, data).exec(&self.controller).await?;
-        }
-
-        if !params.scan_data.is_empty() {
-            let mut data = [0; 31];
-            let mut w = WriteCursor::new(&mut data[..]);
-            for item in params.scan_data.iter() {
-                item.encode(&mut w)?;
-            }
-            let len = w.len();
-            LeSetScanResponseData::new(len as u8, data)
+            //          let mut data = [0; 31];
+            //          let mut w = WriteCursor::new(&mut data[..]);
+            //          for item in params.adv_data.iter() {
+            //              item.encode(&mut w)?;
+            //          }
+            //          let len = w.len();
+            LeSetExtAdvData::new(handle, Operation::Complete, false, params.adv_data)
                 .exec(&self.controller)
                 .await?;
         }
 
-        match params.kind {
-            AdvertisementKind::Legacy(_) => {
-                LeSetAdvEnable::new(true).exec(&self.controller).await?;
-                let conn = Connection::accept(self).await;
-                LeSetAdvEnable::new(false).exec(&self.controller).await?;
-                Ok(conn)
-            }
-            AdvertisementKind::Extended(_) => {
-                LeSetExtAdvEnable::new(true, &[]).exec(&self.controller).await?;
-                let conn = Connection::accept(self).await;
-                LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await?;
-                Ok(conn)
-            }
+        if !params.scan_data.is_empty() {
+            //let mut data = [0; 31];
+            //let mut w = WriteCursor::new(&mut data[..]);
+            //for item in params.scan_data.iter() {
+            //    item.encode(&mut w)?;
+            //}
+            //let len = w.len();
+            LeSetExtScanResponseData::new(handle, Operation::Complete, false, params.scan_data)
+                .exec(&self.controller)
+                .await?;
         }
+
+        LeSetExtAdvEnable::new(true, &[params.set])
+            .exec(&self.controller)
+            .await?;
+        let conn = Connection::accept(self).await;
+        LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await?;
+        Ok(conn)
     }
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
@@ -325,7 +312,6 @@ where
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<Reset>
             + ControllerCmdAsync<LeCreateConn>
-            + ControllerCmdSync<LeSetScanEnable>
             //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
             //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,

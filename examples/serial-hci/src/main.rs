@@ -88,6 +88,17 @@ async fn main() {
         )
     };
 
+    let mut adv_data = [0; 31];
+    AdStructure::encode_slice(
+        &[
+            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+            AdStructure::CompleteLocalName(b"Trouble HCI"),
+        ],
+        &mut adv_data[..],
+    )
+    .unwrap();
+
     let server = adapter.gatt_server(&table);
 
     info!("Starting advertising and GATT service");
@@ -110,11 +121,8 @@ async fn main() {
                 .advertise(
                     &Default::default(),
                     Advertisement::ConnectableScannableUndirected {
-                        adv_data: &[
-                            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-                        ],
-                        scan_data: &[AdStructure::CompleteLocalName(b"Trouble HCI")],
+                        adv_data: &adv_data[..],
+                        scan_data: &[],
                     },
                 )
                 .await

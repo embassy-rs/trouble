@@ -120,7 +120,9 @@ async fn main(spawner: Spawner) {
         StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::Guaranteed(4)));
 
-    let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = Adapter::new(sdc, host_resources);
+    let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        Adapter::new(sdc, host_resources);
+    unwrap!(adapter.set_random_address(my_addr()).await);
 
     let config = ScanConfig {
         params: None,
@@ -129,7 +131,6 @@ async fn main(spawner: Spawner) {
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to
     let target: Address = Address::random([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
-    unwrap!(adapter.set_random_address(my_addr()).await);
 
     info!("Scanning for peripheral...");
     let _ = join(adapter.run(), async {

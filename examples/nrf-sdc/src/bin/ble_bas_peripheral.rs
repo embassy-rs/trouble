@@ -112,7 +112,9 @@ async fn main(spawner: Spawner) {
         StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = Adapter::new(sdc, host_resources);
+    let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        Adapter::new(sdc, host_resources);
+    unwrap!(adapter.set_random_address(my_addr()).await);
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
@@ -140,7 +142,15 @@ async fn main(spawner: Spawner) {
     };
 
     let server = adapter.gatt_server(&table);
-    unwrap!(adapter.set_random_address(my_addr()).await);
+    let mut adv_data = [0; 31];
+    unwrap!(AdStructure::encode_slice(
+        &[
+            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+            AdStructure::CompleteLocalName(b"Trouble"),
+        ],
+        &mut adv_data[..],
+    ));
 
     info!("Starting advertising and GATT service");
     let _ = join3(
@@ -163,11 +173,8 @@ async fn main(spawner: Spawner) {
                     .advertise(
                         &Default::default(),
                         Advertisement::ConnectableScannableUndirected {
-                            adv_data: &[
-                                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                                AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-                            ],
-                            scan_data: &[AdStructure::CompleteLocalName(b"Trouble")],
+                            adv_data: &adv_data[..],
+                            scan_data: &[],
                         }
                     )
                     .await
