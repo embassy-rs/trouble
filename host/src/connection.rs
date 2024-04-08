@@ -5,6 +5,7 @@ use bt_hci::{
             LeSetExtScanParams, LeSetScanEnable, LeSetScanParams,
         },
         link_control::DisconnectParams,
+        status::ReadRssi,
     },
     controller::{ControllerCmdAsync, ControllerCmdSync},
     param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole},
@@ -84,6 +85,23 @@ impl<'d> Connection<'d> {
 
     pub fn peer_address(&self) -> BdAddr {
         self.info.peer_address
+    }
+
+    pub async fn rssi<
+        M: RawMutex,
+        T,
+        const CONNS: usize,
+        const CHANNELS: usize,
+        const L2CAP_TXQ: usize,
+        const L2CAP_RXQ: usize,
+    >(
+        &self,
+        adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<i8, AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<ReadRssi>,
+    {
+        adapter.read_rssi(self.info.handle).await
     }
 
     pub async fn connect<

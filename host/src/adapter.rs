@@ -18,6 +18,7 @@ use bt_hci::cmd::le::{
     LeSetScanEnable, LeSetScanParams,
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
+use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::Controller;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -133,6 +134,14 @@ where
                 .await?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn read_rssi(&self, conn: ConnHandle) -> Result<i8, AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<ReadRssi>,
+    {
+        let val = ReadRssi::new(conn).exec(&self.controller).await?;
+        Ok(val.rssi)
     }
 
     pub(crate) async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, AdapterError<T::Error>>
