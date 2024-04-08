@@ -1,17 +1,50 @@
 use bt_hci::{
-    cmd::{le::LeCreateConnParams, link_control::DisconnectParams},
-    param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, Duration, LeConnRole},
+    cmd::{
+        le::{
+            LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn, LeSetExtScanEnable,
+            LeSetExtScanParams, LeSetScanEnable, LeSetScanParams,
+        },
+        link_control::DisconnectParams,
+    },
+    controller::{ControllerCmdAsync, ControllerCmdSync},
+    param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole},
 };
 use embassy_sync::{blocking_mutex::raw::RawMutex, channel::DynamicSender};
 
 use crate::adapter::{Adapter, ControlCommand};
+use crate::scan::ScanConfig;
+use crate::AdapterError;
+use embassy_time::Duration;
 
 pub use crate::connection_manager::ConnectionInfo;
 
 #[derive(Clone)]
 pub struct Connection<'d> {
-    info: ConnectionInfo,
-    control: DynamicSender<'d, ControlCommand>,
+    pub(crate) info: ConnectionInfo,
+    pub(crate) control: DynamicSender<'d, ControlCommand>,
+}
+
+pub struct ConnectConfig<'d> {
+    pub scan_config: ScanConfig<'d>,
+    pub connect_params: ConnectParams,
+}
+
+pub struct ConnectParams {
+    pub min_connection_interval: Duration,
+    pub max_connection_interval: Duration,
+    pub max_latency: u16,
+    pub supervision_timeout: Duration,
+}
+
+impl Default for ConnectParams {
+    fn default() -> Self {
+        Self {
+            min_connection_interval: Duration::from_millis(80),
+            max_connection_interval: Duration::from_millis(80),
+            max_latency: 0,
+            supervision_timeout: Duration::from_secs(8),
+        }
+    }
 }
 
 impl<'d> Connection<'d> {
@@ -62,28 +95,18 @@ impl<'d> Connection<'d> {
         const L2CAP_RXQ: usize,
     >(
         adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-        peer_addr: BdAddr,
-    ) -> Self {
-        // TODO: Make this configurable
-        let params = LeCreateConnParams {
-            le_scan_interval: Duration::from_micros(1707500),
-            le_scan_window: Duration::from_micros(312500),
-            use_filter_accept_list: true,
-            peer_addr_kind: AddrKind::RANDOM,
-            peer_addr,
-            own_addr_kind: AddrKind::PUBLIC,
-            conn_interval_min: Duration::from_millis(80),
-            conn_interval_max: Duration::from_millis(80),
-            max_latency: 0,
-            supervision_timeout: Duration::from_millis(8000),
-            min_ce_length: Duration::from_millis(0),
-            max_ce_length: Duration::from_millis(0),
-        };
-        adapter.control.send(ControlCommand::Connect(params)).await;
-        let info = adapter.connections.accept(Some(params.peer_addr)).await;
-        Connection {
-            info,
-            control: adapter.control.sender().into(),
-        }
+        config: &ConnectConfig<'_>,
+    ) -> Result<Self, AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<LeClearFilterAcceptList>
+            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
+            + ControllerCmdAsync<LeCreateConn>
+            + ControllerCmdAsync<LeExtCreateConn>
+            + ControllerCmdSync<LeSetExtScanEnable>
+            + ControllerCmdSync<LeSetExtScanParams>
+            + ControllerCmdSync<LeSetScanParams>
+            + ControllerCmdSync<LeSetScanEnable>,
+    {
+        adapter.connect(config).await
     }
 }

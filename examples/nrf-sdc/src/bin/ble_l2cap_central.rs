@@ -13,7 +13,7 @@ use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
 use trouble_host::{
     adapter::{Adapter, HostResources},
-    connection::Connection,
+    connection::{ConnectConfig, Connection},
     l2cap::L2capChannel,
     scan::ScanConfig,
     Address, PacketQos,
@@ -124,44 +124,41 @@ async fn main(spawner: Spawner) {
         Adapter::new(sdc, host_resources);
     unwrap!(adapter.set_random_address(my_addr()).await);
 
-    let config = ScanConfig {
-        params: None,
-        filter_accept_list: &[],
-    };
-
     // NOTE: Modify this to match the address of the peripheral you want to connect to
     let target: Address = Address::random([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
+
+    let config = ConnectConfig {
+        connect_params: Default::default(),
+        scan_config: ScanConfig {
+            filter_accept_list: &[(target.kind, &target.addr)],
+            ..Default::default()
+        },
+    };
 
     info!("Scanning for peripheral...");
     let _ = join(adapter.run(), async {
         loop {
-            let reports = unwrap!(adapter.scan(&config).await);
-            for report in reports.iter() {
-                let report = report.unwrap();
-                if report.addr == target.addr {
-                    let conn = Connection::connect(&adapter, report.addr).await;
-                    info!("Connected, creating l2cap channel");
-                    const PAYLOAD_LEN: usize = 27;
-                    let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
-                        unwrap!(L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16).await);
-                    info!("New l2cap channel created, sending some data!");
-                    for i in 0..10 {
-                        let tx = [i; PAYLOAD_LEN];
-                        unwrap!(ch1.send(&tx).await);
-                    }
-                    info!("Sent data, waiting for them to be sent back");
-                    let mut rx = [0; PAYLOAD_LEN];
-                    for i in 0..10 {
-                        let len = unwrap!(ch1.receive(&mut rx).await);
-                        assert_eq!(len, rx.len());
-                        assert_eq!(rx, [i; PAYLOAD_LEN]);
-                    }
-
-                    info!("Received successfully!");
-
-                    Timer::after(Duration::from_secs(60)).await;
-                }
+            let conn = unwrap!(Connection::connect(&adapter, &config).await);
+            info!("Connected, creating l2cap channel");
+            const PAYLOAD_LEN: usize = 27;
+            let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
+                unwrap!(L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16).await);
+            info!("New l2cap channel created, sending some data!");
+            for i in 0..10 {
+                let tx = [i; PAYLOAD_LEN];
+                unwrap!(ch1.send(&tx).await);
             }
+            info!("Sent data, waiting for them to be sent back");
+            let mut rx = [0; PAYLOAD_LEN];
+            for i in 0..10 {
+                let len = unwrap!(ch1.receive(&mut rx).await);
+                assert_eq!(len, rx.len());
+                assert_eq!(rx, [i; PAYLOAD_LEN]);
+            }
+
+            info!("Received successfully!");
+
+            Timer::after(Duration::from_secs(60)).await;
         }
     })
     .await;

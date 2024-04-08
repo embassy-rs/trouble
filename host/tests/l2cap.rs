@@ -12,7 +12,7 @@ use tokio_serial::{DataBits, Parity, StopBits};
 use trouble_host::{
     adapter::{Adapter, HostResources},
     advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    connection::Connection,
+    connection::{ConnectConfig, Connection},
     l2cap::L2capChannel,
     scan::ScanConfig,
     PacketQos,
@@ -80,14 +80,22 @@ async fn l2cap_connection_oriented_channels() {
                 r
             }
             r = async {
+                let mut adv_data = [0; 31];
+                AdStructure::encode_slice(
+                    &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),],
+                    &mut adv_data[..],
+                ).unwrap();
+
+                let mut scan_data = [0; 31];
+                AdStructure::encode_slice(
+                    &[AdStructure::CompleteLocalName(b"trouble-l2cap-int"),],
+                    &mut scan_data[..],
+                ).unwrap();
                 loop {
                     println!("[peripheral] advertising");
                     let conn = adapter.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
-                        adv_data: &[
-                            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                            AdStructure::CompleteLocalName(b"trouble-l2cap-int"),
-                        ],
-                        scan_data: &[],
+                        adv_data: &adv_data[..],
+                        scan_data: &scan_data[..],
                     }).await?;
                     println!("[peripheral] connected");
 
@@ -128,12 +136,7 @@ async fn l2cap_connection_oriented_channels() {
             HostResources::new(PacketQos::Guaranteed(4));
 
         let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
-            Adapter::new(controller_central, &mut host_resources, None);
-
-        let config = ScanConfig {
-            params: None,
-            filter_accept_list: &[],
-        };
+            Adapter::new(controller_central, &mut host_resources);
 
         select! {
             r = adapter.run() => {
@@ -142,21 +145,28 @@ async fn l2cap_connection_oriented_channels() {
             r = async {
                 println!("[central] scanning");
                 loop {
-                    let reports = adapter.scan(&config).await?;
+                    let reports = adapter.scan(&Default::default()).await?;
                     let mut found = None;
                     for report in reports.iter() {
                         let report = report.unwrap();
                         for adv in AdStructure::decode(report.data) {
                             if let Ok(AdStructure::CompleteLocalName(b"trouble-l2cap-int")) = adv {
-                                found.replace(report.addr);
+                                found.replace((report.addr_kind, report.addr));
                                 break;
                             }
                         }
                     }
 
-                    if let Some(target) = found {
+                    if let Some((kind, addr)) = found {
+                        let config = ConnectConfig {
+                            connect_params: Default::default(),
+                            scan_config: ScanConfig {
+                                filter_accept_list: &[(kind, &addr)],
+                                ..Default::default()
+                            },
+                        };
                         println!("[central] connecting");
-                        let conn = Connection::connect(&adapter, target).await;
+                        let conn = Connection::connect(&adapter, &config).await.unwrap();
                         println!("[central] connected");
                         const PAYLOAD_LEN: usize = 27;
                         let mut ch1: L2capChannel<'_, '_, _, 27> =

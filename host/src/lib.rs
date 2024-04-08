@@ -71,6 +71,7 @@ pub enum Error {
     OutOfMemory,
     NotSupported,
     ChannelClosed,
+    Timeout,
     Busy,
     Disconnected,
     Other,
