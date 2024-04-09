@@ -86,7 +86,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> Clone for L2capChannel<'a, '
 
 impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CAP_MTU> {
     fn encode(&self, data: &[u8], packet: &mut [u8], header: Option<u16>) -> Result<usize, Error> {
-        let mut w = WriteCursor::new(packet.as_mut());
+        let mut w = WriteCursor::new(packet);
         if header.is_some() {
             w.write(2 + data.len() as u16)?;
         } else {

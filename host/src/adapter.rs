@@ -18,6 +18,7 @@ use bt_hci::cmd::le::{
     LeSetScanEnable, LeSetScanParams,
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
+use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::Controller;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -135,6 +136,14 @@ where
         Ok(())
     }
 
+    pub(crate) async fn read_rssi(&self, conn: ConnHandle) -> Result<i8, AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<ReadRssi>,
+    {
+        let val = ReadRssi::new(conn).exec(&self.controller).await?;
+        Ok(val.rssi)
+    }
+
     pub(crate) async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, AdapterError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
@@ -156,9 +165,9 @@ where
                 return Err(Error::Timeout.into());
             };
             if config.scan_config.extended {
-                for entry in report.iter_ext() {
+                if let Some(entry) = report.iter_ext().next() {
                     self.stop_scan(&config.scan_config).await?;
-                    let entry = entry.map_err(|e| Error::HciDecode(e))?;
+                    let entry = entry.map_err(Error::HciDecode)?;
                     let initiating = InitiatingPhy {
                         scan_interval: bt_hci::param::Duration::from_micros(config.scan_config.interval.as_micros()),
                         scan_window: bt_hci::param::Duration::from_micros(config.scan_config.window.as_micros()),
@@ -191,32 +200,30 @@ where
                         control: self.control.sender().into(),
                     });
                 }
-            } else {
-                for entry in report.iter() {
-                    self.stop_scan(&config.scan_config).await?;
-                    let entry = entry.map_err(|e| Error::HciDecode(e))?;
-                    LeCreateConn::new(
-                        bt_hci::param::Duration::from_micros(config.scan_config.interval.as_micros()),
-                        bt_hci::param::Duration::from_micros(config.scan_config.window.as_micros()),
-                        true,
-                        entry.addr_kind,
-                        entry.addr,
-                        self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-                        bt_hci::param::Duration::from_micros(config.connect_params.min_connection_interval.as_micros()),
-                        bt_hci::param::Duration::from_micros(config.connect_params.max_connection_interval.as_micros()),
-                        config.connect_params.max_latency,
-                        bt_hci::param::Duration::from_micros(config.connect_params.supervision_timeout.as_micros()),
-                        bt_hci::param::Duration::from_millis(0),
-                        bt_hci::param::Duration::from_millis(0),
-                    )
-                    .exec(&self.controller)
-                    .await?;
-                    let info = self.connections.accept(Some(entry.addr)).await;
-                    return Ok(Connection {
-                        info,
-                        control: self.control.sender().into(),
-                    });
-                }
+            } else if let Some(entry) = report.iter().next() {
+                self.stop_scan(&config.scan_config).await?;
+                let entry = entry.map_err(Error::HciDecode)?;
+                LeCreateConn::new(
+                    bt_hci::param::Duration::from_micros(config.scan_config.interval.as_micros()),
+                    bt_hci::param::Duration::from_micros(config.scan_config.window.as_micros()),
+                    true,
+                    entry.addr_kind,
+                    entry.addr,
+                    self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+                    bt_hci::param::Duration::from_micros(config.connect_params.min_connection_interval.as_micros()),
+                    bt_hci::param::Duration::from_micros(config.connect_params.max_connection_interval.as_micros()),
+                    config.connect_params.max_latency,
+                    bt_hci::param::Duration::from_micros(config.connect_params.supervision_timeout.as_micros()),
+                    bt_hci::param::Duration::from_millis(0),
+                    bt_hci::param::Duration::from_millis(0),
+                )
+                .exec(&self.controller)
+                .await?;
+                let info = self.connections.accept(Some(entry.addr)).await;
+                return Ok(Connection {
+                    info,
+                    control: self.control.sender().into(),
+                });
             }
         }
     }
@@ -281,7 +288,7 @@ where
                 if config.active {
                     bt_hci::param::LeScanKind::Active
                 } else {
-                    bt_hci::param::LeScanKind::Active
+                    bt_hci::param::LeScanKind::Passive
                 },
                 bt_hci::param::Duration::from_micros(config.interval.as_micros()),
                 bt_hci::param::Duration::from_micros(config.interval.as_micros()),
