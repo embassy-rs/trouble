@@ -13,8 +13,8 @@ use embassy_sync::{
 
 use crate::{
     adapter::HciController,
-    l2cap::L2capPacket,
-    packet_pool::{AllocId, DynamicPacketPool},
+    l2cap::L2capHeader,
+    packet_pool::{AllocId, DynamicPacketPool, Packet},
     pdu::Pdu,
     types::l2cap::{
         L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
@@ -25,6 +25,7 @@ use crate::{
 const BASE_ID: u16 = 0x40;
 
 struct State<const CHANNELS: usize> {
+    next_req_id: u8,
     channels: [ChannelState; CHANNELS],
     accept_waker: WakerRegistration,
     create_waker: WakerRegistration,
@@ -41,8 +42,9 @@ pub struct ChannelManager<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TX
 
 pub trait DynamicChannelManager<'d> {
     fn poll_request_to_send(&self, cid: u16, credits: usize, cx: Option<&mut Context<'_>>) -> Poll<Result<(), Error>>;
-    fn confirm_received(&self, cid: u16, credits: usize) -> Result<(ConnHandle, L2capLeSignal), Error>;
+    fn flow_control(&self, cid: u16) -> Result<Option<(ConnHandle, L2capLeSignal)>, Error>;
     fn confirm_disconnected(&self, cid: u16) -> Result<(), Error>;
+    fn disconnect(&self, cid: u16) -> Result<(), Error>;
 }
 
 impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
@@ -56,6 +58,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         Self {
             pool,
             state: Mutex::new(RefCell::new(State {
+                next_req_id: 0,
                 channels: [Self::DISCONNECTED; CHANNELS],
                 accept_waker: WakerRegistration::new(),
                 create_waker: WakerRegistration::new(),
@@ -65,11 +68,28 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         }
     }
 
-    async fn disconnect(&self, cid: u16) -> Result<(), Error> {
+    fn next_request_id(&self) -> u8 {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            let next = state.next_req_id;
+            state.next_req_id = state.next_req_id.wrapping_add(1);
+            next
+        })
+    }
+
+    fn disconnect(&self, cid: u16) -> Result<(), Error> {
         let idx = self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage {
+                    ChannelState::Disconnecting(state) if cid == state.cid => {
+                        *storage = ChannelState::Disconnected;
+                        return Ok(idx);
+                    }
+                    ChannelState::PeerConnecting(state) if cid == state.cid => {
+                        *storage = ChannelState::Disconnecting(DisconnectingState { conn: state.conn, cid });
+                        return Ok(idx);
+                    }
                     ChannelState::Connecting(state) if cid == state.cid => {
                         *storage = ChannelState::Disconnecting(DisconnectingState { conn: state.conn, cid });
                         return Ok(idx);
@@ -83,7 +103,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             }
             Err(Error::NotFound)
         })?;
-        self.inbound[idx].send(None).await;
+        let _ = self.inbound[idx].try_send(None);
         Ok(())
     }
 
@@ -92,12 +112,20 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             let mut state = state.borrow_mut();
             for storage in state.channels.iter_mut() {
                 match storage {
-                    ChannelState::Connecting(state) if cid == state.cid => {
+                    ChannelState::Disconnecting(state) if cid == state.cid => {
                         *storage = ChannelState::Disconnected;
                         break;
                     }
+                    ChannelState::PeerConnecting(state) if cid == state.cid => {
+                        *storage = ChannelState::Disconnecting(DisconnectingState { conn: state.conn, cid });
+                        break;
+                    }
+                    ChannelState::Connecting(state) if cid == state.cid => {
+                        *storage = ChannelState::Disconnecting(DisconnectingState { conn: state.conn, cid });
+                        break;
+                    }
                     ChannelState::Connected(state) if cid == state.cid => {
-                        *storage = ChannelState::Disconnected;
+                        *storage = ChannelState::Disconnecting(DisconnectingState { conn: state.conn, cid });
                         break;
                     }
                     _ => {}
@@ -107,16 +135,62 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         })
     }
 
-    fn connect(&self, mut req: ConnectingState) -> Result<(usize, u16), Error> {
+    pub fn disconnected_connection(&self, conn: ConnHandle) -> Result<(), Error> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
+                match storage {
+                    ChannelState::PeerConnecting(state) if conn == state.conn => {
+                        *storage = ChannelState::Disconnecting(DisconnectingState { conn, cid: state.cid });
+                        let _ = self.inbound[idx].try_send(None);
+                    }
+                    ChannelState::Connecting(state) if conn == state.conn => {
+                        *storage = ChannelState::Disconnecting(DisconnectingState { conn, cid: state.cid });
+                        let _ = self.inbound[idx].try_send(None);
+                    }
+                    ChannelState::Connected(state) if conn == state.conn => {
+                        *storage = ChannelState::Disconnecting(DisconnectingState { conn, cid: state.cid });
+                        let _ = self.inbound[idx].try_send(None);
+                    }
+                    _ => {}
+                }
+            }
+            state.accept_waker.wake();
+            state.create_waker.wake();
+            for w in state.credit_wakers.iter_mut() {
+                w.wake();
+            }
+        });
+        Ok(())
+    }
+
+    fn peer_connect<F: FnOnce(usize, u16) -> PeerConnectingState>(&self, f: F) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 if let ChannelState::Disconnected = storage {
                     let cid: u16 = BASE_ID + idx as u16;
+                    let mut req = f(idx, cid);
+                    req.cid = cid;
+                    *storage = ChannelState::PeerConnecting(req);
+                    state.accept_waker.wake();
+                    return Ok(());
+                }
+            }
+            Err(Error::NoChannelAvailable)
+        })
+    }
+
+    fn connect<F: FnOnce(usize, u16) -> ConnectingState>(&self, f: F) -> Result<(), Error> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
+                if let ChannelState::Disconnected = storage {
+                    let cid: u16 = BASE_ID + idx as u16;
+                    let mut req = f(idx, cid);
                     req.cid = cid;
                     *storage = ChannelState::Connecting(req);
-                    state.accept_waker.wake();
-                    return Ok((idx, cid));
+                    return Ok(());
                 }
             }
             Err(Error::NoChannelAvailable)
@@ -134,6 +208,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 match storage {
                     ChannelState::Connecting(req) if request_id == req.request_id => {
                         let res = f(idx, req);
+                        // info!("Connection created, properties: {:?}", res);
                         *storage = ChannelState::Connected(res);
                         state.create_waker.wake();
                         return Ok(());
@@ -162,10 +237,10 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         })
     }
 
-    fn poll_accept<F: FnOnce(usize, &ConnectingState) -> ConnectedState>(
+    fn poll_accept<F: FnOnce(usize, &PeerConnectingState) -> ConnectedState>(
         &self,
         conn: ConnHandle,
-        psm: u16,
+        psm: &[u16],
         cx: &mut Context<'_>,
         f: F,
     ) -> Poll<(usize, ConnectedState)> {
@@ -173,7 +248,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage {
-                    ChannelState::Connecting(req) if req.conn == conn && req.psm == psm => {
+                    ChannelState::PeerConnecting(req) if req.conn == conn && psm.contains(&req.psm) => {
                         let state = f(idx, req);
                         let cid = state.cid;
                         *storage = ChannelState::Connected(state.clone());
@@ -190,8 +265,9 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
     pub(crate) async fn accept<T: Controller>(
         &self,
         conn: ConnHandle,
-        psm: u16,
+        psm: &[u16],
         mut mtu: u16,
+        credit_flow: CreditFlowPolicy,
         controller: &HciController<'_, T>,
     ) -> Result<(ConnectedState, DynamicReceiver<'_, Option<Pdu<'d>>>), AdapterError<T::Error>> {
         let mut req_id = 0;
@@ -201,13 +277,13 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 let mps = req.mps.min(self.pool.mtu() as u16 - 4);
                 mtu = req.mtu.min(mtu);
                 let credits = self.pool.min_available(AllocId::dynamic(idx)) as u16;
-                info!("Accept, initial credits: {}", credits);
+                //info!("Accept, initial credits: {}", credits);
                 ConnectedState {
                     conn: req.conn,
                     cid: req.cid,
                     psm: req.psm,
-                    credits: self.pool.min_available(AllocId::dynamic(idx)) as u16,
-                    peer_credits: req.initial_credits,
+                    flow_control: CreditFlowControl::new(credit_flow, credits),
+                    peer_credits: req.offered_credits,
                     peer_cid: req.peer_cid,
                     pool_id: AllocId::dynamic(idx),
                     mps,
@@ -223,7 +299,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 mps: state.mps,
                 dcid: state.cid,
                 mtu,
-                credits: state.credits,
+                credits: 0,
                 result: LeCreditConnResultCode::Success,
             }),
         );
@@ -231,6 +307,22 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         // info!("Responding to create: {:?}", response);
 
         controller.signal(conn, response).await?;
+
+        // Send initial credits
+        let next_req_id = self.next_request_id();
+        controller
+            .signal(
+                conn,
+                L2capLeSignal::new(
+                    next_req_id,
+                    L2capLeSignalData::LeCreditFlowInd(LeCreditFlowInd {
+                        cid: state.cid,
+                        credits: state.flow_control.available(),
+                    }),
+                ),
+            )
+            .await?;
+
         Ok((state, self.inbound[idx].receiver().into()))
     }
 
@@ -239,39 +331,52 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
         conn: ConnHandle,
         psm: u16,
         mtu: u16,
+        credit_flow: CreditFlowPolicy,
         controller: &HciController<'_, T>,
     ) -> Result<(ConnectedState, DynamicReceiver<'_, Option<Pdu<'d>>>), AdapterError<T::Error>> {
-        let state = ConnectingState {
-            conn,
-            cid: 0,
-            request_id: 0,
-            psm,
-            peer_cid: 0,
-            initial_credits: 0,
-            mps: self.pool.mtu() as u16,
-            mtu,
-        };
-        let (idx, cid) = self.connect(state)?;
+        let req_id = self.next_request_id();
+        let mut credits = 0;
+        let mut cid: u16 = 0;
+        self.connect(|i, c| {
+            cid = c;
+            credits = self.pool.min_available(AllocId::dynamic(i)) as u16;
+            ConnectingState {
+                conn,
+                cid,
+                request_id: req_id,
+                psm,
+                initial_credits: credits,
+                flow_control_policy: credit_flow,
+                mps: self.pool.mtu() as u16 - 4,
+                mtu,
+            }
+        })?;
+        //info!("Created connect state with idx cid {}", cid);
 
         let command = L2capLeSignal::new(
-            0,
+            req_id,
             L2capLeSignalData::LeCreditConnReq(LeCreditConnReq {
                 psm,
                 mps: self.pool.mtu() as u16 - 4,
                 scid: cid,
                 mtu,
-                credits: self.pool.min_available(AllocId::dynamic(idx)) as u16,
+                credits: 0,
             }),
         );
+        //info!("Signal packet to remote: {:?}", command);
         controller.signal(conn, command).await?;
+        // info!("Sent signal packet to remote, awaiting response");
 
         let (idx, state) = poll_fn(|cx| {
             self.state.lock(|state| {
                 let mut state = state.borrow_mut();
                 for (idx, storage) in state.channels.iter_mut().enumerate() {
                     match storage {
+                        ChannelState::Disconnecting(req) if req.conn == conn && req.cid == cid => {
+                            return Poll::Ready(Err(Error::Disconnected));
+                        }
                         ChannelState::Connected(req) if req.conn == conn && req.cid == cid => {
-                            return Poll::Ready((idx, req.clone()));
+                            return Poll::Ready(Ok((idx, req.clone())));
                         }
                         _ => {}
                     }
@@ -280,20 +385,38 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 Poll::Pending
             })
         })
-        .await;
+        .await?;
 
-        // let tx = self.inbound[idx].sender().into();
+        // info!("Peer setup cid {} Sending initial credits", state.peer_cid);
+
+        // Send initial credits
+        let next_req_id = self.next_request_id();
+        controller
+            .signal(
+                conn,
+                L2capLeSignal::new(
+                    next_req_id,
+                    L2capLeSignalData::LeCreditFlowInd(LeCreditFlowInd {
+                        cid: state.cid,
+                        credits,
+                    }),
+                ),
+            )
+            .await?;
+
+        // info!("Done!");
+
         let rx = self.inbound[idx].receiver().into();
 
         Ok((state, rx))
     }
 
-    pub async fn dispatch(&self, packet: L2capPacket<'_>) -> Result<(), Error> {
-        if packet.channel < BASE_ID {
+    pub async fn dispatch(&self, header: L2capHeader, packet: Packet<'d>) -> Result<(), Error> {
+        if header.channel < BASE_ID {
             return Err(Error::InvalidChannelId);
         }
 
-        let chan = (packet.channel - BASE_ID) as usize;
+        let chan = (header.channel - BASE_ID) as usize;
         if chan > self.inbound.len() {
             return Err(Error::InvalidChannelId);
         }
@@ -302,12 +425,12 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage {
-                    ChannelState::Connected(state) if packet.channel == state.cid => {
-                        if state.credits > 0 {
-                            state.credits -= 1;
-                        } else {
+                    ChannelState::Connected(state) if header.channel == state.cid => {
+                        if state.flow_control.available() == 0 {
+                            // info!("No credits available on channel {}", state.cid);
                             return Err(Error::OutOfMemory);
                         }
+                        state.flow_control.received(1);
                     }
                     _ => {}
                 }
@@ -315,35 +438,30 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             Ok(())
         })?;
 
-        let chan_alloc = AllocId::dynamic(chan);
-        if let Some(mut p) = self.pool.alloc(chan_alloc) {
-            let len = packet.payload.len();
-            p.as_mut()[..len].copy_from_slice(packet.payload);
-            self.inbound[chan].send(Some(Pdu::new(p, len))).await;
-            Ok(())
-        } else {
-            warn!("No memory for channel {} (id {})", packet.channel, chan);
-            Err(Error::OutOfMemory)
-        }
+        self.inbound[chan]
+            .send(Some(Pdu::new(packet, header.length as usize)))
+            .await;
+        Ok(())
     }
 
     pub async fn control(&self, conn: ConnHandle, signal: L2capLeSignal) -> Result<(), Error> {
         // info!("Inbound signal: {:?}", signal);
         match signal.data {
             L2capLeSignalData::LeCreditConnReq(req) => {
-                self.connect(ConnectingState {
+                self.peer_connect(|i, c| PeerConnectingState {
                     conn,
-                    cid: 0,
+                    cid: c,
                     psm: req.psm,
                     request_id: signal.id,
                     peer_cid: req.scid,
-                    initial_credits: req.credits,
+                    offered_credits: req.credits,
                     mps: req.mps,
                     mtu: req.mtu,
                 })?;
                 Ok(())
             }
             L2capLeSignalData::LeCreditConnRes(res) => {
+                // info!("Got response to create request: {:?}", res);
                 match res.result {
                     LeCreditConnResultCode::Success => {
                         // Must be a response of a previous request which should already by allocated a channel for
@@ -351,7 +469,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                             conn: req.conn,
                             cid: req.cid,
                             psm: req.psm,
-                            credits: 0,
+                            flow_control: CreditFlowControl::new(req.flow_control_policy, req.initial_credits),
                             peer_credits: res.credits,
                             peer_cid: res.dcid,
                             pool_id: AllocId::dynamic(idx),
@@ -376,7 +494,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             }
             L2capLeSignalData::DisconnectionReq(req) => {
                 info!("Disconnect request: {:?}!", req);
-                self.disconnect(req.dcid).await?;
+                self.disconnect(req.dcid)?;
                 Ok(())
             }
             L2capLeSignalData::DisconnectionRes(res) => {
@@ -391,33 +509,36 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
 impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize> DynamicChannelManager<'d>
     for ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
 {
-    fn confirm_received(&self, cid: u16, credits: usize) -> Result<(ConnHandle, L2capLeSignal), Error> {
-        let (conn, signal) = self.state.lock(|state| {
+    fn flow_control(&self, cid: u16) -> Result<Option<(ConnHandle, L2capLeSignal)>, Error> {
+        let next_req_id = self.next_request_id();
+        let ret = self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage {
                     ChannelState::Connected(state) if cid == state.cid => {
-                        // Don't set credits higher than what we can promise
-                        let increment = self.pool.min_available(AllocId::dynamic(idx)).min(credits);
-                        state.credits += increment as u16;
-                        // info!("Credits: {}. Increment {}", state.credits, increment);
-                        return Ok((
-                            state.conn,
-                            L2capLeSignal::new(
-                                (cid % 255) as u8,
-                                L2capLeSignalData::LeCreditFlowInd(LeCreditFlowInd {
-                                    cid: state.peer_cid,
-                                    credits: increment as u16,
-                                }),
-                            ),
-                        ));
+                        return Ok(state.flow_control.process().map(|credits| {
+                            (
+                                state.conn,
+                                L2capLeSignal::new(
+                                    next_req_id,
+                                    L2capLeSignalData::LeCreditFlowInd(LeCreditFlowInd {
+                                        cid: state.cid,
+                                        credits,
+                                    }),
+                                ),
+                            )
+                        }));
                     }
                     _ => {}
                 }
             }
             Err(Error::NotFound)
         })?;
-        Ok((conn, signal))
+        Ok(ret)
+    }
+
+    fn disconnect(&self, cid: u16) -> Result<(), Error> {
+        ChannelManager::disconnect(self, cid)
     }
 
     fn confirm_disconnected(&self, cid: u16) -> Result<(), Error> {
@@ -463,31 +584,117 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
 pub enum ChannelState {
     Disconnected,
     Connecting(ConnectingState),
+    PeerConnecting(PeerConnectingState),
     Connected(ConnectedState),
     Disconnecting(DisconnectingState),
 }
 
-#[derive(Clone)]
+/// Control how credits are issued by the receiving end.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CreditFlowPolicy {
+    /// Issue credits for every N messages received
+    Every(u16),
+    /// Issue credits when below a threshold
+    MinThreshold(u16),
+}
+
+impl Default for CreditFlowPolicy {
+    fn default() -> Self {
+        Self::Every(1)
+    }
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) struct CreditFlowControl {
+    policy: CreditFlowPolicy,
+    credits: u16,
+    received: u16,
+}
+
+impl CreditFlowControl {
+    fn new(policy: CreditFlowPolicy, initial_credits: u16) -> Self {
+        Self {
+            policy,
+            credits: initial_credits,
+            received: 0,
+        }
+    }
+
+    fn available(&self) -> u16 {
+        self.credits
+    }
+
+    fn received(&mut self, n: u16) {
+        self.credits = self.credits.saturating_sub(n);
+        self.received = self.received.saturating_add(n);
+    }
+
+    fn process(&mut self) -> Option<u16> {
+        let flow = match self.policy {
+            CreditFlowPolicy::Every(count) => {
+                if self.received >= count {
+                    let amount = self.received;
+                    self.received = 0;
+                    self.credits += amount;
+                    Some(amount)
+                } else {
+                    None
+                }
+            }
+            CreditFlowPolicy::MinThreshold(threshold) => {
+                if self.credits <= threshold {
+                    let amount = self.received;
+                    self.received = 0;
+                    self.credits += amount;
+                    Some(amount)
+                } else {
+                    None
+                }
+            }
+        };
+        flow
+    }
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectingState {
+    pub(crate) conn: ConnHandle,
+    pub(crate) cid: u16,
+    pub(crate) request_id: u8,
+    pub(crate) flow_control_policy: CreditFlowPolicy,
+
+    pub(crate) psm: u16,
+    pub(crate) initial_credits: u16,
+    pub(crate) mps: u16,
+    pub(crate) mtu: u16,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PeerConnectingState {
     pub(crate) conn: ConnHandle,
     pub(crate) cid: u16,
     pub(crate) request_id: u8,
 
     pub(crate) psm: u16,
     pub(crate) peer_cid: u16,
-    pub(crate) initial_credits: u16,
+    pub(crate) offered_credits: u16,
     pub(crate) mps: u16,
     pub(crate) mtu: u16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectedState {
     pub(crate) conn: ConnHandle,
     pub(crate) cid: u16,
     pub(crate) psm: u16,
     pub(crate) mps: u16,
     pub(crate) mtu: u16,
-    pub(crate) credits: u16,
+    pub(crate) flow_control: CreditFlowControl,
 
     pub(crate) peer_cid: u16,
     pub(crate) peer_credits: u16,
@@ -495,6 +702,8 @@ pub struct ConnectedState {
     pub(crate) pool_id: AllocId,
 }
 
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DisconnectingState {
     pub(crate) conn: ConnHandle,
     pub(crate) cid: u16,

@@ -1,3 +1,4 @@
+use core::cell::RefCell;
 use core::future::poll_fn;
 
 use crate::adapter::{Adapter, ControlCommand, HciController};
@@ -5,7 +6,7 @@ use crate::channel_manager::DynamicChannelManager;
 use crate::codec;
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::packet_pool::{AllocId, DynamicPacketPool};
+use crate::packet_pool::{AllocId, DynamicPacketPool, Packet};
 use crate::pdu::Pdu;
 use crate::{AdapterError, Error};
 use bt_hci::cmd::link_control::DisconnectParams;
@@ -18,36 +19,124 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::DynamicReceiver;
 use embassy_sync::channel::DynamicSender;
 
+pub use crate::channel_manager::CreditFlowPolicy;
+
 pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
 pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
 pub(crate) const L2CAP_CID_DYN_START: u16 = 0x0040;
 
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug)]
-pub struct L2capPacket<'d> {
-    pub channel: u16,
-    pub payload: &'d [u8],
+pub struct AssembledPacket<'d> {
+    packet: Packet<'d>,
+    written: usize,
 }
 
-impl<'d> L2capPacket<'d> {
-    pub fn decode(packet: AclPacket<'_>) -> Result<(bt_hci::param::ConnHandle, L2capPacket), codec::Error> {
-        let handle = packet.handle();
-        let data = packet.data();
+impl<'d> AssembledPacket<'d> {
+    pub fn new(packet: Packet<'d>, initial: usize) -> Self {
+        Self {
+            packet,
+            written: initial,
+        }
+    }
 
+    pub fn write(&mut self, data: &[u8]) -> Result<(), Error> {
+        if self.written + data.len() > self.packet.len() {
+            return Err(Error::InsufficientSpace);
+        }
+        self.packet.as_mut()[self.written..self.written + data.len()].copy_from_slice(data);
+        self.written += data.len();
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.written
+    }
+
+    pub fn finalize(self, header: L2capHeader) -> Result<(L2capHeader, Packet<'d>), Error> {
+        if header.length as usize != self.written {
+            return Err(Error::InvalidValue);
+        }
+        Ok((header, self.packet))
+    }
+}
+
+// Handles reassembling of packets
+pub struct PacketReassembly<'d, const CONNS: usize> {
+    handles: RefCell<[Option<(ConnHandle, L2capHeader, AssembledPacket<'d>)>; CONNS]>,
+}
+
+impl<'d, const CONNS: usize> PacketReassembly<'d, CONNS> {
+    const EMPTY: Option<(ConnHandle, L2capHeader, AssembledPacket<'d>)> = None;
+    pub fn new() -> Self {
+        Self {
+            handles: RefCell::new([Self::EMPTY; CONNS]),
+        }
+    }
+
+    /// Initializes a reassembly for a given connection
+    ///
+    /// Returns InvalidState if there is already an ongoing reassembly for this connection
+    /// Returns InsufficientSpace if there is no space for this reassembly
+    pub fn init(&self, handle: ConnHandle, header: L2capHeader, p: Packet<'d>, initial: usize) -> Result<(), Error> {
+        let mut state = self.handles.borrow_mut();
+
+        // Sanity check
+        for entry in state.iter() {
+            if let Some(entry) = entry {
+                if entry.0 == handle {
+                    return Err(Error::InvalidState);
+                }
+            }
+        }
+
+        // Sanity check
+        for entry in state.iter_mut() {
+            if entry.is_none() {
+                entry.replace((handle, header, AssembledPacket::new(p, initial)));
+                return Ok(());
+            }
+        }
+        Err(Error::InsufficientSpace)
+    }
+
+    /// Updates any in progress packet assembly for the connection
+    ///
+    /// If the reassembly is complete, the l2cap header + packet is returned.
+    pub fn update(&self, handle: ConnHandle, data: &[u8]) -> Result<Option<(L2capHeader, Packet<'d>)>, Error> {
+        let mut state = self.handles.borrow_mut();
+
+        for entry in state.iter_mut() {
+            match entry {
+                Some((conn, header, packet)) if *conn == handle => {
+                    let (conn, header, mut packet) = entry.take().unwrap();
+                    packet.write(data)?;
+                    if packet.len() == header.length as usize {
+                        return Ok(Some(packet.finalize(header)?));
+                    } else {
+                        entry.replace((conn, header, packet));
+                        return Ok(None);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Err(Error::NotFound)
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
+pub struct L2capHeader {
+    pub length: u16,
+    pub channel: u16,
+}
+
+impl L2capHeader {
+    pub fn decode<'m>(packet: &AclPacket<'m>) -> Result<(L2capHeader, &'m [u8]), codec::Error> {
+        let data = packet.data();
         let mut r = ReadCursor::new(data);
         let length: u16 = r.read()?;
         let channel: u16 = r.read()?;
-        let payload = r.consume(length as usize)?;
-
-        Ok((handle, L2capPacket { channel, payload }))
-    }
-
-    pub fn encode(&self, dest: &mut [u8]) -> Result<usize, codec::Error> {
-        let mut w = WriteCursor::new(dest);
-        w.write(self.payload.len() as u16)?;
-        w.write(self.channel)?;
-        w.append(self.payload)?;
-        Ok(w.len())
+        Ok((Self { length, channel }, &packet.data()[4..]))
     }
 }
 
@@ -107,6 +196,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
         assert!(p_buf.len() >= self.mps + 4);
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + (buf.len().saturating_sub(self.mps - 2)).div_ceil(self.mps);
+        // info!("Sending data of len {} into {} packets", buf.len(), n_packets);
 
         poll_fn(|cx| self.manager.poll_request_to_send(self.cid, n_packets, Some(cx))).await?;
 
@@ -133,6 +223,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
 
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + (buf.len().saturating_sub(self.mps - 2)).div_ceil(self.mps);
+        //info!("Sending data of len {} into {} packets", buf.len(), n_packets);
 
         match self.manager.poll_request_to_send(self.cid, n_packets, None) {
             Poll::Ready(res) => res?,
@@ -185,7 +276,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
         let mut remaining = remaining as usize - data.len();
 
         drop(packet);
-        self.issue_credits(1).await?;
+        self.flow_control().await?;
         //info!(
         //    "Total size of PDU is {}, read buffer size is {} remaining; {}",
         //    len,
@@ -203,16 +294,17 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
             }
             remaining -= packet.len;
             drop(packet);
-            self.issue_credits(1).await?;
+            self.flow_control().await?;
         }
 
         // info!("Total reserved {} bytes", pos);
         Ok(pos)
     }
 
-    async fn issue_credits(&mut self, credits: usize) -> Result<(), AdapterError<T::Error>> {
-        let (handle, response) = self.manager.confirm_received(self.cid, credits)?;
-        self.tx.signal(handle, response).await?;
+    async fn flow_control(&mut self) -> Result<(), AdapterError<T::Error>> {
+        if let Some((handle, response)) = self.manager.flow_control(self.cid)? {
+            self.tx.signal(handle, response).await?;
+        }
         Ok(())
     }
 
@@ -225,13 +317,16 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
     >(
         adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection<'a>,
-        psm: u16,
+        psm: &[u16],
         mtu: u16,
+        flow_policy: CreditFlowPolicy,
     ) -> Result<L2capChannel<'a, 'd, T, L2CAP_MTU>, AdapterError<T::Error>> {
         let connections = &adapter.connections;
         let channels = &adapter.channels;
 
-        let (state, rx) = channels.accept(connection.handle(), psm, mtu, &adapter.hci()).await?;
+        let (state, rx) = channels
+            .accept(connection.handle(), psm, mtu, flow_policy, &adapter.hci())
+            .await?;
 
         Ok(Self {
             conn: connection.handle(),
@@ -248,7 +343,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
     }
 
     pub fn disconnect(&self, close_connection: bool) -> Result<(), AdapterError<T::Error>> {
-        self.manager.confirm_disconnected(self.cid)?;
+        self.manager.disconnect(self.cid)?;
         if close_connection {
             self.control
                 .try_send(ControlCommand::Disconnect(DisconnectParams {
@@ -271,13 +366,12 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
         connection: &Connection<'a>,
         psm: u16,
         mtu: u16,
+        flow_policy: CreditFlowPolicy,
     ) -> Result<Self, AdapterError<T::Error>>
 where {
-        // TODO: Use unique signal ID to ensure no collision of signal messages
-        //
         let (state, rx) = adapter
             .channels
-            .create(connection.handle(), psm, mtu, &adapter.hci())
+            .create(connection.handle(), psm, mtu, flow_policy, &adapter.hci())
             .await?;
 
         Ok(Self {

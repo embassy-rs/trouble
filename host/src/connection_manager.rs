@@ -4,7 +4,7 @@ use core::{
     task::{Context, Poll},
 };
 
-use bt_hci::param::{BdAddr, ConnHandle, LeConnRole, Status};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole, Status};
 use embassy_sync::{
     blocking_mutex::{raw::RawMutex, Mutex},
     waitqueue::WakerRegistration,
@@ -64,16 +64,18 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
-    pub fn poll_accept(&self, peer: Option<BdAddr>, cx: &mut Context<'_>) -> Poll<ConnectionInfo> {
+    pub fn poll_accept(&self, peers: &[(AddrKind, &BdAddr)], cx: &mut Context<'_>) -> Poll<ConnectionInfo> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
                 if let ConnectionState::Connecting(handle, info) = storage {
-                    if let Some(peer) = peer {
-                        if info.peer_address == peer {
-                            let i = *info;
-                            *storage = ConnectionState::Connected(*handle, *info);
-                            return Poll::Ready(i);
+                    if !peers.is_empty() {
+                        for peer in peers.iter() {
+                            if info.peer_addr_kind == peer.0 && &info.peer_address == peer.1 {
+                                let i = *info;
+                                *storage = ConnectionState::Connected(*handle, *info);
+                                return Poll::Ready(i);
+                            }
                         }
                     } else {
                         let i = *info;
@@ -87,8 +89,8 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
-    pub async fn accept(&self, peer: Option<BdAddr>) -> ConnectionInfo {
-        poll_fn(move |cx| self.poll_accept(peer, cx)).await
+    pub async fn accept(&self, peers: &[(AddrKind, &BdAddr)]) -> ConnectionInfo {
+        poll_fn(move |cx| self.poll_accept(peers, cx)).await
     }
 
     pub fn info(&self, handle: ConnHandle) -> Result<ConnectionInfo, Error> {
@@ -149,11 +151,13 @@ impl<M: RawMutex, const CONNS: usize> DynamicConnectionManager for ConnectionMan
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionInfo {
     pub handle: ConnHandle,
     pub status: Status,
     pub role: LeConnRole,
+    pub peer_addr_kind: AddrKind,
     pub peer_address: BdAddr,
     pub interval: u16,
     pub latency: u16,

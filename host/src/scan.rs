@@ -1,4 +1,3 @@
-use crate::advertise::TxPower;
 use bt_hci::{
     param::{AddrKind, BdAddr, LeAdvReport, LeExtAdvReport},
     FromHciBytes, FromHciBytesError,
@@ -15,7 +14,6 @@ pub struct ScanConfig<'d> {
     pub interval: Duration,
     pub window: Duration,
     pub timeout: Duration,
-    pub tx_power: TxPower,
 }
 
 impl<'d> Default for ScanConfig<'d> {
@@ -28,7 +26,6 @@ impl<'d> Default for ScanConfig<'d> {
             interval: Duration::from_secs(1),
             window: Duration::from_secs(1),
             timeout: Duration::from_secs(0),
-            tx_power: TxPower::ZerodBm,
         }
     }
 }
