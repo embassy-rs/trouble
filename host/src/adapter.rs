@@ -151,8 +151,8 @@ where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
-        let ret = cmd.exec(&self.controller).await?;
-        Ok(ret)
+        cmd.exec(&self.controller).await?;
+        Ok(())
     }
 
     pub(crate) async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, AdapterError<T::Error>>

@@ -122,7 +122,7 @@ impl<'d> Connection<'d> {
     where
         T: ControllerCmdAsync<LeConnUpdate>,
     {
-        let ret = adapter
+        adapter
             .async_command(LeConnUpdate::new(
                 self.info.handle,
                 params.min_connection_interval.into(),

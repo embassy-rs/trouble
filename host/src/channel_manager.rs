@@ -632,7 +632,7 @@ impl CreditFlowControl {
     }
 
     fn process(&mut self) -> Option<u16> {
-        let flow = match self.policy {
+        match self.policy {
             CreditFlowPolicy::Every(count) => {
                 if self.received >= count {
                     let amount = self.received;
@@ -653,8 +653,7 @@ impl CreditFlowControl {
                     None
                 }
             }
-        };
-        flow
+        }
     }
 }
 

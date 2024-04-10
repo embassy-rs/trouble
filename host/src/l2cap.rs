@@ -31,14 +31,14 @@ pub struct AssembledPacket<'d> {
 }
 
 impl<'d> AssembledPacket<'d> {
-    pub fn new(packet: Packet<'d>, initial: usize) -> Self {
+    pub(crate) fn new(packet: Packet<'d>, initial: usize) -> Self {
         Self {
             packet,
             written: initial,
         }
     }
 
-    pub fn write(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub(crate) fn write(&mut self, data: &[u8]) -> Result<(), Error> {
         if self.written + data.len() > self.packet.len() {
             return Err(Error::InsufficientSpace);
         }
@@ -47,11 +47,11 @@ impl<'d> AssembledPacket<'d> {
         Ok(())
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.written
     }
 
-    pub fn finalize(self, header: L2capHeader) -> Result<(L2capHeader, Packet<'d>), Error> {
+    pub(crate) fn finalize(self, header: L2capHeader) -> Result<(L2capHeader, Packet<'d>), Error> {
         if header.length as usize != self.written {
             return Err(Error::InvalidValue);
         }
@@ -62,6 +62,11 @@ impl<'d> AssembledPacket<'d> {
 // Handles reassembling of packets
 pub struct PacketReassembly<'d, const CONNS: usize> {
     handles: RefCell<[Option<(ConnHandle, L2capHeader, AssembledPacket<'d>)>; CONNS]>,
+}
+impl<'d, const CONNS: usize> Default for PacketReassembly<'d, CONNS> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<'d, const CONNS: usize> PacketReassembly<'d, CONNS> {
@@ -80,11 +85,9 @@ impl<'d, const CONNS: usize> PacketReassembly<'d, CONNS> {
         let mut state = self.handles.borrow_mut();
 
         // Sanity check
-        for entry in state.iter() {
-            if let Some(entry) = entry {
-                if entry.0 == handle {
-                    return Err(Error::InvalidState);
-                }
+        for entry in state.iter().flatten() {
+            if entry.0 == handle {
+                return Err(Error::InvalidState);
             }
         }
 

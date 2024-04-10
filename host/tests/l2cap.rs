@@ -196,8 +196,8 @@ async fn l2cap_connection_oriented_channels() {
 
     match tokio::time::timeout(Duration::from_secs(30), local).await {
         Ok(_) => {
-            let _ = central.await.unwrap().unwrap();
-            let _ = peripheral.await.unwrap().unwrap();
+            central.await.unwrap().unwrap();
+            peripheral.await.unwrap().unwrap();
             println!("Test completed successfully");
         }
         Err(e) => {
