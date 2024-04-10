@@ -68,11 +68,13 @@ pub enum Error {
     InvalidChannelId,
     NoChannelAvailable,
     NotFound,
+    InvalidState,
     OutOfMemory,
     NotSupported,
     ChannelClosed,
     Timeout,
     Busy,
+    NoPermits,
     Disconnected,
     Other,
 }

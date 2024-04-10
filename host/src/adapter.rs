@@ -3,14 +3,14 @@ use crate::channel_manager::ChannelManager;
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::l2cap::{L2capPacket, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
-use crate::packet_pool::{DynamicPacketPool, PacketPool, Qos};
+use crate::l2cap::{L2capHeader, PacketReassembly, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
+use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos};
 use crate::pdu::Pdu;
 use crate::scan::{PhySet, ScanConfig, ScanReport};
 use crate::types::l2cap::L2capLeSignal;
 use crate::Address;
 use crate::{AdapterError, Error};
-use bt_hci::cmd::controller_baseband::{Reset, SetEventMask};
+use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnParams,
     LeExtCreateConn, LeReadBufferSize, LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable,
@@ -18,7 +18,6 @@ use bt_hci::cmd::le::{
     LeSetScanEnable, LeSetScanParams,
 };
 use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
-use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::Controller;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -67,6 +66,7 @@ pub struct Adapter<
     pub(crate) address: Option<Address>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<M, CONNS>,
+    pub(crate) reassembly: PacketReassembly<'d, CONNS>,
     pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
@@ -102,6 +102,7 @@ where
             address: None,
             controller,
             connections: ConnectionManager::new(),
+            reassembly: PacketReassembly::new(),
             channels: ChannelManager::new(&host_resources.pool),
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
@@ -136,12 +137,22 @@ where
         Ok(())
     }
 
-    pub(crate) async fn read_rssi(&self, conn: ConnHandle) -> Result<i8, AdapterError<T::Error>>
+    pub async fn command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
     where
-        T: ControllerCmdSync<ReadRssi>,
+        C: SyncCmd,
+        T: ControllerCmdSync<C>,
     {
-        let val = ReadRssi::new(conn).exec(&self.controller).await?;
-        Ok(val.rssi)
+        let ret = cmd.exec(&self.controller).await?;
+        Ok(ret)
+    }
+
+    pub async fn async_command<C>(&self, cmd: C) -> Result<(), AdapterError<T::Error>>
+    where
+        C: AsyncCmd,
+        T: ControllerCmdAsync<C>,
+    {
+        cmd.exec(&self.controller).await?;
+        Ok(())
     }
 
     pub(crate) async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, AdapterError<T::Error>>
@@ -158,73 +169,56 @@ where
         if config.scan_config.filter_accept_list.is_empty() {
             return Err(Error::InvalidValue.into());
         }
+        self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
-        self.start_scan(&config.scan_config).await?;
-        loop {
-            let Some(report) = self.scanner.receive().await else {
-                return Err(Error::Timeout.into());
+        if config.scan_config.extended {
+            let initiating = InitiatingPhy {
+                scan_interval: config.scan_config.interval.into(),
+                scan_window: config.scan_config.window.into(),
+                conn_interval_min: config.connect_params.min_connection_interval.into(),
+                conn_interval_max: config.connect_params.max_connection_interval.into(),
+                max_latency: config.connect_params.max_latency,
+                supervision_timeout: config.connect_params.supervision_timeout.into(),
+                min_ce_len: config.connect_params.event_length.into(),
+                max_ce_len: config.connect_params.event_length.into(),
             };
-            if config.scan_config.extended {
-                if let Some(entry) = report.iter_ext().next() {
-                    self.stop_scan(&config.scan_config).await?;
-                    let entry = entry.map_err(Error::HciDecode)?;
-                    let initiating = InitiatingPhy {
-                        scan_interval: bt_hci::param::Duration::from_micros(config.scan_config.interval.as_micros()),
-                        scan_window: bt_hci::param::Duration::from_micros(config.scan_config.window.as_micros()),
-                        conn_interval_min: bt_hci::param::Duration::from_micros(
-                            config.connect_params.min_connection_interval.as_micros(),
-                        ),
-                        conn_interval_max: bt_hci::param::Duration::from_micros(
-                            config.connect_params.max_connection_interval.as_micros(),
-                        ),
-                        max_latency: config.connect_params.max_latency,
-                        supervision_timeout: bt_hci::param::Duration::from_micros(
-                            config.connect_params.supervision_timeout.as_micros(),
-                        ),
-                        min_ce_len: bt_hci::param::Duration::from_millis(0),
-                        max_ce_len: bt_hci::param::Duration::from_millis(0),
-                    };
-                    let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
-                    LeExtCreateConn::new(
-                        true,
-                        self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-                        entry.addr_kind,
-                        entry.addr,
-                        phy_params,
-                    )
-                    .exec(&self.controller)
-                    .await?;
-                    let info = self.connections.accept(Some(entry.addr)).await;
-                    return Ok(Connection {
-                        info,
-                        control: self.control.sender().into(),
-                    });
-                }
-            } else if let Some(entry) = report.iter().next() {
-                self.stop_scan(&config.scan_config).await?;
-                let entry = entry.map_err(Error::HciDecode)?;
-                LeCreateConn::new(
-                    bt_hci::param::Duration::from_micros(config.scan_config.interval.as_micros()),
-                    bt_hci::param::Duration::from_micros(config.scan_config.window.as_micros()),
-                    true,
-                    entry.addr_kind,
-                    entry.addr,
-                    self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-                    bt_hci::param::Duration::from_micros(config.connect_params.min_connection_interval.as_micros()),
-                    bt_hci::param::Duration::from_micros(config.connect_params.max_connection_interval.as_micros()),
-                    config.connect_params.max_latency,
-                    bt_hci::param::Duration::from_micros(config.connect_params.supervision_timeout.as_micros()),
-                    bt_hci::param::Duration::from_millis(0),
-                    bt_hci::param::Duration::from_millis(0),
-                )
-                .exec(&self.controller)
-                .await?;
-                let info = self.connections.accept(Some(entry.addr)).await;
-                return Ok(Connection {
-                    info,
-                    control: self.control.sender().into(),
-                });
-            }
+            let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
+            LeExtCreateConn::new(
+                true,
+                self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+                AddrKind::RANDOM,
+                BdAddr::default(),
+                phy_params,
+            )
+            .exec(&self.controller)
+            .await?;
+            let info = self.connections.accept(config.scan_config.filter_accept_list).await;
+            return Ok(Connection {
+                info,
+                control: self.control.sender().into(),
+            });
+        } else {
+            LeCreateConn::new(
+                config.scan_config.interval.into(),
+                config.scan_config.window.into(),
+                true,
+                AddrKind::RANDOM,
+                BdAddr::default(),
+                self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+                config.connect_params.min_connection_interval.into(),
+                config.connect_params.max_connection_interval.into(),
+                config.connect_params.max_latency,
+                config.connect_params.supervision_timeout.into(),
+                config.connect_params.event_length.into(),
+                config.connect_params.event_length.into(),
+            )
+            .exec(&self.controller)
+            .await?;
+            let info = self.connections.accept(config.scan_config.filter_accept_list).await;
+            return Ok(Connection {
+                info,
+                control: self.control.sender().into(),
+            });
         }
     }
 
@@ -260,8 +254,8 @@ where
         if config.extended {
             let scanning = ScanningPhy {
                 active_scan: config.active,
-                scan_interval: bt_hci::param::Duration::from_micros(config.interval.as_micros()),
-                scan_window: bt_hci::param::Duration::from_micros(config.window.as_micros()),
+                scan_interval: config.interval.into(),
+                scan_window: config.window.into(),
             };
             let phy_params = Self::create_phy_params(scanning, config.phys);
             LeSetExtScanParams::new(
@@ -278,7 +272,7 @@ where
             LeSetExtScanEnable::new(
                 true,
                 FilterDuplicates::Disabled,
-                bt_hci::param::Duration::from_micros(config.timeout.as_micros()),
+                config.timeout.into(),
                 bt_hci::param::Duration::from_secs(0),
             )
             .exec(&self.controller)
@@ -290,8 +284,8 @@ where
                 } else {
                     bt_hci::param::LeScanKind::Passive
                 },
-                bt_hci::param::Duration::from_micros(config.interval.as_micros()),
-                bt_hci::param::Duration::from_micros(config.interval.as_micros()),
+                config.interval.into(),
+                config.interval.into(),
                 bt_hci::param::AddrKind::RANDOM,
                 if config.filter_accept_list.is_empty() {
                     bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
@@ -313,8 +307,8 @@ where
         if config.extended {
             LeSetExtScanEnable::new(
                 false,
-                FilterDuplicates::Enabled,
-                bt_hci::param::Duration::from_micros(config.timeout.as_micros()),
+                FilterDuplicates::Disabled,
+                bt_hci::param::Duration::from_secs(0),
                 bt_hci::param::Duration::from_secs(0),
             )
             .exec(&self.controller)
@@ -370,7 +364,7 @@ where
         let mut params = params.into();
         let timeout = config
             .timeout
-            .map(|m| bt_hci::param::Duration::from_micros(m.as_micros()))
+            .map(|m| m.into())
             .unwrap_or(bt_hci::param::Duration::from_secs(0));
         let max_events = config.max_events.unwrap_or(0);
 
@@ -384,8 +378,8 @@ where
         LeSetExtAdvParams::new(
             handle,
             params.props,
-            bt_hci::param::ExtDuration::from_micros(config.interval_min.as_micros()),
-            bt_hci::param::ExtDuration::from_micros(config.interval_min.as_micros()),
+            config.interval_min.into(),
+            config.interval_min.into(),
             config.channel_map,
             self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
             peer.kind,
@@ -457,33 +451,59 @@ where
     }
 
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
-        let (conn, packet) = L2capPacket::decode(acl)?;
-        match packet.channel {
-            L2CAP_CID_ATT => {
-                #[cfg(feature = "gatt")]
-                if let Some(mut p) = self.pool.alloc(crate::packet_pool::ATT_ID) {
-                    let len = packet.payload.len();
-                    p.as_mut()[..len].copy_from_slice(packet.payload);
-                    self.att_inbound.send((conn, Pdu { packet: p, len })).await;
-                } else {
-                    // TODO: Signal back
+        let (header, packet) = match acl.boundary_flag() {
+            AclPacketBoundary::FirstFlushable => {
+                let (header, data) = L2capHeader::decode(&acl)?;
+
+                // Avoids using the packet buffer for signalling packets
+                if header.channel == L2CAP_CID_LE_U_SIGNAL {
+                    assert!(data.len() == header.length as usize);
+                    let mut r = ReadCursor::new(data);
+                    let signal: L2capLeSignal = r.read()?;
+                    self.channels.control(acl.handle(), signal).await?;
+                    return Ok(());
                 }
 
+                let Some(mut p) = self.pool.alloc(AllocId::from_channel(header.channel)) else {
+                    return Err(Error::OutOfMemory);
+                };
+                p.as_mut()[..data.len()].copy_from_slice(data);
+
+                if header.length as usize != data.len() {
+                    self.reassembly.init(acl.handle(), header, p, data.len())?;
+                    return Ok(());
+                }
+                (header, p)
+            }
+            // Next (potentially last) in a fragment
+            AclPacketBoundary::Continuing => {
+                // Get the existing fragment
+                if let Some((header, p)) = self.reassembly.update(acl.handle(), acl.data())? {
+                    (header, p)
+                } else {
+                    // Do not process yet
+                    return Ok(());
+                }
+            }
+            other => {
+                warn!("Unexpected boundary flag: {:?}!", other);
+                return Err(Error::NotSupported);
+            }
+        };
+
+        match header.channel {
+            L2CAP_CID_ATT => {
+                #[cfg(feature = "gatt")]
+                self.att_inbound
+                    .send((acl.handle(), Pdu::new(packet, header.length as usize)))
+                    .await;
                 #[cfg(not(feature = "gatt"))]
                 return Err(Error::NotSupported);
             }
             L2CAP_CID_LE_U_SIGNAL => {
-                let mut r = ReadCursor::new(packet.payload);
-                let signal: L2capLeSignal = r.read()?;
-                match self.channels.control(conn, signal).await {
-                    Ok(_) => {}
-                    Err(_) => {
-                        return Err(Error::Other);
-                    }
-                }
+                panic!("le signalling channel was fragmented, impossible!");
             }
-
-            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(packet).await {
+            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, packet).await {
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
@@ -501,20 +521,21 @@ where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<HostBufferSize>
             + ControllerCmdSync<Reset>
             + ControllerCmdAsync<LeCreateConn>
             //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
             //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
     {
+        const MAX_HCI_PACKET_LEN: usize = 259;
         self.control.send(ControlCommand::Init).await;
-
+        let mut disconnects = 0;
         loop {
             // Task handling receiving data from the controller.
             let rx_fut = async {
-                let mut rx = [0u8; 259];
+                let mut rx = [0u8; MAX_HCI_PACKET_LEN];
                 match self.controller.read(&mut rx).await {
-                    // info!("Incoming event: {:?}", result);
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
                         Ok(_) => {}
                         Err(e) => {
@@ -530,6 +551,7 @@ where
                                         handle: e.handle,
                                         status: e.status,
                                         role: e.role,
+                                        peer_addr_kind: e.peer_addr_kind,
                                         peer_address: e.peer_addr,
                                         interval: e.conn_interval.as_u16(),
                                         latency: e.peripheral_latency,
@@ -557,12 +579,14 @@ where
                                     .await;
                             }
                             _ => {
-                                warn!("Unknown event: {:?}", event);
+                                error!("Unknown event: {:?}", event);
                             }
                         },
                         Event::DisconnectionComplete(e) => {
-                            info!("Disconnected: {:?}", e);
+                            disconnects += 1;
+                            info!("Disconnected (total {}): {:?}", disconnects, e);
                             let _ = self.connections.disconnect(e.handle);
+                            let _ = self.channels.disconnected_connection(e.handle);
                         }
                         Event::NumberOfCompletedPackets(c) => {
                             // trace!("Confirmed {} packets sent", c.completed_packets.len());
@@ -615,6 +639,15 @@ where
                     }
                     ControlCommand::Init => {
                         Reset::new().exec(&self.controller).await?;
+                        info!("Informing controller we have buffer size of {}", self.pool.mtu());
+                        HostBufferSize::new(
+                            self.pool.mtu() as u16,
+                            self.pool.mtu() as u8,
+                            L2CAP_RXQ as u16,
+                            L2CAP_RXQ as u16,
+                        )
+                        .exec(&self.controller)
+                        .await?;
                         SetEventMask::new(
                             EventMask::new()
                                 .enable_le_meta(true)
@@ -629,6 +662,7 @@ where
                         LeSetEventMask::new(
                             LeEventMask::new()
                                 .enable_le_conn_complete(true)
+                                .enable_le_conn_update_complete(true)
                                 .enable_le_adv_report(true)
                                 .enable_le_scan_timeout(true)
                                 .enable_le_ext_adv_report(true),
@@ -677,13 +711,14 @@ impl<'d, T: Controller> HciController<'d, T> {
         let permit = self
             .permits
             .try_acquire(1)
-            .ok_or::<AdapterError<T::Error>>(Error::Busy.into())?;
+            .ok_or::<AdapterError<T::Error>>(Error::NoPermits.into())?;
         let acl = AclPacket::new(
             handle,
             AclPacketBoundary::FirstNonFlushable,
             AclBroadcastFlag::PointToPoint,
             pdu,
         );
+        // info!("Sent ACL {:?}", acl);
         let fut = self.controller.write_acl_data(&acl);
         match embassy_futures::poll_once(fut) {
             Poll::Ready(result) => result.map_err(AdapterError::Controller),
@@ -712,6 +747,7 @@ impl<'d, T: Controller> HciController<'d, T> {
         response: L2capLeSignal,
     ) -> Result<(), AdapterError<T::Error>> {
         // TODO: Refactor signal to avoid encode/decode
+        // info!("[{}] sending signal: {:?}", handle, response);
         let mut tx = [0; 32];
         let mut w = WriteCursor::new(&mut tx);
         let (mut header, mut body) = w.split(4)?;

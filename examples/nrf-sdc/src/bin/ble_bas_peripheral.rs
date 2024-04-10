@@ -57,8 +57,8 @@ const PACKET_POOL_SIZE: usize = 10;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
-    rng: &'d RngPool<'d>,
-    mpsl: &'d MultiprotocolServiceLayer<'d>,
+    rng: &'d RngPool,
+    mpsl: &'d MultiprotocolServiceLayer,
     mem: &'d mut sdc::Mem<N>,
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
     sdc::Builder::new()?

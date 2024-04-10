@@ -2,11 +2,14 @@ use core::cell::{RefCell, UnsafeCell};
 
 use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
 
+use crate::l2cap::{L2CAP_CID_ATT, L2CAP_CID_DYN_START};
+
 // Generic client ID used by ATT PDU
 #[cfg(feature = "gatt")]
 pub(crate) const ATT_ID: AllocId = AllocId(0);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AllocId(usize);
 
 impl AllocId {
@@ -16,6 +19,19 @@ impl AllocId {
         return AllocId(1 + idx);
         #[cfg(not(feature = "gatt"))]
         return AllocId(idx);
+    }
+
+    pub fn from_channel(cid: u16) -> AllocId {
+        match cid {
+            L2CAP_CID_ATT => {
+                #[cfg(feature = "gatt")]
+                return ATT_ID;
+                #[cfg(not(feature = "gatt"))]
+                panic!("gatt feature must be enabled to support gatt");
+            }
+            cid if cid >= L2CAP_CID_DYN_START => Self::dynamic((cid - L2CAP_CID_DYN_START) as usize),
+            _ => unimplemented!(),
+        }
     }
 }
 
@@ -209,6 +225,12 @@ pub struct Packet<'d> {
     client: AllocId,
     p_ref: Option<PacketRef>,
     pool: &'d dyn DynamicPacketPool<'d>,
+}
+
+impl<'d> Packet<'d> {
+    pub fn len(&self) -> usize {
+        self.as_ref().len()
+    }
 }
 
 impl<'d> Drop for Packet<'d> {

@@ -1,8 +1,8 @@
 use bt_hci::{
     cmd::{
         le::{
-            LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn, LeSetExtScanEnable,
-            LeSetExtScanParams, LeSetScanEnable, LeSetScanParams,
+            LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn, LeExtCreateConn,
+            LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable, LeSetScanParams,
         },
         link_control::DisconnectParams,
         status::ReadRssi,
@@ -34,6 +34,7 @@ pub struct ConnectParams {
     pub min_connection_interval: Duration,
     pub max_connection_interval: Duration,
     pub max_latency: u16,
+    pub event_length: Duration,
     pub supervision_timeout: Duration,
 }
 
@@ -43,6 +44,7 @@ impl Default for ConnectParams {
             min_connection_interval: Duration::from_millis(80),
             max_connection_interval: Duration::from_millis(80),
             max_latency: 0,
+            event_length: Duration::from_secs(0),
             supervision_timeout: Duration::from_secs(8),
         }
     }
@@ -63,7 +65,7 @@ impl<'d> Connection<'d> {
     >(
         adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
-        let info = adapter.connections.accept(None).await;
+        let info = adapter.connections.accept(&[]).await;
         Connection {
             info,
             control: adapter.control.sender().into(),
@@ -101,7 +103,37 @@ impl<'d> Connection<'d> {
     where
         T: ControllerCmdSync<ReadRssi>,
     {
-        adapter.read_rssi(self.info.handle).await
+        let ret = adapter.command(ReadRssi::new(self.info.handle)).await?;
+        Ok(ret.rssi)
+    }
+
+    pub async fn set_connection_params<
+        M: RawMutex,
+        T,
+        const CONNS: usize,
+        const CHANNELS: usize,
+        const L2CAP_TXQ: usize,
+        const L2CAP_RXQ: usize,
+    >(
+        &self,
+        adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        params: ConnectParams,
+    ) -> Result<(), AdapterError<T::Error>>
+    where
+        T: ControllerCmdAsync<LeConnUpdate>,
+    {
+        adapter
+            .async_command(LeConnUpdate::new(
+                self.info.handle,
+                params.min_connection_interval.into(),
+                params.max_connection_interval.into(),
+                params.max_latency,
+                params.supervision_timeout.into(),
+                bt_hci::param::Duration::from_secs(0),
+                bt_hci::param::Duration::from_secs(0),
+            ))
+            .await?;
+        Ok(())
     }
 
     pub async fn connect<

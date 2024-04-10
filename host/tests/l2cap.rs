@@ -100,7 +100,7 @@ async fn l2cap_connection_oriented_channels() {
                     println!("[peripheral] connected");
 
                     let mut ch1: L2capChannel<'_, '_, _, 27> =
-                        L2capChannel::accept(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16).await?;
+                        L2capChannel::accept(&adapter, &conn, &[0x2349], PAYLOAD_LEN as u16, Default::default()).await?;
 
                     println!("[peripheral] channel created");
 
@@ -170,7 +170,7 @@ async fn l2cap_connection_oriented_channels() {
                         println!("[central] connected");
                         const PAYLOAD_LEN: usize = 27;
                         let mut ch1: L2capChannel<'_, '_, _, 27> =
-                            L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16).await?;
+                            L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16, Default::default()).await?;
                         println!("[central] channel created");
                         for i in 0..10 {
                             let tx = [i; PAYLOAD_LEN];
@@ -196,8 +196,8 @@ async fn l2cap_connection_oriented_channels() {
 
     match tokio::time::timeout(Duration::from_secs(30), local).await {
         Ok(_) => {
-            let _ = central.await.unwrap().unwrap();
-            let _ = peripheral.await.unwrap().unwrap();
+            central.await.unwrap().unwrap();
+            peripheral.await.unwrap().unwrap();
             println!("Test completed successfully");
         }
         Err(e) => {

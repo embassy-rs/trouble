@@ -63,8 +63,8 @@ const PACKET_POOL_SIZE: usize = (L2CAP_TXQ + L2CAP_RXQ) as usize;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
-    rng: &'d RngPool<'d>,
-    mpsl: &'d MultiprotocolServiceLayer<'d>,
+    rng: &'d RngPool,
+    mpsl: &'d MultiprotocolServiceLayer,
     mem: &'d mut sdc::Mem<N>,
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
     sdc::Builder::new()?
@@ -152,7 +152,7 @@ async fn main(spawner: Spawner) {
             info!("Connection established");
 
             let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
-                unwrap!(L2capChannel::accept(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16).await);
+                unwrap!(L2capChannel::accept(&adapter, &conn, &[0x2349], PAYLOAD_LEN as u16, Default::default()).await);
 
             info!("L2CAP channel accepted");
 
