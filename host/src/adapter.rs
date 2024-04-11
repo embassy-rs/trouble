@@ -12,14 +12,14 @@ use crate::Address;
 use crate::{AdapterError, Error};
 use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
 use bt_hci::cmd::le::{
-    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnParams,
-    LeExtCreateConn, LeReadBufferSize, LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable,
-    LeSetExtAdvParams, LeSetExtScanEnable, LeSetExtScanParams, LeSetExtScanResponseData, LeSetRandomAddr,
-    LeSetScanEnable, LeSetScanParams,
+    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn,
+    LeReadBufferSize, LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams,
+    LeSetExtScanEnable, LeSetExtScanParams, LeSetExtScanResponseData, LeSetRandomAddr, LeSetScanEnable,
+    LeSetScanParams,
 };
-use bt_hci::cmd::link_control::{Disconnect, DisconnectParams};
+use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::Controller;
+use bt_hci::controller::{CmdError, Controller};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
@@ -29,10 +29,12 @@ use bt_hci::param::{
     Operation, PhyParams, ScanningPhy,
 };
 use bt_hci::ControllerToHostPacket;
+use core::future::pending;
 use core::task::Poll;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
+use futures::pin_mut;
 use futures_intrusive::sync::LocalSemaphore;
 
 #[cfg(feature = "gatt")]
@@ -72,14 +74,7 @@ pub struct Adapter<
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
     pub(crate) permits: LocalSemaphore,
 
-    pub(crate) control: Channel<M, ControlCommand, 1>,
     pub(crate) scanner: Channel<M, Option<ScanReport>, 1>,
-}
-
-pub(crate) enum ControlCommand {
-    Init,
-    Disconnect(DisconnectParams),
-    Connect(LeCreateConnParams),
 }
 
 impl<'d, M, T, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
@@ -107,7 +102,6 @@ where
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
-            control: Channel::new(),
             permits: LocalSemaphore::new(true, 0),
         }
     }
@@ -155,7 +149,7 @@ where
         Ok(())
     }
 
-    pub(crate) async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, AdapterError<T::Error>>
+    pub(crate) async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection, AdapterError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -193,10 +187,7 @@ where
             .exec(&self.controller)
             .await?;
             let info = self.connections.accept(config.scan_config.filter_accept_list).await;
-            return Ok(Connection {
-                info,
-                control: self.control.sender().into(),
-            });
+            return Ok(Connection { info });
         } else {
             LeCreateConn::new(
                 config.scan_config.interval.into(),
@@ -215,10 +206,7 @@ where
             .exec(&self.controller)
             .await?;
             let info = self.connections.accept(config.scan_config.filter_accept_list).await;
-            return Ok(Connection {
-                info,
-                control: self.control.sender().into(),
-            });
+            return Ok(Connection { info });
         }
     }
 
@@ -343,11 +331,11 @@ where
     ///
     /// Advertisements are stopped when a connection is made against this host,
     /// in which case a handle for the connection is returned.
-    pub async fn advertise<'m, 'k>(
-        &'m self,
+    pub async fn advertise<'k>(
+        &self,
         config: &AdvertisementConfig,
         params: impl Into<RawAdvertisement<'k>>,
-    ) -> Result<Connection<'m>, AdapterError<T::Error>>
+    ) -> Result<Connection, AdapterError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
@@ -523,14 +511,62 @@ where
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdSync<Reset>
-            + ControllerCmdAsync<LeCreateConn>
             //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
             //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
-        self.control.send(ControlCommand::Init).await;
         let mut disconnects = 0;
+
+        // Init future must run just once
+        let init_fut = async {
+            Reset::new().exec(&self.controller).await?;
+            info!("Informing controller we have buffer size of {}", self.pool.mtu());
+            HostBufferSize::new(
+                self.pool.mtu() as u16,
+                self.pool.mtu() as u8,
+                L2CAP_RXQ as u16,
+                L2CAP_RXQ as u16,
+            )
+            .exec(&self.controller)
+            .await?;
+            SetEventMask::new(
+                EventMask::new()
+                    .enable_le_meta(true)
+                    .enable_conn_request(true)
+                    .enable_conn_complete(true)
+                    .enable_hardware_error(true)
+                    .enable_disconnection_complete(true),
+            )
+            .exec(&self.controller)
+            .await?;
+
+            LeSetEventMask::new(
+                LeEventMask::new()
+                    .enable_le_conn_complete(true)
+                    .enable_le_conn_update_complete(true)
+                    .enable_le_adv_report(true)
+                    .enable_le_scan_timeout(true)
+                    .enable_le_ext_adv_report(true),
+            )
+            .exec(&self.controller)
+            .await?;
+
+            let ret = LeReadBufferSize::new().exec(&self.controller).await?;
+            trace!(
+                "Setting max flow control packets to {}",
+                ret.total_num_le_acl_data_packets
+            );
+            self.permits.release(ret.total_num_le_acl_data_packets as usize);
+            //                        let feats = LeReadLocalSupportedFeatures::new().exec(&self.controller).await?;
+            // TODO: Configure ACL max buffer size as well?
+
+            // Never return
+            let _ = pending::<Result<(), AdapterError<T>>>().await;
+            Ok(())
+        };
+        pin_mut!(init_fut);
+
         loop {
             // Task handling receiving data from the controller.
             let rx_fut = async {
@@ -608,84 +644,8 @@ where
                 Ok(())
             };
 
-            // Task issuing control.
-            // TODO: This does not necessarily need to go through the channel and could be dispatch directly
-            let control_fut = async {
-                let command = self.control.receive().await;
-                match command {
-                    ControlCommand::Connect(params) => {
-                        LeCreateConn::new(
-                            params.le_scan_interval,
-                            params.le_scan_window,
-                            params.use_filter_accept_list,
-                            params.peer_addr_kind,
-                            params.peer_addr,
-                            params.own_addr_kind,
-                            params.conn_interval_min,
-                            params.conn_interval_max,
-                            params.max_latency,
-                            params.supervision_timeout,
-                            params.min_ce_length,
-                            params.max_ce_length,
-                        )
-                        .exec(&self.controller)
-                        .await?;
-                    }
-                    ControlCommand::Disconnect(params) => {
-                        self.connections.disconnect(params.handle)?;
-                        Disconnect::new(params.handle, params.reason)
-                            .exec(&self.controller)
-                            .await?;
-                    }
-                    ControlCommand::Init => {
-                        Reset::new().exec(&self.controller).await?;
-                        info!("Informing controller we have buffer size of {}", self.pool.mtu());
-                        HostBufferSize::new(
-                            self.pool.mtu() as u16,
-                            self.pool.mtu() as u8,
-                            L2CAP_RXQ as u16,
-                            L2CAP_RXQ as u16,
-                        )
-                        .exec(&self.controller)
-                        .await?;
-                        SetEventMask::new(
-                            EventMask::new()
-                                .enable_le_meta(true)
-                                .enable_conn_request(true)
-                                .enable_conn_complete(true)
-                                .enable_hardware_error(true)
-                                .enable_disconnection_complete(true),
-                        )
-                        .exec(&self.controller)
-                        .await?;
-
-                        LeSetEventMask::new(
-                            LeEventMask::new()
-                                .enable_le_conn_complete(true)
-                                .enable_le_conn_update_complete(true)
-                                .enable_le_adv_report(true)
-                                .enable_le_scan_timeout(true)
-                                .enable_le_ext_adv_report(true),
-                        )
-                        .exec(&self.controller)
-                        .await?;
-
-                        let ret = LeReadBufferSize::new().exec(&self.controller).await?;
-                        trace!(
-                            "Setting max flow control packets to {}",
-                            ret.total_num_le_acl_data_packets
-                        );
-                        self.permits.release(ret.total_num_le_acl_data_packets as usize);
-
-                        //                        let feats = LeReadLocalSupportedFeatures::new().exec(&self.controller).await?;
-                        // TODO: Configure ACL max buffer size as well?
-                    }
-                }
-                Ok(())
-            };
-
             // info!("Entering select loop");
-            let result: Result<(), AdapterError<T::Error>> = match select(rx_fut, control_fut).await {
+            let result: Result<(), AdapterError<T::Error>> = match select(&mut init_fut, rx_fut).await {
                 Either::First(result) => result,
                 Either::Second(result) => result,
             };
@@ -704,6 +664,15 @@ where
 pub struct HciController<'d, T: Controller> {
     pub(crate) controller: &'d T,
     pub(crate) permits: &'d LocalSemaphore,
+}
+
+impl<'d, T: Controller> Clone for HciController<'d, T> {
+    fn clone(&self) -> Self {
+        Self {
+            controller: self.controller,
+            permits: self.permits,
+        }
+    }
 }
 
 impl<'d, T: Controller> HciController<'d, T> {
@@ -765,5 +734,21 @@ impl<'d, T: Controller> HciController<'d, T> {
         self.send(handle, &tx[..len]).await?;
 
         Ok(())
+    }
+
+    pub(crate) fn try_command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
+    where
+        C: SyncCmd,
+        T: ControllerCmdSync<C>,
+    {
+        let fut = cmd.exec(self.controller);
+        match embassy_futures::poll_once(fut) {
+            Poll::Ready(result) => match result {
+                Ok(r) => Ok(r),
+                Err(CmdError::Io(e)) => Err(AdapterError::Controller(e)),
+                Err(CmdError::Hci(e)) => Err(e.into()),
+            },
+            Poll::Pending => Err(Error::Busy.into()),
+        }
     }
 }

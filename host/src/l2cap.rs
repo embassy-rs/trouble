@@ -1,7 +1,7 @@
 use core::cell::RefCell;
 use core::future::poll_fn;
 
-use crate::adapter::{Adapter, ControlCommand, HciController};
+use crate::adapter::{Adapter, HciController};
 use crate::channel_manager::DynamicChannelManager;
 use crate::codec;
 use crate::connection::Connection;
@@ -9,15 +9,14 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::{AllocId, DynamicPacketPool, Packet};
 use crate::pdu::Pdu;
 use crate::{AdapterError, Error};
-use bt_hci::cmd::link_control::DisconnectParams;
-use bt_hci::controller::Controller;
+use bt_hci::cmd::link_control::Disconnect;
+use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::data::AclPacket;
 use bt_hci::param::ConnHandle;
 use bt_hci::param::DisconnectReason;
 use core::task::Poll;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::DynamicReceiver;
-use embassy_sync::channel::DynamicSender;
 
 pub use crate::channel_manager::CreditFlowPolicy;
 
@@ -152,8 +151,7 @@ pub struct L2capChannel<'a, 'd, T: Controller, const L2CAP_MTU: usize = 27> {
     pool: &'d dyn DynamicPacketPool<'d>,
     manager: &'a dyn DynamicChannelManager<'d>,
     rx: DynamicReceiver<'a, Option<Pdu<'d>>>,
-    control: DynamicSender<'a, ControlCommand>,
-    tx: HciController<'a, T>,
+    hci: HciController<'a, T>,
 }
 
 impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> Clone for L2capChannel<'a, 'd, T, L2CAP_MTU> {
@@ -167,11 +165,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> Clone for L2capChannel<'a, '
             pool: self.pool,
             manager: self.manager,
             rx: self.rx,
-            tx: HciController {
-                controller: self.tx.controller,
-                permits: self.tx.permits,
-            },
-            control: self.control,
+            hci: self.hci.clone(),
         }
     }
 }
@@ -207,14 +201,14 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
         let (first, remaining) = buf.split_at(buf.len().min(self.mps - 2));
 
         let len = self.encode(first, &mut p_buf[..], Some(buf.len() as u16))?;
-        self.tx.send(self.conn, &p_buf[..len]).await?;
+        self.hci.send(self.conn, &p_buf[..len]).await?;
 
         let chunks = remaining.chunks(self.mps);
         let num_chunks = chunks.len();
 
         for (i, chunk) in chunks.enumerate() {
             let len = self.encode(chunk, &mut p_buf[..], None)?;
-            self.tx.send(self.conn, &p_buf[..len]).await?;
+            self.hci.send(self.conn, &p_buf[..len]).await?;
         }
 
         Ok(())
@@ -237,14 +231,14 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
         let (first, remaining) = buf.split_at(buf.len().min(self.mps - 2));
 
         let len = self.encode(first, &mut p_buf[..], Some(buf.len() as u16))?;
-        self.tx.try_send(self.conn, &p_buf[..len])?;
+        self.hci.try_send(self.conn, &p_buf[..len])?;
 
         let chunks = remaining.chunks(self.mps);
         let num_chunks = chunks.len();
 
         for (i, chunk) in chunks.enumerate() {
             let len = self.encode(chunk, &mut p_buf[..], None)?;
-            self.tx.try_send(self.conn, &p_buf[..len])?;
+            self.hci.try_send(self.conn, &p_buf[..len])?;
         }
 
         Ok(())
@@ -306,7 +300,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
 
     async fn flow_control(&mut self) -> Result<(), AdapterError<T::Error>> {
         if let Some((handle, response)) = self.manager.flow_control(self.cid)? {
-            self.tx.signal(handle, response).await?;
+            self.hci.signal(handle, response).await?;
         }
         Ok(())
     }
@@ -319,7 +313,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
         const L2CAP_RXQ: usize,
     >(
         adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-        connection: &Connection<'a>,
+        connection: &Connection,
         psm: &[u16],
         mtu: u16,
         flow_policy: CreditFlowPolicy,
@@ -339,21 +333,19 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
             pool: adapter.pool,
             pool_id: state.pool_id,
             manager: &adapter.channels,
-            tx: adapter.hci(),
-            control: adapter.control.sender().into(),
+            hci: adapter.hci(),
             rx,
         })
     }
 
-    pub fn disconnect(&self, close_connection: bool) -> Result<(), AdapterError<T::Error>> {
+    pub fn disconnect(&self, close_connection: bool) -> Result<(), AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<Disconnect>,
+    {
         self.manager.disconnect(self.cid)?;
         if close_connection {
-            self.control
-                .try_send(ControlCommand::Disconnect(DisconnectParams {
-                    handle: self.conn,
-                    reason: DisconnectReason::RemoteUserTerminatedConn,
-                }))
-                .map_err(|_| Error::Busy)?;
+            self.hci
+                .try_command(Disconnect::new(self.conn, DisconnectReason::RemoteUserTerminatedConn))?;
         }
         Ok(())
     }
@@ -366,7 +358,7 @@ impl<'a, 'd, T: Controller, const L2CAP_MTU: usize> L2capChannel<'a, 'd, T, L2CA
         const L2CAP_RXQ: usize,
     >(
         adapter: &'a Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-        connection: &Connection<'a>,
+        connection: &Connection,
         psm: u16,
         mtu: u16,
         flow_policy: CreditFlowPolicy,
@@ -385,8 +377,7 @@ where {
             mps: state.mps as usize,
             pool: adapter.pool,
             manager: &adapter.channels,
-            tx: adapter.hci(),
-            control: adapter.control.sender().into(),
+            hci: adapter.hci(),
             rx,
         })
     }

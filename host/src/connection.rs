@@ -4,15 +4,15 @@ use bt_hci::{
             LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn, LeExtCreateConn,
             LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable, LeSetScanParams,
         },
-        link_control::DisconnectParams,
+        link_control::Disconnect,
         status::ReadRssi,
     },
     controller::{ControllerCmdAsync, ControllerCmdSync},
     param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole},
 };
-use embassy_sync::{blocking_mutex::raw::RawMutex, channel::DynamicSender};
+use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use crate::adapter::{Adapter, ControlCommand};
+use crate::adapter::Adapter;
 use crate::scan::ScanConfig;
 use crate::AdapterError;
 use embassy_time::Duration;
@@ -20,9 +20,8 @@ use embassy_time::Duration;
 pub use crate::connection_manager::ConnectionInfo;
 
 #[derive(Clone)]
-pub struct Connection<'d> {
+pub struct Connection {
     pub(crate) info: ConnectionInfo,
-    pub(crate) control: DynamicSender<'d, ControlCommand>,
 }
 
 pub struct ConnectConfig<'d> {
@@ -50,7 +49,7 @@ impl Default for ConnectParams {
     }
 }
 
-impl<'d> Connection<'d> {
+impl Connection {
     pub fn handle(&self) -> ConnHandle {
         self.info.handle
     }
@@ -63,22 +62,33 @@ impl<'d> Connection<'d> {
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Self {
         let info = adapter.connections.accept(&[]).await;
-        Connection {
-            info,
-            control: adapter.control.sender().into(),
-        }
+        Connection { info }
     }
 
-    pub async fn disconnect(&mut self) {
-        self.control
-            .send(ControlCommand::Disconnect(DisconnectParams {
-                handle: self.info.handle,
-                reason: DisconnectReason::RemoteUserTerminatedConn,
-            }))
-            .await;
+    pub async fn disconnect<
+        M: RawMutex,
+        T,
+        const CONNS: usize,
+        const CHANNELS: usize,
+        const L2CAP_TXQ: usize,
+        const L2CAP_RXQ: usize,
+    >(
+        &mut self,
+        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<(), AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<Disconnect>,
+    {
+        adapter
+            .command(Disconnect::new(
+                self.info.handle,
+                DisconnectReason::RemoteUserTerminatedConn,
+            ))
+            .await?;
+        Ok(())
     }
 
     pub fn role(&self) -> LeConnRole {
@@ -98,7 +108,7 @@ impl<'d> Connection<'d> {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<i8, AdapterError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
@@ -116,7 +126,7 @@ impl<'d> Connection<'d> {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         params: ConnectParams,
     ) -> Result<(), AdapterError<T::Error>>
     where
@@ -144,7 +154,7 @@ impl<'d> Connection<'d> {
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &'d Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         config: &ConnectConfig<'_>,
     ) -> Result<Self, AdapterError<T::Error>>
     where
