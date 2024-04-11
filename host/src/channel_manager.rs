@@ -71,6 +71,10 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
     fn next_request_id(&self) -> u8 {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
+            // 0 is an invalid identifier
+            if state.next_req_id == 0 {
+                state.next_req_id = state.next_req_id + 1;
+            }
             let next = state.next_req_id;
             state.next_req_id = state.next_req_id.wrapping_add(1);
             next
@@ -277,7 +281,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 let mps = req.mps.min(self.pool.mtu() as u16 - 4);
                 mtu = req.mtu.min(mtu);
                 let credits = self.pool.min_available(AllocId::dynamic(idx)) as u16;
-                //info!("Accept, initial credits: {}", credits);
+                // info!("Accept L2CAP, initial credits: {}", credits);
                 ConnectedState {
                     conn: req.conn,
                     cid: req.cid,
@@ -303,8 +307,6 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
                 result: LeCreditConnResultCode::Success,
             }),
         );
-
-        // info!("Responding to create: {:?}", response);
 
         controller.signal(conn, response).await?;
 
