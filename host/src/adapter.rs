@@ -1,4 +1,4 @@
-use crate::advertise::{AdvertisementConfig, RawAdvertisement};
+use crate::advertise::{Advertisement, AdvertisementConfig, ExtendedAdvertisement, RawAdvertisement};
 use crate::channel_manager::ChannelManager;
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
@@ -12,10 +12,10 @@ use crate::Address;
 use crate::{AdapterError, Error};
 use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
 use bt_hci::cmd::le::{
-    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn,
-    LeReadBufferSize, LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams,
-    LeSetExtScanEnable, LeSetExtScanParams, LeSetExtScanResponseData, LeSetRandomAddr, LeSetScanEnable,
-    LeSetScanParams,
+    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnCancel,
+    LeExtCreateConn, LeReadBufferSize, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetAdvSetRandomAddr,
+    LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanEnable, LeSetExtScanParams,
+    LeSetExtScanResponseData, LeSetRandomAddr, LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -25,8 +25,8 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{
-    AddrKind, AdvHandle, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates, InitiatingPhy, LeEventMask,
-    Operation, PhyParams, ScanningPhy,
+    AddrKind, AdvHandle, AdvKind, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates, InitiatingPhy,
+    LeEventMask, Operation, PhyParams, ScanningPhy,
 };
 use bt_hci::ControllerToHostPacket;
 use core::future::pending;
@@ -158,8 +158,12 @@ where
             + ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeSetExtScanParams>
             + ControllerCmdSync<LeSetScanParams>
+            + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeSetScanEnable>,
     {
+        // Cancel any ongoing connection process
+        let _ = LeCreateConnCancel::new().exec(&self.controller).await;
+
         if config.scan_config.filter_accept_list.is_empty() {
             return Err(Error::InvalidValue.into());
         }
@@ -187,6 +191,7 @@ where
             .exec(&self.controller)
             .await?;
             let info = self.connections.accept(config.scan_config.filter_accept_list).await;
+            let _ = LeCreateConnCancel::new().exec(&self.controller).await;
             return Ok(Connection { info });
         } else {
             LeCreateConn::new(
@@ -206,6 +211,7 @@ where
             .exec(&self.controller)
             .await?;
             let info = self.connections.accept(config.scan_config.filter_accept_list).await;
+            let _ = LeCreateConnCancel::new().exec(&self.controller).await;
             return Ok(Connection { info });
         }
     }
@@ -327,11 +333,86 @@ where
         Ok(report)
     }
 
+    //
+    pub async fn advertise<'k>(
+        &self,
+        config: &AdvertisementConfig,
+        params: Advertisement<'k>,
+    ) -> Result<Connection, AdapterError<T::Error>>
+    where
+        T: for<'t> ControllerCmdSync<LeSetAdvData>
+            + ControllerCmdSync<LeSetAdvParams>
+            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+    {
+        // May fail if already disabled
+        let _ = LeSetAdvEnable::new(false).exec(&self.controller).await;
+
+        let mut params: RawAdvertisement = params.into();
+        let timeout = config
+            .timeout
+            .map(|m| m.into())
+            .unwrap_or(bt_hci::param::Duration::from_secs(0));
+        let max_events = config.max_events.unwrap_or(0);
+
+        params.set.duration = timeout;
+        params.set.max_ext_adv_events = max_events;
+
+        if !params.props.legacy_adv() {
+            return Err(Error::InvalidValue.into());
+        }
+
+        let kind = match (params.props.connectable_adv(), params.props.scannable_adv()) {
+            (true, true) => AdvKind::AdvInd,
+            (true, false) => AdvKind::AdvDirectIndLow,
+            (false, true) => AdvKind::AdvScanInd,
+            (false, false) => AdvKind::AdvNonconnInd,
+        };
+        let peer = params.peer.unwrap_or(Address {
+            kind: AddrKind::RANDOM,
+            addr: BdAddr::default(),
+        });
+
+        LeSetAdvParams::new(
+            config.interval_min.into(),
+            config.interval_max.into(),
+            kind,
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            peer.kind,
+            peer.addr,
+            config.channel_map,
+            config.filter_policy,
+        )
+        .exec(&self.controller)
+        .await?;
+
+        if !params.adv_data.is_empty() {
+            let mut data = [0; 31];
+            let to_copy = params.adv_data.len().min(data.len());
+            data[..to_copy].copy_from_slice(&params.adv_data[..to_copy]);
+            LeSetAdvData::new(to_copy as u8, data).exec(&self.controller).await?;
+        }
+
+        if !params.scan_data.is_empty() {
+            let mut data = [0; 31];
+            let to_copy = params.scan_data.len().min(data.len());
+            data[..to_copy].copy_from_slice(&params.scan_data[..to_copy]);
+            LeSetScanResponseData::new(to_copy as u8, data)
+                .exec(&self.controller)
+                .await?;
+        }
+
+        LeSetAdvEnable::new(true).exec(&self.controller).await?;
+        let conn = Connection::accept(self).await;
+        LeSetAdvEnable::new(false).exec(&self.controller).await?;
+        Ok(conn)
+    }
+
     /// Starts sending BLE advertisements according to the provided config.
     ///
     /// Advertisements are stopped when a connection is made against this host,
     /// in which case a handle for the connection is returned.
-    pub async fn advertise<'k>(
+    pub async fn advertise_ext<'k>(
         &self,
         config: &AdvertisementConfig,
         params: impl Into<RawAdvertisement<'k>>,
@@ -349,7 +430,7 @@ where
         let _ = LeClearAdvSets::new().exec(&self.controller).await;
         let handle = AdvHandle::new(0); // TODO: Configurable?
 
-        let mut params = params.into();
+        let mut params: RawAdvertisement = params.into();
         let timeout = config
             .timeout
             .map(|m| m.into())
@@ -367,7 +448,7 @@ where
             handle,
             params.props,
             config.interval_min.into(),
-            config.interval_min.into(),
+            config.interval_max.into(),
             config.channel_map,
             self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
             peer.kind,
@@ -377,7 +458,7 @@ where
             config.primary_phy,
             0,
             config.secondary_phy,
-            params.set.adv_handle.as_raw(),
+            0,
             false,
         )
         .exec(&self.controller)
@@ -390,24 +471,12 @@ where
         }
 
         if !params.adv_data.is_empty() {
-            //          let mut data = [0; 31];
-            //          let mut w = WriteCursor::new(&mut data[..]);
-            //          for item in params.adv_data.iter() {
-            //              item.encode(&mut w)?;
-            //          }
-            //          let len = w.len();
             LeSetExtAdvData::new(handle, Operation::Complete, false, params.adv_data)
                 .exec(&self.controller)
                 .await?;
         }
 
         if !params.scan_data.is_empty() {
-            //let mut data = [0; 31];
-            //let mut w = WriteCursor::new(&mut data[..]);
-            //for item in params.scan_data.iter() {
-            //    item.encode(&mut w)?;
-            //}
-            //let len = w.len();
             LeSetExtScanResponseData::new(handle, Operation::Complete, false, params.scan_data)
                 .exec(&self.controller)
                 .await?;
@@ -545,6 +614,7 @@ where
                 LeEventMask::new()
                     .enable_le_conn_complete(true)
                     .enable_le_conn_update_complete(true)
+                    .enable_le_adv_set_terminated(true)
                     .enable_le_adv_report(true)
                     .enable_le_scan_timeout(true)
                     .enable_le_ext_adv_report(true),
@@ -581,24 +651,32 @@ where
                     Ok(ControllerToHostPacket::Event(event)) => match event {
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => {
-                                if let Err(err) = self.connections.connect(
-                                    e.handle,
-                                    ConnectionInfo {
-                                        handle: e.handle,
-                                        status: e.status,
-                                        role: e.role,
-                                        peer_addr_kind: e.peer_addr_kind,
-                                        peer_address: e.peer_addr,
-                                        interval: e.conn_interval.as_u16(),
-                                        latency: e.peripheral_latency,
-                                        timeout: e.supervision_timeout.as_u16(),
-                                        att_mtu: 23,
-                                    },
-                                ) {
-                                    warn!("Error establishing connection: {:?}", err);
-                                    Disconnect::new(e.handle, DisconnectReason::RemoteDeviceTerminatedConnLowResources)
+                                if e.status.into_inner() == 0 {
+                                    info!("Connection complete {:?}: {:?}", e.handle, e.peer_addr);
+                                    if let Err(err) = self.connections.connect(
+                                        e.handle,
+                                        ConnectionInfo {
+                                            handle: e.handle,
+                                            status: e.status,
+                                            role: e.role,
+                                            peer_addr_kind: e.peer_addr_kind,
+                                            peer_address: e.peer_addr,
+                                            interval: e.conn_interval.as_u16(),
+                                            latency: e.peripheral_latency,
+                                            timeout: e.supervision_timeout.as_u16(),
+                                            att_mtu: 23,
+                                        },
+                                    ) {
+                                        warn!("Error establishing connection: {:?}", err);
+                                        Disconnect::new(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        )
                                         .exec(&self.controller)
                                         .await?;
+                                    }
+                                } else {
+                                    warn!("Error connection complete event: {:?}", e.status);
                                 }
                             }
                             LeEvent::LeScanTimeout(_) => {

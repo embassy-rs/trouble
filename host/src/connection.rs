@@ -1,8 +1,8 @@
 use bt_hci::{
     cmd::{
         le::{
-            LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn, LeExtCreateConn,
-            LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable, LeSetScanParams,
+            LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn, LeCreateConnCancel,
+            LeExtCreateConn, LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable, LeSetScanParams,
         },
         link_control::Disconnect,
         status::ReadRssi,
@@ -165,6 +165,7 @@ impl Connection {
             + ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeSetExtScanParams>
             + ControllerCmdSync<LeSetScanParams>
+            + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeSetScanEnable>,
     {
         adapter.connect(config).await
