@@ -16,21 +16,13 @@ The BLE specification defines the software of a BLE implementation in terms of a
 
 ## Current status
 
-The implementation has some basic functionality working.
+The implementation has some basic functionality working:
 
-Done:
 * Peripheral role - advertise as a peripheral and accept connections.
 * Central role - scan for devices and establish connections.
 * Basic GATT server supporting write, read, notifications
 * L2CAP CoC (Connection oriented Channels) with credit management (for both central and peripheral)
-
-Missing:
-* Security manager (i.e. secure pairing)
-* Gatt client
-* Expose more configuration options
-* Legacy Bluetooth (probably won't happen unless it's needed for qualification).*
-* Testing preparing for qualification (see https://github.com/auto-pts/auto-pts which is an automated framework we might be able to use)
-* Check serialization/deserialization code size and improve
+* Runs on any transport supporting the `bt-hci` traits.
 
 ## Example
 
