@@ -1,4 +1,4 @@
-use crate::advertise::{Advertisement, AdvertisementConfig, ExtendedAdvertisement, RawAdvertisement};
+use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
 use crate::channel_manager::ChannelManager;
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
@@ -65,7 +65,7 @@ pub struct Adapter<
 > where
     M: RawMutex,
 {
-    pub(crate) address: Option<Address>,
+    address: Option<Address>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<M, CONNS>,
     pub(crate) reassembly: PacketReassembly<'d, CONNS>,
@@ -106,13 +106,8 @@ where
         }
     }
 
-    pub async fn set_random_address(&mut self, address: Address) -> Result<(), AdapterError<T::Error>>
-    where
-        T: ControllerCmdSync<LeSetRandomAddr>,
-    {
-        LeSetRandomAddr::new(address.addr).exec(&self.controller).await?;
+    pub fn set_random_address(&mut self, address: Address) {
         self.address.replace(address);
-        Ok(())
     }
 
     pub(crate) async fn set_accept_filter(
@@ -136,6 +131,7 @@ where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
+        let permit = self.permits.acquire(1).await;
         let ret = cmd.exec(&self.controller).await?;
         Ok(ret)
     }
@@ -145,6 +141,7 @@ where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
+        let permit = self.permits.acquire(1).await;
         cmd.exec(&self.controller).await?;
         Ok(())
     }
@@ -578,6 +575,7 @@ where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdSync<Reset>
             //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
@@ -590,7 +588,12 @@ where
         // Init future must run just once
         let init_fut = async {
             Reset::new().exec(&self.controller).await?;
-            info!("Informing controller we have buffer size of {}", self.pool.mtu());
+
+            if let Some(addr) = self.address {
+                LeSetRandomAddr::new(addr.addr).exec(&self.controller).await?;
+                info!("Adapter address set to {:?}", addr.addr);
+            }
+
             HostBufferSize::new(
                 self.pool.mtu() as u16,
                 self.pool.mtu() as u8,
@@ -613,8 +616,12 @@ where
             LeSetEventMask::new(
                 LeEventMask::new()
                     .enable_le_conn_complete(true)
-                    .enable_le_conn_update_complete(true)
-                    .enable_le_adv_set_terminated(true)
+                    //                    .enable_le_conn_update_complete(true)
+                    //                    .enable_le_enhanced_conn_complete(true)
+                    //                    .enable_le_conn_iq_report(true)
+                    //                    .enable_le_transmit_power_reporting(true)
+                    //                    .enable_le_enhanced_conn_complete_v2(true)
+                    //                    .enable_le_adv_set_terminated(true)
                     .enable_le_adv_report(true)
                     .enable_le_scan_timeout(true)
                     .enable_le_ext_adv_report(true),
@@ -623,10 +630,6 @@ where
             .await?;
 
             let ret = LeReadBufferSize::new().exec(&self.controller).await?;
-            trace!(
-                "Setting max flow control packets to {}",
-                ret.total_num_le_acl_data_packets
-            );
             self.permits.release(ret.total_num_le_acl_data_packets as usize);
             //                        let feats = LeReadLocalSupportedFeatures::new().exec(&self.controller).await?;
             // TODO: Configure ACL max buffer size as well?
