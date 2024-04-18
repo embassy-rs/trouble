@@ -43,7 +43,7 @@ pub struct AdvertisementConfig {
     pub interval_min: Duration,
     pub interval_max: Duration,
 
-    pub channel_map: AdvChannelMap,
+    pub channel_map: Option<AdvChannelMap>,
     pub filter_policy: AdvFilterPolicy,
 }
 
@@ -58,7 +58,7 @@ impl Default for AdvertisementConfig {
             interval_min: Duration::from_millis(250),
             interval_max: Duration::from_millis(250),
             filter_policy: AdvFilterPolicy::default(),
-            channel_map: AdvChannelMap::ALL,
+            channel_map: None,
         }
     }
 }

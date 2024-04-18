@@ -83,7 +83,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
     pub async fn notify(
         &self,
         handle: CharacteristicHandle,
-        connection: &Connection<'_>,
+        connection: &Connection,
         value: &[u8],
     ) -> Result<(), AdapterError<T::Error>> {
         let conn = connection.handle();
@@ -116,7 +116,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
 #[derive(Clone)]
 pub enum GattEvent<'reference, 'values> {
     Write {
-        connection: Connection<'reference>,
+        connection: &'reference Connection,
         handle: CharacteristicHandle,
         value: &'values [u8],
     },

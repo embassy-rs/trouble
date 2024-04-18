@@ -122,7 +122,7 @@ async fn main(spawner: Spawner) {
 
     let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
         Adapter::new(sdc, host_resources);
-    unwrap!(adapter.set_random_address(my_addr()).await);
+    adapter.set_random_address(my_addr());
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to
     let target: Address = Address::random([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
