@@ -53,12 +53,29 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
+    pub(crate) fn with_connection<F: FnOnce(&ConnectionInfo) -> R, R>(
+        &self,
+        handle: ConnHandle,
+        f: F,
+    ) -> Result<R, Error> {
+        self.state.lock(|state| {
+            let state = state.borrow();
+            for storage in state.connections.iter() {
+                match storage {
+                    ConnectionState::Connected(h, info) if *h == handle => return Ok(f(info)),
+                    _ => {}
+                }
+            }
+            Err(Error::NotFound)
+        })
+    }
+
     pub fn connect(&self, handle: ConnHandle, info: ConnectionInfo) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
                 if let ConnectionState::Disconnected = storage {
-                    *storage = ConnectionState::Connecting(handle, info);
+                    *storage = ConnectionState::Connecting(handle, Some(info));
                     state.waker.wake();
                     return Ok(());
                 }
@@ -76,23 +93,24 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         self.canceled.signal(());
     }
 
-    pub fn poll_accept(&self, peers: &[(AddrKind, &BdAddr)], cx: &mut Context<'_>) -> Poll<ConnectionInfo> {
+    pub fn poll_accept(&self, peers: &[(AddrKind, &BdAddr)], cx: &mut Context<'_>) -> Poll<ConnHandle> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.connections.iter_mut() {
                 if let ConnectionState::Connecting(handle, info) = storage {
+                    let handle = *handle;
                     if !peers.is_empty() {
                         for peer in peers.iter() {
-                            if info.peer_addr_kind == peer.0 && &info.peer_address == peer.1 {
-                                let i = *info;
-                                *storage = ConnectionState::Connected(*handle, *info);
-                                return Poll::Ready(i);
+                            if info.as_ref().unwrap().peer_addr_kind == peer.0
+                                && &info.as_ref().unwrap().peer_address == peer.1
+                            {
+                                *storage = ConnectionState::Connected(handle, info.take().unwrap());
+                                return Poll::Ready(handle);
                             }
                         }
                     } else {
-                        let i = *info;
-                        *storage = ConnectionState::Connected(*handle, *info);
-                        return Poll::Ready(i);
+                        *storage = ConnectionState::Connected(handle, info.take().unwrap());
+                        return Poll::Ready(handle);
                     }
                 }
             }
@@ -101,28 +119,14 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
-    pub async fn accept(&self, peers: &[(AddrKind, &BdAddr)]) -> ConnectionInfo {
+    pub async fn accept(&self, peers: &[(AddrKind, &BdAddr)]) -> ConnHandle {
         poll_fn(move |cx| self.poll_accept(peers, cx)).await
-    }
-
-    pub fn info(&self, handle: ConnHandle) -> Result<ConnectionInfo, Error> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for storage in state.connections.iter_mut() {
-                if let ConnectionState::Connected(h, info) = storage {
-                    if *h == handle {
-                        return Ok(*info);
-                    }
-                }
-            }
-            Err(Error::NotFound)
-        })
     }
 }
 
 pub enum ConnectionState {
     Disconnected,
-    Connecting(ConnHandle, ConnectionInfo),
+    Connecting(ConnHandle, Option<ConnectionInfo>),
     Connected(ConnHandle, ConnectionInfo),
 }
 
@@ -163,7 +167,7 @@ impl<M: RawMutex, const CONNS: usize> DynamicConnectionManager for ConnectionMan
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionInfo {
     pub handle: ConnHandle,

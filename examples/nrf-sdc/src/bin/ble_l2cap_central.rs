@@ -120,7 +120,7 @@ async fn main(spawner: Spawner) {
         StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::Guaranteed(4)));
 
-    let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+    let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
         Adapter::new(sdc, host_resources);
     adapter.set_random_address(my_addr());
 
@@ -141,17 +141,17 @@ async fn main(spawner: Spawner) {
             let conn = unwrap!(adapter.connect(&config).await);
             info!("Connected, creating l2cap channel");
             const PAYLOAD_LEN: usize = 27;
-            let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
+            let mut ch1 =
                 unwrap!(L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16, Default::default()).await);
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                unwrap!(ch1.send(&tx).await);
+                unwrap!(ch1.send(&adapter, &tx).await);
             }
             info!("Sent data, waiting for them to be sent back");
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
-                let len = unwrap!(ch1.receive(&mut rx).await);
+                let len = unwrap!(ch1.receive(&adapter, &mut rx).await);
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }
