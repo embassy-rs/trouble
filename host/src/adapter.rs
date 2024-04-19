@@ -107,7 +107,7 @@ where
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
-            permits: LocalSemaphore::new(true, 0),
+            permits: LocalSemaphore::new(false, 0),
         }
     }
 
@@ -135,7 +135,6 @@ where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
-        let permit = self.permits.acquire(1).await;
         let ret = cmd.exec(&self.controller).await?;
         Ok(ret)
     }
@@ -145,7 +144,6 @@ where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
-        let permit = self.permits.acquire(1).await;
         cmd.exec(&self.controller).await?;
         Ok(())
     }
@@ -785,7 +783,7 @@ impl<'d, T: Controller> Clone for HciController<'d, T> {
 
 impl<'d, T: Controller> HciController<'d, T> {
     pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
-        let permit = self
+        let mut permit = self
             .permits
             .try_acquire(1)
             .ok_or::<AdapterError<T::Error>>(Error::NoPermits.into())?;
@@ -798,7 +796,12 @@ impl<'d, T: Controller> HciController<'d, T> {
         // info!("Sent ACL {:?}", acl);
         let fut = self.controller.write_acl_data(&acl);
         match embassy_futures::poll_once(fut) {
-            Poll::Ready(result) => result.map_err(AdapterError::Controller),
+            Poll::Ready(result) => {
+                if result.is_ok() {
+                    permit.disarm();
+                }
+                result.map_err(AdapterError::Controller)
+            }
             Poll::Pending => Err(Error::Busy.into()),
         }
     }
@@ -849,10 +852,6 @@ impl<'d, T: Controller> HciController<'d, T> {
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
-        let permit = self
-            .permits
-            .try_acquire(1)
-            .ok_or::<AdapterError<T::Error>>(Error::NoPermits.into())?;
         let fut = cmd.exec(self.controller);
         match embassy_futures::poll_once(fut) {
             Poll::Ready(result) => match result {
