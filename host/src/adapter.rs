@@ -829,7 +829,10 @@ impl<'d, T: Controller> HciController<'d, T> {
 
                 result.map_err(AdapterError::Controller)
             }
-            Poll::Pending => Err(Error::Busy.into()),
+            Poll::Pending => {
+                warn!("hci: acl data send busy");
+                Err(Error::Busy.into())
+            }
         }
     }
 

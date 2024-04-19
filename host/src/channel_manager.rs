@@ -633,7 +633,10 @@ impl<
 
         match self.poll_request_to_send(cid, n_packets, None) {
             Poll::Ready(res) => res?,
-            Poll::Pending => return Err(Error::Busy.into()),
+            Poll::Pending => {
+                warn!("l2cap: not enough credits for {} packets", n_packets);
+                return Err(Error::Busy.into());
+            }
         }
 
         // Segment using mps
