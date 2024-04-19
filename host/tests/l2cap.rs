@@ -12,7 +12,7 @@ use tokio_serial::{DataBits, Parity, StopBits};
 use trouble_host::{
     adapter::{Adapter, HostResources},
     advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    connection::{ConnectConfig, Connection},
+    connection::ConnectConfig,
     l2cap::L2capChannel,
     scan::ScanConfig,
     PacketQos,
@@ -166,7 +166,7 @@ async fn l2cap_connection_oriented_channels() {
                             },
                         };
                         println!("[central] connecting");
-                        let conn = Connection::connect(&adapter, &config).await.unwrap();
+                        let conn = adapter.connect(&config).await.unwrap();
                         println!("[central] connected");
                         const PAYLOAD_LEN: usize = 27;
                         let mut ch1: L2capChannel<'_, '_, _, 27> =

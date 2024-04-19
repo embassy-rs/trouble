@@ -7,6 +7,7 @@ use core::{
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole, Status};
 use embassy_sync::{
     blocking_mutex::{raw::RawMutex, Mutex},
+    signal::Signal,
     waitqueue::WakerRegistration,
 };
 
@@ -19,6 +20,7 @@ struct State<const CONNS: usize> {
 
 pub struct ConnectionManager<M: RawMutex, const CONNS: usize> {
     state: Mutex<M, RefCell<State<CONNS>>>,
+    canceled: Signal<M, ()>,
 }
 
 impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
@@ -29,6 +31,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                 connections: [Self::DISCONNECTED; CONNS],
                 waker: WakerRegistration::new(),
             })),
+            canceled: Signal::new(),
         }
     }
 
@@ -62,6 +65,15 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
             }
             Err(Error::NotFound)
         })
+    }
+
+    pub async fn wait_canceled(&self) {
+        self.canceled.wait().await;
+        self.canceled.reset();
+    }
+
+    pub fn canceled(&self) {
+        self.canceled.signal(());
     }
 
     pub fn poll_accept(&self, peers: &[(AddrKind, &BdAddr)], cx: &mut Context<'_>) -> Poll<ConnectionInfo> {

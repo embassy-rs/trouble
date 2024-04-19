@@ -122,10 +122,9 @@ where
     where
         T: ControllerCmdSync<LeClearFilterAcceptList> + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        LeClearFilterAcceptList::new().exec(&self.controller).await?;
+        self.command(LeClearFilterAcceptList::new()).await?;
         for entry in filter_accept_list {
-            LeAddDeviceToFilterAcceptList::new(entry.0, *entry.1)
-                .exec(&self.controller)
+            self.command(LeAddDeviceToFilterAcceptList::new(entry.0, *entry.1))
                 .await?;
         }
         Ok(())
@@ -151,7 +150,8 @@ where
         Ok(())
     }
 
-    pub(crate) async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection, AdapterError<T::Error>>
+    /// Attempt to create a connection with the provided config.
+    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection, AdapterError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -164,11 +164,15 @@ where
             + ControllerCmdSync<LeSetScanEnable>,
     {
         // Cancel any ongoing connection process
-        let _ = LeCreateConnCancel::new().exec(&self.controller).await;
+        let r = self.command(LeCreateConnCancel::new()).await;
+        if let Ok(()) = r {
+            self.connections.wait_canceled().await;
+        }
 
         if config.scan_config.filter_accept_list.is_empty() {
             return Err(Error::InvalidValue.into());
         }
+
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
         if config.scan_config.extended {
@@ -183,19 +187,18 @@ where
                 max_ce_len: config.connect_params.event_length.into(),
             };
             let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
-            LeExtCreateConn::new(
+            self.async_command(LeExtCreateConn::new(
                 true,
                 self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
                 AddrKind::RANDOM,
                 BdAddr::default(),
                 phy_params,
-            )
-            .exec(&self.controller)
+            ))
             .await?;
             let info = self.connections.accept(config.scan_config.filter_accept_list).await;
             Ok(Connection { info })
         } else {
-            LeCreateConn::new(
+            self.async_command(LeCreateConn::new(
                 config.scan_config.interval.into(),
                 config.scan_config.window.into(),
                 true,
@@ -208,8 +211,7 @@ where
                 config.connect_params.supervision_timeout.into(),
                 config.connect_params.event_length.into(),
                 config.connect_params.event_length.into(),
-            )
-            .exec(&self.controller)
+            ))
             .await?;
             let info = self.connections.accept(config.scan_config.filter_accept_list).await;
             Ok(Connection { info })
@@ -252,7 +254,7 @@ where
                 scan_window: config.window.into(),
             };
             let phy_params = Self::create_phy_params(scanning, config.phys);
-            LeSetExtScanParams::new(
+            self.command(LeSetExtScanParams::new(
                 self.address.map(|s| s.kind).unwrap_or(AddrKind::RANDOM),
                 if config.filter_accept_list.is_empty() {
                     bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
@@ -260,16 +262,14 @@ where
                     bt_hci::param::ScanningFilterPolicy::BasicFiltered
                 },
                 phy_params,
-            )
-            .exec(&self.controller)
+            ))
             .await?;
-            LeSetExtScanEnable::new(
+            self.command(LeSetExtScanEnable::new(
                 true,
                 FilterDuplicates::Disabled,
                 config.timeout.into(),
                 bt_hci::param::Duration::from_secs(0),
-            )
-            .exec(&self.controller)
+            ))
             .await?;
         } else {
             let params = LeSetScanParams::new(
@@ -287,9 +287,8 @@ where
                     bt_hci::param::ScanningFilterPolicy::BasicFiltered
                 },
             );
-            params.exec(&self.controller).await?;
-
-            LeSetScanEnable::new(true, true).exec(&self.controller).await?;
+            self.command(params).await?;
+            self.command(LeSetScanEnable::new(true, true)).await?;
         }
         Ok(())
     }
@@ -299,16 +298,15 @@ where
         T: ControllerCmdSync<LeSetExtScanEnable> + ControllerCmdSync<LeSetScanEnable>,
     {
         if config.extended {
-            LeSetExtScanEnable::new(
+            self.command(LeSetExtScanEnable::new(
                 false,
                 FilterDuplicates::Disabled,
                 bt_hci::param::Duration::from_secs(0),
                 bt_hci::param::Duration::from_secs(0),
-            )
-            .exec(&self.controller)
+            ))
             .await?;
         } else {
-            LeSetScanEnable::new(false, false).exec(&self.controller).await?;
+            self.command(LeSetScanEnable::new(false, false)).await?;
         }
         Ok(())
     }
@@ -346,7 +344,7 @@ where
             + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
         // May fail if already disabled
-        let _ = LeSetAdvEnable::new(false).exec(&self.controller).await;
+        let _ = self.command(LeSetAdvEnable::new(false)).await;
 
         let mut params: RawAdvertisement = params.into();
         let timeout = config
@@ -373,7 +371,7 @@ where
             addr: BdAddr::default(),
         });
 
-        LeSetAdvParams::new(
+        self.command(LeSetAdvParams::new(
             config.interval_min.into(),
             config.interval_max.into(),
             kind,
@@ -382,29 +380,26 @@ where
             peer.addr,
             config.channel_map.unwrap_or(AdvChannelMap::ALL),
             config.filter_policy,
-        )
-        .exec(&self.controller)
+        ))
         .await?;
 
         if !params.adv_data.is_empty() {
             let mut data = [0; 31];
             let to_copy = params.adv_data.len().min(data.len());
             data[..to_copy].copy_from_slice(&params.adv_data[..to_copy]);
-            LeSetAdvData::new(to_copy as u8, data).exec(&self.controller).await?;
+            self.command(LeSetAdvData::new(to_copy as u8, data)).await?;
         }
 
         if !params.scan_data.is_empty() {
             let mut data = [0; 31];
             let to_copy = params.scan_data.len().min(data.len());
             data[..to_copy].copy_from_slice(&params.scan_data[..to_copy]);
-            LeSetScanResponseData::new(to_copy as u8, data)
-                .exec(&self.controller)
-                .await?;
+            self.command(LeSetScanResponseData::new(to_copy as u8, data)).await?;
         }
 
-        LeSetAdvEnable::new(true).exec(&self.controller).await?;
+        self.command(LeSetAdvEnable::new(true)).await?;
         let conn = Connection::accept(self).await;
-        LeSetAdvEnable::new(false).exec(&self.controller).await?;
+        self.command(LeSetAdvEnable::new(false)).await?;
         Ok(conn)
     }
 
@@ -426,8 +421,8 @@ where
             + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
         // May fail if already disabled
-        let _ = LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await;
-        let _ = LeClearAdvSets::new().exec(&self.controller).await;
+        let _ = self.command(LeSetExtAdvEnable::new(false, &[])).await;
+        let _ = self.command(LeClearAdvSets::new()).await;
         let handle = AdvHandle::new(0); // TODO: Configurable?
 
         let mut params: RawAdvertisement = params.into();
@@ -444,7 +439,7 @@ where
             kind: AddrKind::RANDOM,
             addr: BdAddr::default(),
         });
-        LeSetExtAdvParams::new(
+        self.command(LeSetExtAdvParams::new(
             handle,
             params.props,
             config.interval_min.into(),
@@ -460,33 +455,36 @@ where
             config.secondary_phy,
             0,
             false,
-        )
-        .exec(&self.controller)
+        ))
         .await?;
 
         if let Some(address) = self.address {
-            LeSetAdvSetRandomAddr::new(handle, address.addr)
-                .exec(&self.controller)
-                .await?;
+            self.command(LeSetAdvSetRandomAddr::new(handle, address.addr)).await?;
         }
 
         if !params.adv_data.is_empty() {
-            LeSetExtAdvData::new(handle, Operation::Complete, false, params.adv_data)
-                .exec(&self.controller)
-                .await?;
+            self.command(LeSetExtAdvData::new(
+                handle,
+                Operation::Complete,
+                false,
+                params.adv_data,
+            ))
+            .await?;
         }
 
         if !params.scan_data.is_empty() {
-            LeSetExtScanResponseData::new(handle, Operation::Complete, false, params.scan_data)
-                .exec(&self.controller)
-                .await?;
+            self.command(LeSetExtScanResponseData::new(
+                handle,
+                Operation::Complete,
+                false,
+                params.scan_data,
+            ))
+            .await?;
         }
 
-        LeSetExtAdvEnable::new(true, &[params.set])
-            .exec(&self.controller)
-            .await?;
+        self.command(LeSetExtAdvEnable::new(true, &[params.set])).await?;
         let conn = Connection::accept(self).await;
-        LeSetExtAdvEnable::new(false, &[]).exec(&self.controller).await?;
+        self.command(LeSetExtAdvEnable::new(false, &[])).await?;
         Ok(conn)
     }
 
@@ -674,8 +672,8 @@ where
                     },
                     Ok(ControllerToHostPacket::Event(event)) => match event {
                         Event::Le(event) => match event {
-                            LeEvent::LeConnectionComplete(e) => {
-                                if e.status.into_inner() == 0 {
+                            LeEvent::LeConnectionComplete(e) => match e.status.to_result() {
+                                Ok(_) => {
                                     info!("Connection complete {:?}: {:?}", e.handle, e.peer_addr);
                                     if let Err(err) = self.connections.connect(
                                         e.handle,
@@ -692,17 +690,20 @@ where
                                         },
                                     ) {
                                         warn!("Error establishing connection: {:?}", err);
-                                        Disconnect::new(
+                                        self.command(Disconnect::new(
                                             e.handle,
                                             DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                        )
-                                        .exec(&self.controller)
+                                        ))
                                         .await?;
                                     }
-                                } else {
-                                    warn!("Error connection complete event: {:?}", e.status);
                                 }
-                            }
+                                Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
+                                    self.connections.canceled();
+                                }
+                                Err(e) => {
+                                    warn!("Error connection complete event: {:?}", e);
+                                }
+                            },
                             LeEvent::LeScanTimeout(_) => {
                                 self.scanner.send(None).await;
                             }
@@ -848,6 +849,10 @@ impl<'d, T: Controller> HciController<'d, T> {
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
+        let permit = self
+            .permits
+            .try_acquire(1)
+            .ok_or::<AdapterError<T::Error>>(Error::NoPermits.into())?;
         let fut = cmd.exec(self.controller);
         match embassy_futures::poll_once(fut) {
             Poll::Ready(result) => match result {

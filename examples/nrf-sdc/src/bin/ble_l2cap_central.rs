@@ -13,7 +13,7 @@ use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
 use trouble_host::{
     adapter::{Adapter, HostResources},
-    connection::{ConnectConfig, Connection},
+    connection::ConnectConfig,
     l2cap::L2capChannel,
     scan::ScanConfig,
     Address, PacketQos,
@@ -138,7 +138,7 @@ async fn main(spawner: Spawner) {
     info!("Scanning for peripheral...");
     let _ = join(adapter.run(), async {
         loop {
-            let conn = unwrap!(Connection::connect(&adapter, &config).await);
+            let conn = unwrap!(adapter.connect(&config).await);
             info!("Connected, creating l2cap channel");
             const PAYLOAD_LEN: usize = 27;
             let mut ch1: L2capChannel<'_, '_, _, PAYLOAD_LEN> =
