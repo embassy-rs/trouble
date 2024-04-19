@@ -61,7 +61,7 @@ async fn main() {
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 1, 1> = Adapter::new(controller, host_resources);
+    let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 27, 1, 1> = Adapter::new(controller, host_resources);
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 

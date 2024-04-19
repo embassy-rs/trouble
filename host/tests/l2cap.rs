@@ -72,7 +72,7 @@ async fn l2cap_connection_oriented_channels() {
         let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
             HostResources::new(PacketQos::Guaranteed(4));
 
-        let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
             Adapter::new(controller_peripheral, &mut host_resources);
 
         select! {
@@ -99,8 +99,7 @@ async fn l2cap_connection_oriented_channels() {
                     }).await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1: L2capChannel<'_, '_, _, 27> =
-                        L2capChannel::accept(&adapter, &conn, &[0x2349], PAYLOAD_LEN as u16, Default::default()).await?;
+                    let mut ch1 = L2capChannel::accept(&adapter, &conn, &[0x2349], PAYLOAD_LEN as u16, Default::default()).await?;
 
                     println!("[peripheral] channel created");
 
@@ -108,7 +107,7 @@ async fn l2cap_connection_oriented_channels() {
                     const PAYLOAD_LEN: usize = 27;
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(&mut rx).await?;
+                        let len = ch1.receive(&adapter, &mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }
@@ -117,7 +116,7 @@ async fn l2cap_connection_oriented_channels() {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send(&tx).await?;
+                        ch1.send(&adapter, &tx).await?;
                     }
                     println!("[peripheral] data sent");
                     break;
@@ -135,7 +134,7 @@ async fn l2cap_connection_oriented_channels() {
         let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
             HostResources::new(PacketQos::Guaranteed(4));
 
-        let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
             Adapter::new(controller_central, &mut host_resources);
 
         select! {
@@ -169,17 +168,16 @@ async fn l2cap_connection_oriented_channels() {
                         let conn = adapter.connect(&config).await.unwrap();
                         println!("[central] connected");
                         const PAYLOAD_LEN: usize = 27;
-                        let mut ch1: L2capChannel<'_, '_, _, 27> =
-                            L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16, Default::default()).await?;
+                        let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16, Default::default()).await?;
                         println!("[central] channel created");
                         for i in 0..10 {
                             let tx = [i; PAYLOAD_LEN];
-                            ch1.send(&tx).await?;
+                            ch1.send(&adapter, &tx).await?;
                         }
                         println!("[central] data sent");
                         let mut rx = [0; PAYLOAD_LEN];
                         for i in 0..10 {
-                            let len = ch1.receive(&mut rx).await?;
+                            let len = ch1.receive(&adapter, &mut rx).await?;
                             assert_eq!(len, rx.len());
                             assert_eq!(rx, [i; PAYLOAD_LEN]);
                         }

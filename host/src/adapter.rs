@@ -65,6 +65,7 @@ pub struct Adapter<
     T,
     const CONNS: usize,
     const CHANNELS: usize,
+    const L2CAP_MTU: usize,
     const L2CAP_TXQ: usize = 1,
     const L2CAP_RXQ: usize = 1,
 > where
@@ -74,7 +75,7 @@ pub struct Adapter<
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<M, CONNS>,
     pub(crate) reassembly: PacketReassembly<'d, CONNS>,
-    pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+    pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
     pub(crate) permits: LocalSemaphore,
@@ -82,8 +83,16 @@ pub struct Adapter<
     pub(crate) scanner: Channel<M, Option<ScanReport>, 1>,
 }
 
-impl<'d, M, T, const CONNS: usize, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
-    Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>
+impl<
+        'd,
+        M,
+        T,
+        const CONNS: usize,
+        const CHANNELS: usize,
+        const L2CAP_MTU: usize,
+        const L2CAP_TXQ: usize,
+        const L2CAP_RXQ: usize,
+    > Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
 where
     M: RawMutex,
     T: Controller,
@@ -94,7 +103,7 @@ where
     ///
     /// The adapter requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the adapter but which the adapter is the only accessor of.
-    pub fn new<const PACKETS: usize, const L2CAP_MTU: usize>(
+    pub fn new<const PACKETS: usize>(
         controller: T,
         host_resources: &'d mut HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
@@ -137,6 +146,22 @@ where
     {
         let ret = cmd.exec(&self.controller).await?;
         Ok(ret)
+    }
+
+    pub fn try_command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
+    where
+        C: SyncCmd,
+        T: ControllerCmdSync<C>,
+    {
+        let fut = cmd.exec(&self.controller);
+        match embassy_futures::poll_once(fut) {
+            Poll::Ready(result) => match result {
+                Ok(r) => Ok(r),
+                Err(CmdError::Io(e)) => Err(AdapterError::Controller(e)),
+                Err(CmdError::Hci(e)) => Err(e.into()),
+            },
+            Poll::Pending => Err(Error::Busy.into()),
+        }
     }
 
     pub async fn async_command<C>(&self, cmd: C) -> Result<(), AdapterError<T::Error>>
@@ -193,8 +218,8 @@ where
                 phy_params,
             ))
             .await?;
-            let info = self.connections.accept(config.scan_config.filter_accept_list).await;
-            Ok(Connection { info })
+            let handle = self.connections.accept(config.scan_config.filter_accept_list).await;
+            Ok(Connection::new(handle))
         } else {
             self.async_command(LeCreateConn::new(
                 config.scan_config.interval.into(),
@@ -211,8 +236,8 @@ where
                 config.connect_params.event_length.into(),
             ))
             .await?;
-            let info = self.connections.accept(config.scan_config.filter_accept_list).await;
-            Ok(Connection { info })
+            let handle = self.connections.accept(config.scan_config.filter_accept_list).await;
+            Ok(Connection::new(handle))
         }
     }
 
@@ -396,9 +421,9 @@ where
         }
 
         self.command(LeSetAdvEnable::new(true)).await?;
-        let conn = Connection::accept(self).await;
+        let handle = self.connections.accept(&[]).await;
         self.command(LeSetAdvEnable::new(false)).await?;
-        Ok(conn)
+        Ok(Connection::new(handle))
     }
 
     /// Starts sending BLE advertisements according to the provided config.
@@ -481,9 +506,9 @@ where
         }
 
         self.command(LeSetExtAdvEnable::new(true, &[params.set])).await?;
-        let conn = Connection::accept(self).await;
+        let handle = self.connections.accept(&[]).await;
         self.command(LeSetExtAdvEnable::new(false, &[])).await?;
-        Ok(conn)
+        Ok(Connection::new(handle))
     }
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
@@ -658,6 +683,7 @@ where
         pin_mut!(init_fut);
 
         loop {
+            // info!("[run] permits: {}", self.permits.permits());
             // Task handling receiving data from the controller.
             let rx_fut = async {
                 let mut rx = [0u8; MAX_HCI_PACKET_LEN];
@@ -672,7 +698,6 @@ where
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => match e.status.to_result() {
                                 Ok(_) => {
-                                    info!("Connection complete {:?}: {:?}", e.handle, e.peer_addr);
                                     if let Err(err) = self.connections.connect(
                                         e.handle,
                                         ConnectionInfo {
@@ -726,7 +751,7 @@ where
                             let _ = self.channels.disconnected_connection(e.handle);
                         }
                         Event::NumberOfCompletedPackets(c) => {
-                            // trace!("Confirmed {} packets sent", c.completed_packets.len());
+                            // info!("Confirmed {} packets sent", c.completed_packets.len());
                             self.permits.release(c.completed_packets.len());
                         }
                         Event::Vendor(vendor) => {
@@ -783,6 +808,7 @@ impl<'d, T: Controller> Clone for HciController<'d, T> {
 
 impl<'d, T: Controller> HciController<'d, T> {
     pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
+        // info!("[try_send] permits: {}", self.permits.permits());
         let mut permit = self
             .permits
             .try_acquire(1)
@@ -800,6 +826,7 @@ impl<'d, T: Controller> HciController<'d, T> {
                 if result.is_ok() {
                     permit.disarm();
                 }
+
                 result.map_err(AdapterError::Controller)
             }
             Poll::Pending => Err(Error::Busy.into()),
@@ -807,6 +834,7 @@ impl<'d, T: Controller> HciController<'d, T> {
     }
 
     pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
+        // info!("[send] permits: {}", self.permits.permits());
         self.permits.acquire(1).await.disarm();
         let acl = AclPacket::new(
             handle,
@@ -824,7 +852,7 @@ impl<'d, T: Controller> HciController<'d, T> {
     pub(crate) async fn signal(
         &self,
         handle: ConnHandle,
-        response: L2capLeSignal,
+        response: &L2capLeSignal,
     ) -> Result<(), AdapterError<T::Error>> {
         // TODO: Refactor signal to avoid encode/decode
         // info!("[{}] sending signal: {:?}", handle, response);
@@ -832,7 +860,7 @@ impl<'d, T: Controller> HciController<'d, T> {
         let mut w = WriteCursor::new(&mut tx);
         let (mut header, mut body) = w.split(4)?;
 
-        body.write(response)?;
+        body.write_ref(response)?;
 
         // TODO: Move into l2cap packet type
         header.write(body.len() as u16)?;

@@ -112,7 +112,7 @@ async fn main(spawner: Spawner) {
         StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+    let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
         Adapter::new(sdc, host_resources);
     adapter.set_random_address(my_addr());
 
