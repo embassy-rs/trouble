@@ -1,12 +1,5 @@
 use bt_hci::{
-    cmd::{
-        le::{
-            LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn, LeCreateConnCancel,
-            LeExtCreateConn, LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable, LeSetScanParams,
-        },
-        link_control::Disconnect,
-        status::ReadRssi,
-    },
+    cmd::{le::LeConnUpdate, link_control::Disconnect, status::ReadRssi},
     controller::{ControllerCmdAsync, ControllerCmdSync},
     param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole},
 };
@@ -144,30 +137,5 @@ impl Connection {
             ))
             .await?;
         Ok(())
-    }
-
-    pub async fn connect<
-        M: RawMutex,
-        T,
-        const CONNS: usize,
-        const CHANNELS: usize,
-        const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
-    >(
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-        config: &ConnectConfig<'_>,
-    ) -> Result<Self, AdapterError<T::Error>>
-    where
-        T: ControllerCmdSync<LeClearFilterAcceptList>
-            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
-            + ControllerCmdAsync<LeCreateConn>
-            + ControllerCmdAsync<LeExtCreateConn>
-            + ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeSetExtScanParams>
-            + ControllerCmdSync<LeSetScanParams>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + ControllerCmdSync<LeSetScanEnable>,
-    {
-        adapter.connect(config).await
     }
 }
