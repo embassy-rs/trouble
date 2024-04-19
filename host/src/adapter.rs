@@ -23,10 +23,10 @@ use bt_hci::controller::{CmdError, Controller};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
-use bt_hci::event::Event;
+use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
-    AddrKind, AdvHandle, AdvKind, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates, InitiatingPhy,
-    LeEventMask, Operation, PhyParams, ScanningPhy,
+    AddrKind, AdvChannelMap, AdvHandle, AdvKind, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates,
+    InitiatingPhy, LeEventMask, Operation, PhyParams, ScanningPhy,
 };
 use bt_hci::ControllerToHostPacket;
 use core::future::pending;
@@ -52,6 +52,11 @@ impl<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: 
             pool: PacketPool::new(qos),
         }
     }
+}
+
+/// Event handler for vendor-specific events handled outside the adapter.
+pub trait VendorEventHandler {
+    fn on_event(&self, event: &Vendor<'_>);
 }
 
 pub struct Adapter<
@@ -188,8 +193,7 @@ where
             .exec(&self.controller)
             .await?;
             let info = self.connections.accept(config.scan_config.filter_accept_list).await;
-            let _ = LeCreateConnCancel::new().exec(&self.controller).await;
-            return Ok(Connection { info });
+            Ok(Connection { info })
         } else {
             LeCreateConn::new(
                 config.scan_config.interval.into(),
@@ -208,8 +212,7 @@ where
             .exec(&self.controller)
             .await?;
             let info = self.connections.accept(config.scan_config.filter_accept_list).await;
-            let _ = LeCreateConnCancel::new().exec(&self.controller).await;
-            return Ok(Connection { info });
+            Ok(Connection { info })
         }
     }
 
@@ -377,7 +380,7 @@ where
             self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
             peer.kind,
             peer.addr,
-            config.channel_map,
+            config.channel_map.unwrap_or(AdvChannelMap::ALL),
             config.filter_policy,
         )
         .exec(&self.controller)
@@ -446,7 +449,7 @@ where
             params.props,
             config.interval_min.into(),
             config.interval_max.into(),
-            config.channel_map,
+            config.channel_map.unwrap_or(AdvChannelMap::ALL),
             self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
             peer.kind,
             peer.addr,
@@ -582,6 +585,24 @@ where
             //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
     {
+        self.run_with_handler(None).await
+    }
+
+    pub async fn run_with_handler(
+        &self,
+        vendor_handler: Option<&dyn VendorEventHandler>,
+    ) -> Result<(), AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<Disconnect>
+            + ControllerCmdSync<SetEventMask>
+            + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<LeSetRandomAddr>
+            + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdSync<Reset>
+            //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
+            //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
+            + ControllerCmdSync<LeReadBufferSize>,
+    {
         const MAX_HCI_PACKET_LEN: usize = 259;
         let mut disconnects = 0;
 
@@ -696,7 +717,7 @@ where
                                     .await;
                             }
                             _ => {
-                                error!("Unknown event: {:?}", event);
+                                warn!("Unknown LE event!");
                             }
                         },
                         Event::DisconnectionComplete(e) => {
@@ -709,8 +730,13 @@ where
                             // trace!("Confirmed {} packets sent", c.completed_packets.len());
                             self.permits.release(c.completed_packets.len());
                         }
+                        Event::Vendor(vendor) => {
+                            if let Some(handler) = vendor_handler {
+                                handler.on_event(&vendor);
+                            }
+                        }
                         _ => {
-                            warn!("Unknown event: {:?}", event);
+                            warn!("Unknown event");
                         }
                     },
                     Ok(p) => {

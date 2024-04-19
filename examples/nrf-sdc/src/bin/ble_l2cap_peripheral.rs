@@ -121,7 +121,7 @@ async fn main(spawner: Spawner) {
 
     let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
         Adapter::new(sdc, host_resources);
-    unwrap!(adapter.set_random_address(my_addr()).await);
+    adapter.set_random_address(my_addr());
     let mut adv_data = [0; 31];
     unwrap!(AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),],

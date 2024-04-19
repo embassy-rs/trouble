@@ -73,7 +73,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP
             let mut state = state.borrow_mut();
             // 0 is an invalid identifier
             if state.next_req_id == 0 {
-                state.next_req_id = state.next_req_id + 1;
+                state.next_req_id += 1;
             }
             let next = state.next_req_id;
             state.next_req_id = state.next_req_id.wrapping_add(1);
