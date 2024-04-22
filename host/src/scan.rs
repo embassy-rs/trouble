@@ -1,8 +1,7 @@
-use bt_hci::{
-    param::{AddrKind, BdAddr, LeAdvReport, LeExtAdvReport},
-    FromHciBytes, FromHciBytesError,
-};
 use core::iter::FusedIterator;
+
+use bt_hci::param::{AddrKind, BdAddr, LeAdvReport, LeExtAdvReport};
+use bt_hci::{FromHciBytes, FromHciBytesError};
 use embassy_time::Duration;
 use heapless::Vec;
 

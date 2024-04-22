@@ -1,16 +1,15 @@
-use bt_hci::{
-    cmd::{le::LeConnUpdate, link_control::Disconnect, status::ReadRssi},
-    controller::{Controller, ControllerCmdAsync, ControllerCmdSync},
-    param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole},
-};
+use bt_hci::cmd::le::LeConnUpdate;
+use bt_hci::cmd::link_control::Disconnect;
+use bt_hci::cmd::status::ReadRssi;
+use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-
-use crate::adapter::Adapter;
-use crate::scan::ScanConfig;
-use crate::AdapterError;
 use embassy_time::Duration;
 
+use crate::adapter::Adapter;
 pub use crate::connection_manager::ConnectionInfo;
+use crate::scan::ScanConfig;
+use crate::AdapterError;
 
 #[derive(Clone)]
 pub struct Connection {

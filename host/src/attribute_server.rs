@@ -1,15 +1,14 @@
+use core::cell::RefCell;
+
 use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-
-use crate::{
-    att::{self, Att, AttDecodeError, AttErrorCode},
-    attribute::{AttributeData, AttributeTable},
-    codec,
-    cursor::WriteCursor,
-    types::uuid::Uuid,
-};
-use core::cell::RefCell;
 use embassy_sync::blocking_mutex::Mutex;
+
+use crate::att::{self, Att, AttDecodeError, AttErrorCode};
+use crate::attribute::{AttributeData, AttributeTable};
+use crate::codec;
+use crate::cursor::WriteCursor;
+use crate::types::uuid::Uuid;
 
 #[derive(Debug, PartialEq)]
 pub enum WorkResult {

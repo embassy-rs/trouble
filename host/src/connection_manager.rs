@@ -1,15 +1,12 @@
-use core::{
-    cell::RefCell,
-    future::poll_fn,
-    task::{Context, Poll},
-};
+use core::cell::RefCell;
+use core::future::poll_fn;
+use core::task::{Context, Poll};
 
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole, Status};
-use embassy_sync::{
-    blocking_mutex::{raw::RawMutex, Mutex},
-    signal::Signal,
-    waitqueue::WakerRegistration,
-};
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::signal::Signal;
+use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::Error;
 

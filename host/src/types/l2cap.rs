@@ -1,8 +1,29 @@
-use crate::{
-    codec::{Decode, Encode, Error, FixedSize, Type},
-    cursor::{ReadCursor, WriteCursor},
-};
+use bt_hci::data::AclPacket;
 use trouble_host_macros::*;
+
+use crate::codec::{self, Decode, Encode, Error, FixedSize, Type};
+use crate::cursor::{ReadCursor, WriteCursor};
+
+pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
+pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
+pub(crate) const L2CAP_CID_DYN_START: u16 = 0x0040;
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
+pub struct L2capHeader {
+    pub length: u16,
+    pub channel: u16,
+}
+
+impl L2capHeader {
+    pub fn decode<'m>(packet: &AclPacket<'m>) -> Result<(L2capHeader, &'m [u8]), codec::Error> {
+        let data = packet.data();
+        let mut r = ReadCursor::new(data);
+        let length: u16 = r.read()?;
+        let channel: u16 = r.read()?;
+        Ok((Self { length, channel }, &packet.data()[4..]))
+    }
+}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]

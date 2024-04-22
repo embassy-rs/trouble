@@ -1,15 +1,6 @@
-use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
-use crate::channel_manager::ChannelManager;
-use crate::connection::{ConnectConfig, Connection};
-use crate::connection_manager::{ConnectionInfo, ConnectionManager};
-use crate::cursor::{ReadCursor, WriteCursor};
-use crate::l2cap::{L2capHeader, PacketReassembly, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
-use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos};
-use crate::pdu::Pdu;
-use crate::scan::{PhySet, ScanConfig, ScanReport};
-use crate::types::l2cap::L2capLeSignal;
-use crate::Address;
-use crate::{AdapterError, Error};
+use core::future::pending;
+use core::task::Poll;
+
 use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnCancel,
@@ -19,8 +10,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{CmdError, Controller};
-use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::controller::{CmdError, Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
@@ -29,16 +19,25 @@ use bt_hci::param::{
     InitiatingPhy, LeEventMask, Operation, PhyParams, ScanningPhy,
 };
 use bt_hci::ControllerToHostPacket;
-use core::future::pending;
-use core::task::Poll;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use futures::pin_mut;
 use futures_intrusive::sync::LocalSemaphore;
 
+use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
+use crate::channel_manager::ChannelManager;
+use crate::connection::{ConnectConfig, Connection};
+use crate::connection_manager::{ConnectionInfo, ConnectionManager};
+use crate::cursor::{ReadCursor, WriteCursor};
+use crate::l2cap::sar::PacketReassembly;
+use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos};
+use crate::pdu::Pdu;
+use crate::scan::{PhySet, ScanConfig, ScanReport};
+use crate::types::l2cap::{L2capHeader, L2capLeSignal, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
 #[cfg(feature = "gatt")]
 use crate::{attribute::AttributeTable, gatt::GattServer};
+use crate::{AdapterError, Address, Error};
 
 pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,

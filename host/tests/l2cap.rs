@@ -3,20 +3,16 @@ use bt_hci::controller::ExternalController;
 use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_io_adapters::tokio_1::FromTokio;
-use tokio::io::ReadHalf;
-use tokio::io::WriteHalf;
+use tokio::io::{ReadHalf, WriteHalf};
 use tokio::select;
 use tokio::time::Duration;
-use tokio_serial::SerialStream;
-use tokio_serial::{DataBits, Parity, StopBits};
-use trouble_host::{
-    adapter::{Adapter, HostResources},
-    advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    connection::ConnectConfig,
-    l2cap::L2capChannel,
-    scan::ScanConfig,
-    PacketQos,
-};
+use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
+use trouble_host::adapter::{Adapter, HostResources};
+use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
+use trouble_host::connection::ConnectConfig;
+use trouble_host::l2cap::L2capChannel;
+use trouble_host::scan::ScanConfig;
+use trouble_host::PacketQos;
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3;

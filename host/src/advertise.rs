@@ -1,13 +1,10 @@
-use crate::{
-    codec,
-    cursor::{ReadCursor, WriteCursor},
-    types::uuid::Uuid,
-    Address,
-};
+pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, PhyKind};
 use bt_hci::param::{AdvEventProps, AdvHandle, AdvSet};
 use embassy_time::Duration;
 
-pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, PhyKind};
+use crate::cursor::{ReadCursor, WriteCursor};
+use crate::types::uuid::Uuid;
+use crate::{codec, Address};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Eq, PartialEq, Copy, Clone)]

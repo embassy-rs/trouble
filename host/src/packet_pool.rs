@@ -1,8 +1,9 @@
 use core::cell::{RefCell, UnsafeCell};
 
-use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 
-use crate::l2cap::{L2CAP_CID_ATT, L2CAP_CID_DYN_START};
+use crate::types::l2cap::{L2CAP_CID_ATT, L2CAP_CID_DYN_START};
 
 // Generic client ID used by ATT PDU
 #[cfg(feature = "gatt")]

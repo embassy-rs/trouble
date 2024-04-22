@@ -4,9 +4,8 @@
 #![allow(unused_variables)]
 
 use advertise::AdvertisementDataError;
-use bt_hci::FromHciBytesError;
-
 pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
+use bt_hci::FromHciBytesError;
 
 mod fmt;
 

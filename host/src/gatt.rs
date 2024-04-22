@@ -1,5 +1,10 @@
 use core::fmt;
 
+use bt_hci::controller::Controller;
+use bt_hci::param::ConnHandle;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::channel::DynamicReceiver;
+
 use crate::adapter::HciController;
 use crate::att::{self, Att, ATT_HANDLE_VALUE_NTF_OPTCODE};
 use crate::attribute::CharacteristicHandle;
@@ -10,10 +15,6 @@ use crate::cursor::WriteCursor;
 use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
 use crate::{AdapterError, Error};
-use bt_hci::controller::Controller;
-use bt_hci::param::ConnHandle;
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::DynamicReceiver;
 
 pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize> {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,

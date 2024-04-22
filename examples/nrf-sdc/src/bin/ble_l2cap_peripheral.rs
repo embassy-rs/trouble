@@ -8,16 +8,14 @@ use embassy_futures::join::join;
 use embassy_nrf::{bind_interrupts, pac};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
-use nrf_sdc::{self as sdc, mpsl, mpsl::MultiprotocolServiceLayer};
+use nrf_sdc::mpsl::MultiprotocolServiceLayer;
+use nrf_sdc::{self as sdc, mpsl};
 use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
-use trouble_host::{
-    adapter::{Adapter, HostResources},
-    advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    l2cap::L2capChannel,
-    Address, PacketQos,
-};
-
+use trouble_host::adapter::{Adapter, HostResources};
+use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
+use trouble_host::l2cap::L2capChannel;
+use trouble_host::{Address, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {

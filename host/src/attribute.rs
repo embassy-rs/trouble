@@ -1,9 +1,13 @@
-use core::{cell::RefCell, fmt};
+use core::cell::RefCell;
+use core::fmt;
 
-use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 
+use crate::att::AttErrorCode;
+use crate::cursor::WriteCursor;
 pub use crate::types::uuid::Uuid;
-use crate::{att::AttErrorCode, cursor::WriteCursor, Error};
+use crate::Error;
 
 pub const GENERIC_ACCESS_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1800u16.to_le_bytes());
 pub const CHARACTERISTIC_DEVICE_NAME_UUID16: Uuid = Uuid::Uuid16(0x2A00u16.to_le_bytes());

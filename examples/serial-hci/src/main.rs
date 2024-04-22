@@ -6,14 +6,11 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::*;
 use static_cell::StaticCell;
 use tokio::time::Duration;
-use tokio_serial::SerialStream;
-use tokio_serial::{DataBits, Parity, StopBits};
-use trouble_host::{
-    adapter::{Adapter, HostResources},
-    advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE},
-    attribute::{AttributeTable, CharacteristicProp, Service, Uuid},
-    PacketQos,
-};
+use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
+use trouble_host::adapter::{Adapter, HostResources};
+use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
+use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
+use trouble_host::PacketQos;
 
 #[tokio::main]
 async fn main() {

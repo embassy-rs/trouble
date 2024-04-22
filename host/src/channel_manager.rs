@@ -1,27 +1,23 @@
-use core::{
-    cell::RefCell,
-    future::poll_fn,
-    task::{Context, Poll},
-};
+use core::cell::RefCell;
+use core::future::poll_fn;
+use core::task::{Context, Poll};
 
-use bt_hci::{controller::Controller, param::ConnHandle};
-use embassy_sync::{
-    blocking_mutex::{raw::RawMutex, Mutex},
-    channel::Channel,
-    waitqueue::WakerRegistration,
-};
+use bt_hci::controller::Controller;
+use bt_hci::param::ConnHandle;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::channel::Channel;
+use embassy_sync::waitqueue::WakerRegistration;
 
-use crate::{
-    adapter::HciController,
-    cursor::{ReadCursor, WriteCursor},
-    l2cap::L2capHeader,
-    packet_pool::{AllocId, DynamicPacketPool, Packet},
-    pdu::Pdu,
-    types::l2cap::{
-        L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
-    },
-    AdapterError, Error,
+use crate::adapter::HciController;
+use crate::cursor::{ReadCursor, WriteCursor};
+use crate::packet_pool::{AllocId, DynamicPacketPool, Packet};
+use crate::pdu::Pdu;
+use crate::types::l2cap::{
+    L2capHeader, L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode,
+    LeCreditFlowInd,
 };
+use crate::{AdapterError, Error};
 
 const BASE_ID: u16 = 0x40;
 
