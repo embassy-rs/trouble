@@ -10,10 +10,32 @@ use crate::AdapterError;
 
 pub(crate) mod sar;
 
+/// Handle representing an L2CAP channel.
 #[derive(Clone)]
 pub struct L2capChannel {
     handle: ConnHandle,
     cid: u16,
+}
+
+/// Configuration for an L2CAP channel.
+pub struct L2capChannelConfig {
+    /// Desired mtu of the Service Delivery Unit (SDU). May be fragmented according to the host
+    /// adapter L2CAP MTU.
+    pub mtu: u16,
+    /// Flow control policy for connection oriented channels.
+    pub flow_policy: CreditFlowPolicy,
+    /// Initial credits for connection oriented channels.
+    pub initial_credits: Option<u16>,
+}
+
+impl Default for L2capChannelConfig {
+    fn default() -> Self {
+        Self {
+            mtu: 23,
+            flow_policy: Default::default(),
+            initial_credits: None,
+        }
+    }
 }
 
 impl L2capChannel {
@@ -77,13 +99,19 @@ impl L2capChannel {
         adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection,
         psm: &[u16],
-        mtu: u16,
-        flow_policy: CreditFlowPolicy,
+        config: &L2capChannelConfig,
     ) -> Result<L2capChannel, AdapterError<T::Error>> {
         let handle = connection.handle();
         let cid = adapter
             .channels
-            .accept(handle, psm, mtu, flow_policy, &adapter.hci())
+            .accept(
+                handle,
+                psm,
+                config.mtu,
+                config.flow_policy,
+                config.initial_credits,
+                &adapter.hci(),
+            )
             .await?;
 
         Ok(Self { cid, handle })
@@ -121,14 +149,20 @@ impl L2capChannel {
         adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection,
         psm: u16,
-        mtu: u16,
-        flow_policy: CreditFlowPolicy,
+        config: &L2capChannelConfig,
     ) -> Result<Self, AdapterError<T::Error>>
 where {
         let handle = connection.handle();
         let cid = adapter
             .channels
-            .create(connection.handle(), psm, mtu, flow_policy, &adapter.hci())
+            .create(
+                connection.handle(),
+                psm,
+                config.mtu,
+                config.flow_policy,
+                config.initial_credits,
+                &adapter.hci(),
+            )
             .await?;
 
         Ok(Self { handle, cid })

@@ -274,6 +274,7 @@ impl<
         psm: &[u16],
         mut mtu: u16,
         credit_flow: CreditFlowPolicy,
+        initial_credits: Option<u16>,
         controller: &HciController<'_, T>,
     ) -> Result<u16, AdapterError<T::Error>> {
         let mut req_id = 0;
@@ -282,7 +283,7 @@ impl<
                 req_id = req.request_id;
                 let mps = req.mps.min(self.pool.mtu() as u16 - 4);
                 mtu = req.mtu.min(mtu);
-                let credits = self.pool.min_available(AllocId::dynamic(idx)) as u16;
+                let credits = initial_credits.unwrap_or(self.pool.min_available(AllocId::dynamic(idx)) as u16);
                 // info!("Accept L2CAP, initial credits: {}", credits);
                 ConnectedState {
                     conn: req.conn,
@@ -336,6 +337,7 @@ impl<
         psm: u16,
         mtu: u16,
         credit_flow: CreditFlowPolicy,
+        initial_credits: Option<u16>,
         controller: &HciController<'_, T>,
     ) -> Result<u16, AdapterError<T::Error>> {
         let req_id = self.next_request_id();
@@ -343,7 +345,7 @@ impl<
         let mut cid: u16 = 0;
         self.connect(|i, c| {
             cid = c;
-            credits = self.pool.min_available(AllocId::dynamic(i)) as u16;
+            credits = initial_credits.unwrap_or(self.pool.min_available(AllocId::dynamic(i)) as u16);
             ConnectingState {
                 conn,
                 cid,
