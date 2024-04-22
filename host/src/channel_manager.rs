@@ -4,6 +4,7 @@ use core::task::{Context, Poll};
 
 use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
+use bt_hci::FromHciBytes;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::channel::Channel;
@@ -14,8 +15,8 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::{AllocId, DynamicPacketPool, Packet};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
-    L2capHeader, L2capLeSignal, L2capLeSignalData, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode,
-    LeCreditFlowInd,
+    CommandRejectRes, DisconnectionReq, DisconnectionRes, L2capHeader, L2capSignalCode, L2capSignalHeader,
+    LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
 };
 use crate::{AdapterError, Error};
 
@@ -274,6 +275,7 @@ impl<
         psm: &[u16],
         mut mtu: u16,
         credit_flow: CreditFlowPolicy,
+        initial_credits: Option<u16>,
         controller: &HciController<'_, T>,
     ) -> Result<u16, AdapterError<T::Error>> {
         let mut req_id = 0;
@@ -282,7 +284,7 @@ impl<
                 req_id = req.request_id;
                 let mps = req.mps.min(self.pool.mtu() as u16 - 4);
                 mtu = req.mtu.min(mtu);
-                let credits = self.pool.min_available(AllocId::dynamic(idx)) as u16;
+                let credits = initial_credits.unwrap_or(self.pool.min_available(AllocId::dynamic(idx)) as u16);
                 // info!("Accept L2CAP, initial credits: {}", credits);
                 ConnectedState {
                     conn: req.conn,
@@ -299,31 +301,34 @@ impl<
         })
         .await;
 
-        let response = L2capLeSignal::new(
-            req_id,
-            L2capLeSignalData::LeCreditConnRes(LeCreditConnRes {
-                mps: state.mps,
-                dcid: state.cid,
-                mtu,
-                credits: 0,
-                result: LeCreditConnResultCode::Success,
-            }),
-        );
-
-        controller.signal(conn, &response).await?;
-
-        // Send initial credits
-        let next_req_id = self.next_request_id();
+        let mut tx = [0; 18];
         controller
             .signal(
                 conn,
-                &L2capLeSignal::new(
-                    next_req_id,
-                    L2capLeSignalData::LeCreditFlowInd(LeCreditFlowInd {
-                        cid: state.cid,
-                        credits: state.flow_control.available(),
-                    }),
-                ),
+                req_id,
+                &LeCreditConnRes {
+                    mps: state.mps,
+                    dcid: state.cid,
+                    mtu,
+                    credits: 0,
+                    result: LeCreditConnResultCode::Success,
+                },
+                &mut tx[..],
+            )
+            .await?;
+
+        // Send initial credits
+        let next_req_id = self.next_request_id();
+
+        controller
+            .signal(
+                conn,
+                next_req_id,
+                &LeCreditFlowInd {
+                    cid: state.cid,
+                    credits: state.flow_control.available(),
+                },
+                &mut tx[..],
             )
             .await?;
 
@@ -336,6 +341,7 @@ impl<
         psm: u16,
         mtu: u16,
         credit_flow: CreditFlowPolicy,
+        initial_credits: Option<u16>,
         controller: &HciController<'_, T>,
     ) -> Result<u16, AdapterError<T::Error>> {
         let req_id = self.next_request_id();
@@ -343,7 +349,7 @@ impl<
         let mut cid: u16 = 0;
         self.connect(|i, c| {
             cid = c;
-            credits = self.pool.min_available(AllocId::dynamic(i)) as u16;
+            credits = initial_credits.unwrap_or(self.pool.min_available(AllocId::dynamic(i)) as u16);
             ConnectingState {
                 conn,
                 cid,
@@ -356,19 +362,19 @@ impl<
             }
         })?;
         //info!("Created connect state with idx cid {}", cid);
+        //
+        let mut tx = [0; 18];
 
-        let command = L2capLeSignal::new(
-            req_id,
-            L2capLeSignalData::LeCreditConnReq(LeCreditConnReq {
-                psm,
-                mps: self.pool.mtu() as u16 - 4,
-                scid: cid,
-                mtu,
-                credits: 0,
-            }),
-        );
+        let command = LeCreditConnReq {
+            psm,
+            mps: self.pool.mtu() as u16 - 4,
+            scid: cid,
+            mtu,
+            credits: 0,
+        };
+
         //info!("Signal packet to remote: {:?}", command);
-        controller.signal(conn, &command).await?;
+        controller.signal(conn, req_id, &command, &mut tx[..]).await?;
         // info!("Sent signal packet to remote, awaiting response");
 
         let (idx, cid) = poll_fn(|cx| {
@@ -395,14 +401,8 @@ impl<
 
         // Send initial credits
         let next_req_id = self.next_request_id();
-        controller
-            .signal(
-                conn,
-                &L2capLeSignal::new(
-                    next_req_id,
-                    L2capLeSignalData::LeCreditFlowInd(LeCreditFlowInd { cid, credits }),
-                ),
-            )
+        let req = controller
+            .signal(conn, next_req_id, &LeCreditFlowInd { cid, credits }, &mut tx[..])
             .await?;
 
         // info!("Done!");
@@ -442,15 +442,17 @@ impl<
         Ok(())
     }
 
-    pub async fn control(&self, conn: ConnHandle, signal: L2capLeSignal) -> Result<(), Error> {
+    pub async fn control(&self, conn: ConnHandle, data: &[u8]) -> Result<(), Error> {
         // info!("Inbound signal: {:?}", signal);
-        match signal.data {
-            L2capLeSignalData::LeCreditConnReq(req) => {
+        let (header, data) = L2capSignalHeader::from_hci_bytes(data)?;
+        match header.code {
+            L2capSignalCode::LeCreditConnReq => {
+                let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
                 self.peer_connect(|i, c| PeerConnectingState {
                     conn,
                     cid: c,
                     psm: req.psm,
-                    request_id: signal.id,
+                    request_id: header.identifier,
                     peer_cid: req.scid,
                     offered_credits: req.credits,
                     mps: req.mps,
@@ -458,12 +460,13 @@ impl<
                 })?;
                 Ok(())
             }
-            L2capLeSignalData::LeCreditConnRes(res) => {
+            L2capSignalCode::LeCreditConnRes => {
+                let res = LeCreditConnRes::from_hci_bytes_complete(data)?;
                 // info!("Got response to create request: {:?}", res);
                 match res.result {
                     LeCreditConnResultCode::Success => {
                         // Must be a response of a previous request which should already by allocated a channel for
-                        self.connected(signal.id, |idx, req| ConnectedState {
+                        self.connected(header.identifier, |idx, req| ConnectedState {
                             conn: req.conn,
                             cid: req.cid,
                             psm: req.psm,
@@ -482,24 +485,29 @@ impl<
                     }
                 }
             }
-            L2capLeSignalData::LeCreditFlowInd(req) => {
+            L2capSignalCode::LeCreditFlowInd => {
+                let req = LeCreditFlowInd::from_hci_bytes_complete(data)?;
                 self.remote_credits(req.cid, req.credits)?;
                 Ok(())
             }
-            L2capLeSignalData::CommandRejectRes(reject) => {
+            L2capSignalCode::CommandRejectRes => {
+                let (reject, _) = CommandRejectRes::from_hci_bytes(data)?;
                 warn!("Rejected: {:?}", reject);
                 Ok(())
             }
-            L2capLeSignalData::DisconnectionReq(req) => {
+            L2capSignalCode::DisconnectionReq => {
+                let req = DisconnectionReq::from_hci_bytes_complete(data)?;
                 info!("Disconnect request: {:?}!", req);
                 self.disconnect(req.dcid)?;
                 Ok(())
             }
-            L2capLeSignalData::DisconnectionRes(res) => {
+            L2capSignalCode::DisconnectionRes => {
+                let res = DisconnectionRes::from_hci_bytes_complete(data)?;
                 warn!("Disconnection result!");
                 self.disconnected(res.dcid)?;
                 Ok(())
             }
+            _ => Err(Error::NotSupported),
         }
     }
 
@@ -556,8 +564,7 @@ impl<
 
         let mut remaining = remaining as usize - data.len();
 
-        drop(packet);
-        self.flow_control(cid, hci).await?;
+        self.flow_control(cid, hci, packet.packet).await?;
         //info!(
         //    "Total size of PDU is {}, read buffer size is {} remaining; {}",
         //    len,
@@ -574,8 +581,7 @@ impl<
                 pos += to_copy;
             }
             remaining -= packet.len;
-            drop(packet);
-            self.flow_control(cid, hci).await?;
+            self.flow_control(cid, hci, packet.packet).await?;
         }
 
         // info!("Total reserved {} bytes", pos);
@@ -656,6 +662,7 @@ impl<
         &self,
         cid: u16,
         hci: &HciController<'_, T>,
+        mut packet: Packet<'_>,
     ) -> Result<(), AdapterError<T::Error>> {
         let (conn, credits) = self.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -671,15 +678,11 @@ impl<
         })?;
 
         if let Some(credits) = credits {
-            let next_req_id = self.next_request_id();
-            hci.signal(
-                conn,
-                &L2capLeSignal::new(
-                    next_req_id,
-                    L2capLeSignalData::LeCreditFlowInd(LeCreditFlowInd { cid, credits }),
-                ),
-            )
-            .await?;
+            let identifier = self.next_request_id();
+            let signal = LeCreditFlowInd { cid, credits };
+
+            // Reuse packet buffer for signalling data to save the extra TX buffer
+            hci.signal(conn, identifier, &signal, packet.as_mut()).await?;
         }
         Ok(())
     }

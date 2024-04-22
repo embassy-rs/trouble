@@ -14,7 +14,7 @@ use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
 use trouble_host::adapter::{Adapter, HostResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
-use trouble_host::l2cap::L2capChannel;
+use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
 use trouble_host::{Address, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
 
@@ -149,8 +149,18 @@ async fn main(spawner: Spawner) {
 
             info!("Connection established");
 
-            let mut ch1 =
-                unwrap!(L2capChannel::accept(&adapter, &conn, &[0x2349], PAYLOAD_LEN as u16, Default::default()).await);
+            let mut ch1 = unwrap!(
+                L2capChannel::accept(
+                    &adapter,
+                    &conn,
+                    &[0x2349],
+                    &L2capChannelConfig {
+                        mtu: PAYLOAD_LEN as u16,
+                        ..Default::default()
+                    }
+                )
+                .await
+            );
 
             info!("L2CAP channel accepted");
 

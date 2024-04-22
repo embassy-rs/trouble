@@ -14,7 +14,7 @@ use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
 use trouble_host::adapter::{Adapter, HostResources};
 use trouble_host::connection::ConnectConfig;
-use trouble_host::l2cap::L2capChannel;
+use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
 use trouble_host::scan::ScanConfig;
 use trouble_host::{Address, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
@@ -139,8 +139,18 @@ async fn main(spawner: Spawner) {
             let conn = unwrap!(adapter.connect(&config).await);
             info!("Connected, creating l2cap channel");
             const PAYLOAD_LEN: usize = 27;
-            let mut ch1 =
-                unwrap!(L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16, Default::default()).await);
+            let mut ch1 = unwrap!(
+                L2capChannel::create(
+                    &adapter,
+                    &conn,
+                    0x2349,
+                    &L2capChannelConfig {
+                        mtu: PAYLOAD_LEN as u16,
+                        ..Default::default()
+                    }
+                )
+                .await
+            );
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
