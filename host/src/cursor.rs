@@ -1,6 +1,8 @@
 //! Module for cursors over a byte slice.
 //!
 
+use bt_hci::WriteHci;
+
 use crate::codec::{Decode, Encode, Error};
 
 // Not a byte writer. It is just a cursor to track where a byte slice is being written.
@@ -52,6 +54,18 @@ impl<'d> WriteCursor<'d> {
             Err(Error::InsufficientSpace)
         } else {
             data.encode(&mut self.data[self.pos..self.pos + data.size()])?;
+            self.pos += data.size();
+            Ok(())
+        }
+    }
+
+    /// Write fixed sized type
+    pub fn write_hci<E: WriteHci>(&mut self, data: &E) -> Result<(), Error> {
+        if self.available() < data.size() {
+            Err(Error::InsufficientSpace)
+        } else {
+            data.write_hci(&mut self.data[self.pos..self.pos + data.size()])
+                .map_err(|_| Error::InsufficientSpace)?;
             self.pos += data.size();
             Ok(())
         }

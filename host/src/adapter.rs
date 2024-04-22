@@ -18,7 +18,7 @@ use bt_hci::param::{
     AddrKind, AdvChannelMap, AdvHandle, AdvKind, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates,
     InitiatingPhy, LeEventMask, Operation, PhyParams, ScanningPhy,
 };
-use bt_hci::ControllerToHostPacket;
+use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
@@ -29,12 +29,14 @@ use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
 use crate::channel_manager::ChannelManager;
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionInfo, ConnectionManager};
-use crate::cursor::{ReadCursor, WriteCursor};
+use crate::cursor::WriteCursor;
 use crate::l2cap::sar::PacketReassembly;
 use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos};
 use crate::pdu::Pdu;
 use crate::scan::{PhySet, ScanConfig, ScanReport};
-use crate::types::l2cap::{L2capHeader, L2capLeSignal, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL};
+use crate::types::l2cap::{
+    L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL,
+};
 #[cfg(feature = "gatt")]
 use crate::{attribute::AttributeTable, gatt::GattServer};
 use crate::{AdapterError, Address, Error};
@@ -530,14 +532,12 @@ where
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         let (header, packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
-                let (header, data) = L2capHeader::decode(&acl)?;
+                let (header, data) = L2capHeader::from_hci_bytes(acl.data())?;
 
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    let mut r = ReadCursor::new(data);
-                    let signal: L2capLeSignal = r.read()?;
-                    self.channels.control(acl.handle(), signal).await?;
+                    self.channels.control(acl.handle(), &data).await?;
                     return Ok(());
                 }
 
@@ -851,28 +851,29 @@ impl<'d, T: Controller> HciController<'d, T> {
         Ok(())
     }
 
-    pub(crate) async fn signal(
+    pub(crate) async fn signal<D: L2capSignal>(
         &self,
         handle: ConnHandle,
-        response: &L2capLeSignal,
+        identifier: u8,
+        signal: &D,
+        p_buf: &mut [u8],
     ) -> Result<(), AdapterError<T::Error>> {
-        // TODO: Refactor signal to avoid encode/decode
-        // info!("[{}] sending signal: {:?}", handle, response);
-        let mut tx = [0; 32];
-        let mut w = WriteCursor::new(&mut tx);
-        let (mut header, mut body) = w.split(4)?;
+        let header = L2capSignalHeader {
+            identifier,
+            code: D::code(),
+            length: signal.size() as u16,
+        };
+        let l2cap = L2capHeader {
+            channel: D::channel(),
+            length: header.size() as u16 + header.length,
+        };
 
-        body.write_ref(response)?;
+        let mut w = WriteCursor::new(p_buf);
+        w.write_hci(&l2cap)?;
+        w.write_hci(&header)?;
+        w.write_hci(signal)?;
 
-        // TODO: Move into l2cap packet type
-        header.write(body.len() as u16)?;
-        header.write(L2CAP_CID_LE_U_SIGNAL)?;
-        let len = header.len() + body.len();
-
-        header.finish();
-        body.finish();
-        w.finish();
-        self.send(handle, &tx[..len]).await?;
+        self.send(handle, w.finish()).await?;
 
         Ok(())
     }

@@ -10,7 +10,7 @@ use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_host::adapter::{Adapter, HostResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::connection::ConnectConfig;
-use trouble_host::l2cap::L2capChannel;
+use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
 use trouble_host::scan::ScanConfig;
 use trouble_host::PacketQos;
 
@@ -95,7 +95,9 @@ async fn l2cap_connection_oriented_channels() {
                     }).await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::accept(&adapter, &conn, &[0x2349], PAYLOAD_LEN as u16, Default::default()).await?;
+                    let mut ch1 = L2capChannel::accept(&adapter, &conn, &[0x2349], &L2capChannelConfig {
+                        mtu: PAYLOAD_LEN as u16, ..Default::default()
+                    }).await?;
 
                     println!("[peripheral] channel created");
 
@@ -164,7 +166,10 @@ async fn l2cap_connection_oriented_channels() {
                         let conn = adapter.connect(&config).await.unwrap();
                         println!("[central] connected");
                         const PAYLOAD_LEN: usize = 27;
-                        let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, PAYLOAD_LEN as u16, Default::default()).await?;
+                        let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, &L2capChannelConfig {
+                            mtu: PAYLOAD_LEN as u16,
+                            ..Default::default()
+                        }).await?;
                         println!("[central] channel created");
                         for i in 0..10 {
                             let tx = [i; PAYLOAD_LEN];
