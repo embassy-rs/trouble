@@ -807,7 +807,7 @@ impl CreditFlowControl {
                 }
             }
             CreditFlowPolicy::MinThreshold(threshold) => {
-                if self.credits <= threshold {
+                if self.credits < threshold {
                     let amount = self.received;
                     self.received = 0;
                     self.credits += amount;
