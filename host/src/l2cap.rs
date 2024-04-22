@@ -1,6 +1,6 @@
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::controller::{Controller, ControllerCmdSync};
-use bt_hci::param::{ConnHandle, DisconnectReason};
+use bt_hci::param::DisconnectReason;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::adapter::Adapter;
@@ -13,7 +13,6 @@ pub(crate) mod sar;
 /// Handle representing an L2CAP channel.
 #[derive(Clone)]
 pub struct L2capChannel {
-    handle: ConnHandle,
     cid: u16,
 }
 
@@ -114,7 +113,7 @@ impl L2capChannel {
             )
             .await?;
 
-        Ok(Self { cid, handle })
+        Ok(Self { cid })
     }
 
     pub fn disconnect<
@@ -130,9 +129,9 @@ impl L2capChannel {
         adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         close_connection: bool,
     ) -> Result<(), AdapterError<T::Error>> {
-        adapter.channels.disconnect(self.cid)?;
+        let handle = adapter.channels.disconnect(self.cid)?;
         if close_connection {
-            adapter.try_command(Disconnect::new(self.handle, DisconnectReason::RemoteUserTerminatedConn))?;
+            adapter.try_command(Disconnect::new(handle, DisconnectReason::RemoteUserTerminatedConn))?;
         }
         Ok(())
     }
@@ -165,6 +164,6 @@ where {
             )
             .await?;
 
-        Ok(Self { handle, cid })
+        Ok(Self { cid })
     }
 }
