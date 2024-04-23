@@ -50,7 +50,7 @@ impl Connection {
         self.handle
     }
 
-    pub async fn disconnect<
+    pub fn disconnect<
         M: RawMutex,
         T: Controller + ControllerCmdSync<Disconnect>,
         const CONNS: usize,
@@ -62,9 +62,7 @@ impl Connection {
         &mut self,
         adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<(), AdapterError<T::Error>> {
-        adapter
-            .command(Disconnect::new(self.handle, DisconnectReason::RemoteUserTerminatedConn))
-            .await?;
+        adapter.try_command(Disconnect::new(self.handle, DisconnectReason::RemoteUserTerminatedConn))?;
         Ok(())
     }
 

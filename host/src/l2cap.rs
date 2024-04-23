@@ -38,6 +38,12 @@ impl Default for L2capChannelConfig {
 }
 
 impl L2capChannel {
+    /// Send the provided buffer over this l2cap channel.
+    ///
+    /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
+    ///
+    /// If the channel has been closed or the channel id is not valid, an error is returned.
+    /// If there are no available credits to send, waits until more credits are available.
     pub async fn send<
         M: RawMutex,
         T: Controller,
@@ -54,6 +60,12 @@ impl L2capChannel {
         adapter.channels.send(self.cid, buf, &adapter.hci()).await
     }
 
+    /// Send the provided buffer over this l2cap channel.
+    ///
+    /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
+    ///
+    /// If the channel has been closed or the channel id is not valid, an error is returned.
+    /// If there are no available credits to send, returns Error::Busy.
     pub fn try_send<
         M: RawMutex,
         T: Controller,
@@ -70,6 +82,9 @@ impl L2capChannel {
         adapter.channels.try_send(self.cid, buf, &adapter.hci())
     }
 
+    /// Receive data on this channel and copy it into the buffer.
+    ///
+    /// The length provided buffer slice must be equal or greater to the agreed MTU.
     pub async fn receive<
         M: RawMutex,
         T: Controller,
@@ -86,6 +101,7 @@ impl L2capChannel {
         adapter.channels.receive(self.cid, buf, &adapter.hci()).await
     }
 
+    /// Await an incoming connection request matching the list of PSM.
     pub async fn accept<
         M: RawMutex,
         T: Controller,
@@ -116,6 +132,7 @@ impl L2capChannel {
         Ok(Self { cid })
     }
 
+    /// Disconnect this channel.
     pub fn disconnect<
         M: RawMutex,
         T: Controller + ControllerCmdSync<Disconnect>,
@@ -136,6 +153,7 @@ impl L2capChannel {
         Ok(())
     }
 
+    /// Create a new connection request with the provided PSM.
     pub async fn create<
         M: RawMutex,
         T: Controller,

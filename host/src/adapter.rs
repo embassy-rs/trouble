@@ -537,7 +537,7 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    self.channels.control(acl.handle(), &data).await?;
+                    self.channels.signal(acl.handle(), &data).await?;
                     return Ok(());
                 }
 
@@ -747,7 +747,7 @@ where
                             disconnects += 1;
                             info!("Disconnected (total {}): {:?}", disconnects, e);
                             let _ = self.connections.disconnect(e.handle);
-                            let _ = self.channels.disconnected_connection(e.handle);
+                            let _ = self.channels.disconnected(e.handle);
                         }
                         Event::NumberOfCompletedPackets(c) => {
                             // info!("Confirmed {} packets sent", c.completed_packets.len());
