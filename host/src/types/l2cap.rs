@@ -219,3 +219,9 @@ unsafe impl FixedSizeValue for DisconnectionRes {
         return true;
     }
 }
+
+impl L2capSignal for DisconnectionRes {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::DisconnectionRes
+    }
+}

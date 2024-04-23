@@ -90,6 +90,7 @@ impl<
                 match storage.state {
                     ChannelState::Disconnecting if cid == storage.cid => {
                         storage.state = ChannelState::Disconnected;
+                        storage.cid = 0;
                         let _ = self.inbound[idx].try_send(None);
                         return Ok(storage.conn);
                     }
@@ -104,6 +105,7 @@ impl<
                         return Ok(storage.conn);
                     }
                     ChannelState::Connected if cid == storage.cid => {
+                        storage.state = ChannelState::Disconnecting;
                         let _ = self.inbound[idx].try_send(None);
                         return Ok(storage.conn);
                     }
@@ -168,6 +170,7 @@ impl<
         initial_credits: Option<u16>,
         controller: &HciController<'_, T>,
     ) -> Result<u16, AdapterError<T::Error>> {
+        // Wait until we find a channel for our connection in the connecting state matching our PSM.
         let (req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
             self.state.lock(|state| {
                 let mut state = state.borrow_mut();
@@ -196,6 +199,7 @@ impl<
         .await;
 
         let mut tx = [0; 18];
+        // Respond that we accept the channel.
         controller
             .signal(
                 conn,
@@ -234,6 +238,7 @@ impl<
         let mut cid: u16 = 0;
         let mps = self.pool.mtu() as u16 - 4;
 
+        // Allocate space for our new channel.
         self.alloc(|storage| {
             cid = storage.cid;
             credits = initial_credits.unwrap_or(self.pool.min_available(AllocId::from_channel(storage.cid)) as u16);
@@ -244,9 +249,8 @@ impl<
             storage.state = ChannelState::Connecting(req_id);
         })?;
 
-        //info!("Created connect state with idx cid {}", cid);
-        //
         let mut tx = [0; 18];
+        // Send the initial connect request.
         let command = LeCreditConnReq {
             psm,
             mps,
@@ -254,11 +258,9 @@ impl<
             mtu,
             credits: 0,
         };
-
-        //info!("Signal packet to remote: {:?}", command);
         controller.signal(conn, req_id, &command, &mut tx[..]).await?;
-        // info!("Sent signal packet to remote, awaiting response");
 
+        // Wait until a response is accepted.
         poll_fn(|cx| {
             self.state.lock(|state| {
                 let mut state = state.borrow_mut();
@@ -279,15 +281,11 @@ impl<
         })
         .await?;
 
-        // info!("Peer setup cid {} Sending initial credits", state.peer_cid);
-
         // Send initial credits
         let next_req_id = self.next_request_id();
         let req = controller
             .signal(conn, next_req_id, &LeCreditFlowInd { cid, credits }, &mut tx[..])
             .await?;
-
-        // info!("Done!");
         Ok(cid)
     }
 
@@ -301,6 +299,7 @@ impl<
         if chan > self.inbound.len() {
             return Err(Error::InvalidChannelId);
         }
+        trace!("[l2cap] inbound data packet for {}", header.channel);
 
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -464,32 +463,24 @@ impl<
         let idx = self.connected_channel_index(cid)?;
 
         let mut n_received = 1;
-        let packet = self.receive_pdu(cid, idx).await?;
+        let packet = self.receive_pdu(cid, idx, hci).await?;
         let len = packet.len;
 
         let mut r = ReadCursor::new(packet.as_ref());
         let remaining: u16 = r.read()?;
-        // info!("Total expected: {}", remaining);
 
         let data = r.remaining();
         let to_copy = data.len().min(buf.len());
         buf[..to_copy].copy_from_slice(&data[..to_copy]);
         let mut pos = to_copy;
 
-        // info!("Received {} bytes so far", pos);
-
         let mut remaining = remaining as usize - data.len();
 
         self.flow_control(cid, hci, packet.packet).await?;
-        //info!(
-        //    "Total size of PDU is {}, read buffer size is {} remaining; {}",
-        //    len,
-        //    buf.len(),
-        //    remaining
-        //);
+
         // We have some k-frames to reassemble
         while remaining > 0 {
-            let packet = self.receive_pdu(cid, idx).await?;
+            let packet = self.receive_pdu(cid, idx, hci).await?;
             n_received += 1;
             let to_copy = packet.len.min(buf.len() - pos);
             if to_copy > 0 {
@@ -500,7 +491,6 @@ impl<
             self.flow_control(cid, hci, packet.packet).await?;
         }
 
-        // info!("Total reserved {} bytes", pos);
         Ok(pos)
     }
 
@@ -517,12 +507,17 @@ impl<
         })
     }
 
-    async fn receive_pdu(&self, cid: u16, idx: usize) -> Result<Pdu<'d>, Error> {
+    async fn receive_pdu<T: Controller>(
+        &self,
+        cid: u16,
+        idx: usize,
+        hci: &HciController<'_, T>,
+    ) -> Result<Pdu<'d>, AdapterError<T::Error>> {
         match self.inbound[idx].receive().await {
             Some(pdu) => Ok(pdu),
             None => {
-                self.confirm_disconnected(cid)?;
-                Err(Error::ChannelClosed)
+                self.confirm_disconnected(cid, hci).await?;
+                Err(Error::ChannelClosed.into())
             }
         }
     }
@@ -542,7 +537,6 @@ impl<
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + ((buf.len() as u16).saturating_sub(mps - 2)).div_ceil(mps);
-        // info!("Sending data of len {} into {} packets", buf.len(), n_packets);
 
         poll_fn(|cx| self.poll_request_to_send(cid, n_packets, Some(cx))).await?;
 
@@ -576,9 +570,9 @@ impl<
     ) -> Result<(), AdapterError<T::Error>> {
         let mut p_buf = [0u8; L2CAP_MTU];
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
+
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + ((buf.len() as u16).saturating_sub(mps - 2)).div_ceil(mps);
-        // info!("Sending data of len {} into {} packets", buf.len(), n_packets);
 
         match self.poll_request_to_send(cid, n_packets, None) {
             Poll::Ready(res) => res?,
@@ -620,6 +614,8 @@ impl<
         })
     }
 
+    // Check the current state of flow control and send flow indications if
+    // our policy says so.
     async fn flow_control<T: Controller>(
         &self,
         cid: u16,
@@ -650,20 +646,41 @@ impl<
         Ok(())
     }
 
-    fn confirm_disconnected(&self, cid: u16) -> Result<(), Error> {
-        self.state.lock(|state| {
+    async fn confirm_disconnected<T: Controller>(
+        &self,
+        cid: u16,
+        hci: &HciController<'_, T>,
+    ) -> Result<(), AdapterError<T::Error>> {
+        let (handle, dcid, scid) = self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.channels.iter_mut() {
                 match storage.state {
                     ChannelState::Disconnecting if cid == storage.cid => {
                         storage.state = ChannelState::Disconnected;
-                        return Ok(());
+                        let scid = storage.cid;
+                        let dcid = storage.peer_cid;
+                        let handle = storage.conn;
+                        storage.cid = 0;
+                        storage.peer_cid = 0;
+                        storage.conn = 0;
+                        return Ok((handle, dcid, scid));
                     }
                     _ => {}
                 }
             }
             Err(Error::NotFound)
-        })
+        })?;
+
+        let identifier = self.next_request_id();
+        let mut tx = [0; 18];
+        hci.signal(
+            ConnHandle::new(handle),
+            identifier,
+            &DisconnectionRes { dcid, scid },
+            &mut tx[..],
+        )
+        .await?;
+        Ok(())
     }
 
     fn poll_request_to_send(&self, cid: u16, credits: u16, cx: Option<&mut Context<'_>>) -> Poll<Result<(), Error>> {
