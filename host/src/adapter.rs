@@ -28,7 +28,7 @@ use futures_intrusive::sync::LocalSemaphore;
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
 use crate::channel_manager::ChannelManager;
 use crate::connection::{ConnectConfig, Connection};
-use crate::connection_manager::{ConnectionInfo, ConnectionManager};
+use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::PacketReassembly;
 use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos};
@@ -537,7 +537,7 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    self.channels.control(acl.handle(), &data).await?;
+                    self.channels.signal(acl.handle(), &data).await?;
                     return Ok(());
                 }
 
@@ -697,20 +697,7 @@ where
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => match e.status.to_result() {
                                 Ok(_) => {
-                                    if let Err(err) = self.connections.connect(
-                                        e.handle,
-                                        ConnectionInfo {
-                                            handle: e.handle,
-                                            status: e.status,
-                                            role: e.role,
-                                            peer_addr_kind: e.peer_addr_kind,
-                                            peer_address: e.peer_addr,
-                                            interval: e.conn_interval.as_u16(),
-                                            latency: e.peripheral_latency,
-                                            timeout: e.supervision_timeout.as_u16(),
-                                            att_mtu: 23,
-                                        },
-                                    ) {
+                                    if let Err(err) = self.connections.connect(e.handle, &e) {
                                         warn!("Error establishing connection: {:?}", err);
                                         self.command(Disconnect::new(
                                             e.handle,
@@ -747,7 +734,7 @@ where
                             disconnects += 1;
                             info!("Disconnected (total {}): {:?}", disconnects, e);
                             let _ = self.connections.disconnect(e.handle);
-                            let _ = self.channels.disconnected_connection(e.handle);
+                            let _ = self.channels.disconnected(e.handle);
                         }
                         Event::NumberOfCompletedPackets(c) => {
                             // info!("Confirmed {} packets sent", c.completed_packets.len());
