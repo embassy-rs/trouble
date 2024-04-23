@@ -7,7 +7,6 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
 use crate::adapter::Adapter;
-pub use crate::connection_manager::ConnectionInfo;
 use crate::scan::ScanConfig;
 use crate::AdapterError;
 
@@ -78,7 +77,7 @@ impl Connection {
         &self,
         adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<LeConnRole, AdapterError<T::Error>> {
-        let role = adapter.connections.with_connection(self.handle, |info| info.role)?;
+        let role = adapter.connections.role(self.handle)?;
         Ok(role)
     }
 
@@ -94,10 +93,8 @@ impl Connection {
         &self,
         adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<BdAddr, AdapterError<T::Error>> {
-        let role = adapter
-            .connections
-            .with_connection(self.handle, |info| info.peer_address)?;
-        Ok(role)
+        let addr = adapter.connections.peer_address(self.handle)?;
+        Ok(addr)
     }
 
     pub async fn rssi<
