@@ -6,7 +6,6 @@ use embassy_time::Duration;
 use heapless::Vec;
 
 pub struct ScanConfig<'d> {
-    pub extended: bool,
     pub active: bool,
     pub filter_accept_list: &'d [(AddrKind, &'d BdAddr)],
     pub phys: PhySet,
@@ -18,7 +17,6 @@ pub struct ScanConfig<'d> {
 impl<'d> Default for ScanConfig<'d> {
     fn default() -> Self {
         Self {
-            extended: false,
             active: true,
             filter_accept_list: &[],
             phys: PhySet::M1,

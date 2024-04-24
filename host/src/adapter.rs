@@ -182,12 +182,7 @@ where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
             + ControllerCmdAsync<LeCreateConn>
-            + ControllerCmdAsync<LeExtCreateConn>
-            + ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeSetExtScanParams>
-            + ControllerCmdSync<LeSetScanParams>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + ControllerCmdSync<LeSetScanEnable>,
+            + ControllerCmdSync<LeCreateConnCancel>,
     {
         // Cancel any ongoing connection process
         let r = self.command(LeCreateConnCancel::new()).await;
@@ -201,47 +196,68 @@ where
 
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
-        if config.scan_config.extended {
-            let initiating = InitiatingPhy {
-                scan_interval: config.scan_config.interval.into(),
-                scan_window: config.scan_config.window.into(),
-                conn_interval_min: config.connect_params.min_connection_interval.into(),
-                conn_interval_max: config.connect_params.max_connection_interval.into(),
-                max_latency: config.connect_params.max_latency,
-                supervision_timeout: config.connect_params.supervision_timeout.into(),
-                min_ce_len: config.connect_params.event_length.into(),
-                max_ce_len: config.connect_params.event_length.into(),
-            };
-            let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
-            self.async_command(LeExtCreateConn::new(
-                true,
-                self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-                AddrKind::RANDOM,
-                BdAddr::default(),
-                phy_params,
-            ))
-            .await?;
-            let handle = self.connections.accept(config.scan_config.filter_accept_list).await;
-            Ok(Connection::new(handle))
-        } else {
-            self.async_command(LeCreateConn::new(
-                config.scan_config.interval.into(),
-                config.scan_config.window.into(),
-                true,
-                AddrKind::RANDOM,
-                BdAddr::default(),
-                self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-                config.connect_params.min_connection_interval.into(),
-                config.connect_params.max_connection_interval.into(),
-                config.connect_params.max_latency,
-                config.connect_params.supervision_timeout.into(),
-                config.connect_params.event_length.into(),
-                config.connect_params.event_length.into(),
-            ))
-            .await?;
-            let handle = self.connections.accept(config.scan_config.filter_accept_list).await;
-            Ok(Connection::new(handle))
+        self.async_command(LeCreateConn::new(
+            config.scan_config.interval.into(),
+            config.scan_config.window.into(),
+            true,
+            AddrKind::RANDOM,
+            BdAddr::default(),
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            config.connect_params.min_connection_interval.into(),
+            config.connect_params.max_connection_interval.into(),
+            config.connect_params.max_latency,
+            config.connect_params.supervision_timeout.into(),
+            config.connect_params.event_length.into(),
+            config.connect_params.event_length.into(),
+        ))
+        .await?;
+        let handle = self.connections.accept(config.scan_config.filter_accept_list).await;
+        Ok(Connection::new(handle))
+    }
+
+    /// Attempt to create a connection with the provided config.
+    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection, AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<LeClearFilterAcceptList>
+            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
+            + ControllerCmdAsync<LeExtCreateConn>
+            + ControllerCmdSync<LeSetExtScanEnable>
+            + ControllerCmdSync<LeSetExtScanParams>
+            + ControllerCmdSync<LeCreateConnCancel>,
+    {
+        // Cancel any ongoing connection process
+        let r = self.command(LeCreateConnCancel::new()).await;
+        if let Ok(()) = r {
+            self.connections.wait_canceled().await;
         }
+
+        if config.scan_config.filter_accept_list.is_empty() {
+            return Err(Error::InvalidValue.into());
+        }
+
+        self.set_accept_filter(config.scan_config.filter_accept_list).await?;
+
+        let initiating = InitiatingPhy {
+            scan_interval: config.scan_config.interval.into(),
+            scan_window: config.scan_config.window.into(),
+            conn_interval_min: config.connect_params.min_connection_interval.into(),
+            conn_interval_max: config.connect_params.max_connection_interval.into(),
+            max_latency: config.connect_params.max_latency,
+            supervision_timeout: config.connect_params.supervision_timeout.into(),
+            min_ce_len: config.connect_params.event_length.into(),
+            max_ce_len: config.connect_params.event_length.into(),
+        };
+        let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
+        self.async_command(LeExtCreateConn::new(
+            true,
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            AddrKind::RANDOM,
+            BdAddr::default(),
+            phy_params,
+        ))
+        .await?;
+        let handle = self.connections.accept(config.scan_config.filter_accept_list).await;
+        Ok(Connection::new(handle))
     }
 
     fn create_phy_params<P: Copy>(phy: P, phys: PhySet) -> PhyParams<P> {
@@ -264,77 +280,106 @@ where
 
     async fn start_scan(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
     where
-        T: ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeSetExtScanParams>
-            + ControllerCmdSync<LeSetScanParams>
+        T: ControllerCmdSync<LeSetScanParams>
             + ControllerCmdSync<LeSetScanEnable>
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
         self.set_accept_filter(config.filter_accept_list).await?;
 
-        if config.extended {
-            let scanning = ScanningPhy {
-                active_scan: config.active,
-                scan_interval: config.interval.into(),
-                scan_window: config.window.into(),
-            };
-            let phy_params = Self::create_phy_params(scanning, config.phys);
-            self.command(LeSetExtScanParams::new(
-                self.address.map(|s| s.kind).unwrap_or(AddrKind::RANDOM),
-                if config.filter_accept_list.is_empty() {
-                    bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
-                } else {
-                    bt_hci::param::ScanningFilterPolicy::BasicFiltered
-                },
-                phy_params,
-            ))
-            .await?;
-            self.command(LeSetExtScanEnable::new(
-                true,
-                FilterDuplicates::Disabled,
-                config.timeout.into(),
-                bt_hci::param::Duration::from_secs(0),
-            ))
-            .await?;
-        } else {
-            let params = LeSetScanParams::new(
-                if config.active {
-                    bt_hci::param::LeScanKind::Active
-                } else {
-                    bt_hci::param::LeScanKind::Passive
-                },
-                config.interval.into(),
-                config.interval.into(),
-                bt_hci::param::AddrKind::RANDOM,
-                if config.filter_accept_list.is_empty() {
-                    bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
-                } else {
-                    bt_hci::param::ScanningFilterPolicy::BasicFiltered
-                },
-            );
-            self.command(params).await?;
-            self.command(LeSetScanEnable::new(true, true)).await?;
-        }
+        let params = LeSetScanParams::new(
+            if config.active {
+                bt_hci::param::LeScanKind::Active
+            } else {
+                bt_hci::param::LeScanKind::Passive
+            },
+            config.interval.into(),
+            config.interval.into(),
+            bt_hci::param::AddrKind::RANDOM,
+            if config.filter_accept_list.is_empty() {
+                bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
+            } else {
+                bt_hci::param::ScanningFilterPolicy::BasicFiltered
+            },
+        );
+        self.command(params).await?;
+        self.command(LeSetScanEnable::new(true, true)).await?;
+        Ok(())
+    }
+
+    async fn start_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetExtScanEnable>
+            + ControllerCmdSync<LeSetExtScanParams>
+            + ControllerCmdSync<LeClearFilterAcceptList>
+            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
+    {
+        self.set_accept_filter(config.filter_accept_list).await?;
+
+        let scanning = ScanningPhy {
+            active_scan: config.active,
+            scan_interval: config.interval.into(),
+            scan_window: config.window.into(),
+        };
+        let phy_params = Self::create_phy_params(scanning, config.phys);
+        self.command(LeSetExtScanParams::new(
+            self.address.map(|s| s.kind).unwrap_or(AddrKind::RANDOM),
+            if config.filter_accept_list.is_empty() {
+                bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
+            } else {
+                bt_hci::param::ScanningFilterPolicy::BasicFiltered
+            },
+            phy_params,
+        ))
+        .await?;
+        self.command(LeSetExtScanEnable::new(
+            true,
+            FilterDuplicates::Disabled,
+            config.timeout.into(),
+            bt_hci::param::Duration::from_secs(0),
+        ))
+        .await?;
         Ok(())
     }
 
     async fn stop_scan(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
     where
-        T: ControllerCmdSync<LeSetExtScanEnable> + ControllerCmdSync<LeSetScanEnable>,
+        T: ControllerCmdSync<LeSetScanEnable>,
     {
-        if config.extended {
-            self.command(LeSetExtScanEnable::new(
-                false,
-                FilterDuplicates::Disabled,
-                bt_hci::param::Duration::from_secs(0),
-                bt_hci::param::Duration::from_secs(0),
-            ))
-            .await?;
-        } else {
-            self.command(LeSetScanEnable::new(false, false)).await?;
-        }
+        self.command(LeSetScanEnable::new(false, false)).await?;
         Ok(())
+    }
+
+    async fn stop_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetExtScanEnable>,
+    {
+        self.command(LeSetExtScanEnable::new(
+            false,
+            FilterDuplicates::Disabled,
+            bt_hci::param::Duration::from_secs(0),
+            bt_hci::param::Duration::from_secs(0),
+        ))
+        .await?;
+        Ok(())
+    }
+
+    /// Performs an extended BLE scan, return a report for discovering peripherals.
+    ///
+    /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
+    pub async fn scan_ext(&self, config: &ScanConfig<'_>) -> Result<ScanReport, AdapterError<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetExtScanEnable>
+            + ControllerCmdSync<LeSetExtScanParams>
+            + ControllerCmdSync<LeClearFilterAcceptList>
+            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
+    {
+        self.start_scan_ext(config).await?;
+        let Some(report) = self.scanner.receive().await else {
+            return Err(Error::Timeout.into());
+        };
+        self.stop_scan_ext(config).await?;
+        Ok(report)
     }
 
     /// Performs a BLE scan, return a report for discovering peripherals.
@@ -342,9 +387,7 @@ where
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
     pub async fn scan(&self, config: &ScanConfig<'_>) -> Result<ScanReport, AdapterError<T::Error>>
     where
-        T: ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeSetExtScanParams>
-            + ControllerCmdSync<LeSetScanParams>
+        T: ControllerCmdSync<LeSetScanParams>
             + ControllerCmdSync<LeSetScanEnable>
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
