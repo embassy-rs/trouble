@@ -1,3 +1,9 @@
+//! Trouble is a Bluetooth Low Energy (BLE) Host implementation that communicates
+//! with a controller over any transport implementing the traits from the `bt-hci`
+//! crate.
+//!
+//! Trouble can run on embedded devices (`no_std`) and be configured to consume
+//! as little resources are needed depending on your required configuration.
 #![no_std]
 #![allow(async_fn_in_trait)]
 #![allow(dead_code)]
