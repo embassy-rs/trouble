@@ -20,10 +20,10 @@ use bt_hci::param::{
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
+use embassy_sync::semaphore::{GreedySemaphore, Semaphore as _};
 use futures::pin_mut;
-use futures_intrusive::sync::LocalSemaphore;
 
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
 use crate::channel_manager::ChannelManager;
@@ -79,7 +79,7 @@ pub struct Adapter<
     pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
-    pub(crate) permits: LocalSemaphore,
+    pub(crate) permits: GreedySemaphore<NoopRawMutex>,
 
     pub(crate) scanner: Channel<M, Option<ScanReport>, 1>,
 }
@@ -98,8 +98,6 @@ where
     M: RawMutex,
     T: Controller,
 {
-    const NEW_L2CAP: Channel<M, Pdu<'d>, L2CAP_RXQ> = Channel::new();
-
     /// Create a new instance of the BLE host adapter.
     ///
     /// The adapter requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
@@ -117,10 +115,11 @@ where
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
-            permits: LocalSemaphore::new(false, 0),
+            permits: GreedySemaphore::new(0),
         }
     }
 
+    /// Set the random address used by this adapter.
     pub fn set_random_address(&mut self, address: Address) {
         self.address.replace(address);
     }
@@ -140,6 +139,7 @@ where
         Ok(())
     }
 
+    /// Run a HCI command and return the response.
     pub async fn command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
     where
         C: SyncCmd,
@@ -149,6 +149,7 @@ where
         Ok(ret)
     }
 
+    /// Attempt to run a HCI command and return the response.
     pub fn try_command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
     where
         C: SyncCmd,
@@ -165,6 +166,7 @@ where
         }
     }
 
+    /// Run an async HCI command where the response will generate an event later.
     pub async fn async_command<C>(&self, cmd: C) -> Result<(), AdapterError<T::Error>>
     where
         C: AsyncCmd,
@@ -643,6 +645,7 @@ where
             )
             .exec(&self.controller)
             .await?;
+
             SetEventMask::new(
                 EventMask::new()
                     .enable_le_meta(true)
@@ -671,8 +674,7 @@ where
             .await?;
 
             let ret = LeReadBufferSize::new().exec(&self.controller).await?;
-            self.permits.release(ret.total_num_le_acl_data_packets as usize);
-            //                        let feats = LeReadLocalSupportedFeatures::new().exec(&self.controller).await?;
+            self.permits.set(ret.total_num_le_acl_data_packets as usize);
             // TODO: Configure ACL max buffer size as well?
 
             // Never return
@@ -682,7 +684,6 @@ where
         pin_mut!(init_fut);
 
         loop {
-            // info!("[run] permits: {}", self.permits.permits());
             // Task handling receiving data from the controller.
             let rx_fut = async {
                 let mut rx = [0u8; MAX_HCI_PACKET_LEN];
@@ -780,7 +781,7 @@ where
 
 pub struct HciController<'d, T: Controller> {
     pub(crate) controller: &'d T,
-    pub(crate) permits: &'d LocalSemaphore,
+    pub(crate) permits: &'d GreedySemaphore<NoopRawMutex>,
 }
 
 impl<'d, T: Controller> Clone for HciController<'d, T> {
@@ -795,7 +796,7 @@ impl<'d, T: Controller> Clone for HciController<'d, T> {
 impl<'d, T: Controller> HciController<'d, T> {
     pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
         // info!("[try_send] permits: {}", self.permits.permits());
-        let mut permit = self
+        let permit = self
             .permits
             .try_acquire(1)
             .ok_or::<AdapterError<T::Error>>(Error::NoPermits.into())?;
@@ -824,7 +825,11 @@ impl<'d, T: Controller> HciController<'d, T> {
 
     pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
         // info!("[send] permits: {}", self.permits.permits());
-        self.permits.acquire(1).await.disarm();
+        let permit = self
+            .permits
+            .acquire(1)
+            .await
+            .map_err(|_| AdapterError::Adapter(Error::NoPermits))?;
         let acl = AclPacket::new(
             handle,
             AclPacketBoundary::FirstNonFlushable,
@@ -835,6 +840,7 @@ impl<'d, T: Controller> HciController<'d, T> {
             .write_acl_data(&acl)
             .await
             .map_err(AdapterError::Controller)?;
+        permit.disarm();
         Ok(())
     }
 
