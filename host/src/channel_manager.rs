@@ -208,19 +208,21 @@ impl<
                     mps,
                     dcid: cid,
                     mtu,
-                    credits: 0,
+                    credits,
                     result: LeCreditConnResultCode::Success,
                 },
                 &mut tx[..],
             )
             .await?;
 
+        // NOTE: This code is disabled as we send the credits in the response request. For some reason the nrf-softdevice doesn't do that,
+        // so lets keep this around in case we need it.
         // Send initial credits
-        let next_req_id = self.next_request_id();
-        controller
-            .signal(conn, next_req_id, &LeCreditFlowInd { cid, credits }, &mut tx[..])
-            .await?;
-
+        //        let next_req_id = self.next_request_id();
+        //        controller
+        //            .signal(conn, next_req_id, &LeCreditFlowInd { cid, credits }, &mut tx[..])
+        //            .await?;
+        //
         Ok(cid)
     }
 
@@ -256,7 +258,7 @@ impl<
             mps,
             scid: cid,
             mtu,
-            credits: 0,
+            credits,
         };
         controller.signal(conn, req_id, &command, &mut tx[..]).await?;
 
@@ -281,11 +283,13 @@ impl<
         })
         .await?;
 
+        // NOTE: This code is disabled as we send the credits in the response request. For some reason the nrf-softdevice doesn't do that,
+        // so lets keep this around in case we need it.
         // Send initial credits
-        let next_req_id = self.next_request_id();
-        let req = controller
-            .signal(conn, next_req_id, &LeCreditFlowInd { cid, credits }, &mut tx[..])
-            .await?;
+        // let next_req_id = self.next_request_id();
+        // let req = controller
+        //    .signal(conn, next_req_id, &LeCreditFlowInd { cid, credits }, &mut tx[..])
+        //    .await?;
         Ok(cid)
     }
 
@@ -540,21 +544,31 @@ impl<
 
         poll_fn(|cx| self.poll_request_to_send(cid, n_packets, Some(cx))).await?;
 
-        // Segment using mps
-        let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
+        let mut unsent = n_packets;
+        let result: Result<(), AdapterError<T::Error>> = async {
+            // Segment using mps
+            let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
-        let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        hci.send(conn, &p_buf[..len]).await?;
-
-        let chunks = remaining.chunks(mps as usize);
-        let num_chunks = chunks.len();
-
-        for (i, chunk) in chunks.enumerate() {
-            let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
+            let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
             hci.send(conn, &p_buf[..len]).await?;
-        }
+            unsent -= 1;
 
-        Ok(())
+            let chunks = remaining.chunks(mps as usize);
+            let num_chunks = chunks.len();
+
+            for (i, chunk) in chunks.enumerate() {
+                let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
+                hci.send(conn, &p_buf[..len]).await?;
+                unsent -= 1;
+            }
+            Ok(())
+        }
+        .await;
+        if unsent > 0 {
+            warn!("Replenishing credits for {} unsent packets", unsent);
+            self.abort_send(cid, unsent)?;
+        }
+        result
     }
 
     /// Send the provided buffer over a given l2cap channel.
@@ -582,21 +596,31 @@ impl<
             }
         }
 
-        // Segment using mps
-        let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
+        let mut unsent = n_packets;
+        let result: Result<(), AdapterError<T::Error>> = {
+            // Segment using mps
+            let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
-        let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        hci.try_send(conn, &p_buf[..len])?;
-
-        let chunks = remaining.chunks(mps as usize);
-        let num_chunks = chunks.len();
-
-        for (i, chunk) in chunks.enumerate() {
-            let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
+            let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
             hci.try_send(conn, &p_buf[..len])?;
-        }
+            unsent -= 1;
 
-        Ok(())
+            let chunks = remaining.chunks(mps as usize);
+            let num_chunks = chunks.len();
+
+            for (i, chunk) in chunks.enumerate() {
+                let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
+                hci.try_send(conn, &p_buf[..len])?;
+                unsent -= 1;
+            }
+            Ok(())
+        };
+
+        if unsent > 0 {
+            warn!("Replenishing credits for {} unsent packets", unsent);
+            self.abort_send(cid, unsent)?;
+        }
+        result
     }
 
     fn connected_channel_params(&self, cid: u16) -> Result<(ConnHandle, u16, u16), Error> {
@@ -681,6 +705,22 @@ impl<
         )
         .await?;
         Ok(())
+    }
+
+    fn abort_send(&self, cid: u16, credits: u16) -> Result<(), Error> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
+                match storage.state {
+                    ChannelState::Connected if cid == storage.cid => {
+                        storage.peer_credits += credits;
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            Err(Error::NotFound)
+        })
     }
 
     fn poll_request_to_send(&self, cid: u16, credits: u16, cx: Option<&mut Context<'_>>) -> Poll<Result<(), Error>> {
