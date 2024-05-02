@@ -2,8 +2,7 @@
 
 [![CI](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml/badge.svg)](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml)
 
-*WIP* Basic functionality works, but API is likely to change a bit. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE Rust stack for nRF.
-
+*WIP* Basic functionality works, however API is likely to change a bit. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE Rust stack for nRF.
 
 TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification.
 
@@ -22,7 +21,7 @@ The implementation has some basic functionality working:
 * Central role - scan for devices and establish connections.
 * Basic GATT server supporting write, read, notifications
 * L2CAP CoC (Connection oriented Channels) with credit management (for both central and peripheral)
-* Runs on any transport supporting the `bt-hci` traits.
+* Runs on any transport supporting the `Controller` and `ControllerCmd` traits from `bt-hci`. The `SerialTransport` and `ExternalController` helper types can be used to create additional implementations.
 
 ## Example
 
