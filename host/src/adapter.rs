@@ -22,8 +22,8 @@ use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
-use embassy_sync::semaphore::{GreedySemaphore, Semaphore as _};
 use embassy_sync::once_lock::OnceLock;
+use embassy_sync::semaphore::{GreedySemaphore, Semaphore as _};
 use futures::pin_mut;
 
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
@@ -729,7 +729,7 @@ where
             self.permits.set(ret.total_num_le_acl_data_packets as usize);
             // TODO: Configure ACL max buffer size as well?
 
-            let _  = self.initialized.init(());
+            let _ = self.initialized.init(());
             // Never return
             let _ = pending::<Result<(), AdapterError<T>>>().await;
             Ok(())
