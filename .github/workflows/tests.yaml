@@ -22,6 +22,7 @@ jobs:
       - name: Set pending
         env:
           COMMIT: ${{ steps.checkout.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
@@ -37,6 +38,7 @@ jobs:
       - name: Update status
         env:
           COMMIT: ${{ steps.checkout.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
