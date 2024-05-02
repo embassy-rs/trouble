@@ -19,16 +19,25 @@ jobs:
         run: |
           gh pr checkout "${{ github.event.inputs.prNr }}"
           echo "commit=$(git rev-parse --verify HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Set pending
+        env:
+          COMMIT: ${{ steps.checkout.outputs.commit }}
+        run: |
+          gh api --method POST -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -f "state=pending" -f "description=Running tests" -f "context=tests"
       - name: Test
         env:
           TEST_ADAPTER_ONE: /dev/ttyACM0
           TEST_ADAPTER_TWO: /dev/ttyACM1
           RUST_LOG: info
         run: |
-          env:
-            COMMIT: ${{ steps.checkout.outputs.commit }}
           cd host
           cargo test --test '*' -- --nocapture
+      - name: Update status
+        env:
+          COMMIT: ${{ steps.checkout.outputs.commit }}
+        run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/$COMMIT \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
             -f "state=success" -f "description=The build succeeded!" -f "context=tests"
