@@ -30,7 +30,6 @@ See `examples` for example applications. Currently there are two examples:
 * `nrf-sdc` for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
 * `serial-hci` which runs on a PC using a HCI controller attached via a serial port (Such as [this Zephyr sample](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/samples/bluetooth/hci_uart/README.html)).
 
-
 ## License
 
 Trouble is licensed under either of
