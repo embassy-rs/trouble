@@ -2,9 +2,10 @@ name: Tests
 
 on:
   workflow_dispatch:
-    prNr:
-      description: A PR number to build
-      required: true
+    inputs:
+      prNr:
+        description: A PR number to build
+        required: true
 
 jobs:
   integration-tests:
