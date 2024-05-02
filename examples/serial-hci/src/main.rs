@@ -10,7 +10,7 @@ use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_host::adapter::{Adapter, HostResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
-use trouble_host::PacketQos;
+use trouble_host::{Address, PacketQos};
 
 #[tokio::main]
 async fn main() {
@@ -58,8 +58,9 @@ async fn main() {
     static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
 
-    let adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 27, 1, 1> = Adapter::new(controller, host_resources);
+    let mut adapter: Adapter<'_, NoopRawMutex, _, 2, 4, 27, 1, 1> = Adapter::new(controller, host_resources);
 
+    adapter.set_random_address(Address::random([0xff, 0x9f, 0x1a, 0x05, 0xe4, 0xff]));
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
     // Generic Access Service (mandatory)

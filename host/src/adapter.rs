@@ -22,6 +22,7 @@ use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
+use embassy_sync::once_lock::OnceLock;
 use embassy_sync::semaphore::{GreedySemaphore, Semaphore as _};
 use futures::pin_mut;
 
@@ -73,6 +74,7 @@ pub struct Adapter<
     M: RawMutex,
 {
     address: Option<Address>,
+    initialized: OnceLock<()>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<M, CONNS>,
     pub(crate) reassembly: PacketReassembly<'d, CONNS>,
@@ -108,6 +110,7 @@ where
     ) -> Self {
         Self {
             address: None,
+            initialized: OnceLock::new(),
             controller,
             connections: ConnectionManager::new(),
             reassembly: PacketReassembly::new(),
@@ -145,6 +148,7 @@ where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
+        let _ = self.initialized.get().await;
         let ret = cmd.exec(&self.controller).await?;
         Ok(ret)
     }
@@ -155,6 +159,10 @@ where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
+        if self.initialized.try_get().is_none() {
+            return Err(Error::Busy.into());
+        }
+
         let fut = cmd.exec(&self.controller);
         match embassy_futures::poll_once(fut) {
             Poll::Ready(result) => match result {
@@ -172,6 +180,7 @@ where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
+        let _ = self.initialized.get().await;
         cmd.exec(&self.controller).await?;
         Ok(())
     }
@@ -200,9 +209,9 @@ where
             config.scan_config.interval.into(),
             config.scan_config.window.into(),
             true,
-            AddrKind::RANDOM,
+            AddrKind::PUBLIC,
             BdAddr::default(),
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             config.connect_params.min_connection_interval.into(),
             config.connect_params.max_connection_interval.into(),
             config.connect_params.max_latency,
@@ -250,8 +259,8 @@ where
         let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
         self.async_command(LeExtCreateConn::new(
             true,
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-            AddrKind::RANDOM,
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            AddrKind::PUBLIC,
             BdAddr::default(),
             phy_params,
         ))
@@ -295,7 +304,7 @@ where
             },
             config.interval.into(),
             config.interval.into(),
-            bt_hci::param::AddrKind::RANDOM,
+            bt_hci::param::AddrKind::PUBLIC,
             if config.filter_accept_list.is_empty() {
                 bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
             } else {
@@ -323,7 +332,7 @@ where
         };
         let phy_params = Self::create_phy_params(scanning, config.phys);
         self.command(LeSetExtScanParams::new(
-            self.address.map(|s| s.kind).unwrap_or(AddrKind::RANDOM),
+            self.address.map(|s| s.kind).unwrap_or(AddrKind::PUBLIC),
             if config.filter_accept_list.is_empty() {
                 bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
             } else {
@@ -436,7 +445,7 @@ where
             (false, false) => AdvKind::AdvNonconnInd,
         };
         let peer = params.peer.unwrap_or(Address {
-            kind: AddrKind::RANDOM,
+            kind: AddrKind::PUBLIC,
             addr: BdAddr::default(),
         });
 
@@ -444,7 +453,7 @@ where
             config.interval_min.into(),
             config.interval_max.into(),
             kind,
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             peer.kind,
             peer.addr,
             config.channel_map.unwrap_or(AdvChannelMap::ALL),
@@ -505,7 +514,7 @@ where
         params.set.max_ext_adv_events = max_events;
 
         let peer = params.peer.unwrap_or(Address {
-            kind: AddrKind::RANDOM,
+            kind: AddrKind::PUBLIC,
             addr: BdAddr::default(),
         });
         self.command(LeSetExtAdvParams::new(
@@ -514,7 +523,7 @@ where
             config.interval_min.into(),
             config.interval_max.into(),
             config.channel_map.unwrap_or(AdvChannelMap::ALL),
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             peer.kind,
             peer.addr,
             config.filter_policy,
@@ -720,6 +729,7 @@ where
             self.permits.set(ret.total_num_le_acl_data_packets as usize);
             // TODO: Configure ACL max buffer size as well?
 
+            let _ = self.initialized.init(());
             // Never return
             let _ = pending::<Result<(), AdapterError<T>>>().await;
             Ok(())

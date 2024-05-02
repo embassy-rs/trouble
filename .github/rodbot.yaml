@@ -7,5 +7,3 @@ on:
       steps:
         - run: |
             gh workflow run tests.yaml -R embassy-rs/trouble -F prNr=${{ github.event.issue.number }}
-        - run: |
-            gh pr comment ${{ github.event.issue.number }} -b "Aye, aye, captain! … Triggered Test worklow!"
