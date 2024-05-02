@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Checkout PR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           gh pr checkout "${{ github.event.inputs.prNr }}"
       - name: Build
