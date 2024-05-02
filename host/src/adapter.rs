@@ -209,9 +209,9 @@ where
             config.scan_config.interval.into(),
             config.scan_config.window.into(),
             true,
-            AddrKind::RANDOM,
+            AddrKind::PUBLIC,
             BdAddr::default(),
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             config.connect_params.min_connection_interval.into(),
             config.connect_params.max_connection_interval.into(),
             config.connect_params.max_latency,
@@ -259,8 +259,8 @@ where
         let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
         self.async_command(LeExtCreateConn::new(
             true,
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
-            AddrKind::RANDOM,
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            AddrKind::PUBLIC,
             BdAddr::default(),
             phy_params,
         ))
@@ -304,7 +304,7 @@ where
             },
             config.interval.into(),
             config.interval.into(),
-            bt_hci::param::AddrKind::RANDOM,
+            bt_hci::param::AddrKind::PUBLIC,
             if config.filter_accept_list.is_empty() {
                 bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
             } else {
@@ -332,7 +332,7 @@ where
         };
         let phy_params = Self::create_phy_params(scanning, config.phys);
         self.command(LeSetExtScanParams::new(
-            self.address.map(|s| s.kind).unwrap_or(AddrKind::RANDOM),
+            self.address.map(|s| s.kind).unwrap_or(AddrKind::PUBLIC),
             if config.filter_accept_list.is_empty() {
                 bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
             } else {
@@ -445,7 +445,7 @@ where
             (false, false) => AdvKind::AdvNonconnInd,
         };
         let peer = params.peer.unwrap_or(Address {
-            kind: AddrKind::RANDOM,
+            kind: AddrKind::PUBLIC,
             addr: BdAddr::default(),
         });
 
@@ -453,7 +453,7 @@ where
             config.interval_min.into(),
             config.interval_max.into(),
             kind,
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             peer.kind,
             peer.addr,
             config.channel_map.unwrap_or(AdvChannelMap::ALL),
@@ -514,7 +514,7 @@ where
         params.set.max_ext_adv_events = max_events;
 
         let peer = params.peer.unwrap_or(Address {
-            kind: AddrKind::RANDOM,
+            kind: AddrKind::PUBLIC,
             addr: BdAddr::default(),
         });
         self.command(LeSetExtAdvParams::new(
@@ -523,7 +523,7 @@ where
             config.interval_min.into(),
             config.interval_max.into(),
             config.channel_map.unwrap_or(AdvChannelMap::ALL),
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::RANDOM),
+            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             peer.kind,
             peer.addr,
             config.filter_policy,
