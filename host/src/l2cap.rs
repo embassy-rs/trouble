@@ -1,3 +1,4 @@
+//! L2CAP channels.
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::DisconnectReason;

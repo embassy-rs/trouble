@@ -1,3 +1,6 @@
+//! Adapter
+//!
+//! The adapter module contains the main entry point for the TrouBLE host.
 use core::future::pending;
 use core::task::Poll;
 
@@ -42,6 +45,10 @@ use crate::types::l2cap::{
 use crate::{attribute::AttributeTable, gatt::GattServer};
 use crate::{AdapterError, Address, Error};
 
+/// HostResources holds the resources used by the host.
+///
+/// The packet pool is used by the adapter to multiplex data streams, by allocating space for
+/// incoming packets and dispatching to the appropriate connection and channel.
 pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
 }
@@ -49,6 +56,7 @@ pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usiz
 impl<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
     HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>
 {
+    /// Create a new instance of host resources with the provided QoS requirements for packets.
     pub fn new(qos: Qos) -> Self {
         Self {
             pool: PacketPool::new(qos),
@@ -61,6 +69,13 @@ pub trait VendorEventHandler {
     fn on_event(&self, event: &Vendor<'_>);
 }
 
+/// A BLE Host adapter.
+///
+/// The adapter holds the runtime state of the host, and is the entry point
+/// for all interactions with the controller.
+///
+/// The adapter performs connection management, l2cap channel management, and
+/// multiplexes events and data across connections and l2cap channels.
 pub struct Adapter<
     'd,
     M,
