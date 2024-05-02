@@ -1,13 +1,19 @@
 name: Tests
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    prNr:
+      description: A PR number to build
+      required: true
 
 jobs:
   integration-tests:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout PR
+        run: |
+          gh pr checkout "${{ github.event.inputs.prNr }}"
       - name: Build
         env:
           TEST_ADAPTER_ONE: /dev/ttyACM0
