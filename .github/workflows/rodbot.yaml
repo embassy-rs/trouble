@@ -1,0 +1,24 @@
+name: rodbot
+
+on:
+  issue_comment:
+    types: [ "created" ]
+
+jobs:
+  rodbot:
+    runs-on: ubuntu-22.04
+
+    env:
+      GH_TOKEN: ${{ secrets.BOT_PAT }}
+
+    steps:
+      - run: |
+          echo $GITHUB_EVENT_PATH
+          cat $GITHUB_EVENT_PATH
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - uses: ctron/rodbot-action@v0.1
+        with:
+          config: .github/rodbot.yaml
