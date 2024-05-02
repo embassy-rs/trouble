@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      GH_TOKEN: ${{ secrets.BOT_PAT }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - run: |
