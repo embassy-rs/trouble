@@ -12,7 +12,7 @@ use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, 
 use trouble_host::connection::ConnectConfig;
 use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
 use trouble_host::scan::ScanConfig;
-use trouble_host::PacketQos;
+use trouble_host::{Address, PacketQos};
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3;
@@ -59,7 +59,11 @@ async fn l2cap_connection_oriented_channels() {
     let peripheral = std::env::var("TEST_ADAPTER_ONE").unwrap();
     let central = std::env::var("TEST_ADAPTER_TWO").unwrap();
 
+    let peripheral_address: Address = Address::random([0xff, 0x9f, 0x1a, 0x05, 0xe4, 0xff]);
+
     let local = tokio::task::LocalSet::new();
+
+    const PAYLOAD_LEN: usize = 4;
 
     // Spawn peripheral
     let peripheral = local.spawn_local(async move {
@@ -68,8 +72,10 @@ async fn l2cap_connection_oriented_channels() {
         let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
             HostResources::new(PacketQos::Guaranteed(4));
 
-        let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
+        let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
             Adapter::new(controller_peripheral, &mut host_resources);
+
+        adapter.set_random_address(peripheral_address);
 
         select! {
             r = adapter.run() => {
@@ -78,15 +84,16 @@ async fn l2cap_connection_oriented_channels() {
             r = async {
                 let mut adv_data = [0; 31];
                 AdStructure::encode_slice(
-                    &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),],
+                    &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
                     &mut adv_data[..],
                 ).unwrap();
 
                 let mut scan_data = [0; 31];
                 AdStructure::encode_slice(
-                    &[AdStructure::CompleteLocalName(b"trouble-l2cap-int"),],
+                    &[AdStructure::CompleteLocalName(b"trouble-l2cap-int")],
                     &mut scan_data[..],
                 ).unwrap();
+
                 loop {
                     println!("[peripheral] advertising");
                     let conn = adapter.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
@@ -102,7 +109,6 @@ async fn l2cap_connection_oriented_channels() {
                     println!("[peripheral] channel created");
 
                     // Size of payload we're expecting
-                    const PAYLOAD_LEN: usize = 27;
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
                         let len = ch1.receive(&adapter, &mut rx).await?;
@@ -140,51 +146,37 @@ async fn l2cap_connection_oriented_channels() {
                 r
             }
             r = async {
-                println!("[central] scanning");
-                loop {
-                    let reports = adapter.scan(&Default::default()).await?;
-                    let mut found = None;
-                    for report in reports.iter() {
-                        let report = report.unwrap();
-                        for adv in AdStructure::decode(report.data) {
-                            if let Ok(AdStructure::CompleteLocalName(b"trouble-l2cap-int")) = adv {
-                                found.replace((report.addr_kind, report.addr));
-                                break;
-                            }
-                        }
-                    }
+                let config = ConnectConfig {
+                    connect_params: Default::default(),
+                    scan_config: ScanConfig {
+                        active: true,
+                        filter_accept_list: &[(peripheral_address.kind, &peripheral_address.addr)],
+                        ..Default::default()
+                    },
+                };
 
-                    if let Some((kind, addr)) = found {
-                        let config = ConnectConfig {
-                            connect_params: Default::default(),
-                            scan_config: ScanConfig {
-                                filter_accept_list: &[(kind, &addr)],
-                                ..Default::default()
-                            },
-                        };
-                        println!("[central] connecting");
-                        let conn = adapter.connect(&config).await.unwrap();
-                        println!("[central] connected");
-                        const PAYLOAD_LEN: usize = 27;
-                        let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, &L2capChannelConfig {
-                            mtu: PAYLOAD_LEN as u16,
-                            ..Default::default()
-                        }).await?;
-                        println!("[central] channel created");
-                        for i in 0..10 {
-                            let tx = [i; PAYLOAD_LEN];
-                            ch1.send(&adapter, &tx).await?;
-                        }
-                        println!("[central] data sent");
-                        let mut rx = [0; PAYLOAD_LEN];
-                        for i in 0..10 {
-                            let len = ch1.receive(&adapter, &mut rx).await?;
-                            assert_eq!(len, rx.len());
-                            assert_eq!(rx, [i; PAYLOAD_LEN]);
-                        }
-                        println!("[central] data received");
-                        break;
+                println!("[central] connecting");
+                loop {
+                    let conn = adapter.connect(&config).await.unwrap();
+                    println!("[central] connected");
+                    let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, &L2capChannelConfig {
+                        mtu: PAYLOAD_LEN as u16,
+                        ..Default::default()
+                    }).await?;
+                    println!("[central] channel created");
+                    for i in 0..10 {
+                        let tx = [i; PAYLOAD_LEN];
+                        ch1.send(&adapter, &tx).await?;
                     }
+                    println!("[central] data sent");
+                    let mut rx = [0; PAYLOAD_LEN];
+                    for i in 0..10 {
+                        let len = ch1.receive(&adapter, &mut rx).await?;
+                        assert_eq!(len, rx.len());
+                        assert_eq!(rx, [i; PAYLOAD_LEN]);
+                    }
+                    println!("[central] data received");
+                    break;
                 }
                 Ok(())
             } => {
@@ -194,11 +186,24 @@ async fn l2cap_connection_oriented_channels() {
     });
 
     match tokio::time::timeout(Duration::from_secs(30), local).await {
-        Ok(_) => {
-            central.await.unwrap().unwrap();
-            peripheral.await.unwrap().unwrap();
-            println!("Test completed successfully");
-        }
+        Ok(_) => match tokio::join!(central, peripheral) {
+            (Err(e1), Err(e2)) => {
+                println!("Central error: {:?}", e1);
+                println!("Peripheral error: {:?}", e2);
+                assert!(false);
+            }
+            (Err(e), _) => {
+                println!("Central error: {:?}", e);
+                assert!(false)
+            }
+            (_, Err(e)) => {
+                println!("Peripheral error: {:?}", e);
+                assert!(false)
+            }
+            _ => {
+                println!("Test completed successfully");
+            }
+        },
         Err(e) => {
             println!("Test timed out: {:?}", e);
             assert!(false);
