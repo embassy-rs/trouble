@@ -23,6 +23,7 @@ use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::semaphore::{GreedySemaphore, Semaphore as _};
+use embassy_sync::once_lock::OnceLock;
 use futures::pin_mut;
 
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
@@ -73,6 +74,7 @@ pub struct Adapter<
     M: RawMutex,
 {
     address: Option<Address>,
+    initialized: OnceLock<()>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<M, CONNS>,
     pub(crate) reassembly: PacketReassembly<'d, CONNS>,
@@ -108,6 +110,7 @@ where
     ) -> Self {
         Self {
             address: None,
+            initialized: OnceLock::new(),
             controller,
             connections: ConnectionManager::new(),
             reassembly: PacketReassembly::new(),
@@ -145,6 +148,7 @@ where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
+        let _ = self.initialized.get().await;
         let ret = cmd.exec(&self.controller).await?;
         Ok(ret)
     }
@@ -155,6 +159,10 @@ where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
+        if self.initialized.try_get().is_none() {
+            return Err(Error::Busy.into());
+        }
+
         let fut = cmd.exec(&self.controller);
         match embassy_futures::poll_once(fut) {
             Poll::Ready(result) => match result {
@@ -172,6 +180,7 @@ where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
+        let _ = self.initialized.get().await;
         cmd.exec(&self.controller).await?;
         Ok(())
     }
@@ -720,6 +729,7 @@ where
             self.permits.set(ret.total_num_le_acl_data_packets as usize);
             // TODO: Configure ACL max buffer size as well?
 
+            let _  = self.initialized.init(());
             // Never return
             let _ = pending::<Result<(), AdapterError<T>>>().await;
             Ok(())
