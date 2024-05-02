@@ -1,3 +1,4 @@
+//! Advertisement config.
 pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, PhyKind};
 use bt_hci::param::{AdvEventProps, AdvHandle, AdvSet};
 use embassy_time::Duration;

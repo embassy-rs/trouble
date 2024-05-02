@@ -1,3 +1,4 @@
+//! BLE connection.
 use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::status::ReadRssi;
@@ -45,10 +46,11 @@ impl Connection {
         Self { handle }
     }
 
-    pub fn handle(&self) -> ConnHandle {
+    pub(crate) fn handle(&self) -> ConnHandle {
         self.handle
     }
 
+    /// Request disconnection of this connection handle.
     pub fn disconnect<
         M: RawMutex,
         T: Controller + ControllerCmdSync<Disconnect>,
@@ -65,6 +67,7 @@ impl Connection {
         Ok(())
     }
 
+    /// The connection role for this connection.
     pub fn role<
         M: RawMutex,
         T: Controller,
@@ -81,6 +84,7 @@ impl Connection {
         Ok(role)
     }
 
+    /// The peer address for this connection.
     pub fn peer_address<
         M: RawMutex,
         T: Controller,
@@ -97,6 +101,7 @@ impl Connection {
         Ok(addr)
     }
 
+    /// The RSSI value for this connection.
     pub async fn rssi<
         M: RawMutex,
         T,
@@ -115,6 +120,7 @@ impl Connection {
         Ok(ret.rssi)
     }
 
+    /// Update connection parameters for this connection.
     pub async fn set_connection_params<
         M: RawMutex,
         T,

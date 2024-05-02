@@ -2,33 +2,42 @@
 
 [![CI](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml/badge.svg)](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml)
 
-*WIP* Basic functionality works, however API is likely to change a bit. Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE Rust stack for nRF.
+TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification. The initial implementation was based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with types and traits from [`bt-hci`](https://github.com/alexmoon/bt-hci).
 
-TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification.
+### What is a Host?
 
-The initial implementation was based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with [`bt-hci`](https://github.com/alexmoon/bt-hci), which implements Rust types for the HCI specification as well as an interface
-for a BLE Controller.
+A BLE Host is one side of the Host Controller Interface (HCI). The BLE specification defines the software of a BLE implementation in terms of a `controller` (lower layer) and a `host` (upper layer).
 
-### HCI what?
+These communicate via a standardized protocol, that may run over different transports such as as UART, USB or a custom in-memory IPC implementation.
 
-The BLE specification defines the software of a BLE implementation in terms of a `controller` (lower layer) and a `host` (upper layer). These communicate via a standardized protocol called the Host-Controller Interface (HCI), which can operate over different transports such as UART, USB or a custom IPC implementation.
+The advantage of this split is that the Host can generally be reused for different controller implementations.
+
+## Hardware support
+
+TrouBLE can use any controller that implements the traits from `bt-hci`. At present, that includes:
+
+* [nRF Softdevice Controller](https://github.com/alexmoon/nrf-sdc). Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE Rust stack for nRF.
+* [Zephyr UART HCI](https://docs.zephyrproject.org/latest/samples/bluetooth/hci_uart/README.html).
+* [Raspberry Pi Pico W](https://github.com/embassy-rs/embassy/pull/2865) - This is still WIP and largely untested.
+
 
 ## Current status
 
-The implementation has some basic functionality working:
+The implementation has the following functionality working:
 
 * Peripheral role - advertise as a peripheral and accept connections.
 * Central role - scan for devices and establish connections.
 * Basic GATT server supporting write, read, notifications
 * L2CAP CoC (Connection oriented Channels) with credit management (for both central and peripheral)
-* Runs on any transport supporting the `Controller` and `ControllerCmd` traits from `bt-hci`. The `SerialTransport` and `ExternalController` helper types can be used to create additional implementations.
 
-## Example
+See the [issues](https://github.com/embassy-rs/trouble/issues) for a list of TODOs.
+
+## Examples
 
 See `examples` for example applications. Currently there are two examples:
 
 * `nrf-sdc` for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
-* `serial-hci` which runs on a PC using a HCI controller attached via a serial port (Such as [this Zephyr sample](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/samples/bluetooth/hci_uart/README.html)).
+* `serial-hci` which runs on std using a controller attached via a serial port (Such as [this Zephyr sample](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/samples/bluetooth/hci_uart/README.html)).
 
 ## License
 

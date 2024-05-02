@@ -1,3 +1,4 @@
+//! Scan config.
 use core::iter::FusedIterator;
 
 use bt_hci::param::{AddrKind, BdAddr, LeAdvReport, LeExtAdvReport};

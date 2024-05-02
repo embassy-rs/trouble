@@ -39,6 +39,7 @@ mod attribute_server;
 #[cfg(feature = "gatt")]
 pub mod gatt;
 
+/// A BLE address.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Address {
@@ -55,6 +56,7 @@ impl Address {
     }
 }
 
+/// Errors returned by the adapter.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdapterError<E> {
@@ -62,6 +64,7 @@ pub enum AdapterError<E> {
     Adapter(Error),
 }
 
+/// Errors related to Host.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
