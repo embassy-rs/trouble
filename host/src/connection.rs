@@ -46,7 +46,8 @@ impl Connection {
         Self { handle }
     }
 
-    pub(crate) fn handle(&self) -> ConnHandle {
+    /// Connection handle of this connection.
+    pub fn handle(&self) -> ConnHandle {
         self.handle
     }
 
