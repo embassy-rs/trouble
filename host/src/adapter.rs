@@ -2,6 +2,7 @@
 //!
 //! The adapter module contains the main entry point for the TrouBLE host.
 use core::future::poll_fn;
+use core::task::Poll;
 
 use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
 use bt_hci::cmd::le::{
@@ -22,10 +23,9 @@ use bt_hci::param::{
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::once_lock::OnceLock;
-use embassy_sync::semaphore::{GreedySemaphore, Semaphore as _};
 use futures::pin_mut;
 
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
@@ -95,7 +95,6 @@ pub struct Adapter<
     pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
     pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
-    pub(crate) permits: GreedySemaphore<NoopRawMutex>,
 
     pub(crate) scanner: Channel<M, Option<ScanReport>, 1>,
 }
@@ -132,7 +131,6 @@ where
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
-            permits: GreedySemaphore::new(0),
         }
     }
 
@@ -589,6 +587,7 @@ where
                 }
 
                 let Some(mut p) = self.pool.alloc(AllocId::from_channel(header.channel)) else {
+                    trace!("No memory for packets on channel {}", header.channel);
                     return Err(Error::OutOfMemory);
                 };
                 p.as_mut()[..data.len()].copy_from_slice(data);
@@ -719,9 +718,14 @@ where
             .await?;
 
             let ret = LeReadBufferSize::new().exec(&self.controller).await?;
-            self.permits.set(ret.total_num_le_acl_data_packets as usize);
-            // TODO: Configure ACL max buffer size as well?
+            info!(
+                "[adapter] setting permits to {}",
+                ret.total_num_le_acl_data_packets as usize
+            );
 
+            self.connections
+                .set_link_credits(ret.total_num_le_acl_data_packets as usize);
+            // TODO: Configure ACL max buffer size as well?
             let _ = self.initialized.init(());
 
             loop {
@@ -788,8 +792,17 @@ where
                             let _ = self.channels.disconnected(e.handle);
                         }
                         Event::NumberOfCompletedPackets(c) => {
-                            // info!("Confirmed {} packets sent", c.completed_packets.len());
-                            self.permits.release(c.completed_packets.len());
+                            // Explicitly ignoring for now
+                            for entry in c.completed_packets.iter() {
+                                match (entry.handle(), entry.num_completed_packets()) {
+                                    (Ok(handle), Ok(completed)) => {
+                                        let _ = self.connections.confirm_sent(handle, completed as usize);
+                                    }
+                                    _ => {} // Ignoring for now
+                                }
+
+                                //c.completed_packets.len());
+                            }
                         }
                         Event::Vendor(vendor) => {
                             if let Some(handler) = vendor_handler {
@@ -821,38 +834,41 @@ where
         }
     }
 
-    pub(crate) fn hci(&self) -> HciController<'_, T> {
+    pub(crate) fn hci(&self) -> HciController<'_, M, T, CONNS> {
         HciController {
             controller: &self.controller,
-            permits: &self.permits,
+            connections: &self.connections,
         }
     }
 }
 
-pub struct HciController<'d, T: Controller> {
+pub struct HciController<'d, M: RawMutex, T: Controller, const CONNS: usize> {
     pub(crate) controller: &'d T,
-    pub(crate) permits: &'d GreedySemaphore<NoopRawMutex>,
+    pub(crate) connections: &'d ConnectionManager<M, CONNS>,
 }
 
-impl<'d, T: Controller> Clone for HciController<'d, T> {
+impl<'d, M: RawMutex, T: Controller, const CONNS: usize> Clone for HciController<'d, M, T, CONNS> {
     fn clone(&self) -> Self {
         Self {
             controller: self.controller,
-            permits: self.permits,
+            connections: self.connections,
         }
     }
 }
 
-impl<'d, T: Controller> HciController<'d, T> {
+impl<'d, M: RawMutex, T: Controller, const CONNS: usize> HciController<'d, M, T, CONNS> {
     pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>>
     where
         T: blocking::Controller,
     {
-        // info!("[try_send] permits: {}", self.permits.permits());
-        let permit = self
-            .permits
-            .try_acquire(1)
-            .ok_or::<AdapterError<T::Error>>(Error::NoPermits.into())?;
+        let mut grant = match self.connections.poll_request_to_send(handle, 1, None) {
+            Poll::Ready(res) => res?,
+            Poll::Pending => {
+                warn!("[link][handle = {}]: not enough credits", handle);
+                return Err(Error::Busy.into());
+            }
+        };
+
         let acl = AclPacket::new(
             handle,
             AclPacketBoundary::FirstNonFlushable,
@@ -862,7 +878,7 @@ impl<'d, T: Controller> HciController<'d, T> {
         // info!("Sent ACL {:?}", acl);
         match self.controller.try_write_acl_data(&acl) {
             Ok(result) => {
-                permit.disarm();
+                grant.confirm(1);
                 Ok(result)
             }
             Err(blocking::TryError::Busy) => {
@@ -874,12 +890,7 @@ impl<'d, T: Controller> HciController<'d, T> {
     }
 
     pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
-        // info!("[send] permits: {}", self.permits.permits());
-        let permit = self
-            .permits
-            .acquire(1)
-            .await
-            .map_err(|_| AdapterError::Adapter(Error::NoPermits))?;
+        let mut grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, 1, Some(cx))).await?;
         let acl = AclPacket::new(
             handle,
             AclPacketBoundary::FirstNonFlushable,
@@ -890,7 +901,7 @@ impl<'d, T: Controller> HciController<'d, T> {
             .write_acl_data(&acl)
             .await
             .map_err(AdapterError::Controller)?;
-        permit.disarm();
+        grant.confirm(1);
         Ok(())
     }
 
@@ -901,6 +912,12 @@ impl<'d, T: Controller> HciController<'d, T> {
         signal: &D,
         p_buf: &mut [u8],
     ) -> Result<(), AdapterError<T::Error>> {
+        trace!(
+            "[l2cap][conn = {}] sending control signal (req = {}) signal: {:?}",
+            handle,
+            identifier,
+            signal
+        );
         let header = L2capSignalHeader {
             identifier,
             code: D::code(),
