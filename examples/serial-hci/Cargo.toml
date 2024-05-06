@@ -24,7 +24,7 @@ bt-hci = { version = "0.1.0", default-features = false, features = ["log"] }
 trouble-host = { version = "0.1.0", path = "../../host", features = ["log", "gatt"] }
 
 [patch.crates-io]
-bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "try-controller" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
 #embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
 #bt-hci = { path = "../../../bt-hci" }
