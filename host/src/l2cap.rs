@@ -1,6 +1,6 @@
 //! L2CAP channels.
 use bt_hci::cmd::link_control::Disconnect;
-use bt_hci::controller::{Controller, ControllerCmdSync};
+use bt_hci::controller::{blocking, Controller, ControllerCmdSync};
 use bt_hci::param::DisconnectReason;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
@@ -69,7 +69,7 @@ impl L2capChannel {
     /// If there are no available credits to send, returns Error::Busy.
     pub fn try_send<
         M: RawMutex,
-        T: Controller,
+        T: Controller + blocking::Controller,
         const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
@@ -149,7 +149,9 @@ impl L2capChannel {
     ) -> Result<(), AdapterError<T::Error>> {
         let handle = adapter.channels.disconnect(self.cid)?;
         if close_connection {
-            adapter.try_command(Disconnect::new(handle, DisconnectReason::RemoteUserTerminatedConn))?;
+            adapter
+                .connections
+                .request_disconnect(handle, DisconnectReason::RemoteUserTerminatedConn)?;
         }
         Ok(())
     }

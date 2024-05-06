@@ -64,7 +64,9 @@ impl Connection {
         &mut self,
         adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<(), AdapterError<T::Error>> {
-        adapter.try_command(Disconnect::new(self.handle, DisconnectReason::RemoteUserTerminatedConn))?;
+        adapter
+            .connections
+            .request_disconnect(self.handle, DisconnectReason::RemoteUserTerminatedConn)?;
         Ok(())
     }
 

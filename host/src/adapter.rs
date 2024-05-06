@@ -1,8 +1,7 @@
 //! Adapter
 //!
 //! The adapter module contains the main entry point for the TrouBLE host.
-use core::future::pending;
-use core::task::Poll;
+use core::future::poll_fn;
 
 use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
 use bt_hci::cmd::le::{
@@ -13,7 +12,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{CmdError, Controller, ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
@@ -166,27 +165,6 @@ where
         let _ = self.initialized.get().await;
         let ret = cmd.exec(&self.controller).await?;
         Ok(ret)
-    }
-
-    /// Attempt to run a HCI command and return the response.
-    pub fn try_command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
-    where
-        C: SyncCmd,
-        T: ControllerCmdSync<C>,
-    {
-        if self.initialized.try_get().is_none() {
-            return Err(Error::Busy.into());
-        }
-
-        let fut = cmd.exec(&self.controller);
-        match embassy_futures::poll_once(fut) {
-            Poll::Ready(result) => match result {
-                Ok(r) => Ok(r),
-                Err(CmdError::Io(e)) => Err(AdapterError::Controller(e)),
-                Err(CmdError::Hci(e)) => Err(e.into()),
-            },
-            Poll::Pending => Err(Error::Busy.into()),
-        }
     }
 
     /// Run an async HCI command where the response will generate an event later.
@@ -695,8 +673,8 @@ where
         const MAX_HCI_PACKET_LEN: usize = 259;
         let mut disconnects = 0;
 
-        // Init future must run just once
-        let init_fut = async {
+        // Control future that initializes system and handles controller changes.
+        let control_fut = async {
             Reset::new().exec(&self.controller).await?;
 
             if let Some(addr) = self.address {
@@ -745,11 +723,15 @@ where
             // TODO: Configure ACL max buffer size as well?
 
             let _ = self.initialized.init(());
-            // Never return
-            let _ = pending::<Result<(), AdapterError<T>>>().await;
-            Ok(())
+
+            loop {
+                let mut it = poll_fn(|cx| self.connections.poll_disconnecting(cx)).await;
+                while let Some(entry) = it.next() {
+                    self.command(Disconnect::new(entry.0, entry.1)).await?;
+                }
+            }
         };
-        pin_mut!(init_fut);
+        pin_mut!(control_fut);
 
         loop {
             // Task handling receiving data from the controller.
@@ -831,7 +813,7 @@ where
             };
 
             // info!("Entering select loop");
-            let result: Result<(), AdapterError<T::Error>> = match select(&mut init_fut, rx_fut).await {
+            let result: Result<(), AdapterError<T::Error>> = match select(&mut control_fut, rx_fut).await {
                 Either::First(result) => result,
                 Either::Second(result) => result,
             };
@@ -862,7 +844,10 @@ impl<'d, T: Controller> Clone for HciController<'d, T> {
 }
 
 impl<'d, T: Controller> HciController<'d, T> {
-    pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
+    pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>>
+    where
+        T: blocking::Controller,
+    {
         // info!("[try_send] permits: {}", self.permits.permits());
         let permit = self
             .permits
@@ -875,19 +860,16 @@ impl<'d, T: Controller> HciController<'d, T> {
             pdu,
         );
         // info!("Sent ACL {:?}", acl);
-        let fut = self.controller.write_acl_data(&acl);
-        match embassy_futures::poll_once(fut) {
-            Poll::Ready(result) => {
-                if result.is_ok() {
-                    permit.disarm();
-                }
-
-                result.map_err(AdapterError::Controller)
+        match self.controller.try_write_acl_data(&acl) {
+            Ok(result) => {
+                permit.disarm();
+                Ok(result)
             }
-            Poll::Pending => {
+            Err(blocking::TryError::Busy) => {
                 warn!("hci: acl data send busy");
                 Err(Error::Busy.into())
             }
+            Err(blocking::TryError::Error(e)) => Err(AdapterError::Controller(e)),
         }
     }
 
@@ -937,21 +919,5 @@ impl<'d, T: Controller> HciController<'d, T> {
         self.send(handle, w.finish()).await?;
 
         Ok(())
-    }
-
-    pub(crate) fn try_command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
-    where
-        C: SyncCmd,
-        T: ControllerCmdSync<C>,
-    {
-        let fut = cmd.exec(self.controller);
-        match embassy_futures::poll_once(fut) {
-            Poll::Ready(result) => match result {
-                Ok(r) => Ok(r),
-                Err(CmdError::Io(e)) => Err(AdapterError::Controller(e)),
-                Err(CmdError::Hci(e)) => Err(e.into()),
-            },
-            Poll::Pending => Err(Error::Busy.into()),
-        }
     }
 }

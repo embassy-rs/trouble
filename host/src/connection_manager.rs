@@ -3,7 +3,7 @@ use core::future::poll_fn;
 use core::task::{Context, Poll};
 
 use bt_hci::event::le::LeConnectionComplete;
-use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
@@ -13,7 +13,8 @@ use crate::Error;
 
 struct State<const CONNS: usize> {
     connections: [ConnectionStorage; CONNS],
-    waker: WakerRegistration,
+    accept_waker: WakerRegistration,
+    disconnect_waker: WakerRegistration,
 }
 
 pub(crate) struct ConnectionManager<M: RawMutex, const CONNS: usize> {
@@ -26,7 +27,8 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         Self {
             state: Mutex::new(RefCell::new(State {
                 connections: [ConnectionStorage::DISCONNECTED; CONNS],
-                waker: WakerRegistration::new(),
+                accept_waker: WakerRegistration::new(),
+                disconnect_waker: WakerRegistration::new(),
             })),
             canceled: Signal::new(),
         }
@@ -56,6 +58,42 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         })
     }
 
+    pub(crate) fn request_disconnect(&self, h: ConnHandle, reason: DisconnectReason) -> Result<(), Error> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for storage in state.connections.iter_mut() {
+                match storage.state {
+                    ConnectionState::Connecting if storage.handle.unwrap() == h => {
+                        storage.state = ConnectionState::Disconnecting(reason);
+                        return Ok(());
+                    }
+                    ConnectionState::Connected if storage.handle.unwrap() == h => {
+                        storage.state = ConnectionState::Disconnecting(reason);
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            Err(Error::NotFound)
+        })
+    }
+
+    pub(crate) fn poll_disconnecting<'m>(
+        &'m self,
+        cx: &mut Context<'_>,
+    ) -> Poll<impl Iterator<Item = (ConnHandle, DisconnectReason)> + 'm> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            state.disconnect_waker.register(cx.waker());
+            for storage in state.connections.iter() {
+                if let ConnectionState::Disconnecting(_) = storage.state {
+                    return Poll::Ready(DisconnectIter { state: &self.state });
+                }
+            }
+            Poll::Pending
+        })
+    }
+
     pub(crate) fn disconnect(&self, h: ConnHandle) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -63,14 +101,18 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                 match storage.state {
                     ConnectionState::Connecting if storage.handle.unwrap() == h => {
                         storage.state = ConnectionState::Disconnected;
+                        state.disconnect_waker.wake();
+                        return Ok(());
                     }
                     ConnectionState::Connected if storage.handle.unwrap() == h => {
                         storage.state = ConnectionState::Disconnected;
+                        state.disconnect_waker.wake();
+                        return Ok(());
                     }
                     _ => {}
                 }
             }
-            Ok(())
+            Err(Error::NotFound)
         })
     }
 
@@ -84,7 +126,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                     storage.peer_addr_kind.replace(info.peer_addr_kind);
                     storage.peer_addr.replace(info.peer_addr);
                     storage.role.replace(info.role);
-                    state.waker.wake();
+                    state.accept_waker.wake();
                     return Ok(());
                 }
             }
@@ -120,7 +162,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                     }
                 }
             }
-            state.waker.register(cx.waker());
+            state.accept_waker.register(cx.waker());
             Poll::Pending
         })
     }
@@ -167,6 +209,17 @@ impl<M: RawMutex, const CONNS: usize> DynamicConnectionManager for ConnectionMan
     }
 }
 
+pub struct DisconnectIter<'d, M: RawMutex, const CONNS: usize> {
+    state: &'d Mutex<M, RefCell<State<CONNS>>>,
+}
+
+impl<'d, M: RawMutex, const CONNS: usize> Iterator for DisconnectIter<'d, M, CONNS> {
+    type Item = (ConnHandle, DisconnectReason);
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionStorage {
@@ -192,6 +245,7 @@ impl ConnectionStorage {
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConnectionState {
+    Disconnecting(DisconnectReason),
     Disconnected,
     Connecting,
     Connected,

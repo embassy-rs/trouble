@@ -2,7 +2,7 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use bt_hci::controller::Controller;
+use bt_hci::controller::{blocking, Controller};
 use bt_hci::param::ConnHandle;
 use bt_hci::FromHciBytes;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -576,7 +576,7 @@ impl<
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
-    pub(crate) fn try_send<T: Controller>(
+    pub(crate) fn try_send<T: Controller + blocking::Controller>(
         &self,
         cid: u16,
         buf: &[u8],
