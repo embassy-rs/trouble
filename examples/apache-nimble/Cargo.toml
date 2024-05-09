@@ -1,0 +1,38 @@
+[package]
+name = "trouble-apache-nimble-examples"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+defmt = "0.3"
+defmt-rtt = "0.4"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+cortex-m-rt = "0.7.0"
+cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+apache-nimble = { version = "0.1.0", features = ["port-layer-embassy", "nrf52840", "controller"] }
+embassy-time = { version = "0.3.0", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-sync = "0.5.0"
+embassy-futures = "0.1.0"
+embassy-executor = { version = "0.5.0", features = ["defmt", "integrated-timers", "executor-thread", "arch-cortex-m"] }
+embassy-nrf = { version = "0.1.0", features = ["defmt", "nfc-pins-as-gpio", "time-driver-rtc1", "nrf52840"] }
+trouble-host = { version = "0.1.0", features = ["gatt"] }
+static_cell = "1.0.0"
+
+[patch.crates-io]
+apache-nimble = { git = "https://github.com/rumcake-rs/apache-nimble-sys", branch = "controller-bindings" }
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
+trouble-host = { git = "https://github.com/embassy-rs/trouble", branch = "main" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+
+[profile.dev]
+debug = 2
+
+[profile.release]
+debug = 2
+lto = true
+# opt-level = "z"
+
