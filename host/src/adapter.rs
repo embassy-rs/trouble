@@ -562,7 +562,7 @@ where
     pub fn gatt_server<'reference, 'values, const MAX: usize>(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
-    ) -> GattServer<'reference, 'values, 'd, M, T, MAX> {
+    ) -> GattServer<'reference, 'values, 'd, M, T, CONNS, MAX> {
         use crate::attribute_server::AttributeServer;
         GattServer {
             server: AttributeServer::new(table),
@@ -864,7 +864,7 @@ impl<'d, M: RawMutex, T: Controller, const CONNS: usize> HciController<'d, M, T,
         let mut grant = match self.connections.poll_request_to_send(handle, 1, None) {
             Poll::Ready(res) => res?,
             Poll::Pending => {
-                warn!("[link][handle = {}]: not enough credits", handle);
+                warn!("[link][handle = {:?}]: not enough credits", handle);
                 return Err(Error::Busy.into());
             }
         };
@@ -913,7 +913,7 @@ impl<'d, M: RawMutex, T: Controller, const CONNS: usize> HciController<'d, M, T,
         p_buf: &mut [u8],
     ) -> Result<(), AdapterError<T::Error>> {
         trace!(
-            "[l2cap][conn = {}] sending control signal (req = {}) signal: {:?}",
+            "[l2cap][conn = {:?}] sending control signal (req = {}) signal: {:?}",
             handle,
             identifier,
             signal

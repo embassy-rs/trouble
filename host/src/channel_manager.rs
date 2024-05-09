@@ -333,7 +333,7 @@ impl<
     pub(crate) async fn signal(&self, conn: ConnHandle, data: &[u8]) -> Result<(), Error> {
         let (header, data) = L2capSignalHeader::from_hci_bytes(data)?;
         trace!(
-            "[l2cap][conn = {}] received signal (req {}) code {:?}",
+            "[l2cap][conn = {:?}] received signal (req {}) code {:?}",
             conn,
             header.identifier,
             header.code
@@ -361,13 +361,13 @@ impl<
             }
             L2capSignalCode::DisconnectionReq => {
                 let req = DisconnectionReq::from_hci_bytes_complete(data)?;
-                trace!("[l2cap][conn = {}, cid = {}] disconnect request", conn, req.dcid);
+                trace!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
                 self.disconnect(req.dcid)?;
                 Ok(())
             }
             L2capSignalCode::DisconnectionRes => {
                 let res = DisconnectionRes::from_hci_bytes_complete(data)?;
-                trace!("[l2cap][conn = {}, cid = {}] disconnect response", conn, res.scid);
+                trace!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
                 self.handle_disconnect_response(&res)
             }
             _ => Err(Error::NotSupported),

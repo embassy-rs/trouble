@@ -201,7 +201,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                     _ => {}
                 }
             }
-            trace!("[link][confirm_sent] connection {} not found", handle);
+            trace!("[link][confirm_sent] connection {:?} not found", handle);
             Err(Error::NotFound)
         })
     }
@@ -230,7 +230,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                     _ => {}
                 }
             }
-            trace!("[link][pool_request_to_send] connection {} not found", handle);
+            trace!("[link][pool_request_to_send] connection {:?} not found", handle);
             Poll::Ready(Err(Error::NotFound))
         })
     }
@@ -349,7 +349,7 @@ impl<'d, M: RawMutex, const CHANNELS: usize> Drop for PacketGrant<'d, M, CHANNEL
                     }
                 }
                 // make it an assert?
-                trace!("[link] connection {} not found", self.handle);
+                trace!("[link] connection {:?} not found", self.handle);
             })
         }
     }

@@ -16,17 +16,18 @@ use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
 use crate::{AdapterError, Error};
 
-pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize> {
+pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controller, const CONNS: usize, const MAX: usize>
+{
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
     pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'resources>)>,
-    pub(crate) tx: HciController<'reference, T>,
+    pub(crate) tx: HciController<'reference, M, T, CONNS>,
     pub(crate) pool_id: AllocId,
     pub(crate) pool: &'resources dyn DynamicPacketPool<'resources>,
     pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 
-impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize>
-    GattServer<'reference, 'values, 'resources, M, T, MAX>
+impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const CONNS: usize, const MAX: usize>
+    GattServer<'reference, 'values, 'resources, M, T, CONNS, MAX>
 {
     pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, AdapterError<T::Error>> {
         loop {
