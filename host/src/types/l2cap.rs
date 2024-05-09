@@ -35,7 +35,16 @@ unsafe impl FixedSizeValue for L2capSignalHeader {
     }
 }
 
+#[cfg(not(feature = "defmt"))]
 pub trait L2capSignal: WriteHci + FixedSizeValue {
+    fn channel() -> u16 {
+        L2CAP_CID_LE_U_SIGNAL
+    }
+    fn code() -> L2capSignalCode;
+}
+
+#[cfg(feature = "defmt")]
+pub trait L2capSignal: WriteHci + FixedSizeValue + defmt::Format {
     fn channel() -> u16 {
         L2CAP_CID_LE_U_SIGNAL
     }

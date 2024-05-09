@@ -91,7 +91,6 @@ impl<
                     ChannelState::Disconnecting if cid == storage.cid => {
                         storage.state = ChannelState::Disconnected;
                         storage.cid = 0;
-                        let _ = self.inbound[idx].try_send(None);
                         return Ok(storage.conn);
                     }
                     ChannelState::PeerConnecting(_) if cid == storage.cid => {
@@ -112,6 +111,7 @@ impl<
                     _ => {}
                 }
             }
+            trace!("[l2cap][disconnect] channel {} not found", cid);
             Err(Error::NotFound)
         })?;
         Ok(ConnHandle::new(handle))
@@ -146,12 +146,13 @@ impl<
         Ok(())
     }
 
-    fn alloc<F: FnOnce(&mut ChannelStorage)>(&self, f: F) -> Result<(), Error> {
+    fn alloc<F: FnOnce(&mut ChannelStorage)>(&self, conn: ConnHandle, f: F) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 if let ChannelState::Disconnected = storage.state {
                     let cid: u16 = BASE_ID + idx as u16;
+                    storage.conn = conn.raw();
                     storage.cid = cid;
                     f(storage);
                     return Ok(());
@@ -161,14 +162,14 @@ impl<
         })
     }
 
-    pub(crate) async fn accept<T: Controller>(
+    pub(crate) async fn accept<T: Controller, const CONNS: usize>(
         &self,
         conn: ConnHandle,
         psm: &[u16],
         mtu: u16,
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
-        controller: &HciController<'_, T>,
+        controller: &HciController<'_, M, T, CONNS>,
     ) -> Result<u16, AdapterError<T::Error>> {
         // Wait until we find a channel for our connection in the connecting state matching our PSM.
         let (req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
@@ -226,14 +227,14 @@ impl<
         Ok(cid)
     }
 
-    pub(crate) async fn create<T: Controller>(
+    pub(crate) async fn create<T: Controller, const CONNS: usize>(
         &self,
         conn: ConnHandle,
         psm: u16,
         mtu: u16,
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
-        controller: &HciController<'_, T>,
+        controller: &HciController<'_, M, T, CONNS>,
     ) -> Result<u16, AdapterError<T::Error>> {
         let req_id = self.next_request_id();
         let mut credits = 0;
@@ -241,13 +242,13 @@ impl<
         let mps = self.pool.mtu() as u16 - 4;
 
         // Allocate space for our new channel.
-        self.alloc(|storage| {
+        self.alloc(conn, |storage| {
             cid = storage.cid;
             credits = initial_credits.unwrap_or(self.pool.min_available(AllocId::from_channel(storage.cid)) as u16);
+            storage.psm = psm;
             storage.mps = mps;
             storage.mtu = mtu;
             storage.flow_control = CreditFlowControl::new(credit_flow, credits);
-
             storage.state = ChannelState::Connecting(req_id);
         })?;
 
@@ -303,7 +304,6 @@ impl<
         if chan > self.inbound.len() {
             return Err(Error::InvalidChannelId);
         }
-        trace!("[l2cap] inbound data packet for {}", header.channel);
 
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -311,6 +311,8 @@ impl<
                 match storage.state {
                     ChannelState::Connected if header.channel == storage.cid => {
                         if storage.flow_control.available() == 0 {
+                            trace!("[l2cap][cid = {}] no credits available", header.channel);
+                            self.dump_state();
                             return Err(Error::OutOfMemory);
                         }
                         storage.flow_control.received(1);
@@ -330,7 +332,13 @@ impl<
     /// Handle incoming L2CAP signal
     pub(crate) async fn signal(&self, conn: ConnHandle, data: &[u8]) -> Result<(), Error> {
         let (header, data) = L2capSignalHeader::from_hci_bytes(data)?;
-        trace!("[l2cap] inbound signal code {:?}", header.code);
+        trace!(
+            "[l2cap][conn = {}] received signal (req {}) code {:?}",
+            conn,
+            header.identifier,
+            header.code
+        );
+        self.dump_state();
         match header.code {
             L2capSignalCode::LeCreditConnReq => {
                 let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
@@ -342,7 +350,8 @@ impl<
             }
             L2capSignalCode::LeCreditFlowInd => {
                 let req = LeCreditFlowInd::from_hci_bytes_complete(data)?;
-                self.handle_credit_flow(&req)?;
+                trace!("[l2cap] credit flow: {:?}", req);
+                self.handle_credit_flow(conn, &req)?;
                 Ok(())
             }
             L2capSignalCode::CommandRejectRes => {
@@ -352,11 +361,13 @@ impl<
             }
             L2capSignalCode::DisconnectionReq => {
                 let req = DisconnectionReq::from_hci_bytes_complete(data)?;
+                trace!("[l2cap][conn = {}, cid = {}] disconnect request", conn, req.dcid);
                 self.disconnect(req.dcid)?;
                 Ok(())
             }
             L2capSignalCode::DisconnectionRes => {
                 let res = DisconnectionRes::from_hci_bytes_complete(data)?;
+                trace!("[l2cap][conn = {}, cid = {}] disconnect response", conn, res.scid);
                 self.handle_disconnect_response(&res)
             }
             _ => Err(Error::NotSupported),
@@ -364,7 +375,7 @@ impl<
     }
 
     fn handle_connect_request(&self, conn: ConnHandle, identifier: u8, req: &LeCreditConnReq) -> Result<(), Error> {
-        self.alloc(|storage| {
+        self.alloc(conn, |storage| {
             storage.conn = conn.raw();
             storage.psm = req.psm;
             storage.peer_cid = req.scid;
@@ -399,6 +410,10 @@ impl<
                             _ => {}
                         }
                     }
+                    trace!(
+                        "[l2cap][handle_connect_response] request with id {} not found",
+                        identifier
+                    );
                     Err(Error::NotFound)
                 })
             }
@@ -409,12 +424,12 @@ impl<
         }
     }
 
-    fn handle_credit_flow(&self, req: &LeCreditFlowInd) -> Result<(), Error> {
+    fn handle_credit_flow(&self, conn: ConnHandle, req: &LeCreditFlowInd) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage.state {
-                    ChannelState::Connected if storage.peer_cid == req.cid => {
+                    ChannelState::Connected if storage.peer_cid == req.cid && conn.raw() == storage.conn => {
                         storage.peer_credits += req.credits;
                         state.credit_wakers[idx].wake();
                         return Ok(());
@@ -422,12 +437,13 @@ impl<
                     _ => {}
                 }
             }
+            trace!("[l2cap][handle_credit_flow] peer channel {} not found", req.cid);
             Err(Error::NotFound)
         })
     }
 
     fn handle_disconnect_response(&self, res: &DisconnectionRes) -> Result<(), Error> {
-        let cid = res.dcid;
+        let cid = res.scid;
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.channels.iter_mut() {
@@ -458,11 +474,11 @@ impl<
     /// Receive data on a given channel and copy it into the buffer.
     ///
     /// The length provided buffer slice must be equal or greater to the agreed MTU.
-    pub(crate) async fn receive<T: Controller>(
+    pub(crate) async fn receive<T: Controller, const CONNS: usize>(
         &self,
         cid: u16,
         buf: &mut [u8],
-        hci: &HciController<'_, T>,
+        hci: &HciController<'_, M, T, CONNS>,
     ) -> Result<usize, AdapterError<T::Error>> {
         let idx = self.connected_channel_index(cid)?;
 
@@ -507,15 +523,16 @@ impl<
                     return Ok(idx);
                 }
             }
+            trace!("[l2cap][connected_channel_index] channel {} not found", cid);
             Err(Error::NotFound)
         })
     }
 
-    async fn receive_pdu<T: Controller>(
+    async fn receive_pdu<T: Controller, const CONNS: usize>(
         &self,
         cid: u16,
         idx: usize,
-        hci: &HciController<'_, T>,
+        hci: &HciController<'_, M, T, CONNS>,
     ) -> Result<Pdu<'d>, AdapterError<T::Error>> {
         match self.inbound[idx].receive().await {
             Some(pdu) => Ok(pdu),
@@ -531,44 +548,35 @@ impl<
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
-    pub(crate) async fn send<T: Controller>(
+    pub(crate) async fn send<T: Controller, const CONNS: usize>(
         &self,
         cid: u16,
         buf: &[u8],
-        hci: &HciController<'_, T>,
+        hci: &HciController<'_, M, T, CONNS>,
     ) -> Result<(), AdapterError<T::Error>> {
         let mut p_buf = [0u8; L2CAP_MTU];
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + ((buf.len() as u16).saturating_sub(mps - 2)).div_ceil(mps);
 
-        poll_fn(|cx| self.poll_request_to_send(cid, n_packets, Some(cx))).await?;
+        let mut grant = poll_fn(|cx| self.poll_request_to_send(cid, n_packets, Some(cx))).await?;
 
-        let mut unsent = n_packets;
-        let result: Result<(), AdapterError<T::Error>> = async {
-            // Segment using mps
-            let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
+        // Segment using mps
+        let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
-            let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
+        let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
+        hci.send(conn, &p_buf[..len]).await?;
+        grant.confirm(1);
+
+        let chunks = remaining.chunks(mps as usize);
+        let num_chunks = chunks.len();
+
+        for (i, chunk) in chunks.enumerate() {
+            let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
             hci.send(conn, &p_buf[..len]).await?;
-            unsent -= 1;
-
-            let chunks = remaining.chunks(mps as usize);
-            let num_chunks = chunks.len();
-
-            for (i, chunk) in chunks.enumerate() {
-                let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-                hci.send(conn, &p_buf[..len]).await?;
-                unsent -= 1;
-            }
-            Ok(())
+            grant.confirm(1);
         }
-        .await;
-        if unsent > 0 {
-            warn!("Replenishing credits for {} unsent packets", unsent);
-            self.abort_send(cid, unsent)?;
-        }
-        result
+        Ok(())
     }
 
     /// Send the provided buffer over a given l2cap channel.
@@ -576,11 +584,11 @@ impl<
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
-    pub(crate) fn try_send<T: Controller + blocking::Controller>(
+    pub(crate) fn try_send<T: Controller + blocking::Controller, const CONNS: usize>(
         &self,
         cid: u16,
         buf: &[u8],
-        hci: &HciController<'_, T>,
+        hci: &HciController<'_, M, T, CONNS>,
     ) -> Result<(), AdapterError<T::Error>> {
         let mut p_buf = [0u8; L2CAP_MTU];
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
@@ -588,39 +596,31 @@ impl<
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + ((buf.len() as u16).saturating_sub(mps - 2)).div_ceil(mps);
 
-        match self.poll_request_to_send(cid, n_packets, None) {
+        let mut grant = match self.poll_request_to_send(cid, n_packets, None) {
             Poll::Ready(res) => res?,
             Poll::Pending => {
-                warn!("l2cap: not enough credits for {} packets", n_packets);
+                warn!("[l2cap][cid = {}]: not enough credits for {} packets", cid, n_packets);
+                self.dump_state();
                 return Err(Error::Busy.into());
             }
-        }
-
-        let mut unsent = n_packets;
-        let result: Result<(), AdapterError<T::Error>> = {
-            // Segment using mps
-            let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
-
-            let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-            hci.try_send(conn, &p_buf[..len])?;
-            unsent -= 1;
-
-            let chunks = remaining.chunks(mps as usize);
-            let num_chunks = chunks.len();
-
-            for (i, chunk) in chunks.enumerate() {
-                let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-                hci.try_send(conn, &p_buf[..len])?;
-                unsent -= 1;
-            }
-            Ok(())
         };
 
-        if unsent > 0 {
-            warn!("Replenishing credits for {} unsent packets", unsent);
-            self.abort_send(cid, unsent)?;
+        // Segment using mps
+        let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
+
+        let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
+        hci.try_send(conn, &p_buf[..len])?;
+        grant.confirm(1);
+
+        let chunks = remaining.chunks(mps as usize);
+        let num_chunks = chunks.len();
+
+        for (i, chunk) in chunks.enumerate() {
+            let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
+            hci.try_send(conn, &p_buf[..len])?;
+            grant.confirm(1);
         }
-        result
+        Ok(())
     }
 
     fn connected_channel_params(&self, cid: u16) -> Result<(ConnHandle, u16, u16), Error> {
@@ -634,16 +634,17 @@ impl<
                     _ => {}
                 }
             }
+            trace!("[l2cap][connected_channel_params] channel {} not found", cid);
             Err(Error::NotFound)
         })
     }
 
     // Check the current state of flow control and send flow indications if
     // our policy says so.
-    async fn flow_control<T: Controller>(
+    async fn flow_control<T: Controller, const CONNS: usize>(
         &self,
         cid: u16,
-        hci: &HciController<'_, T>,
+        hci: &HciController<'_, M, T, CONNS>,
         mut packet: Packet<'_>,
     ) -> Result<(), AdapterError<T::Error>> {
         let (conn, credits) = self.state.lock(|state| {
@@ -656,6 +657,7 @@ impl<
                     _ => {}
                 }
             }
+            trace!("[l2cap][flow_control] channel {} not found", cid);
             Err(Error::NotFound)
         })?;
 
@@ -670,10 +672,10 @@ impl<
         Ok(())
     }
 
-    async fn confirm_disconnected<T: Controller>(
+    async fn confirm_disconnected<T: Controller, const CONNS: usize>(
         &self,
         cid: u16,
-        hci: &HciController<'_, T>,
+        hci: &HciController<'_, M, T, CONNS>,
     ) -> Result<(), AdapterError<T::Error>> {
         let (handle, dcid, scid) = self.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -692,6 +694,7 @@ impl<
                     _ => {}
                 }
             }
+            trace!("[l2cap][confirm_disconnected] channel {} not found", cid);
             Err(Error::NotFound)
         })?;
 
@@ -707,23 +710,23 @@ impl<
         Ok(())
     }
 
-    fn abort_send(&self, cid: u16, credits: u16) -> Result<(), Error> {
+    fn dump_state(&self) {
         self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for (idx, storage) in state.channels.iter_mut().enumerate() {
-                match storage.state {
-                    ChannelState::Connected if cid == storage.cid => {
-                        storage.peer_credits += credits;
-                        return Ok(());
-                    }
-                    _ => {}
+            let state = state.borrow();
+            for (idx, storage) in state.channels.iter().enumerate() {
+                if let ChannelState::Connected = storage.state {
+                    trace!("[l2cap][idx = {}] state = {:?}", idx, storage);
                 }
             }
-            Err(Error::NotFound)
         })
     }
 
-    fn poll_request_to_send(&self, cid: u16, credits: u16, cx: Option<&mut Context<'_>>) -> Poll<Result<(), Error>> {
+    fn poll_request_to_send(
+        &self,
+        cid: u16,
+        credits: u16,
+        cx: Option<&mut Context<'_>>,
+    ) -> Poll<Result<CreditGrant<'_, M, CHANNELS>, Error>> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for (idx, storage) in state.channels.iter_mut().enumerate() {
@@ -731,7 +734,7 @@ impl<
                     ChannelState::Connected if cid == storage.cid => {
                         if credits <= storage.peer_credits {
                             storage.peer_credits -= credits;
-                            return Poll::Ready(Ok(()));
+                            return Poll::Ready(Ok(CreditGrant::new(&self.state, cid, credits)));
                         } else {
                             if let Some(cx) = cx {
                                 state.credit_wakers[idx].register(cx.waker());
@@ -742,6 +745,7 @@ impl<
                     _ => {}
                 }
             }
+            trace!("[l2cap][pool_request_to_send] channel {} not found", cid);
             Poll::Ready(Err(Error::NotFound))
         })
     }
@@ -764,6 +768,8 @@ fn encode(data: &[u8], packet: &mut [u8], peer_cid: u16, header: Option<u16>) ->
     Ok(w.len())
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChannelStorage {
     state: ChannelState,
     conn: u16,
@@ -792,7 +798,8 @@ impl ChannelStorage {
     };
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ChannelState {
     Disconnected,
     Connecting(u8),
@@ -864,6 +871,48 @@ impl CreditFlowControl {
                     None
                 }
             }
+        }
+    }
+}
+
+pub struct CreditGrant<'d, M: RawMutex, const CHANNELS: usize> {
+    state: &'d Mutex<M, RefCell<State<CHANNELS>>>,
+    cid: u16,
+    credits: u16,
+}
+
+impl<'d, M: RawMutex, const CHANNELS: usize> CreditGrant<'d, M, CHANNELS> {
+    fn new(state: &'d Mutex<M, RefCell<State<CHANNELS>>>, cid: u16, credits: u16) -> Self {
+        Self { state, cid, credits }
+    }
+
+    pub(crate) fn confirm(&mut self, sent: u16) {
+        self.credits = self.credits.saturating_sub(sent);
+    }
+
+    fn done(&mut self) {
+        self.credits = 0;
+    }
+}
+
+impl<'d, M: RawMutex, const CHANNELS: usize> Drop for CreditGrant<'d, M, CHANNELS> {
+    fn drop(&mut self) {
+        if self.credits > 0 {
+            self.state.lock(|state| {
+                let mut state = state.borrow_mut();
+                for (idx, storage) in state.channels.iter_mut().enumerate() {
+                    match storage.state {
+                        ChannelState::Connected if self.cid == storage.cid => {
+                            storage.peer_credits += self.credits;
+                            state.credit_wakers[idx].wake();
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                // make it an assert?
+                trace!("[l2cap][credit grant drop] channel {} not found", self.cid);
+            })
         }
     }
 }

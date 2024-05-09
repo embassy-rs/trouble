@@ -15,6 +15,8 @@ struct State<const CONNS: usize> {
     connections: [ConnectionStorage; CONNS],
     accept_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
+    link_credit_wakers: [WakerRegistration; CONNS],
+    default_link_credits: usize,
 }
 
 pub(crate) struct ConnectionManager<M: RawMutex, const CONNS: usize> {
@@ -23,12 +25,15 @@ pub(crate) struct ConnectionManager<M: RawMutex, const CONNS: usize> {
 }
 
 impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
+    const CREDIT_WAKER: WakerRegistration = WakerRegistration::new();
     pub(crate) fn new() -> Self {
         Self {
             state: Mutex::new(RefCell::new(State {
                 connections: [ConnectionStorage::DISCONNECTED; CONNS],
                 accept_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
+                link_credit_wakers: [Self::CREDIT_WAKER; CONNS],
+                default_link_credits: 0,
             })),
             canceled: Signal::new(),
         }
@@ -119,9 +124,11 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
     pub(crate) fn connect(&self, handle: ConnHandle, info: &LeConnectionComplete) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
+            let default_credits = state.default_link_credits;
             for storage in state.connections.iter_mut() {
                 if let ConnectionState::Disconnected = storage.state {
                     storage.state = ConnectionState::Connecting;
+                    storage.link_credits = default_credits;
                     storage.handle.replace(handle);
                     storage.peer_addr_kind.replace(info.peer_addr_kind);
                     storage.peer_addr.replace(info.peer_addr);
@@ -169,6 +176,63 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
 
     pub(crate) async fn accept(&self, peers: &[(AddrKind, &BdAddr)]) -> ConnHandle {
         poll_fn(move |cx| self.poll_accept(peers, cx)).await
+    }
+
+    pub(crate) fn set_link_credits(&self, credits: usize) {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            state.default_link_credits = credits;
+            for storage in state.connections.iter_mut() {
+                storage.link_credits = credits;
+            }
+        });
+    }
+
+    pub(crate) fn confirm_sent(&self, handle: ConnHandle, packets: usize) -> Result<(), Error> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for (idx, storage) in state.connections.iter_mut().enumerate() {
+                match storage.state {
+                    ConnectionState::Connected if handle == storage.handle.unwrap() => {
+                        storage.link_credits += packets;
+                        state.link_credit_wakers[idx].wake();
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            trace!("[link][confirm_sent] connection {} not found", handle);
+            Err(Error::NotFound)
+        })
+    }
+
+    pub(crate) fn poll_request_to_send(
+        &self,
+        handle: ConnHandle,
+        packets: usize,
+        cx: Option<&mut Context<'_>>,
+    ) -> Poll<Result<PacketGrant<'_, M, CONNS>, Error>> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            for (idx, storage) in state.connections.iter_mut().enumerate() {
+                match storage.state {
+                    ConnectionState::Connected if storage.handle.unwrap() == handle => {
+                        if packets <= storage.link_credits {
+                            storage.link_credits -= packets;
+                            return Poll::Ready(Ok(PacketGrant::new(&self.state, handle, packets)));
+                        } else {
+                            if let Some(cx) = cx {
+                                state.link_credit_wakers[idx].register(cx.waker());
+                            }
+                            return Poll::Pending;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            trace!("[link][pool_request_to_send] connection {} not found", handle);
+            Poll::Ready(Err(Error::NotFound))
+        })
     }
 }
 
@@ -229,6 +293,7 @@ pub struct ConnectionStorage {
     pub peer_addr_kind: Option<AddrKind>,
     pub peer_addr: Option<BdAddr>,
     pub att_mtu: u16,
+    pub link_credits: usize,
 }
 
 impl ConnectionStorage {
@@ -239,6 +304,7 @@ impl ConnectionStorage {
         peer_addr_kind: None,
         peer_addr: None,
         att_mtu: 23,
+        link_credits: 0,
     };
 }
 
@@ -249,4 +315,42 @@ pub enum ConnectionState {
     Disconnected,
     Connecting,
     Connected,
+}
+
+pub struct PacketGrant<'d, M: RawMutex, const CONNS: usize> {
+    state: &'d Mutex<M, RefCell<State<CONNS>>>,
+    handle: ConnHandle,
+    packets: usize,
+}
+
+impl<'d, M: RawMutex, const CONNS: usize> PacketGrant<'d, M, CONNS> {
+    fn new(state: &'d Mutex<M, RefCell<State<CONNS>>>, handle: ConnHandle, packets: usize) -> Self {
+        Self { state, handle, packets }
+    }
+
+    pub(crate) fn confirm(&mut self, sent: usize) {
+        self.packets = self.packets.saturating_sub(sent);
+    }
+}
+
+impl<'d, M: RawMutex, const CHANNELS: usize> Drop for PacketGrant<'d, M, CHANNELS> {
+    fn drop(&mut self) {
+        if self.packets > 0 {
+            self.state.lock(|state| {
+                let mut state = state.borrow_mut();
+                for (idx, storage) in state.connections.iter_mut().enumerate() {
+                    match storage.state {
+                        ConnectionState::Connected if self.handle == storage.handle.unwrap() => {
+                            storage.link_credits += self.packets;
+                            state.link_credit_wakers[idx].wake();
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                // make it an assert?
+                trace!("[link] connection {} not found", self.handle);
+            })
+        }
+    }
 }
