@@ -15,7 +15,6 @@ struct State<const CONNS: usize> {
     connections: [ConnectionStorage; CONNS],
     accept_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
-    link_credit_wakers: [WakerRegistration; CONNS],
     default_link_credits: usize,
 }
 
@@ -32,7 +31,6 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                 connections: [ConnectionStorage::DISCONNECTED; CONNS],
                 accept_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
-                link_credit_wakers: [Self::CREDIT_WAKER; CONNS],
                 default_link_credits: 0,
             })),
             canceled: Signal::new(),
@@ -191,11 +189,11 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
     pub(crate) fn confirm_sent(&self, handle: ConnHandle, packets: usize) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
-            for (idx, storage) in state.connections.iter_mut().enumerate() {
+            for storage in state.connections.iter_mut() {
                 match storage.state {
                     ConnectionState::Connected if handle == storage.handle.unwrap() => {
                         storage.link_credits += packets;
-                        state.link_credit_wakers[idx].wake();
+                        storage.link_credit_waker.wake();
                         return Ok(());
                     }
                     _ => {}
@@ -214,7 +212,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
     ) -> Poll<Result<PacketGrant<'_, M, CONNS>, Error>> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
-            for (idx, storage) in state.connections.iter_mut().enumerate() {
+            for storage in state.connections.iter_mut() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
                         if packets <= storage.link_credits {
@@ -222,7 +220,7 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
                             return Poll::Ready(Ok(PacketGrant::new(&self.state, handle, packets)));
                         } else {
                             if let Some(cx) = cx {
-                                state.link_credit_wakers[idx].register(cx.waker());
+                                storage.link_credit_waker.register(cx.waker());
                             }
                             return Poll::Pending;
                         }
@@ -294,6 +292,7 @@ pub struct ConnectionStorage {
     pub peer_addr: Option<BdAddr>,
     pub att_mtu: u16,
     pub link_credits: usize,
+    pub link_credit_waker: WakerRegistration,
 }
 
 impl ConnectionStorage {
@@ -305,6 +304,7 @@ impl ConnectionStorage {
         peer_addr: None,
         att_mtu: 23,
         link_credits: 0,
+        link_credit_waker: WakerRegistration::new(),
     };
 }
 
@@ -338,11 +338,11 @@ impl<'d, M: RawMutex, const CHANNELS: usize> Drop for PacketGrant<'d, M, CHANNEL
         if self.packets > 0 {
             self.state.lock(|state| {
                 let mut state = state.borrow_mut();
-                for (idx, storage) in state.connections.iter_mut().enumerate() {
+                for storage in state.connections.iter_mut() {
                     match storage.state {
                         ConnectionState::Connected if self.handle == storage.handle.unwrap() => {
                             storage.link_credits += self.packets;
-                            state.link_credit_wakers[idx].wake();
+                            storage.link_credit_waker.wake();
                             break;
                         }
                         _ => {}
