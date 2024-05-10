@@ -31,7 +31,7 @@ use futures::pin_mut;
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
 use crate::channel_manager::ChannelManager;
 use crate::connection::{ConnectConfig, Connection};
-use crate::connection_manager::ConnectionManager;
+use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::PacketReassembly;
 use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos};
@@ -48,17 +48,25 @@ use crate::{AdapterError, Address, Error};
 ///
 /// The packet pool is used by the adapter to multiplex data streams, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
+pub struct HostResources<
+    M: RawMutex,
+    const CONNS: usize,
+    const CHANNELS: usize,
+    const PACKETS: usize,
+    const L2CAP_MTU: usize,
+> {
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
+    connections: [ConnectionStorage; CONNS],
 }
 
-impl<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
-    HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>
+impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
+    HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>
 {
     /// Create a new instance of host resources with the provided QoS requirements for packets.
     pub fn new(qos: Qos) -> Self {
         Self {
             pool: PacketPool::new(qos),
+            connections: [ConnectionStorage::DISCONNECTED; CONNS],
         }
     }
 }
@@ -90,7 +98,7 @@ pub struct Adapter<
     address: Option<Address>,
     initialized: OnceLock<()>,
     pub(crate) controller: T,
-    pub(crate) connections: ConnectionManager<M, CONNS>,
+    pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d, CONNS>,
     pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
@@ -119,13 +127,13 @@ where
     /// a reference to resources that are created outside the adapter but which the adapter is the only accessor of.
     pub fn new<const PACKETS: usize>(
         controller: T,
-        host_resources: &'d mut HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>,
+        host_resources: &'d mut HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
         Self {
             address: None,
             initialized: OnceLock::new(),
             controller,
-            connections: ConnectionManager::new(),
+            connections: ConnectionManager::new(&mut host_resources.connections[..]),
             reassembly: PacketReassembly::new(),
             channels: ChannelManager::new(&host_resources.pool),
             pool: &host_resources.pool,
@@ -834,7 +842,7 @@ where
         }
     }
 
-    pub(crate) fn hci(&self) -> HciController<'_, M, T, CONNS> {
+    pub(crate) fn hci(&self) -> HciController<'_, 'd, T> {
         HciController {
             controller: &self.controller,
             connections: &self.connections,
@@ -842,12 +850,12 @@ where
     }
 }
 
-pub struct HciController<'d, M: RawMutex, T: Controller, const CONNS: usize> {
-    pub(crate) controller: &'d T,
-    pub(crate) connections: &'d ConnectionManager<M, CONNS>,
+pub struct HciController<'a, 'd, T: Controller> {
+    pub(crate) controller: &'a T,
+    pub(crate) connections: &'a ConnectionManager<'d>,
 }
 
-impl<'d, M: RawMutex, T: Controller, const CONNS: usize> Clone for HciController<'d, M, T, CONNS> {
+impl<'a, 'd, T: Controller> Clone for HciController<'a, 'd, T> {
     fn clone(&self) -> Self {
         Self {
             controller: self.controller,
@@ -856,7 +864,7 @@ impl<'d, M: RawMutex, T: Controller, const CONNS: usize> Clone for HciController
     }
 }
 
-impl<'d, M: RawMutex, T: Controller, const CONNS: usize> HciController<'d, M, T, CONNS> {
+impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
     pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>>
     where
         T: blocking::Controller,

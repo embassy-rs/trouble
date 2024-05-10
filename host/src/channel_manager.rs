@@ -162,14 +162,14 @@ impl<
         })
     }
 
-    pub(crate) async fn accept<T: Controller, const CONNS: usize>(
+    pub(crate) async fn accept<T: Controller>(
         &self,
         conn: ConnHandle,
         psm: &[u16],
         mtu: u16,
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
-        controller: &HciController<'_, M, T, CONNS>,
+        controller: &HciController<'_, 'd, T>,
     ) -> Result<u16, AdapterError<T::Error>> {
         // Wait until we find a channel for our connection in the connecting state matching our PSM.
         let (req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
@@ -227,14 +227,14 @@ impl<
         Ok(cid)
     }
 
-    pub(crate) async fn create<T: Controller, const CONNS: usize>(
+    pub(crate) async fn create<T: Controller>(
         &self,
         conn: ConnHandle,
         psm: u16,
         mtu: u16,
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
-        controller: &HciController<'_, M, T, CONNS>,
+        controller: &HciController<'_, 'd, T>,
     ) -> Result<u16, AdapterError<T::Error>> {
         let req_id = self.next_request_id();
         let mut credits = 0;
@@ -474,11 +474,11 @@ impl<
     /// Receive data on a given channel and copy it into the buffer.
     ///
     /// The length provided buffer slice must be equal or greater to the agreed MTU.
-    pub(crate) async fn receive<T: Controller, const CONNS: usize>(
+    pub(crate) async fn receive<T: Controller>(
         &self,
         cid: u16,
         buf: &mut [u8],
-        hci: &HciController<'_, M, T, CONNS>,
+        hci: &HciController<'_, 'd, T>,
     ) -> Result<usize, AdapterError<T::Error>> {
         let idx = self.connected_channel_index(cid)?;
 
@@ -528,11 +528,11 @@ impl<
         })
     }
 
-    async fn receive_pdu<T: Controller, const CONNS: usize>(
+    async fn receive_pdu<T: Controller>(
         &self,
         cid: u16,
         idx: usize,
-        hci: &HciController<'_, M, T, CONNS>,
+        hci: &HciController<'_, 'd, T>,
     ) -> Result<Pdu<'d>, AdapterError<T::Error>> {
         match self.inbound[idx].receive().await {
             Some(pdu) => Ok(pdu),
@@ -548,11 +548,11 @@ impl<
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
-    pub(crate) async fn send<T: Controller, const CONNS: usize>(
+    pub(crate) async fn send<T: Controller>(
         &self,
         cid: u16,
         buf: &[u8],
-        hci: &HciController<'_, M, T, CONNS>,
+        hci: &HciController<'_, 'd, T>,
     ) -> Result<(), AdapterError<T::Error>> {
         let mut p_buf = [0u8; L2CAP_MTU];
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
@@ -584,11 +584,11 @@ impl<
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
-    pub(crate) fn try_send<T: Controller + blocking::Controller, const CONNS: usize>(
+    pub(crate) fn try_send<T: Controller + blocking::Controller>(
         &self,
         cid: u16,
         buf: &[u8],
-        hci: &HciController<'_, M, T, CONNS>,
+        hci: &HciController<'_, 'd, T>,
     ) -> Result<(), AdapterError<T::Error>> {
         let mut p_buf = [0u8; L2CAP_MTU];
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
@@ -641,10 +641,10 @@ impl<
 
     // Check the current state of flow control and send flow indications if
     // our policy says so.
-    async fn flow_control<T: Controller, const CONNS: usize>(
+    async fn flow_control<T: Controller>(
         &self,
         cid: u16,
-        hci: &HciController<'_, M, T, CONNS>,
+        hci: &HciController<'_, 'd, T>,
         mut packet: Packet<'_>,
     ) -> Result<(), AdapterError<T::Error>> {
         let (conn, credits) = self.state.lock(|state| {
@@ -672,10 +672,10 @@ impl<
         Ok(())
     }
 
-    async fn confirm_disconnected<T: Controller, const CONNS: usize>(
+    async fn confirm_disconnected<T: Controller>(
         &self,
         cid: u16,
-        hci: &HciController<'_, M, T, CONNS>,
+        hci: &HciController<'_, 'd, T>,
     ) -> Result<(), AdapterError<T::Error>> {
         let (handle, dcid, scid) = self.state.lock(|state| {
             let mut state = state.borrow_mut();
