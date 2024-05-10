@@ -27,7 +27,6 @@ struct State<const CHANNELS: usize> {
     channels: [ChannelStorage; CHANNELS],
     accept_waker: WakerRegistration,
     create_waker: WakerRegistration,
-    credit_wakers: [WakerRegistration; CHANNELS],
 }
 
 /// Channel manager for L2CAP channels used directly by clients.
@@ -64,7 +63,6 @@ impl<
                 channels: [ChannelStorage::DISCONNECTED; CHANNELS],
                 accept_waker: WakerRegistration::new(),
                 create_waker: WakerRegistration::new(),
-                credit_wakers: [Self::CREDIT_WAKER; CHANNELS],
             })),
             inbound: [Self::RX_CHANNEL; CHANNELS],
         }
@@ -136,12 +134,10 @@ impl<
                     }
                     _ => {}
                 }
+                storage.credit_waker.wake();
             }
             state.accept_waker.wake();
             state.create_waker.wake();
-            for w in state.credit_wakers.iter_mut() {
-                w.wake();
-            }
         });
         Ok(())
     }
@@ -427,11 +423,11 @@ impl<
     fn handle_credit_flow(&self, conn: ConnHandle, req: &LeCreditFlowInd) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
-            for (idx, storage) in state.channels.iter_mut().enumerate() {
+            for storage in state.channels.iter_mut() {
                 match storage.state {
                     ChannelState::Connected if storage.peer_cid == req.cid && conn.raw() == storage.conn => {
                         storage.peer_credits += req.credits;
-                        state.credit_wakers[idx].wake();
+                        storage.credit_waker.wake();
                         return Ok(());
                     }
                     _ => {}
@@ -729,16 +725,16 @@ impl<
     ) -> Poll<Result<CreditGrant<'_, M, CHANNELS>, Error>> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
-            for (idx, storage) in state.channels.iter_mut().enumerate() {
+            for storage in state.channels.iter_mut() {
                 match storage.state {
                     ChannelState::Connected if cid == storage.cid => {
+                        if let Some(cx) = cx {
+                            storage.credit_waker.register(cx.waker());
+                        }
                         if credits <= storage.peer_credits {
                             storage.peer_credits -= credits;
                             return Poll::Ready(Ok(CreditGrant::new(&self.state, cid, credits)));
                         } else {
-                            if let Some(cx) = cx {
-                                state.credit_wakers[idx].register(cx.waker());
-                            }
                             return Poll::Pending;
                         }
                     }
@@ -781,6 +777,7 @@ pub struct ChannelStorage {
 
     peer_cid: u16,
     peer_credits: u16,
+    credit_waker: WakerRegistration,
 }
 
 impl ChannelStorage {
@@ -795,6 +792,7 @@ impl ChannelStorage {
         flow_control: CreditFlowControl::new(CreditFlowPolicy::Every(1), 0),
         peer_cid: 0,
         peer_credits: 0,
+        credit_waker: WakerRegistration::new(),
     };
 }
 
@@ -900,11 +898,11 @@ impl<'d, M: RawMutex, const CHANNELS: usize> Drop for CreditGrant<'d, M, CHANNEL
         if self.credits > 0 {
             self.state.lock(|state| {
                 let mut state = state.borrow_mut();
-                for (idx, storage) in state.channels.iter_mut().enumerate() {
+                for storage in state.channels.iter_mut() {
                     match storage.state {
                         ChannelState::Connected if self.cid == storage.cid => {
                             storage.peer_credits += self.credits;
-                            state.credit_wakers[idx].wake();
+                            storage.credit_waker.wake();
                             break;
                         }
                         _ => {}
