@@ -89,7 +89,6 @@ pub struct Adapter<
     'd,
     M,
     T,
-    const CONNS: usize,
     const CHANNELS: usize,
     const L2CAP_MTU: usize,
     const L2CAP_TXQ: usize = 1,
@@ -109,16 +108,8 @@ pub struct Adapter<
     pub(crate) scanner: Channel<M, Option<ScanReport>, 1>,
 }
 
-impl<
-        'd,
-        M,
-        T,
-        const CONNS: usize,
-        const CHANNELS: usize,
-        const L2CAP_MTU: usize,
-        const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
-    > Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
+impl<'d, M, T, const CHANNELS: usize, const L2CAP_MTU: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
+    Adapter<'d, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
 where
     M: RawMutex,
     T: Controller,
@@ -127,7 +118,7 @@ where
     ///
     /// The adapter requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the adapter but which the adapter is the only accessor of.
-    pub fn new<const PACKETS: usize>(
+    pub fn new<const CONNS: usize, const PACKETS: usize>(
         controller: T,
         host_resources: &'static mut HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
@@ -572,7 +563,7 @@ where
     pub fn gatt_server<'reference, 'values, const MAX: usize>(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
-    ) -> GattServer<'reference, 'values, 'd, M, T, CONNS, MAX> {
+    ) -> GattServer<'reference, 'values, 'd, M, T, MAX> {
         use crate::attribute_server::AttributeServer;
         GattServer {
             server: AttributeServer::new(table),

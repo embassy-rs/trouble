@@ -55,14 +55,13 @@ impl Connection {
     pub fn disconnect<
         M: RawMutex,
         T: Controller + ControllerCmdSync<Disconnect>,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<(), AdapterError<T::Error>> {
         adapter
             .connections
@@ -74,14 +73,13 @@ impl Connection {
     pub fn role<
         M: RawMutex,
         T: Controller,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<LeConnRole, AdapterError<T::Error>> {
         let role = adapter.connections.role(self.handle)?;
         Ok(role)
@@ -91,30 +89,22 @@ impl Connection {
     pub fn peer_address<
         M: RawMutex,
         T: Controller,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<BdAddr, AdapterError<T::Error>> {
         let addr = adapter.connections.peer_address(self.handle)?;
         Ok(addr)
     }
 
     /// The RSSI value for this connection.
-    pub async fn rssi<
-        M: RawMutex,
-        T,
-        const CONNS: usize,
-        const CHANNELS: usize,
-        const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
-    >(
+    pub async fn rssi<M: RawMutex, T, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
         &self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<i8, AdapterError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
@@ -127,13 +117,12 @@ impl Connection {
     pub async fn set_connection_params<
         M: RawMutex,
         T,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         params: ConnectParams,
     ) -> Result<(), AdapterError<T::Error>>
     where

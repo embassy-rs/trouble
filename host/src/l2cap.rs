@@ -48,14 +48,13 @@ impl L2capChannel {
     pub async fn send<
         M: RawMutex,
         T: Controller,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &[u8],
     ) -> Result<(), AdapterError<T::Error>> {
         adapter.channels.send(self.cid, buf, &adapter.hci()).await
@@ -70,14 +69,13 @@ impl L2capChannel {
     pub fn try_send<
         M: RawMutex,
         T: Controller + blocking::Controller,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &[u8],
     ) -> Result<(), AdapterError<T::Error>> {
         adapter.channels.try_send(self.cid, buf, &adapter.hci())
@@ -89,14 +87,13 @@ impl L2capChannel {
     pub async fn receive<
         M: RawMutex,
         T: Controller,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &mut [u8],
     ) -> Result<usize, AdapterError<T::Error>> {
         adapter.channels.receive(self.cid, buf, &adapter.hci()).await
@@ -106,13 +103,12 @@ impl L2capChannel {
     pub async fn accept<
         M: RawMutex,
         T: Controller,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection,
         psm: &[u16],
         config: &L2capChannelConfig,
@@ -137,14 +133,13 @@ impl L2capChannel {
     pub fn disconnect<
         M: RawMutex,
         T: Controller + ControllerCmdSync<Disconnect>,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         close_connection: bool,
     ) -> Result<(), AdapterError<T::Error>> {
         let handle = adapter.channels.disconnect(self.cid)?;
@@ -160,13 +155,12 @@ impl L2capChannel {
     pub async fn create<
         M: RawMutex,
         T: Controller,
-        const CONNS: usize,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &Adapter<'_, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection,
         psm: u16,
         config: &L2capChannelConfig,
