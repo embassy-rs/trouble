@@ -155,7 +155,7 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
         }
     }
 
-    fn alloc(&self, id: AllocId) -> Option<Packet> {
+    fn alloc(&'static self, id: AllocId) -> Option<Packet> {
         self.state.lock(|state| {
             let available = state.available(self.qos, id);
             if available == 0 {
@@ -185,18 +185,18 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
     }
 }
 
-pub trait DynamicPacketPool<'d> {
-    fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>>;
+pub trait GlobalPacketPool {
+    fn alloc(&'static self, id: AllocId) -> Option<Packet>;
     fn free(&self, id: AllocId, r: PacketRef);
     fn available(&self, id: AllocId) -> usize;
     fn min_available(&self, id: AllocId) -> usize;
     fn mtu(&self) -> usize;
 }
 
-impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> DynamicPacketPool<'d>
+impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> GlobalPacketPool
     for PacketPool<M, MTU, N, CLIENTS>
 {
-    fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>> {
+    fn alloc(&'static self, id: AllocId) -> Option<Packet> {
         PacketPool::alloc(self, id)
     }
 
@@ -222,19 +222,19 @@ pub struct PacketRef {
     buf: *mut [u8],
 }
 
-pub struct Packet<'d> {
+pub struct Packet {
     client: AllocId,
     p_ref: Option<PacketRef>,
-    pool: &'d dyn DynamicPacketPool<'d>,
+    pool: &'static dyn GlobalPacketPool,
 }
 
-impl<'d> Packet<'d> {
+impl Packet {
     pub fn len(&self) -> usize {
         self.as_ref().len()
     }
 }
 
-impl<'d> Drop for Packet<'d> {
+impl Drop for Packet {
     fn drop(&mut self) {
         if let Some(r) = self.p_ref.take() {
             self.pool.free(self.client, r);
@@ -242,14 +242,14 @@ impl<'d> Drop for Packet<'d> {
     }
 }
 
-impl<'d> AsRef<[u8]> for Packet<'d> {
+impl AsRef<[u8]> for Packet {
     fn as_ref(&self) -> &[u8] {
         let p = self.p_ref.as_ref().unwrap();
         unsafe { &(*p.buf)[..] }
     }
 }
 
-impl<'d> AsMut<[u8]> for Packet<'d> {
+impl AsMut<[u8]> for Packet {
     fn as_mut(&mut self) -> &mut [u8] {
         let p = self.p_ref.as_mut().unwrap();
         unsafe { &mut (*p.buf)[..] }

@@ -6,13 +6,13 @@ use crate::packet_pool::Packet;
 use crate::types::l2cap::L2capHeader;
 use crate::Error;
 
-pub(crate) struct AssembledPacket<'d> {
-    packet: Packet<'d>,
+pub(crate) struct AssembledPacket {
+    packet: Packet,
     written: usize,
 }
 
-impl<'d> AssembledPacket<'d> {
-    pub(crate) fn new(packet: Packet<'d>, initial: usize) -> Self {
+impl AssembledPacket {
+    pub(crate) fn new(packet: Packet, initial: usize) -> Self {
         Self {
             packet,
             written: initial,
@@ -32,7 +32,7 @@ impl<'d> AssembledPacket<'d> {
         self.written
     }
 
-    pub(crate) fn finalize(self, header: L2capHeader) -> Result<(L2capHeader, Packet<'d>), Error> {
+    pub(crate) fn finalize(self, header: L2capHeader) -> Result<(L2capHeader, Packet), Error> {
         if header.length as usize != self.written {
             return Err(Error::InvalidValue);
         }
@@ -40,21 +40,17 @@ impl<'d> AssembledPacket<'d> {
     }
 }
 
-// Handles reassembling of packets
-pub struct PacketReassembly<'d, const CONNS: usize> {
-    handles: RefCell<[Option<(ConnHandle, L2capHeader, AssembledPacket<'d>)>; CONNS]>,
-}
-impl<'d, const CONNS: usize> Default for PacketReassembly<'d, CONNS> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub(crate) type SarType = Option<(ConnHandle, L2capHeader, AssembledPacket)>;
+pub(crate) const EMPTY_SAR: Option<(ConnHandle, L2capHeader, AssembledPacket)> = None;
 
-impl<'d, const CONNS: usize> PacketReassembly<'d, CONNS> {
-    const EMPTY: Option<(ConnHandle, L2capHeader, AssembledPacket<'d>)> = None;
-    pub fn new() -> Self {
+// Handles reassembling of packets
+pub struct PacketReassembly<'d> {
+    handles: RefCell<&'d mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>]>,
+}
+impl<'d> PacketReassembly<'d> {
+    pub fn new(handles: &'d mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>]) -> Self {
         Self {
-            handles: RefCell::new([Self::EMPTY; CONNS]),
+            handles: RefCell::new(handles), //[Self::EMPTY; CONNS]),
         }
     }
 
@@ -62,7 +58,7 @@ impl<'d, const CONNS: usize> PacketReassembly<'d, CONNS> {
     ///
     /// Returns InvalidState if there is already an ongoing reassembly for this connection
     /// Returns InsufficientSpace if there is no space for this reassembly
-    pub fn init(&self, handle: ConnHandle, header: L2capHeader, p: Packet<'d>, initial: usize) -> Result<(), Error> {
+    pub fn init(&self, handle: ConnHandle, header: L2capHeader, p: Packet, initial: usize) -> Result<(), Error> {
         let mut state = self.handles.borrow_mut();
 
         // Sanity check
@@ -85,7 +81,7 @@ impl<'d, const CONNS: usize> PacketReassembly<'d, CONNS> {
     /// Updates any in progress packet assembly for the connection
     ///
     /// If the reassembly is complete, the l2cap header + packet is returned.
-    pub fn update(&self, handle: ConnHandle, data: &[u8]) -> Result<Option<(L2capHeader, Packet<'d>)>, Error> {
+    pub fn update(&self, handle: ConnHandle, data: &[u8]) -> Result<Option<(L2capHeader, Packet)>, Error> {
         let mut state = self.handles.borrow_mut();
 
         for entry in state.iter_mut() {

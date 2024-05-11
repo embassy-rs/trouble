@@ -12,7 +12,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::adapter::HciController;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::packet_pool::{AllocId, DynamicPacketPool, Packet};
+use crate::packet_pool::{AllocId, GlobalPacketPool, Packet};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
     CommandRejectRes, DisconnectionReq, DisconnectionRes, L2capHeader, L2capSignalCode, L2capSignalHeader,
@@ -31,16 +31,15 @@ struct State<const CHANNELS: usize> {
 
 /// Channel manager for L2CAP channels used directly by clients.
 pub struct ChannelManager<
-    'd,
     M: RawMutex,
     const CHANNELS: usize,
     const L2CAP_MTU: usize,
     const L2CAP_TXQ: usize,
     const L2CAP_RXQ: usize,
 > {
-    pool: &'d dyn DynamicPacketPool<'d>,
+    pool: &'static dyn GlobalPacketPool,
     state: Mutex<M, RefCell<State<CHANNELS>>>,
-    inbound: [Channel<M, Option<Pdu<'d>>, L2CAP_RXQ>; CHANNELS],
+    inbound: [Channel<M, Option<Pdu>, L2CAP_RXQ>; CHANNELS],
 }
 
 impl<
@@ -50,12 +49,12 @@ impl<
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
-    > ChannelManager<'d, M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
+    > ChannelManager<M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
 {
-    const TX_CHANNEL: Channel<M, Pdu<'d>, L2CAP_TXQ> = Channel::new();
-    const RX_CHANNEL: Channel<M, Option<Pdu<'d>>, L2CAP_RXQ> = Channel::new();
+    const TX_CHANNEL: Channel<M, Pdu, L2CAP_TXQ> = Channel::new();
+    const RX_CHANNEL: Channel<M, Option<Pdu>, L2CAP_RXQ> = Channel::new();
     const CREDIT_WAKER: WakerRegistration = WakerRegistration::new();
-    pub fn new(pool: &'d dyn DynamicPacketPool<'d>) -> Self {
+    pub fn new(pool: &'static dyn GlobalPacketPool) -> Self {
         Self {
             pool,
             state: Mutex::new(RefCell::new(State {
@@ -291,7 +290,7 @@ impl<
     }
 
     /// Dispatch an incoming L2CAP packet to the appropriate channel.
-    pub(crate) async fn dispatch(&self, header: L2capHeader, packet: Packet<'d>) -> Result<(), Error> {
+    pub(crate) async fn dispatch(&self, header: L2capHeader, packet: Packet) -> Result<(), Error> {
         if header.channel < BASE_ID {
             return Err(Error::InvalidChannelId);
         }
@@ -529,7 +528,7 @@ impl<
         cid: u16,
         idx: usize,
         hci: &HciController<'_, 'd, T>,
-    ) -> Result<Pdu<'d>, AdapterError<T::Error>> {
+    ) -> Result<Pdu, AdapterError<T::Error>> {
         match self.inbound[idx].receive().await {
             Some(pdu) => Ok(pdu),
             None => {
@@ -641,7 +640,7 @@ impl<
         &self,
         cid: u16,
         hci: &HciController<'_, 'd, T>,
-        mut packet: Packet<'_>,
+        mut packet: Packet,
     ) -> Result<(), AdapterError<T::Error>> {
         let (conn, credits) = self.state.lock(|state| {
             let mut state = state.borrow_mut();

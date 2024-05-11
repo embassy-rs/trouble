@@ -33,8 +33,8 @@ use crate::channel_manager::ChannelManager;
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
-use crate::l2cap::sar::PacketReassembly;
-use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos};
+use crate::l2cap::sar::{PacketReassembly, SarType, EMPTY_SAR};
+use crate::packet_pool::{AllocId, GlobalPacketPool, PacketPool, Qos};
 use crate::pdu::Pdu;
 use crate::scan::{PhySet, ScanConfig, ScanReport};
 use crate::types::l2cap::{
@@ -57,6 +57,7 @@ pub struct HostResources<
 > {
     pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
     connections: [ConnectionStorage; CONNS],
+    sar: [SarType; CONNS],
 }
 
 impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
@@ -67,6 +68,7 @@ impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usiz
         Self {
             pool: PacketPool::new(qos),
             connections: [ConnectionStorage::DISCONNECTED; CONNS],
+            sar: [EMPTY_SAR; CONNS],
         }
     }
 }
@@ -99,10 +101,10 @@ pub struct Adapter<
     initialized: OnceLock<()>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
-    pub(crate) reassembly: PacketReassembly<'d, CONNS>,
-    pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
-    pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
+    pub(crate) reassembly: PacketReassembly<'d>,
+    pub(crate) channels: ChannelManager<M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+    pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu), L2CAP_RXQ>,
+    pub(crate) pool: &'static dyn GlobalPacketPool,
 
     pub(crate) scanner: Channel<M, Option<ScanReport>, 1>,
 }
@@ -127,14 +129,14 @@ where
     /// a reference to resources that are created outside the adapter but which the adapter is the only accessor of.
     pub fn new<const PACKETS: usize>(
         controller: T,
-        host_resources: &'d mut HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
+        host_resources: &'static mut HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
         Self {
             address: None,
             initialized: OnceLock::new(),
             controller,
             connections: ConnectionManager::new(&mut host_resources.connections[..]),
-            reassembly: PacketReassembly::new(),
+            reassembly: PacketReassembly::new(&mut host_resources.sar[..]),
             channels: ChannelManager::new(&host_resources.pool),
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
