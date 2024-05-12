@@ -12,7 +12,7 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
-use trouble_host::adapter::{Adapter, HostResources};
+use trouble_host::adapter::{Stack, StackResources};
 use trouble_host::connection::ConnectConfig;
 use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
 use trouble_host::scan::ScanConfig;
@@ -114,12 +114,12 @@ async fn main(spawner: Spawner) {
     info!("Our address = {:02x}", my_addr());
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
+    static HOST_RESOURCES: StaticCell<StackResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
         StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::Guaranteed(4)));
+    let host_resources = HOST_RESOURCES.init(StackResources::new(PacketQos::Guaranteed(4)));
 
-    let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        Adapter::new(sdc, host_resources);
+    let mut adapter: Stack<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
+        Stack::new(sdc, host_resources);
     adapter.set_random_address(my_addr());
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to

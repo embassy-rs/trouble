@@ -18,7 +18,7 @@ use crate::types::l2cap::{
     CommandRejectRes, DisconnectionReq, DisconnectionRes, L2capHeader, L2capSignalCode, L2capSignalHeader,
     LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
 };
-use crate::{AdapterError, Error};
+use crate::{StackError, Error};
 
 const BASE_ID: u16 = 0x40;
 
@@ -165,7 +165,7 @@ impl<
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
         controller: &HciController<'_, 'd, T>,
-    ) -> Result<u16, AdapterError<T::Error>> {
+    ) -> Result<u16, StackError<T::Error>> {
         // Wait until we find a channel for our connection in the connecting state matching our PSM.
         let (req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
             self.state.lock(|state| {
@@ -230,7 +230,7 @@ impl<
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
         controller: &HciController<'_, 'd, T>,
-    ) -> Result<u16, AdapterError<T::Error>> {
+    ) -> Result<u16, StackError<T::Error>> {
         let req_id = self.next_request_id();
         let mut credits = 0;
         let mut cid: u16 = 0;
@@ -474,7 +474,7 @@ impl<
         cid: u16,
         buf: &mut [u8],
         hci: &HciController<'_, 'd, T>,
-    ) -> Result<usize, AdapterError<T::Error>> {
+    ) -> Result<usize, StackError<T::Error>> {
         let idx = self.connected_channel_index(cid)?;
 
         let mut n_received = 1;
@@ -528,7 +528,7 @@ impl<
         cid: u16,
         idx: usize,
         hci: &HciController<'_, 'd, T>,
-    ) -> Result<Pdu, AdapterError<T::Error>> {
+    ) -> Result<Pdu, StackError<T::Error>> {
         match self.inbound[idx].receive().await {
             Some(pdu) => Ok(pdu),
             None => {
@@ -548,7 +548,7 @@ impl<
         cid: u16,
         buf: &[u8],
         hci: &HciController<'_, 'd, T>,
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         let mut p_buf = [0u8; L2CAP_MTU];
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
         // The number of packets we'll need to send for this payload
@@ -584,7 +584,7 @@ impl<
         cid: u16,
         buf: &[u8],
         hci: &HciController<'_, 'd, T>,
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         let mut p_buf = [0u8; L2CAP_MTU];
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
 
@@ -641,7 +641,7 @@ impl<
         cid: u16,
         hci: &HciController<'_, 'd, T>,
         mut packet: Packet,
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         let (conn, credits) = self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.channels.iter_mut() {
@@ -671,7 +671,7 @@ impl<
         &self,
         cid: u16,
         hci: &HciController<'_, 'd, T>,
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         let (handle, dcid, scid) = self.state.lock(|state| {
             let mut state = state.borrow_mut();
             for storage in state.channels.iter_mut() {

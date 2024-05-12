@@ -14,7 +14,7 @@ use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
-use crate::{AdapterError, Error};
+use crate::{StackError, Error};
 
 pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize> {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
@@ -28,7 +28,7 @@ pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controlle
 impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize>
     GattServer<'reference, 'values, 'resources, M, T, MAX>
 {
-    pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, AdapterError<T::Error>> {
+    pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, StackError<T::Error>> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             match Att::decode(pdu.as_ref()) {
@@ -86,7 +86,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
         handle: CharacteristicHandle,
         connection: &Connection,
         value: &[u8],
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         let conn = connection.handle();
         self.server.table.set(handle, value)?;
 

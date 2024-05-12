@@ -4,10 +4,10 @@ use bt_hci::controller::{blocking, Controller, ControllerCmdSync};
 use bt_hci::param::DisconnectReason;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use crate::adapter::Adapter;
+use crate::adapter::Stack;
 pub use crate::channel_manager::CreditFlowPolicy;
 use crate::connection::Connection;
-use crate::AdapterError;
+use crate::StackError;
 
 pub(crate) mod sar;
 
@@ -54,9 +54,9 @@ impl L2capChannel {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &[u8],
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         adapter.channels.send(self.cid, buf, &adapter.hci()).await
     }
 
@@ -75,9 +75,9 @@ impl L2capChannel {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &[u8],
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         adapter.channels.try_send(self.cid, buf, &adapter.hci())
     }
 
@@ -93,9 +93,9 @@ impl L2capChannel {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &mut [u8],
-    ) -> Result<usize, AdapterError<T::Error>> {
+    ) -> Result<usize, StackError<T::Error>> {
         adapter.channels.receive(self.cid, buf, &adapter.hci()).await
     }
 
@@ -108,11 +108,11 @@ impl L2capChannel {
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection,
         psm: &[u16],
         config: &L2capChannelConfig,
-    ) -> Result<L2capChannel, AdapterError<T::Error>> {
+    ) -> Result<L2capChannel, StackError<T::Error>> {
         let handle = connection.handle();
         let cid = adapter
             .channels
@@ -139,9 +139,9 @@ impl L2capChannel {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         close_connection: bool,
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         let handle = adapter.channels.disconnect(self.cid)?;
         if close_connection {
             adapter
@@ -160,11 +160,11 @@ impl L2capChannel {
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection,
         psm: u16,
         config: &L2capChannelConfig,
-    ) -> Result<Self, AdapterError<T::Error>>
+    ) -> Result<Self, StackError<T::Error>>
 where {
         let handle = connection.handle();
         let cid = adapter

@@ -7,7 +7,7 @@ use tokio::io::{ReadHalf, WriteHalf};
 use tokio::select;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
-use trouble_host::adapter::{Adapter, HostResources};
+use trouble_host::adapter::{Stack, StackResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::connection::ConnectConfig;
 use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
@@ -69,11 +69,11 @@ async fn l2cap_connection_oriented_channels() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = create_controller(&peripheral).await;
 
-        let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
-            HostResources::new(PacketQos::Guaranteed(4));
+        let mut host_resources: StackResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
+            StackResources::new(PacketQos::Guaranteed(4));
 
-        let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            Adapter::new(controller_peripheral, &mut host_resources);
+        let mut adapter: Stack<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
+            Stack::new(controller_peripheral, &mut host_resources);
 
         adapter.set_random_address(peripheral_address);
 
@@ -135,11 +135,11 @@ async fn l2cap_connection_oriented_channels() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = create_controller(&central).await;
-        let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
-            HostResources::new(PacketQos::Guaranteed(4));
+        let mut host_resources: StackResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
+            StackResources::new(PacketQos::Guaranteed(4));
 
-        let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            Adapter::new(controller_central, &mut host_resources);
+        let adapter: Stack<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
+            Stack::new(controller_central, &mut host_resources);
 
         select! {
             r = adapter.run() => {

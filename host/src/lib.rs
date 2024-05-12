@@ -59,9 +59,9 @@ impl Address {
 /// Errors returned by the adapter.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AdapterError<E> {
+pub enum StackError<E> {
     Controller(E),
-    Adapter(Error),
+    Stack(Error),
 }
 
 /// Errors related to Host.
@@ -87,9 +87,9 @@ pub enum Error {
     Other,
 }
 
-impl<E> From<Error> for AdapterError<E> {
+impl<E> From<Error> for StackError<E> {
     fn from(value: Error) -> Self {
-        Self::Adapter(value)
+        Self::Stack(value)
     }
 }
 
@@ -99,18 +99,18 @@ impl From<FromHciBytesError> for Error {
     }
 }
 
-impl<E> From<bt_hci::controller::CmdError<E>> for AdapterError<E> {
+impl<E> From<bt_hci::controller::CmdError<E>> for StackError<E> {
     fn from(error: bt_hci::controller::CmdError<E>) -> Self {
         match error {
-            bt_hci::controller::CmdError::Hci(p) => Self::Adapter(Error::HciEncode(p)),
+            bt_hci::controller::CmdError::Hci(p) => Self::Stack(Error::HciEncode(p)),
             bt_hci::controller::CmdError::Io(p) => Self::Controller(p),
         }
     }
 }
 
-impl<E> From<bt_hci::param::Error> for AdapterError<E> {
+impl<E> From<bt_hci::param::Error> for StackError<E> {
     fn from(error: bt_hci::param::Error) -> Self {
-        Self::Adapter(Error::HciEncode(error))
+        Self::Stack(Error::HciEncode(error))
     }
 }
 
@@ -123,11 +123,11 @@ impl From<codec::Error> for Error {
     }
 }
 
-impl<E> From<codec::Error> for AdapterError<E> {
+impl<E> From<codec::Error> for StackError<E> {
     fn from(error: codec::Error) -> Self {
         match error {
-            codec::Error::InsufficientSpace => AdapterError::Adapter(Error::InsufficientSpace),
-            codec::Error::InvalidValue => AdapterError::Adapter(Error::InvalidValue),
+            codec::Error::InsufficientSpace => StackError::Stack(Error::InsufficientSpace),
+            codec::Error::InvalidValue => StackError::Stack(Error::InvalidValue),
         }
     }
 }

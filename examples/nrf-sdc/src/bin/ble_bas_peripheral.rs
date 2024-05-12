@@ -12,7 +12,7 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
-use trouble_host::adapter::{Adapter, HostResources};
+use trouble_host::adapter::{Stack, StackResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
 use trouble_host::{Address, PacketQos};
@@ -106,12 +106,12 @@ async fn main(spawner: Spawner) {
     info!("Our address = {:02x}", my_addr());
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
+    static HOST_RESOURCES: StaticCell<StackResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
         StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(HostResources::new(PacketQos::None));
+    let host_resources = HOST_RESOURCES.init(StackResources::new(PacketQos::None));
 
-    let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        Adapter::new(sdc, host_resources);
+    let mut adapter: Stack<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
+        Stack::new(sdc, host_resources);
     adapter.set_random_address(my_addr());
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();

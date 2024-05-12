@@ -7,9 +7,9 @@ use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
-use crate::adapter::Adapter;
+use crate::adapter::Stack;
 use crate::scan::ScanConfig;
-use crate::AdapterError;
+use crate::StackError;
 
 #[derive(Clone)]
 pub struct Connection {
@@ -61,8 +61,8 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<(), AdapterError<T::Error>> {
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<(), StackError<T::Error>> {
         adapter
             .connections
             .request_disconnect(self.handle, DisconnectReason::RemoteUserTerminatedConn)?;
@@ -79,8 +79,8 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<LeConnRole, AdapterError<T::Error>> {
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<LeConnRole, StackError<T::Error>> {
         let role = adapter.connections.role(self.handle)?;
         Ok(role)
     }
@@ -95,8 +95,8 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<BdAddr, AdapterError<T::Error>> {
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<BdAddr, StackError<T::Error>> {
         let addr = adapter.connections.peer_address(self.handle)?;
         Ok(addr)
     }
@@ -104,8 +104,8 @@ impl Connection {
     /// The RSSI value for this connection.
     pub async fn rssi<M: RawMutex, T, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
         &self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<i8, AdapterError<T::Error>>
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<i8, StackError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
     {
@@ -122,9 +122,9 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Adapter<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         params: ConnectParams,
-    ) -> Result<(), AdapterError<T::Error>>
+    ) -> Result<(), StackError<T::Error>>
     where
         T: ControllerCmdAsync<LeConnUpdate>,
     {

@@ -1,4 +1,4 @@
-//! Adapter
+//! Stack
 //!
 //! The adapter module contains the main entry point for the TrouBLE host.
 use core::future::poll_fn;
@@ -42,13 +42,13 @@ use crate::types::l2cap::{
 };
 #[cfg(feature = "gatt")]
 use crate::{attribute::AttributeTable, gatt::GattServer};
-use crate::{AdapterError, Address, Error};
+use crate::{StackError, Address, Error};
 
-/// HostResources holds the resources used by the host.
+/// StackResources holds the resources used by the host.
 ///
 /// The packet pool is used by the adapter to multiplex data streams, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<
+pub struct StackResources<
     M: RawMutex,
     const CONNS: usize,
     const CHANNELS: usize,
@@ -61,7 +61,7 @@ pub struct HostResources<
 }
 
 impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
-    HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>
+    StackResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>
 {
     /// Create a new instance of host resources with the provided QoS requirements for packets.
     pub fn new(qos: Qos) -> Self {
@@ -85,7 +85,7 @@ pub trait VendorEventHandler {
 ///
 /// The adapter performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
-pub struct Adapter<
+pub struct Stack<
     'd,
     M,
     T,
@@ -109,7 +109,7 @@ pub struct Adapter<
 }
 
 impl<'d, M, T, const CHANNELS: usize, const L2CAP_MTU: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
-    Adapter<'d, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
+    Stack<'d, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
 where
     M: RawMutex,
     T: Controller,
@@ -120,7 +120,7 @@ where
     /// a reference to resources that are created outside the adapter but which the adapter is the only accessor of.
     pub fn new<const CONNS: usize, const PACKETS: usize>(
         controller: T,
-        host_resources: &'static mut HostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
+        host_resources: &'static mut StackResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
         Self {
             address: None,
@@ -143,7 +143,7 @@ where
     pub(crate) async fn set_accept_filter(
         &self,
         filter_accept_list: &[(AddrKind, &BdAddr)],
-    ) -> Result<(), AdapterError<T::Error>>
+    ) -> Result<(), StackError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList> + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
@@ -156,7 +156,7 @@ where
     }
 
     /// Run a HCI command and return the response.
-    pub async fn command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
+    pub async fn command<C>(&self, cmd: C) -> Result<C::Return, StackError<T::Error>>
     where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
@@ -167,7 +167,7 @@ where
     }
 
     /// Run an async HCI command where the response will generate an event later.
-    pub async fn async_command<C>(&self, cmd: C) -> Result<(), AdapterError<T::Error>>
+    pub async fn async_command<C>(&self, cmd: C) -> Result<(), StackError<T::Error>>
     where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
@@ -178,7 +178,7 @@ where
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection, AdapterError<T::Error>>
+    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection, StackError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -217,7 +217,7 @@ where
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection, AdapterError<T::Error>>
+    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection, StackError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -279,7 +279,7 @@ where
         phy_params
     }
 
-    async fn start_scan(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    async fn start_scan(&self, config: &ScanConfig<'_>) -> Result<(), StackError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanParams>
             + ControllerCmdSync<LeSetScanEnable>
@@ -308,7 +308,7 @@ where
         Ok(())
     }
 
-    async fn start_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    async fn start_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), StackError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeSetExtScanParams>
@@ -343,7 +343,7 @@ where
         Ok(())
     }
 
-    async fn stop_scan(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    async fn stop_scan(&self, config: &ScanConfig<'_>) -> Result<(), StackError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanEnable>,
     {
@@ -351,7 +351,7 @@ where
         Ok(())
     }
 
-    async fn stop_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    async fn stop_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), StackError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>,
     {
@@ -368,7 +368,7 @@ where
     /// Performs an extended BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan_ext(&self, config: &ScanConfig<'_>) -> Result<ScanReport, AdapterError<T::Error>>
+    pub async fn scan_ext(&self, config: &ScanConfig<'_>) -> Result<ScanReport, StackError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeSetExtScanParams>
@@ -386,7 +386,7 @@ where
     /// Performs a BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan(&self, config: &ScanConfig<'_>) -> Result<ScanReport, AdapterError<T::Error>>
+    pub async fn scan(&self, config: &ScanConfig<'_>) -> Result<ScanReport, StackError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanParams>
             + ControllerCmdSync<LeSetScanEnable>
@@ -406,7 +406,7 @@ where
         &self,
         config: &AdvertisementConfig,
         params: Advertisement<'k>,
-    ) -> Result<Connection, AdapterError<T::Error>>
+    ) -> Result<Connection, StackError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
@@ -481,7 +481,7 @@ where
         &self,
         config: &AdvertisementConfig,
         params: impl Into<RawAdvertisement<'k>>,
-    ) -> Result<Connection, AdapterError<T::Error>>
+    ) -> Result<Connection, StackError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
@@ -640,7 +640,7 @@ where
         Ok(())
     }
 
-    pub async fn run(&self) -> Result<(), AdapterError<T::Error>>
+    pub async fn run(&self) -> Result<(), StackError<T::Error>>
     where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -658,7 +658,7 @@ where
     pub async fn run_with_handler(
         &self,
         vendor_handler: Option<&dyn VendorEventHandler>,
-    ) -> Result<(), AdapterError<T::Error>>
+    ) -> Result<(), StackError<T::Error>>
     where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -679,7 +679,7 @@ where
 
             if let Some(addr) = self.address {
                 LeSetRandomAddr::new(addr.addr).exec(&self.controller).await?;
-                info!("Adapter address set to {:?}", addr.addr);
+                info!("Stack address set to {:?}", addr.addr);
             }
 
             HostBufferSize::new(
@@ -827,7 +827,7 @@ where
             };
 
             // info!("Entering select loop");
-            let result: Result<(), AdapterError<T::Error>> = match select(&mut control_fut, rx_fut).await {
+            let result: Result<(), StackError<T::Error>> = match select(&mut control_fut, rx_fut).await {
                 Either::First(result) => result,
                 Either::Second(result) => result,
             };
@@ -858,7 +858,7 @@ impl<'a, 'd, T: Controller> Clone for HciController<'a, 'd, T> {
 }
 
 impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
-    pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>>
+    pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), StackError<T::Error>>
     where
         T: blocking::Controller,
     {
@@ -886,11 +886,11 @@ impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
                 warn!("hci: acl data send busy");
                 Err(Error::Busy.into())
             }
-            Err(blocking::TryError::Error(e)) => Err(AdapterError::Controller(e)),
+            Err(blocking::TryError::Error(e)) => Err(StackError::Controller(e)),
         }
     }
 
-    pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
+    pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), StackError<T::Error>> {
         let mut grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, 1, Some(cx))).await?;
         let acl = AclPacket::new(
             handle,
@@ -901,7 +901,7 @@ impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
         self.controller
             .write_acl_data(&acl)
             .await
-            .map_err(AdapterError::Controller)?;
+            .map_err(StackError::Controller)?;
         grant.confirm(1);
         Ok(())
     }
@@ -912,7 +912,7 @@ impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
         identifier: u8,
         signal: &D,
         p_buf: &mut [u8],
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), StackError<T::Error>> {
         trace!(
             "[l2cap][conn = {:?}] sending control signal (req = {}) signal: {:?}",
             handle,
