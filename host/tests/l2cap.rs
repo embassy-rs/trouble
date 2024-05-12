@@ -3,16 +3,16 @@ use bt_hci::controller::ExternalController;
 use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_io_adapters::tokio_1::FromTokio;
+use static_cell::StaticCell;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::select;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
-use trouble_host::adapter::{BleHost, BleHostResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::connection::ConnectConfig;
 use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
 use trouble_host::scan::ScanConfig;
-use trouble_host::{Address, PacketQos};
+use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3;
@@ -69,11 +69,12 @@ async fn l2cap_connection_oriented_channels() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = create_controller(&peripheral).await;
 
-        let mut host_resources: BleHostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
-            BleHostResources::new(PacketQos::Guaranteed(4));
+        static RESOURCES: StaticCell<BleHostResources<NoopRawMutex, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 32, 27>> =
+            StaticCell::new();
+        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
 
-        let mut adapter: BleHost<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            BleHost::new(controller_peripheral, &mut host_resources);
+        let mut adapter: BleHost<'_, NoopRawMutex, _, L2CAP_CHANNELS_MAX, 27> =
+            BleHost::new(controller_peripheral, host_resources);
 
         adapter.set_random_address(peripheral_address);
 
@@ -135,11 +136,12 @@ async fn l2cap_connection_oriented_channels() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = create_controller(&central).await;
-        let mut host_resources: BleHostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
-            BleHostResources::new(PacketQos::Guaranteed(4));
+        static RESOURCES: StaticCell<BleHostResources<NoopRawMutex, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 32, 27>> =
+            StaticCell::new();
+        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
 
-        let adapter: BleHost<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            BleHost::new(controller_central, &mut host_resources);
+        let adapter: BleHost<'_, NoopRawMutex, _, L2CAP_CHANNELS_MAX, 27> =
+            BleHost::new(controller_central, host_resources);
 
         select! {
             r = adapter.run() => {

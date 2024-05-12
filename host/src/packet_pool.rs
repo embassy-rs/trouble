@@ -69,7 +69,7 @@ struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
 }
 
 impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIENTS> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             packets: UnsafeCell::new([PacketBuf::NEW; N]),
             usage: RefCell::new([0; CLIENTS]),
@@ -145,7 +145,7 @@ pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIEN
 }
 
 impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> PacketPool<M, MTU, N, CLIENTS> {
-    pub fn new(qos: Qos) -> Self {
+    pub const fn new(qos: Qos) -> Self {
         // Need at least 1 for gatt
         #[cfg(feature = "gatt")]
         assert!(CLIENTS >= 1);
@@ -259,12 +259,14 @@ impl AsMut<[u8]> for Packet {
 #[cfg(test)]
 mod tests {
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use static_cell::StaticCell;
 
     use super::*;
 
     #[test]
     fn test_fair_qos() {
-        let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::Fair);
+        static POOL: StaticCell<PacketPool<NoopRawMutex, 1, 8, 4>> = StaticCell::new();
+        let pool = POOL.init(PacketPool::new(Qos::Fair));
 
         let a1 = pool.alloc(AllocId(0));
         assert!(a1.is_some());
@@ -284,7 +286,8 @@ mod tests {
 
     #[test]
     fn test_none_qos() {
-        let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::None);
+        static POOL: StaticCell<PacketPool<NoopRawMutex, 1, 8, 4>> = StaticCell::new();
+        let pool = POOL.init(PacketPool::new(Qos::None));
 
         let a1 = pool.alloc(AllocId(0));
         assert!(a1.is_some());
@@ -310,7 +313,8 @@ mod tests {
 
     #[test]
     fn test_guaranteed_qos() {
-        let pool: PacketPool<NoopRawMutex, 1, 8, 4> = PacketPool::new(Qos::Guaranteed(1));
+        static POOL: StaticCell<PacketPool<NoopRawMutex, 1, 8, 4>> = StaticCell::new();
+        let pool = POOL.init(PacketPool::new(Qos::Guaranteed(1)));
 
         let a1 = pool.alloc(AllocId(0));
         assert!(a1.is_some());
@@ -340,7 +344,8 @@ mod tests {
 
     #[test]
     fn test_guaranteed_qos_many() {
-        let pool: PacketPool<NoopRawMutex, 1, 8, 8> = PacketPool::new(Qos::Guaranteed(1));
+        static POOL: StaticCell<PacketPool<NoopRawMutex, 1, 8, 8>> = StaticCell::new();
+        let pool = POOL.init(PacketPool::new(Qos::Guaranteed(1)));
 
         let a1 = pool.alloc(AllocId(0));
         assert!(a1.is_some());
