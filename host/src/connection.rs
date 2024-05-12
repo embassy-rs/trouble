@@ -7,9 +7,9 @@ use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
-use crate::adapter::Stack;
+use crate::host::BleHost;
 use crate::scan::ScanConfig;
-use crate::StackError;
+use crate::BleHostError;
 
 #[derive(Clone)]
 pub struct Connection {
@@ -61,10 +61,9 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<(), StackError<T::Error>> {
-        adapter
-            .connections
+        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<(), BleHostError<T::Error>> {
+        ble.connections
             .request_disconnect(self.handle, DisconnectReason::RemoteUserTerminatedConn)?;
         Ok(())
     }
@@ -79,9 +78,9 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<LeConnRole, StackError<T::Error>> {
-        let role = adapter.connections.role(self.handle)?;
+        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<LeConnRole, BleHostError<T::Error>> {
+        let role = ble.connections.role(self.handle)?;
         Ok(role)
     }
 
@@ -95,21 +94,21 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<BdAddr, StackError<T::Error>> {
-        let addr = adapter.connections.peer_address(self.handle)?;
+        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<BdAddr, BleHostError<T::Error>> {
+        let addr = ble.connections.peer_address(self.handle)?;
         Ok(addr)
     }
 
     /// The RSSI value for this connection.
     pub async fn rssi<M: RawMutex, T, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
         &self,
-        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
-    ) -> Result<i8, StackError<T::Error>>
+        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+    ) -> Result<i8, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
     {
-        let ret = adapter.command(ReadRssi::new(self.handle)).await?;
+        let ret = ble.command(ReadRssi::new(self.handle)).await?;
         Ok(ret.rssi)
     }
 
@@ -122,23 +121,22 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        adapter: &Stack<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         params: ConnectParams,
-    ) -> Result<(), StackError<T::Error>>
+    ) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdAsync<LeConnUpdate>,
     {
-        adapter
-            .async_command(LeConnUpdate::new(
-                self.handle,
-                params.min_connection_interval.into(),
-                params.max_connection_interval.into(),
-                params.max_latency,
-                params.supervision_timeout.into(),
-                bt_hci::param::Duration::from_secs(0),
-                bt_hci::param::Duration::from_secs(0),
-            ))
-            .await?;
+        ble.async_command(LeConnUpdate::new(
+            self.handle,
+            params.min_connection_interval.into(),
+            params.max_connection_interval.into(),
+            params.max_latency,
+            params.supervision_timeout.into(),
+            bt_hci::param::Duration::from_secs(0),
+            bt_hci::param::Duration::from_secs(0),
+        ))
+        .await?;
         Ok(())
     }
 }

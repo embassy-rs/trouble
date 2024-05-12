@@ -26,11 +26,13 @@ pub mod types;
 
 pub use packet_pool::Qos as PacketQos;
 
-pub mod adapter;
 pub mod advertise;
 pub mod connection;
 pub mod l2cap;
 pub mod scan;
+
+pub(crate) mod host;
+pub use host::*;
 
 #[cfg(feature = "gatt")]
 pub mod attribute;
@@ -56,12 +58,12 @@ impl Address {
     }
 }
 
-/// Errors returned by the adapter.
+/// Errors returned by the host.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum StackError<E> {
+pub enum BleHostError<E> {
     Controller(E),
-    Stack(Error),
+    BleHost(Error),
 }
 
 /// Errors related to Host.
@@ -87,9 +89,9 @@ pub enum Error {
     Other,
 }
 
-impl<E> From<Error> for StackError<E> {
+impl<E> From<Error> for BleHostError<E> {
     fn from(value: Error) -> Self {
-        Self::Stack(value)
+        Self::BleHost(value)
     }
 }
 
@@ -99,18 +101,18 @@ impl From<FromHciBytesError> for Error {
     }
 }
 
-impl<E> From<bt_hci::controller::CmdError<E>> for StackError<E> {
+impl<E> From<bt_hci::controller::CmdError<E>> for BleHostError<E> {
     fn from(error: bt_hci::controller::CmdError<E>) -> Self {
         match error {
-            bt_hci::controller::CmdError::Hci(p) => Self::Stack(Error::HciEncode(p)),
+            bt_hci::controller::CmdError::Hci(p) => Self::BleHost(Error::HciEncode(p)),
             bt_hci::controller::CmdError::Io(p) => Self::Controller(p),
         }
     }
 }
 
-impl<E> From<bt_hci::param::Error> for StackError<E> {
+impl<E> From<bt_hci::param::Error> for BleHostError<E> {
     fn from(error: bt_hci::param::Error) -> Self {
-        Self::Stack(Error::HciEncode(error))
+        Self::BleHost(Error::HciEncode(error))
     }
 }
 
@@ -123,11 +125,11 @@ impl From<codec::Error> for Error {
     }
 }
 
-impl<E> From<codec::Error> for StackError<E> {
+impl<E> From<codec::Error> for BleHostError<E> {
     fn from(error: codec::Error) -> Self {
         match error {
-            codec::Error::InsufficientSpace => StackError::Stack(Error::InsufficientSpace),
-            codec::Error::InvalidValue => StackError::Stack(Error::InvalidValue),
+            codec::Error::InsufficientSpace => BleHostError::BleHost(Error::InsufficientSpace),
+            codec::Error::InvalidValue => BleHostError::BleHost(Error::InvalidValue),
         }
     }
 }
