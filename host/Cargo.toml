@@ -41,5 +41,5 @@ defmt = [ "dep:defmt" ]
 gatt = []
 
 [patch.crates-io]
-bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "try-controller" }
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }

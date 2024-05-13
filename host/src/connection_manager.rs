@@ -266,7 +266,6 @@ impl<'a, 'd> Iterator for DisconnectIter<'a, 'd> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionStorage {
     pub state: ConnectionState,
     pub handle: Option<ConnHandle>,

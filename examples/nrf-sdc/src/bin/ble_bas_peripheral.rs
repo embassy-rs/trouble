@@ -12,10 +12,9 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
-use trouble_host::adapter::{Stack, StackResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
-use trouble_host::{Address, PacketQos};
+use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -106,13 +105,13 @@ async fn main(spawner: Spawner) {
     info!("Our address = {:02x}", my_addr());
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<StackResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
-        StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(StackResources::new(PacketQos::None));
+    static HOST_RESOURCES: StaticCell<
+        BleHostResources<NoopRawMutex, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>,
+    > = StaticCell::new();
+    let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
 
-    let mut adapter: Stack<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        Stack::new(sdc, host_resources);
-    adapter.set_random_address(my_addr());
+    let mut ble: BleHost<'_, NoopRawMutex, _, L2CAP_CHANNELS_MAX, L2CAP_MTU> = BleHost::new(sdc, host_resources);
+    ble.set_random_address(my_addr());
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
@@ -139,7 +138,7 @@ async fn main(spawner: Spawner) {
         )
     };
 
-    let server = adapter.gatt_server(&table);
+    let server = ble.gatt_server(&table);
     let mut adv_data = [0; 31];
     unwrap!(AdStructure::encode_slice(
         &[
@@ -152,7 +151,7 @@ async fn main(spawner: Spawner) {
 
     info!("Starting advertising and GATT service");
     let _ = join3(
-        adapter.run(),
+        ble.run(),
         async {
             loop {
                 match server.next().await {
@@ -167,15 +166,14 @@ async fn main(spawner: Spawner) {
         },
         async {
             let conn = unwrap!(
-                adapter
-                    .advertise(
-                        &Default::default(),
-                        Advertisement::ConnectableScannableUndirected {
-                            adv_data: &adv_data[..],
-                            scan_data: &[],
-                        }
-                    )
-                    .await
+                ble.advertise(
+                    &Default::default(),
+                    Advertisement::ConnectableScannableUndirected {
+                        adv_data: &adv_data[..],
+                        scan_data: &[],
+                    }
+                )
+                .await
             );
             // Keep connection alive
             let mut tick: u8 = 0;

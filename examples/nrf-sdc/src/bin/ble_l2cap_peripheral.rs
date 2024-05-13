@@ -12,10 +12,9 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
-use trouble_host::adapter::{Stack, StackResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
-use trouble_host::{Address, PacketQos};
+use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -113,13 +112,13 @@ async fn main(spawner: Spawner) {
     info!("Our address = {:02x}", my_addr());
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<StackResources<NoopRawMutex, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>> =
-        StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(StackResources::new(PacketQos::Guaranteed(4)));
+    static HOST_RESOURCES: StaticCell<
+        BleHostResources<NoopRawMutex, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>,
+    > = StaticCell::new();
+    let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
 
-    let mut adapter: Stack<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        Stack::new(sdc, host_resources);
-    adapter.set_random_address(my_addr());
+    let mut ble: BleHost<'_, NoopRawMutex, _, L2CAP_CHANNELS_MAX, L2CAP_MTU> = BleHost::new(sdc, host_resources);
+    ble.set_random_address(my_addr());
     let mut adv_data = [0; 31];
     unwrap!(AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),],
@@ -132,26 +131,25 @@ async fn main(spawner: Spawner) {
         &mut scan_data[..],
     ));
 
-    let _ = join(adapter.run(), async {
+    let _ = join(ble.run(), async {
         loop {
             info!("Advertising, waiting for connection...");
             let conn = unwrap!(
-                adapter
-                    .advertise(
-                        &Default::default(),
-                        Advertisement::ConnectableScannableUndirected {
-                            adv_data: &adv_data[..],
-                            scan_data: &scan_data[..],
-                        }
-                    )
-                    .await
+                ble.advertise(
+                    &Default::default(),
+                    Advertisement::ConnectableScannableUndirected {
+                        adv_data: &adv_data[..],
+                        scan_data: &scan_data[..],
+                    }
+                )
+                .await
             );
 
             info!("Connection established");
 
             let mut ch1 = unwrap!(
                 L2capChannel::accept(
-                    &adapter,
+                    &ble,
                     &conn,
                     &[0x2349],
                     &L2capChannelConfig {
@@ -168,7 +166,7 @@ async fn main(spawner: Spawner) {
             const PAYLOAD_LEN: usize = 27;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
-                let len = unwrap!(ch1.receive(&adapter, &mut rx).await);
+                let len = unwrap!(ch1.receive(&ble, &mut rx).await);
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }
@@ -177,7 +175,7 @@ async fn main(spawner: Spawner) {
             Timer::after(Duration::from_secs(1)).await;
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                unwrap!(ch1.send(&adapter, &tx).await);
+                unwrap!(ch1.send(&ble, &tx).await);
             }
             info!("L2CAP data echoed");
 

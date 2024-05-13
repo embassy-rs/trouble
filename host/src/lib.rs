@@ -101,11 +101,11 @@ impl From<FromHciBytesError> for Error {
     }
 }
 
-impl<E> From<bt_hci::controller::CmdError<E>> for BleHostError<E> {
-    fn from(error: bt_hci::controller::CmdError<E>) -> Self {
+impl<E> From<bt_hci::cmd::Error<E>> for BleHostError<E> {
+    fn from(error: bt_hci::cmd::Error<E>) -> Self {
         match error {
-            bt_hci::controller::CmdError::Hci(p) => Self::BleHost(Error::HciEncode(p)),
-            bt_hci::controller::CmdError::Io(p) => Self::Controller(p),
+            bt_hci::cmd::Error::Hci(p) => Self::BleHost(Error::HciEncode(p)),
+            bt_hci::cmd::Error::Io(p) => Self::Controller(p),
         }
     }
 }

@@ -764,7 +764,6 @@ fn encode(data: &[u8], packet: &mut [u8], peer_cid: u16, header: Option<u16>) ->
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChannelStorage {
     state: ChannelState,
     conn: u16,
@@ -777,6 +776,24 @@ pub struct ChannelStorage {
     peer_cid: u16,
     peer_credits: u16,
     credit_waker: WakerRegistration,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ChannelStorage {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "state = {}, conn = {}, cid = {}, peer = {}, mps = {}, mtu = {}, our credits {}, their credits = {}",
+            self.state,
+            self.conn,
+            self.cid,
+            self.peer_cid,
+            self.mps,
+            self.mtu,
+            self.peer_credits,
+            self.flow_control.available()
+        );
+    }
 }
 
 impl ChannelStorage {

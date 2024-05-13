@@ -12,16 +12,16 @@ use crate::connection::Connection;
 use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::HciController;
-use crate::packet_pool::{AllocId, DynamicPacketPool};
+use crate::packet_pool::{AllocId, GlobalPacketPool};
 use crate::pdu::Pdu;
 use crate::{BleHostError, Error};
 
 pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize> {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
-    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'resources>)>,
-    pub(crate) tx: HciController<'reference, T>,
+    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
+    pub(crate) tx: HciController<'reference, 'resources, T>,
     pub(crate) pool_id: AllocId,
-    pub(crate) pool: &'resources dyn DynamicPacketPool<'resources>,
+    pub(crate) pool: &'static dyn GlobalPacketPool,
     pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 

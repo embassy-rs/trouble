@@ -145,7 +145,7 @@ pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIEN
 }
 
 impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> PacketPool<M, MTU, N, CLIENTS> {
-    pub const fn new(qos: Qos) -> Self {
+    pub fn new(qos: Qos) -> Self {
         // Need at least 1 for gatt
         #[cfg(feature = "gatt")]
         assert!(CLIENTS >= 1);
