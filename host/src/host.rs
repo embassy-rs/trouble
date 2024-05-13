@@ -740,11 +740,12 @@ where
                                 Ok(_) => {
                                     if let Err(err) = self.connections.connect(e.handle, &e) {
                                         warn!("Error establishing connection: {:?}", err);
-                                        self.command(Disconnect::new(
-                                            e.handle,
-                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                        ))
-                                        .await?;
+                                        let _ = self
+                                            .command(Disconnect::new(
+                                                e.handle,
+                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                            ))
+                                            .await;
                                     }
                                 }
                                 Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
@@ -786,8 +787,6 @@ where
                                     }
                                     _ => {} // Ignoring for now
                                 }
-
-                                //c.completed_packets.len());
                             }
                         }
                         Event::Vendor(vendor) => {
