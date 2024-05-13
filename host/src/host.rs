@@ -23,7 +23,7 @@ use bt_hci::param::{
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::once_lock::OnceLock;
 use futures::pin_mut;
@@ -48,20 +48,14 @@ use crate::{Address, BleHostError, Error};
 ///
 /// The packet pool is used by the host to multiplex data streams, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct BleHostResources<
-    M: RawMutex,
-    const CONNS: usize,
-    const CHANNELS: usize,
-    const PACKETS: usize,
-    const L2CAP_MTU: usize,
-> {
-    pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
+pub struct BleHostResources<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
+    pool: PacketPool<NoopRawMutex, L2CAP_MTU, PACKETS, CHANNELS>,
     connections: [ConnectionStorage; CONNS],
     sar: [SarType; CONNS],
 }
 
-impl<M: RawMutex, const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
-    BleHostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>
+impl<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
+    BleHostResources<CONNS, CHANNELS, PACKETS, L2CAP_MTU>
 {
     /// Create a new instance of host resources with the provided QoS requirements for packets.
     pub fn new(qos: Qos) -> Self {
@@ -87,31 +81,27 @@ pub trait VendorEventHandler {
 /// multiplexes events and data across connections and l2cap channels.
 pub struct BleHost<
     'd,
-    M,
     T,
     const CHANNELS: usize,
     const L2CAP_MTU: usize,
     const L2CAP_TXQ: usize = 1,
     const L2CAP_RXQ: usize = 1,
-> where
-    M: RawMutex,
-{
+> {
     address: Option<Address>,
     initialized: OnceLock<()>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
-    pub(crate) channels: ChannelManager<M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu), L2CAP_RXQ>,
+    pub(crate) channels: ChannelManager<NoopRawMutex, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+    pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), L2CAP_RXQ>,
     pub(crate) pool: &'static dyn GlobalPacketPool,
 
-    pub(crate) scanner: Channel<M, Option<ScanReport>, 1>,
+    pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
 }
 
-impl<'d, M, T, const CHANNELS: usize, const L2CAP_MTU: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
-    BleHost<'d, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
+impl<'d, T, const CHANNELS: usize, const L2CAP_MTU: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
+    BleHost<'d, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
 where
-    M: RawMutex,
     T: Controller,
 {
     /// Create a new instance of the BLE host.
@@ -120,7 +110,7 @@ where
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
     pub fn new<const CONNS: usize, const PACKETS: usize>(
         controller: T,
-        host_resources: &'static mut BleHostResources<M, CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
+        host_resources: &'static mut BleHostResources<CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
         Self {
             address: None,
@@ -560,7 +550,7 @@ where
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
     #[cfg(feature = "gatt")]
-    pub fn gatt_server<'reference, 'values, const MAX: usize>(
+    pub fn gatt_server<'reference, 'values, M: RawMutex, const MAX: usize>(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
     ) -> GattServer<'reference, 'values, 'd, M, T, MAX> {

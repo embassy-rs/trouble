@@ -4,7 +4,6 @@ use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole};
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
 use crate::host::BleHost;
@@ -53,7 +52,6 @@ impl Connection {
 
     /// Request disconnection of this connection handle.
     pub fn disconnect<
-        M: RawMutex,
         T: Controller + ControllerCmdSync<Disconnect>,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
@@ -61,7 +59,7 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<(), BleHostError<T::Error>> {
         ble.connections
             .request_disconnect(self.handle, DisconnectReason::RemoteUserTerminatedConn)?;
@@ -70,7 +68,6 @@ impl Connection {
 
     /// The connection role for this connection.
     pub fn role<
-        M: RawMutex,
         T: Controller,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
@@ -78,7 +75,7 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<LeConnRole, BleHostError<T::Error>> {
         let role = ble.connections.role(self.handle)?;
         Ok(role)
@@ -86,7 +83,6 @@ impl Connection {
 
     /// The peer address for this connection.
     pub fn peer_address<
-        M: RawMutex,
         T: Controller,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
@@ -94,16 +90,16 @@ impl Connection {
         const L2CAP_RXQ: usize,
     >(
         &self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<BdAddr, BleHostError<T::Error>> {
         let addr = ble.connections.peer_address(self.handle)?;
         Ok(addr)
     }
 
     /// The RSSI value for this connection.
-    pub async fn rssi<M: RawMutex, T, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
+    pub async fn rssi<T, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
         &self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
     ) -> Result<i8, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
@@ -113,15 +109,9 @@ impl Connection {
     }
 
     /// Update connection parameters for this connection.
-    pub async fn set_connection_params<
-        M: RawMutex,
-        T,
-        const CHANNELS: usize,
-        const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
-    >(
+    pub async fn set_connection_params<T, const CHANNELS: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>(
         &self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_TXQ, L2CAP_RXQ>,
         params: ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where

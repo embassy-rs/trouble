@@ -2,7 +2,6 @@
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::controller::{blocking, Controller, ControllerCmdSync};
 use bt_hci::param::DisconnectReason;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 
 pub use crate::channel_manager::CreditFlowPolicy;
 use crate::connection::Connection;
@@ -46,7 +45,6 @@ impl L2capChannel {
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, waits until more credits are available.
     pub async fn send<
-        M: RawMutex,
         T: Controller,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
@@ -54,7 +52,7 @@ impl L2capChannel {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
         ble.channels.send(self.cid, buf, &ble.hci()).await
@@ -67,7 +65,6 @@ impl L2capChannel {
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, returns Error::Busy.
     pub fn try_send<
-        M: RawMutex,
         T: Controller + blocking::Controller,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
@@ -75,7 +72,7 @@ impl L2capChannel {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
         ble.channels.try_send(self.cid, buf, &ble.hci())
@@ -85,7 +82,6 @@ impl L2capChannel {
     ///
     /// The length provided buffer slice must be equal or greater to the agreed MTU.
     pub async fn receive<
-        M: RawMutex,
         T: Controller,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
@@ -93,7 +89,7 @@ impl L2capChannel {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
         ble.channels.receive(self.cid, buf, &ble.hci()).await
@@ -101,14 +97,13 @@ impl L2capChannel {
 
     /// Await an incoming connection request matching the list of PSM.
     pub async fn accept<
-        M: RawMutex,
         T: Controller,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection,
         psm: &[u16],
         config: &L2capChannelConfig,
@@ -131,7 +126,6 @@ impl L2capChannel {
 
     /// Disconnect this channel.
     pub fn disconnect<
-        M: RawMutex,
         T: Controller + ControllerCmdSync<Disconnect>,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
@@ -139,7 +133,7 @@ impl L2capChannel {
         const L2CAP_RXQ: usize,
     >(
         &mut self,
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         close_connection: bool,
     ) -> Result<(), BleHostError<T::Error>> {
         let handle = ble.channels.disconnect(self.cid)?;
@@ -152,14 +146,13 @@ impl L2capChannel {
 
     /// Create a new connection request with the provided PSM.
     pub async fn create<
-        M: RawMutex,
         T: Controller,
         const CHANNELS: usize,
         const L2CAP_MTU: usize,
         const L2CAP_TXQ: usize,
         const L2CAP_RXQ: usize,
     >(
-        ble: &BleHost<'_, M, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
+        ble: &BleHost<'_, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
         connection: &Connection,
         psm: u16,
         config: &L2capChannelConfig,
