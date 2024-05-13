@@ -29,7 +29,7 @@ use embassy_sync::once_lock::OnceLock;
 use futures::pin_mut;
 
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
-use crate::channel_manager::ChannelManager;
+use crate::channel_manager::{ChannelManager, ChannelStorage, RxChannel, RX_CHANNEL};
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
@@ -51,6 +51,8 @@ use crate::{Address, BleHostError, Error};
 pub struct BleHostResources<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
     pool: PacketPool<NoopRawMutex, L2CAP_MTU, PACKETS, CHANNELS>,
     connections: [ConnectionStorage; CONNS],
+    channels: [ChannelStorage; CHANNELS],
+    channels_rx: [RxChannel; CHANNELS],
     sar: [SarType; CONNS],
 }
 
@@ -63,6 +65,8 @@ impl<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CA
             pool: PacketPool::new(qos),
             connections: [ConnectionStorage::DISCONNECTED; CONNS],
             sar: [EMPTY_SAR; CONNS],
+            channels: [ChannelStorage::DISCONNECTED; CHANNELS],
+            channels_rx: [RX_CHANNEL; CHANNELS],
         }
     }
 }
@@ -79,28 +83,20 @@ pub trait VendorEventHandler {
 ///
 /// The host performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
-pub struct BleHost<
-    'd,
-    T,
-    const CHANNELS: usize,
-    const L2CAP_MTU: usize,
-    const L2CAP_TXQ: usize = 1,
-    const L2CAP_RXQ: usize = 1,
-> {
+pub struct BleHost<'d, T> {
     address: Option<Address>,
     initialized: OnceLock<()>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
-    pub(crate) channels: ChannelManager<NoopRawMutex, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), L2CAP_RXQ>,
+    pub(crate) channels: ChannelManager<'d>,
+    pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
     pub(crate) pool: &'static dyn GlobalPacketPool,
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
 }
 
-impl<'d, T, const CHANNELS: usize, const L2CAP_MTU: usize, const L2CAP_TXQ: usize, const L2CAP_RXQ: usize>
-    BleHost<'d, T, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
+impl<'d, T> BleHost<'d, T>
 where
     T: Controller,
 {
@@ -108,7 +104,7 @@ where
     ///
     /// The host requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
-    pub fn new<const CONNS: usize, const PACKETS: usize>(
+    pub fn new<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>(
         controller: T,
         host_resources: &'static mut BleHostResources<CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
@@ -118,7 +114,11 @@ where
             controller,
             connections: ConnectionManager::new(&mut host_resources.connections[..]),
             reassembly: PacketReassembly::new(&mut host_resources.sar[..]),
-            channels: ChannelManager::new(&host_resources.pool),
+            channels: ChannelManager::new(
+                &host_resources.pool,
+                &mut host_resources.channels[..],
+                &mut host_resources.channels_rx[..],
+            ),
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
@@ -550,7 +550,7 @@ where
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
     #[cfg(feature = "gatt")]
-    pub fn gatt_server<'reference, 'values, M: RawMutex, const MAX: usize>(
+    pub fn gatt_server<'reference, 'values, M: embassy_sync::blocking_mutex::raw::RawMutex, const MAX: usize>(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
     ) -> GattServer<'reference, 'values, 'd, M, T, MAX> {
@@ -672,14 +672,9 @@ where
                 info!("BleHost address set to {:?}", addr.addr);
             }
 
-            HostBufferSize::new(
-                self.pool.mtu() as u16,
-                self.pool.mtu() as u8,
-                L2CAP_RXQ as u16,
-                L2CAP_RXQ as u16,
-            )
-            .exec(&self.controller)
-            .await?;
+            HostBufferSize::new(self.pool.mtu() as u16, self.pool.mtu() as u8, 1, 1)
+                .exec(&self.controller)
+                .await?;
 
             SetEventMask::new(
                 EventMask::new()

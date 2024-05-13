@@ -106,11 +106,11 @@ async fn main(spawner: Spawner) {
     Timer::after(Duration::from_millis(200)).await;
 
     static HOST_RESOURCES: StaticCell<
-        BleHostResources<NoopRawMutex, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>,
+        BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>,
     > = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
 
-    let mut ble: BleHost<'_, NoopRawMutex, _, L2CAP_CHANNELS_MAX, L2CAP_MTU> = BleHost::new(sdc, host_resources);
+    let mut ble: BleHost<'_, _> = BleHost::new(sdc, host_resources);
     ble.set_random_address(my_addr());
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();

@@ -54,10 +54,10 @@ async fn main() {
 
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
-    static HOST_RESOURCES: StaticCell<BleHostResources<NoopRawMutex, 2, 4, 32, 27>> = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<BleHostResources<2, 4, 32, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
 
-    let mut ble: BleHost<'_, NoopRawMutex, _, 4, 27, 1, 1> = BleHost::new(controller, host_resources);
+    let mut ble: BleHost<'_, _> = BleHost::new(controller, host_resources);
 
     ble.set_random_address(Address::random([0xff, 0x9f, 0x1a, 0x05, 0xe4, 0xff]));
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();

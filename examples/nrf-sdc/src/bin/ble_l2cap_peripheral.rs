@@ -6,14 +6,13 @@ use defmt::{info, unwrap};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_nrf::{bind_interrupts, pac};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
-use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
+use trouble_host::l2cap::L2capChannel;
 use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
 
@@ -113,11 +112,11 @@ async fn main(spawner: Spawner) {
     Timer::after(Duration::from_millis(200)).await;
 
     static HOST_RESOURCES: StaticCell<
-        BleHostResources<NoopRawMutex, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>,
+        BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>,
     > = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
 
-    let mut ble: BleHost<'_, NoopRawMutex, _, L2CAP_CHANNELS_MAX, L2CAP_MTU> = BleHost::new(sdc, host_resources);
+    let mut ble: BleHost<'_, _> = BleHost::new(sdc, host_resources);
     ble.set_random_address(my_addr());
     let mut adv_data = [0; 31];
     unwrap!(AdStructure::encode_slice(
@@ -147,18 +146,8 @@ async fn main(spawner: Spawner) {
 
             info!("Connection established");
 
-            let mut ch1 = unwrap!(
-                L2capChannel::accept(
-                    &ble,
-                    &conn,
-                    &[0x2349],
-                    &L2capChannelConfig {
-                        mtu: PAYLOAD_LEN as u16,
-                        ..Default::default()
-                    }
-                )
-                .await
-            );
+            let mut ch1 =
+                unwrap!(L2capChannel::<PAYLOAD_LEN>::accept(&ble, &conn, &[0x2349], &Default::default(),).await);
 
             info!("L2CAP channel accepted");
 
