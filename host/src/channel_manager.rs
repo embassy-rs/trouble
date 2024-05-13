@@ -285,20 +285,21 @@ impl<'d> ChannelManager<'d> {
             return Err(Error::InvalidChannelId);
         }
 
-        let mut state = self.state.borrow_mut();
-        for (idx, storage) in state.channels.iter_mut().enumerate() {
-            match storage.state {
-                ChannelState::Connected if header.channel == storage.cid => {
-                    if storage.flow_control.available() == 0 {
-                        trace!("[l2cap][cid = {}] no credits available", header.channel);
-                        state.print();
-                        return Err(Error::OutOfMemory);
+        self.with_mut(|state| {
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
+                match storage.state {
+                    ChannelState::Connected if header.channel == storage.cid => {
+                        if storage.flow_control.available() == 0 {
+                            trace!("[l2cap][cid = {}] no credits available", header.channel);
+                            state.print();
+                            return Err(Error::OutOfMemory);
+                        }
+                        storage.flow_control.received(1);
                     }
-                    storage.flow_control.received(1);
+                    _ => {}
                 }
-                _ => {}
             }
-        }
+        });
 
         self.inbound[chan]
             .send(Some(Pdu::new(packet, header.length as usize)))
