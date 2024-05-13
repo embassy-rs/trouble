@@ -874,12 +874,6 @@ impl<'reference, 'state> Drop for CreditGrant<'reference, 'state> {
         if self.credits > 0 {
             let mut state = self.state.borrow_mut();
             for storage in state.channels.iter_mut() {
-                if self.cid == storage.cid {
-                    trace!(
-                        "[l2cap][credit grant drop] found matching cid in state {}",
-                        storage.state
-                    );
-                }
                 match storage.state {
                     ChannelState::Connected if self.cid == storage.cid => {
                         storage.peer_credits += self.credits;
