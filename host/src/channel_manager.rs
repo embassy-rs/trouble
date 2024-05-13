@@ -299,7 +299,8 @@ impl<'d> ChannelManager<'d> {
                     _ => {}
                 }
             }
-        });
+            Ok(())
+        })?;
 
         self.inbound[chan]
             .send(Some(Pdu::new(packet, header.length as usize)))
