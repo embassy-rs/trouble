@@ -38,6 +38,16 @@ pub struct ChannelManager<'d> {
 pub(crate) type RxChannel = Channel<NoopRawMutex, Option<Pdu>, 1>;
 pub(crate) const RX_CHANNEL: RxChannel = Channel::new();
 
+impl<'d> State<'d> {
+    fn print(&self) {
+        for (idx, storage) in self.channels.iter().enumerate() {
+            if let ChannelState::Connected = storage.state {
+                trace!("[l2cap][idx = {}] state = {:?}", idx, storage);
+            }
+        }
+    }
+}
+
 impl<'d> ChannelManager<'d> {
     pub fn new(
         pool: &'static dyn GlobalPacketPool,
@@ -281,7 +291,7 @@ impl<'d> ChannelManager<'d> {
                 ChannelState::Connected if header.channel == storage.cid => {
                     if storage.flow_control.available() == 0 {
                         trace!("[l2cap][cid = {}] no credits available", header.channel);
-                        self.dump_state(&state);
+                        state.print();
                         return Err(Error::OutOfMemory);
                     }
                     storage.flow_control.received(1);
@@ -305,7 +315,7 @@ impl<'d> ChannelManager<'d> {
             header.identifier,
             header.code
         );
-        self.dump_state(&self.state.borrow());
+        self.state.borrow().print();
         match header.code {
             L2capSignalCode::LeCreditConnReq => {
                 let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
@@ -557,7 +567,7 @@ impl<'d> ChannelManager<'d> {
             Poll::Ready(res) => res?,
             Poll::Pending => {
                 warn!("[l2cap][cid = {}]: not enough credits for {} packets", cid, n_packets);
-                self.dump_state(&self.state.borrow());
+                self.state.borrow().print();
                 return Err(Error::Busy.into());
             }
         };
@@ -666,14 +676,6 @@ impl<'d> ChannelManager<'d> {
         )
         .await?;
         Ok(())
-    }
-
-    fn dump_state(&self, state: &State<'_>) {
-        for (idx, storage) in state.channels.iter().enumerate() {
-            if let ChannelState::Connected = storage.state {
-                trace!("[l2cap][idx = {}] state = {:?}", idx, storage);
-            }
-        }
     }
 
     fn poll_request_to_send(
@@ -872,17 +874,25 @@ impl<'reference, 'state> Drop for CreditGrant<'reference, 'state> {
         if self.credits > 0 {
             let mut state = self.state.borrow_mut();
             for storage in state.channels.iter_mut() {
+                if self.cid == storage.cid {
+                    trace!(
+                        "[l2cap][credit grant drop] found matching cid in state {}",
+                        storage.state
+                    );
+                }
                 match storage.state {
                     ChannelState::Connected if self.cid == storage.cid => {
                         storage.peer_credits += self.credits;
                         storage.credit_waker.wake();
-                        break;
+                        return;
                     }
                     _ => {}
                 }
             }
             // make it an assert?
             trace!("[l2cap][credit grant drop] channel {} not found", self.cid);
+            state.print();
+            panic!("Uh Oh!");
         }
     }
 }
