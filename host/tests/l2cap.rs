@@ -16,6 +16,7 @@ use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3;
+const MTU: usize = 23;
 
 async fn create_controller(
     port: &str,
@@ -100,7 +101,7 @@ async fn l2cap_connection_oriented_channels() {
                     }).await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::accept(&adapter, &conn, &[0x2349], &Default::default()).await?;
+                    let mut ch1 = L2capChannel::<MTU>::accept(&adapter, &conn, &[0x2349], &Default::default()).await?;
 
                     println!("[peripheral] channel created");
 
@@ -154,7 +155,7 @@ async fn l2cap_connection_oriented_channels() {
                 loop {
                     let conn = adapter.connect(&config).await.unwrap();
                     println!("[central] connected");
-                    let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, &Default::default()).await?;
+                    let mut ch1 = L2capChannel::<MTU>::create(&adapter, &conn, 0x2349, &Default::default()).await?;
                     println!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];

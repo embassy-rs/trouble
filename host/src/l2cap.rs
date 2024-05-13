@@ -33,7 +33,7 @@ impl Default for L2capChannelConfig {
     }
 }
 
-impl<const MTU: usize = 23> L2capChannel<MTU> {
+impl<const MTU: usize> L2capChannel<MTU> {
     /// Send the provided buffer over this l2cap channel.
     ///
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
