@@ -100,7 +100,7 @@ async fn l2cap_connection_oriented_channels() {
                     }).await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::<PAYLOAD_LEN>::accept(&adapter, &conn, &[0x2349], &Default::default()).await?;
+                    let mut ch1 = L2capChannel::accept(&adapter, &conn, &[0x2349], &Default::default()).await?;
 
                     println!("[peripheral] channel created");
 
@@ -154,7 +154,7 @@ async fn l2cap_connection_oriented_channels() {
                 loop {
                     let conn = adapter.connect(&config).await.unwrap();
                     println!("[central] connected");
-                    let mut ch1 = L2capChannel::<PAYLOAD_LEN>::create(&adapter, &conn, 0x2349, &Default::default()).await?;
+                    let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, &Default::default()).await?;
                     println!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
