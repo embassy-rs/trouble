@@ -35,7 +35,17 @@ jobs:
         run: |
           cd host
           cargo test --test '*' -- --nocapture
-      - name: Update status
+      - name: Update failed status
+        if: failure()
+        env:
+          COMMIT: ${{ steps.checkout.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -f "state=failure" -f "description=The build failed" -f "context=tests"
+      - name: Update success status
+        if: success()
         env:
           COMMIT: ${{ steps.checkout.outputs.commit }}
           GH_TOKEN: ${{ github.token }}

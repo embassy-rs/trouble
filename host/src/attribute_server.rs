@@ -413,7 +413,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         )?)
     }
 
-    /// Process an adapter event and produce a response if necessary
+    /// Process an event and produce a response if necessary
     pub fn process(&self, conn: ConnHandle, packet: Att, rx: &mut [u8]) -> Result<Option<usize>, AttributeServerError> {
         let len = match packet {
             Att::ReadByTypeReq {

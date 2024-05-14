@@ -3,19 +3,20 @@ use bt_hci::controller::ExternalController;
 use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_io_adapters::tokio_1::FromTokio;
+use static_cell::StaticCell;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::select;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
-use trouble_host::adapter::{Adapter, HostResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::connection::ConnectConfig;
-use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
+use trouble_host::l2cap::L2capChannel;
 use trouble_host::scan::ScanConfig;
-use trouble_host::{Address, PacketQos};
+use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3;
+const MTU: usize = 23;
 
 async fn create_controller(
     port: &str,
@@ -69,11 +70,9 @@ async fn l2cap_connection_oriented_channels() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = create_controller(&peripheral).await;
 
-        let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
-            HostResources::new(PacketQos::Guaranteed(4));
-
-        let mut adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            Adapter::new(controller_peripheral, &mut host_resources);
+        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 32, 27>> = StaticCell::new();
+        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
+        let mut adapter: BleHost<'_, _> = BleHost::new(controller_peripheral, host_resources);
 
         adapter.set_random_address(peripheral_address);
 
@@ -102,9 +101,7 @@ async fn l2cap_connection_oriented_channels() {
                     }).await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::accept(&adapter, &conn, &[0x2349], &L2capChannelConfig {
-                        mtu: PAYLOAD_LEN as u16, ..Default::default()
-                    }).await?;
+                    let mut ch1 = L2capChannel::<MTU>::accept(&adapter, &conn, &[0x2349], &Default::default()).await?;
 
                     println!("[peripheral] channel created");
 
@@ -135,11 +132,10 @@ async fn l2cap_connection_oriented_channels() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = create_controller(&central).await;
-        let mut host_resources: HostResources<NoopRawMutex, L2CAP_CHANNELS_MAX, 32, 27> =
-            HostResources::new(PacketQos::Guaranteed(4));
+        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 32, 27>> = StaticCell::new();
+        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
 
-        let adapter: Adapter<'_, NoopRawMutex, _, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            Adapter::new(controller_central, &mut host_resources);
+        let adapter: BleHost<'_, _> = BleHost::new(controller_central, host_resources);
 
         select! {
             r = adapter.run() => {
@@ -159,10 +155,7 @@ async fn l2cap_connection_oriented_channels() {
                 loop {
                     let conn = adapter.connect(&config).await.unwrap();
                     println!("[central] connected");
-                    let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, &L2capChannelConfig {
-                        mtu: PAYLOAD_LEN as u16,
-                        ..Default::default()
-                    }).await?;
+                    let mut ch1 = L2capChannel::<MTU>::create(&adapter, &conn, 0x2349, &Default::default()).await?;
                     println!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];

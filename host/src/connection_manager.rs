@@ -4,141 +4,125 @@ use core::task::{Context, Poll};
 
 use bt_hci::event::le::LeConnectionComplete;
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole};
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::Error;
 
-struct State<const CONNS: usize> {
-    connections: [ConnectionStorage; CONNS],
+struct State<'d> {
+    connections: &'d mut [ConnectionStorage],
     accept_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
-    link_credit_wakers: [WakerRegistration; CONNS],
     default_link_credits: usize,
 }
 
-pub(crate) struct ConnectionManager<M: RawMutex, const CONNS: usize> {
-    state: Mutex<M, RefCell<State<CONNS>>>,
-    canceled: Signal<M, ()>,
+pub(crate) struct ConnectionManager<'d> {
+    state: RefCell<State<'d>>,
+    canceled: Signal<NoopRawMutex, ()>,
 }
 
-impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
-    const CREDIT_WAKER: WakerRegistration = WakerRegistration::new();
-    pub(crate) fn new() -> Self {
+impl<'d> ConnectionManager<'d> {
+    pub(crate) fn new(connections: &'d mut [ConnectionStorage]) -> Self {
         Self {
-            state: Mutex::new(RefCell::new(State {
-                connections: [ConnectionStorage::DISCONNECTED; CONNS],
+            state: RefCell::new(State {
+                connections,
                 accept_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
-                link_credit_wakers: [Self::CREDIT_WAKER; CONNS],
                 default_link_credits: 0,
-            })),
+            }),
             canceled: Signal::new(),
         }
     }
 
     pub(crate) fn role(&self, h: ConnHandle) -> Result<LeConnRole, Error> {
-        self.state.lock(|state| {
-            let state = state.borrow();
-            for storage in state.connections.iter() {
-                if storage.state == ConnectionState::Connected && storage.handle.unwrap() == h {
-                    return Ok(storage.role.unwrap());
-                }
+        let state = self.state.borrow();
+        for storage in state.connections.iter() {
+            if storage.state == ConnectionState::Connected && storage.handle.unwrap() == h {
+                return Ok(storage.role.unwrap());
             }
-            Err(Error::NotFound)
-        })
+        }
+        Err(Error::NotFound)
     }
 
     pub(crate) fn peer_address(&self, h: ConnHandle) -> Result<BdAddr, Error> {
-        self.state.lock(|state| {
-            let state = state.borrow();
-            for storage in state.connections.iter() {
-                if storage.state == ConnectionState::Connected && storage.handle.unwrap() == h {
-                    return Ok(storage.peer_addr.unwrap());
-                }
+        let state = self.state.borrow();
+        for storage in state.connections.iter() {
+            if storage.state == ConnectionState::Connected && storage.handle.unwrap() == h {
+                return Ok(storage.peer_addr.unwrap());
             }
-            Err(Error::NotFound)
-        })
+        }
+        Err(Error::NotFound)
     }
 
     pub(crate) fn request_disconnect(&self, h: ConnHandle, reason: DisconnectReason) -> Result<(), Error> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for storage in state.connections.iter_mut() {
-                match storage.state {
-                    ConnectionState::Connecting if storage.handle.unwrap() == h => {
-                        storage.state = ConnectionState::Disconnecting(reason);
-                        return Ok(());
-                    }
-                    ConnectionState::Connected if storage.handle.unwrap() == h => {
-                        storage.state = ConnectionState::Disconnecting(reason);
-                        return Ok(());
-                    }
-                    _ => {}
+        let mut state = self.state.borrow_mut();
+        for storage in state.connections.iter_mut() {
+            match storage.state {
+                ConnectionState::Connecting if storage.handle.unwrap() == h => {
+                    storage.state = ConnectionState::Disconnecting(reason);
+                    return Ok(());
                 }
+                ConnectionState::Connected if storage.handle.unwrap() == h => {
+                    storage.state = ConnectionState::Disconnecting(reason);
+                    return Ok(());
+                }
+                _ => {}
             }
-            Err(Error::NotFound)
-        })
+        }
+        Err(Error::NotFound)
     }
 
-    pub(crate) fn poll_disconnecting<'m>(
-        &'m self,
-        cx: &mut Context<'_>,
-    ) -> Poll<impl Iterator<Item = (ConnHandle, DisconnectReason)> + 'm> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            state.disconnect_waker.register(cx.waker());
-            for storage in state.connections.iter() {
-                if let ConnectionState::Disconnecting(_) = storage.state {
-                    return Poll::Ready(DisconnectIter { state: &self.state });
-                }
+    pub(crate) fn poll_disconnecting<'m>(&'m self, cx: &mut Context<'_>) -> Poll<DisconnectIter<'m, 'd>> {
+        let mut state = self.state.borrow_mut();
+        state.disconnect_waker.register(cx.waker());
+        for storage in state.connections.iter() {
+            if let ConnectionState::Disconnecting(_) = storage.state {
+                return Poll::Ready(DisconnectIter {
+                    idx: 0,
+                    state: &self.state,
+                });
             }
-            Poll::Pending
-        })
+        }
+        Poll::Pending
     }
 
     pub(crate) fn disconnect(&self, h: ConnHandle) -> Result<(), Error> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for storage in state.connections.iter_mut() {
-                match storage.state {
-                    ConnectionState::Connecting if storage.handle.unwrap() == h => {
-                        storage.state = ConnectionState::Disconnected;
-                        state.disconnect_waker.wake();
-                        return Ok(());
-                    }
-                    ConnectionState::Connected if storage.handle.unwrap() == h => {
-                        storage.state = ConnectionState::Disconnected;
-                        state.disconnect_waker.wake();
-                        return Ok(());
-                    }
-                    _ => {}
+        let mut state = self.state.borrow_mut();
+        for storage in state.connections.iter_mut() {
+            match storage.state {
+                ConnectionState::Connecting if storage.handle.unwrap() == h => {
+                    storage.state = ConnectionState::Disconnected;
+                    state.disconnect_waker.wake();
+                    return Ok(());
                 }
+                ConnectionState::Connected if storage.handle.unwrap() == h => {
+                    storage.state = ConnectionState::Disconnected;
+                    state.disconnect_waker.wake();
+                    return Ok(());
+                }
+                _ => {}
             }
-            Err(Error::NotFound)
-        })
+        }
+        Err(Error::NotFound)
     }
 
     pub(crate) fn connect(&self, handle: ConnHandle, info: &LeConnectionComplete) -> Result<(), Error> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            let default_credits = state.default_link_credits;
-            for storage in state.connections.iter_mut() {
-                if let ConnectionState::Disconnected = storage.state {
-                    storage.state = ConnectionState::Connecting;
-                    storage.link_credits = default_credits;
-                    storage.handle.replace(handle);
-                    storage.peer_addr_kind.replace(info.peer_addr_kind);
-                    storage.peer_addr.replace(info.peer_addr);
-                    storage.role.replace(info.role);
-                    state.accept_waker.wake();
-                    return Ok(());
-                }
+        let mut state = self.state.borrow_mut();
+        let default_credits = state.default_link_credits;
+        for storage in state.connections.iter_mut() {
+            if let ConnectionState::Disconnected = storage.state {
+                storage.state = ConnectionState::Connecting;
+                storage.link_credits = default_credits;
+                storage.handle.replace(handle);
+                storage.peer_addr_kind.replace(info.peer_addr_kind);
+                storage.peer_addr.replace(info.peer_addr);
+                storage.role.replace(info.role);
+                state.accept_waker.wake();
+                return Ok(());
             }
-            Err(Error::NotFound)
-        })
+        }
+        Err(Error::NotFound)
     }
 
     pub(crate) async fn wait_canceled(&self) {
@@ -151,27 +135,25 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
     }
 
     pub(crate) fn poll_accept(&self, peers: &[(AddrKind, &BdAddr)], cx: &mut Context<'_>) -> Poll<ConnHandle> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for storage in state.connections.iter_mut() {
-                if let ConnectionState::Connecting = storage.state {
-                    let handle = storage.handle.unwrap();
-                    if !peers.is_empty() {
-                        for peer in peers.iter() {
-                            if storage.peer_addr_kind.unwrap() == peer.0 && &storage.peer_addr.unwrap() == peer.1 {
-                                storage.state = ConnectionState::Connected;
-                                return Poll::Ready(handle);
-                            }
+        let mut state = self.state.borrow_mut();
+        state.accept_waker.register(cx.waker());
+        for storage in state.connections.iter_mut() {
+            if let ConnectionState::Connecting = storage.state {
+                let handle = storage.handle.unwrap();
+                if !peers.is_empty() {
+                    for peer in peers.iter() {
+                        if storage.peer_addr_kind.unwrap() == peer.0 && &storage.peer_addr.unwrap() == peer.1 {
+                            storage.state = ConnectionState::Connected;
+                            return Poll::Ready(handle);
                         }
-                    } else {
-                        storage.state = ConnectionState::Connected;
-                        return Poll::Ready(handle);
                     }
+                } else {
+                    storage.state = ConnectionState::Connected;
+                    return Poll::Ready(handle);
                 }
             }
-            state.accept_waker.register(cx.waker());
-            Poll::Pending
-        })
+        }
+        Poll::Pending
     }
 
     pub(crate) async fn accept(&self, peers: &[(AddrKind, &BdAddr)]) -> ConnHandle {
@@ -179,31 +161,27 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
     }
 
     pub(crate) fn set_link_credits(&self, credits: usize) {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            state.default_link_credits = credits;
-            for storage in state.connections.iter_mut() {
-                storage.link_credits = credits;
-            }
-        });
+        let mut state = self.state.borrow_mut();
+        state.default_link_credits = credits;
+        for storage in state.connections.iter_mut() {
+            storage.link_credits = credits;
+        }
     }
 
     pub(crate) fn confirm_sent(&self, handle: ConnHandle, packets: usize) -> Result<(), Error> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for (idx, storage) in state.connections.iter_mut().enumerate() {
-                match storage.state {
-                    ConnectionState::Connected if handle == storage.handle.unwrap() => {
-                        storage.link_credits += packets;
-                        state.link_credit_wakers[idx].wake();
-                        return Ok(());
-                    }
-                    _ => {}
+        let mut state = self.state.borrow_mut();
+        for storage in state.connections.iter_mut() {
+            match storage.state {
+                ConnectionState::Connected if handle == storage.handle.unwrap() => {
+                    storage.link_credits += packets;
+                    storage.link_credit_waker.wake();
+                    return Ok(());
                 }
+                _ => {}
             }
-            trace!("[link][confirm_sent] connection {:?} not found", handle);
-            Err(Error::NotFound)
-        })
+        }
+        trace!("[link][confirm_sent] connection {:?} not found", handle);
+        Err(Error::NotFound)
     }
 
     pub(crate) fn poll_request_to_send(
@@ -211,28 +189,26 @@ impl<M: RawMutex, const CONNS: usize> ConnectionManager<M, CONNS> {
         handle: ConnHandle,
         packets: usize,
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<Result<PacketGrant<'_, M, CONNS>, Error>> {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for (idx, storage) in state.connections.iter_mut().enumerate() {
-                match storage.state {
-                    ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if packets <= storage.link_credits {
-                            storage.link_credits -= packets;
-                            return Poll::Ready(Ok(PacketGrant::new(&self.state, handle, packets)));
-                        } else {
-                            if let Some(cx) = cx {
-                                state.link_credit_wakers[idx].register(cx.waker());
-                            }
-                            return Poll::Pending;
+    ) -> Poll<Result<PacketGrant<'_, 'd>, Error>> {
+        let mut state = self.state.borrow_mut();
+        for storage in state.connections.iter_mut() {
+            match storage.state {
+                ConnectionState::Connected if storage.handle.unwrap() == handle => {
+                    if packets <= storage.link_credits {
+                        storage.link_credits -= packets;
+                        return Poll::Ready(Ok(PacketGrant::new(&self.state, handle, packets)));
+                    } else {
+                        if let Some(cx) = cx {
+                            storage.link_credit_waker.register(cx.waker());
                         }
+                        return Poll::Pending;
                     }
-                    _ => {}
                 }
+                _ => {}
             }
-            trace!("[link][pool_request_to_send] connection {:?} not found", handle);
-            Poll::Ready(Err(Error::NotFound))
-        })
+        }
+        trace!("[link][pool_request_to_send] connection {:?} not found", handle);
+        Poll::Ready(Err(Error::NotFound))
     }
 }
 
@@ -241,51 +217,55 @@ pub trait DynamicConnectionManager {
     fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16;
 }
 
-impl<M: RawMutex, const CONNS: usize> DynamicConnectionManager for ConnectionManager<M, CONNS> {
+impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
     fn get_att_mtu(&self, conn: ConnHandle) -> u16 {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for storage in state.connections.iter_mut() {
-                match storage.state {
-                    ConnectionState::Connected if storage.handle.unwrap() == conn => {
-                        return storage.att_mtu;
-                    }
-                    _ => {}
+        let mut state = self.state.borrow_mut();
+        for storage in state.connections.iter_mut() {
+            match storage.state {
+                ConnectionState::Connected if storage.handle.unwrap() == conn => {
+                    return storage.att_mtu;
                 }
+                _ => {}
             }
-            23 // Minimum value
-        })
+        }
+        23 // Minimum value
     }
     fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16 {
-        self.state.lock(|state| {
-            let mut state = state.borrow_mut();
-            for storage in state.connections.iter_mut() {
-                match storage.state {
-                    ConnectionState::Connected if storage.handle.unwrap() == conn => {
-                        storage.att_mtu = storage.att_mtu.min(mtu);
-                        return storage.att_mtu;
-                    }
-                    _ => {}
+        let mut state = self.state.borrow_mut();
+        for storage in state.connections.iter_mut() {
+            match storage.state {
+                ConnectionState::Connected if storage.handle.unwrap() == conn => {
+                    storage.att_mtu = storage.att_mtu.min(mtu);
+                    return storage.att_mtu;
                 }
+                _ => {}
             }
-            mtu
-        })
+        }
+        mtu
     }
 }
 
-pub struct DisconnectIter<'d, M: RawMutex, const CONNS: usize> {
-    state: &'d Mutex<M, RefCell<State<CONNS>>>,
+pub struct DisconnectIter<'a, 'd> {
+    state: &'a RefCell<State<'d>>,
+    idx: usize,
 }
 
-impl<'d, M: RawMutex, const CONNS: usize> Iterator for DisconnectIter<'d, M, CONNS> {
+impl<'a, 'd> Iterator for DisconnectIter<'a, 'd> {
     type Item = (ConnHandle, DisconnectReason);
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        let state = self.state.borrow();
+        for idx in self.idx..state.connections.len() {
+            if let ConnectionState::Disconnecting(reason) = state.connections[idx].state {
+                self.idx = idx;
+                return state.connections[idx].handle.map(|h| (h, reason));
+            }
+        }
+        self.idx = state.connections.len();
+        None
     }
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionStorage {
     pub state: ConnectionState,
     pub handle: Option<ConnHandle>,
@@ -294,10 +274,11 @@ pub struct ConnectionStorage {
     pub peer_addr: Option<BdAddr>,
     pub att_mtu: u16,
     pub link_credits: usize,
+    pub link_credit_waker: WakerRegistration,
 }
 
 impl ConnectionStorage {
-    const DISCONNECTED: ConnectionStorage = ConnectionStorage {
+    pub(crate) const DISCONNECTED: ConnectionStorage = ConnectionStorage {
         state: ConnectionState::Disconnected,
         handle: None,
         role: None,
@@ -305,6 +286,7 @@ impl ConnectionStorage {
         peer_addr: None,
         att_mtu: 23,
         link_credits: 0,
+        link_credit_waker: WakerRegistration::new(),
     };
 }
 
@@ -317,14 +299,14 @@ pub enum ConnectionState {
     Connected,
 }
 
-pub struct PacketGrant<'d, M: RawMutex, const CONNS: usize> {
-    state: &'d Mutex<M, RefCell<State<CONNS>>>,
+pub struct PacketGrant<'a, 'd> {
+    state: &'a RefCell<State<'d>>,
     handle: ConnHandle,
     packets: usize,
 }
 
-impl<'d, M: RawMutex, const CONNS: usize> PacketGrant<'d, M, CONNS> {
-    fn new(state: &'d Mutex<M, RefCell<State<CONNS>>>, handle: ConnHandle, packets: usize) -> Self {
+impl<'a, 'd> PacketGrant<'a, 'd> {
+    fn new(state: &'a RefCell<State<'d>>, handle: ConnHandle, packets: usize) -> Self {
         Self { state, handle, packets }
     }
 
@@ -333,24 +315,22 @@ impl<'d, M: RawMutex, const CONNS: usize> PacketGrant<'d, M, CONNS> {
     }
 }
 
-impl<'d, M: RawMutex, const CHANNELS: usize> Drop for PacketGrant<'d, M, CHANNELS> {
+impl<'a, 'd> Drop for PacketGrant<'a, 'd> {
     fn drop(&mut self) {
         if self.packets > 0 {
-            self.state.lock(|state| {
-                let mut state = state.borrow_mut();
-                for (idx, storage) in state.connections.iter_mut().enumerate() {
-                    match storage.state {
-                        ConnectionState::Connected if self.handle == storage.handle.unwrap() => {
-                            storage.link_credits += self.packets;
-                            state.link_credit_wakers[idx].wake();
-                            break;
-                        }
-                        _ => {}
+            let mut state = self.state.borrow_mut();
+            for storage in state.connections.iter_mut() {
+                match storage.state {
+                    ConnectionState::Connected if self.handle == storage.handle.unwrap() => {
+                        storage.link_credits += self.packets;
+                        storage.link_credit_waker.wake();
+                        break;
                     }
+                    _ => {}
                 }
-                // make it an assert?
-                trace!("[link] connection {:?} not found", self.handle);
-            })
+            }
+            // make it an assert?
+            trace!("[link] connection {:?} not found", self.handle);
         }
     }
 }
