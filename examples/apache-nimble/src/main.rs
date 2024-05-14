@@ -25,7 +25,10 @@ async fn other_task() {
 
 #[::embassy_executor::main]
 async fn main(spawner: embassy_executor::Spawner) {
-    embassy_nrf::init(Default::default());
+    let mut conf = embassy_nrf::config::Config::default();
+    conf.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
+    conf.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
+    embassy_nrf::init(conf);
     apache_nimble::initialize_nimble();
 
     static HOST_RESOURCE: StaticCell<HostResources<CriticalSectionRawMutex, 2, 2, 27>> = StaticCell::new();
