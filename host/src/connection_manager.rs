@@ -17,6 +17,16 @@ struct State<'d> {
     default_link_credits: usize,
 }
 
+impl<'d> State<'d> {
+    fn print(&self) {
+        for (idx, storage) in self.connections.iter().enumerate() {
+            if let ConnectionState::Connected = storage.state {
+                trace!("[link][idx = {}] state = {:?}", idx, storage);
+            }
+        }
+    }
+}
+
 pub(crate) struct ConnectionManager<'d> {
     state: RefCell<State<'d>>,
     canceled: Signal<NoopRawMutex, ()>,
@@ -175,6 +185,8 @@ impl<'d> ConnectionManager<'d> {
                 ConnectionState::Connected if handle == storage.handle.unwrap() => {
                     storage.link_credits += packets;
                     storage.link_credit_waker.wake();
+                    trace!("[link][confirm_sent][conn = {}]", handle);
+                    state.print();
                     return Ok(());
                 }
                 _ => {}
@@ -196,11 +208,14 @@ impl<'d> ConnectionManager<'d> {
                 ConnectionState::Connected if storage.handle.unwrap() == handle => {
                     if packets <= storage.link_credits {
                         storage.link_credits -= packets;
+
                         return Poll::Ready(Ok(PacketGrant::new(&self.state, handle, packets)));
                     } else {
                         if let Some(cx) = cx {
                             storage.link_credit_waker.register(cx.waker());
                         }
+                        trace!("[link][poll_request_to_send][conn = {}]", handle);
+                        state.print();
                         return Poll::Pending;
                     }
                 }
@@ -288,6 +303,19 @@ impl ConnectionStorage {
         link_credits: 0,
         link_credit_waker: WakerRegistration::new(),
     };
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ConnectionStorage {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "state = {}, conn = {}, credits = {}",
+            self.state,
+            self.handle,
+            self.link_credits,
+        );
+    }
 }
 
 #[derive(Debug, PartialEq)]

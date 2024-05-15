@@ -10,7 +10,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::host::HciController;
+use crate::host::BleHost;
 use crate::packet_pool::{AllocId, GlobalPacketPool, Packet};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
@@ -36,6 +36,7 @@ pub struct ChannelManager<'d> {
 }
 
 pub(crate) type RxChannel = Channel<NoopRawMutex, Option<Pdu>, 1>;
+#[allow(clippy::declare_interior_mutable_const)]
 pub(crate) const RX_CHANNEL: RxChannel = Channel::new();
 
 impl<'d> State<'d> {
@@ -154,7 +155,7 @@ impl<'d> ChannelManager<'d> {
         mtu: u16,
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
-        controller: &HciController<'_, 'd, T>,
+        ble: &BleHost<'d, T>,
     ) -> Result<u16, BleHostError<T::Error>> {
         // Wait until we find a channel for our connection in the connecting state matching our PSM.
         let (req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
@@ -183,20 +184,19 @@ impl<'d> ChannelManager<'d> {
 
         let mut tx = [0; 18];
         // Respond that we accept the channel.
-        controller
-            .signal(
-                conn,
-                req_id,
-                &LeCreditConnRes {
-                    mps,
-                    dcid: cid,
-                    mtu,
-                    credits,
-                    result: LeCreditConnResultCode::Success,
-                },
-                &mut tx[..],
-            )
-            .await?;
+        let mut hci = ble.acl(conn, 1).await?;
+        hci.signal(
+            req_id,
+            &LeCreditConnRes {
+                mps,
+                dcid: cid,
+                mtu,
+                credits,
+                result: LeCreditConnResultCode::Success,
+            },
+            &mut tx[..],
+        )
+        .await?;
 
         // NOTE: This code is disabled as we send the credits in the response request. For some reason the nrf-softdevice doesn't do that,
         // so lets keep this around in case we need it.
@@ -216,7 +216,7 @@ impl<'d> ChannelManager<'d> {
         mtu: u16,
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
-        controller: &HciController<'_, 'd, T>,
+        ble: &BleHost<'d, T>,
     ) -> Result<u16, BleHostError<T::Error>> {
         let req_id = self.next_request_id();
         let mut credits = 0;
@@ -243,7 +243,8 @@ impl<'d> ChannelManager<'d> {
             mtu,
             credits,
         };
-        controller.signal(conn, req_id, &command, &mut tx[..]).await?;
+        let mut hci = ble.acl(conn, 1).await?;
+        hci.signal(req_id, &command, &mut tx[..]).await?;
 
         // Wait until a response is accepted.
         poll_fn(|cx| {
@@ -404,8 +405,15 @@ impl<'d> ChannelManager<'d> {
         for storage in state.channels.iter_mut() {
             match storage.state {
                 ChannelState::Connected if storage.peer_cid == req.cid && conn.raw() == storage.conn => {
-                    storage.peer_credits += req.credits;
+                    trace!(
+                        "[l2cap][handle_credit_flow][cid = {}] {} += {} credits",
+                        req.cid,
+                        storage.peer_credits,
+                        req.credits
+                    );
+                    storage.peer_credits = storage.peer_credits.saturating_add(req.credits);
                     storage.credit_waker.wake();
+                    state.print();
                     return Ok(());
                 }
                 _ => {}
@@ -449,12 +457,12 @@ impl<'d> ChannelManager<'d> {
         &self,
         cid: u16,
         buf: &mut [u8],
-        hci: &HciController<'_, 'd, T>,
+        ble: &BleHost<'d, T>,
     ) -> Result<usize, BleHostError<T::Error>> {
         let idx = self.connected_channel_index(cid)?;
 
         let mut n_received = 1;
-        let packet = self.receive_pdu(cid, idx, hci).await?;
+        let packet = self.receive_pdu(cid, idx, ble).await?;
         let len = packet.len;
 
         let mut r = ReadCursor::new(packet.as_ref());
@@ -467,11 +475,11 @@ impl<'d> ChannelManager<'d> {
 
         let mut remaining = remaining as usize - data.len();
 
-        self.flow_control(cid, hci, packet.packet).await?;
+        self.flow_control(cid, ble, packet.packet).await?;
 
         // We have some k-frames to reassemble
         while remaining > 0 {
-            let packet = self.receive_pdu(cid, idx, hci).await?;
+            let packet = self.receive_pdu(cid, idx, ble).await?;
             n_received += 1;
             let to_copy = packet.len.min(buf.len() - pos);
             if to_copy > 0 {
@@ -479,7 +487,7 @@ impl<'d> ChannelManager<'d> {
                 pos += to_copy;
             }
             remaining -= packet.len;
-            self.flow_control(cid, hci, packet.packet).await?;
+            self.flow_control(cid, ble, packet.packet).await?;
         }
 
         Ok(pos)
@@ -501,12 +509,12 @@ impl<'d> ChannelManager<'d> {
         &self,
         cid: u16,
         idx: usize,
-        hci: &HciController<'_, 'd, T>,
+        ble: &BleHost<'d, T>,
     ) -> Result<Pdu, BleHostError<T::Error>> {
         match self.inbound[idx].receive().await {
             Some(pdu) => Ok(pdu),
             None => {
-                self.confirm_disconnected(cid, hci).await?;
+                self.confirm_disconnected(cid, ble).await?;
                 Err(Error::ChannelClosed.into())
             }
         }
@@ -522,19 +530,20 @@ impl<'d> ChannelManager<'d> {
         cid: u16,
         buf: &[u8],
         p_buf: &mut [u8],
-        hci: &HciController<'_, 'd, T>,
+        ble: &BleHost<'d, T>,
     ) -> Result<(), BleHostError<T::Error>> {
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
         // The number of packets we'll need to send for this payload
         let n_packets = 1 + ((buf.len() as u16).saturating_sub(mps - 2)).div_ceil(mps);
 
         let mut grant = poll_fn(|cx| self.poll_request_to_send(cid, n_packets, Some(cx))).await?;
+        let mut hci = ble.acl(conn, n_packets).await?;
 
         // Segment using mps
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        hci.send(conn, &p_buf[..len]).await?;
+        hci.send(&p_buf[..len]).await?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
@@ -542,7 +551,7 @@ impl<'d> ChannelManager<'d> {
 
         for (i, chunk) in chunks.enumerate() {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            hci.send(conn, &p_buf[..len]).await?;
+            hci.send(&p_buf[..len]).await?;
             grant.confirm(1);
         }
         Ok(())
@@ -558,12 +567,12 @@ impl<'d> ChannelManager<'d> {
         cid: u16,
         buf: &[u8],
         p_buf: &mut [u8],
-        hci: &HciController<'_, 'd, T>,
+        ble: &BleHost<'d, T>,
     ) -> Result<(), BleHostError<T::Error>> {
         let (conn, mps, peer_cid) = self.connected_channel_params(cid)?;
 
         // The number of packets we'll need to send for this payload
-        let n_packets = 1 + ((buf.len() as u16).saturating_sub(mps - 2)).div_ceil(mps);
+        let n_packets = ((buf.len() as u16).saturating_add(2)).div_ceil(mps);
 
         let mut grant = match self.poll_request_to_send(cid, n_packets, None) {
             Poll::Ready(res) => res?,
@@ -574,11 +583,13 @@ impl<'d> ChannelManager<'d> {
             }
         };
 
+        let mut hci = ble.try_acl(conn, n_packets)?;
+
         // Segment using mps
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        hci.try_send(conn, &p_buf[..len])?;
+        hci.try_send(&p_buf[..len])?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
@@ -586,7 +597,7 @@ impl<'d> ChannelManager<'d> {
 
         for (i, chunk) in chunks.enumerate() {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            hci.try_send(conn, &p_buf[..len])?;
+            hci.try_send(&p_buf[..len])?;
             grant.confirm(1);
         }
         Ok(())
@@ -611,7 +622,7 @@ impl<'d> ChannelManager<'d> {
     async fn flow_control<T: Controller>(
         &self,
         cid: u16,
-        hci: &HciController<'_, 'd, T>,
+        ble: &BleHost<'d, T>,
         mut packet: Packet,
     ) -> Result<(), BleHostError<T::Error>> {
         let (conn, credits) = self.with_mut(|state| {
@@ -632,8 +643,8 @@ impl<'d> ChannelManager<'d> {
             let signal = LeCreditFlowInd { cid, credits };
 
             // Reuse packet buffer for signalling data to save the extra TX buffer
-            hci.signal(ConnHandle::new(conn), identifier, &signal, packet.as_mut())
-                .await?;
+            let mut hci = ble.acl(ConnHandle::new(conn), 1).await?;
+            hci.signal(identifier, &signal, packet.as_mut()).await?;
         }
         Ok(())
     }
@@ -646,7 +657,7 @@ impl<'d> ChannelManager<'d> {
     async fn confirm_disconnected<T: Controller>(
         &self,
         cid: u16,
-        hci: &HciController<'_, 'd, T>,
+        ble: &BleHost<'d, T>,
     ) -> Result<(), BleHostError<T::Error>> {
         let (handle, dcid, scid) = self.with_mut(|state| {
             for storage in state.channels.iter_mut() {
@@ -670,13 +681,9 @@ impl<'d> ChannelManager<'d> {
 
         let identifier = self.next_request_id();
         let mut tx = [0; 18];
-        hci.signal(
-            ConnHandle::new(handle),
-            identifier,
-            &DisconnectionRes { dcid, scid },
-            &mut tx[..],
-        )
-        .await?;
+        let mut hci = ble.acl(ConnHandle::new(handle), 1).await?;
+        hci.signal(identifier, &DisconnectionRes { dcid, scid }, &mut tx[..])
+            .await?;
         Ok(())
     }
 
@@ -864,6 +871,10 @@ impl<'reference, 'state> CreditGrant<'reference, 'state> {
 
     pub(crate) fn confirm(&mut self, sent: u16) {
         self.credits = self.credits.saturating_sub(sent);
+    }
+
+    pub(crate) fn remaining(&self) -> u16 {
+        self.credits
     }
 
     fn done(&mut self) {

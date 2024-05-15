@@ -31,7 +31,7 @@ use futures::pin_mut;
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
 use crate::channel_manager::{ChannelManager, ChannelStorage, RxChannel, RX_CHANNEL};
 use crate::connection::{ConnectConfig, Connection};
-use crate::connection_manager::{ConnectionManager, ConnectionStorage};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType, EMPTY_SAR};
 use crate::packet_pool::{AllocId, GlobalPacketPool, PacketPool, Qos};
@@ -560,7 +560,7 @@ where
             pool: self.pool,
             pool_id: crate::packet_pool::ATT_ID,
             rx: self.att_inbound.receiver().into(),
-            tx: self.hci(),
+            tx: self,
             connections: &self.connections,
         }
     }
@@ -573,7 +573,7 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    self.channels.signal(acl.handle(), &data).await?;
+                    self.channels.signal(acl.handle(), data).await?;
                     return Ok(());
                 }
 
@@ -704,19 +704,15 @@ where
             .await?;
 
             let ret = LeReadBufferSize::new().exec(&self.controller).await?;
-            info!(
-                "[host] setting permits to {}",
-                ret.total_num_le_acl_data_packets as usize
-            );
-
+            info!("[host] setting txq to {}", ret.total_num_le_acl_data_packets as usize);
             self.connections
                 .set_link_credits(ret.total_num_le_acl_data_packets as usize);
             // TODO: Configure ACL max buffer size as well?
             let _ = self.initialized.init(());
 
             loop {
-                let mut it = poll_fn(|cx| self.connections.poll_disconnecting(cx)).await;
-                while let Some(entry) = it.next() {
+                let it = poll_fn(|cx| self.connections.poll_disconnecting(cx)).await;
+                for entry in it {
                     self.command(Disconnect::new(entry.0, entry.1)).await?;
                 }
             }
@@ -727,7 +723,8 @@ where
             // Task handling receiving data from the controller.
             let rx_fut = async {
                 let mut rx = [0u8; MAX_HCI_PACKET_LEN];
-                match self.controller.read(&mut rx).await {
+                let result = self.controller.read(&mut rx).await;
+                match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
                         Ok(_) => {}
                         Err(e) => {
@@ -752,6 +749,7 @@ where
                                     self.connections.canceled();
                                 }
                                 Err(e) => {
+                                    warn!("Error connection complete");
                                     warn!("Error connection complete event: {:?}", e);
                                 }
                             },
@@ -774,18 +772,18 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             disconnects += 1;
+                            let handle = e.handle;
+                            #[cfg(feature = "defmt")]
+                            let e = defmt::Debug2Format(&e);
                             info!("Disconnected (total {}): {:?}", disconnects, e);
-                            let _ = self.connections.disconnect(e.handle);
-                            let _ = self.channels.disconnected(e.handle);
+                            let _ = self.connections.disconnect(handle);
+                            let _ = self.channels.disconnected(handle);
                         }
                         Event::NumberOfCompletedPackets(c) => {
                             // Explicitly ignoring for now
                             for entry in c.completed_packets.iter() {
-                                match (entry.handle(), entry.num_completed_packets()) {
-                                    (Ok(handle), Ok(completed)) => {
-                                        let _ = self.connections.confirm_sent(handle, completed as usize);
-                                    }
-                                    _ => {} // Ignoring for now
+                                if let (Ok(handle), Ok(completed)) = (entry.handle(), entry.num_completed_packets()) {
+                                    let _ = self.connections.confirm_sent(handle, completed as usize);
                                 }
                             }
                         }
@@ -799,12 +797,12 @@ where
                         }
                     },
                     Ok(p) => {
-                        info!("Ignoring packet: {:?}", p);
+                        warn!("Ignoring packet: {:?}", p);
                     }
                     Err(e) => {
                         #[cfg(feature = "defmt")]
                         let e = defmt::Debug2Format(&e);
-                        info!("Error from controller: {:?}", e);
+                        warn!("Error from controller: {:?}", e);
                     }
                 }
                 Ok(())
@@ -819,43 +817,45 @@ where
         }
     }
 
-    pub(crate) fn hci(&self) -> HciController<'_, 'd, T> {
-        HciController {
+    // Request to send n ACL packets to the HCI controller for a connection
+    pub(crate) async fn acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
+        let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n as usize, Some(cx))).await?;
+        Ok(AclSender {
             controller: &self.controller,
-            connections: &self.connections,
-        }
+            handle,
+            grant,
+        })
     }
-}
 
-pub struct HciController<'a, 'd, T: Controller> {
-    pub(crate) controller: &'a T,
-    pub(crate) connections: &'a ConnectionManager<'d>,
-}
-
-impl<'a, 'd, T: Controller> Clone for HciController<'a, 'd, T> {
-    fn clone(&self) -> Self {
-        Self {
-            controller: self.controller,
-            connections: self.connections,
-        }
-    }
-}
-
-impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
-    pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
-    where
-        T: blocking::Controller,
-    {
-        let mut grant = match self.connections.poll_request_to_send(handle, 1, None) {
+    // Request to send n ACL packets to the HCI controller for a connection
+    pub(crate) fn try_acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
+        let grant = match self.connections.poll_request_to_send(handle, n as usize, None) {
             Poll::Ready(res) => res?,
             Poll::Pending => {
-                warn!("[link][handle = {:?}]: not enough credits", handle);
                 return Err(Error::Busy.into());
             }
         };
-
-        let acl = AclPacket::new(
+        Ok(AclSender {
+            controller: &self.controller,
             handle,
+            grant,
+        })
+    }
+}
+
+pub struct AclSender<'a, 'd, T: Controller> {
+    pub(crate) controller: &'a T,
+    pub(crate) handle: ConnHandle,
+    pub(crate) grant: PacketGrant<'a, 'd>,
+}
+
+impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
+    pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
+    where
+        T: blocking::Controller,
+    {
+        let acl = AclPacket::new(
+            self.handle,
             AclPacketBoundary::FirstNonFlushable,
             AclBroadcastFlag::PointToPoint,
             pdu,
@@ -863,7 +863,7 @@ impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
         // info!("Sent ACL {:?}", acl);
         match self.controller.try_write_acl_data(&acl) {
             Ok(result) => {
-                grant.confirm(1);
+                self.grant.confirm(1);
                 Ok(result)
             }
             Err(blocking::TryError::Busy) => {
@@ -874,10 +874,9 @@ impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
         }
     }
 
-    pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
-        let mut grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, 1, Some(cx))).await?;
+    pub(crate) async fn send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
         let acl = AclPacket::new(
-            handle,
+            self.handle,
             AclPacketBoundary::FirstNonFlushable,
             AclBroadcastFlag::PointToPoint,
             pdu,
@@ -886,20 +885,18 @@ impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
             .write_acl_data(&acl)
             .await
             .map_err(BleHostError::Controller)?;
-        grant.confirm(1);
+        self.grant.confirm(1);
         Ok(())
     }
 
     pub(crate) async fn signal<D: L2capSignal>(
-        &self,
-        handle: ConnHandle,
+        &mut self,
         identifier: u8,
         signal: &D,
         p_buf: &mut [u8],
     ) -> Result<(), BleHostError<T::Error>> {
         trace!(
-            "[l2cap][conn = {:?}] sending control signal (req = {}) signal: {:?}",
-            handle,
+            "[l2cap] sending control signal (req = {}) signal: {:?}",
             identifier,
             signal
         );
@@ -918,7 +915,7 @@ impl<'a, 'd, T: Controller> HciController<'a, 'd, T> {
         w.write_hci(&header)?;
         w.write_hci(signal)?;
 
-        self.send(handle, w.finish()).await?;
+        self.send(w.finish()).await?;
 
         Ok(())
     }
