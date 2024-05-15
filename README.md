@@ -19,6 +19,7 @@ TrouBLE can use any controller that implements the traits from `bt-hci`. At pres
 * [nRF Softdevice Controller](https://github.com/alexmoon/nrf-sdc). Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE Rust stack for nRF.
 * [Zephyr UART HCI](https://docs.zephyrproject.org/latest/samples/bluetooth/hci_uart/README.html).
 * [Raspberry Pi Pico W](https://github.com/embassy-rs/embassy/pull/2865) - This is still WIP and largely untested.
+* [Apache NimBLE Controller](https://github.com/rumcake-rs/apache-nimble-sys).
 
 
 ## Current status
