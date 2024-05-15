@@ -46,7 +46,7 @@ impl<const MTU: usize> L2capChannel<MTU> {
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = [0u8; MTU];
-        ble.channels.send(self.cid, buf, &mut p_buf[..], &ble.hci()).await
+        ble.channels.send(self.cid, buf, &mut p_buf[..], ble).await
     }
 
     /// Send the provided buffer over this l2cap channel.
@@ -61,7 +61,7 @@ impl<const MTU: usize> L2capChannel<MTU> {
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = [0u8; MTU];
-        ble.channels.try_send(self.cid, buf, &mut p_buf[..], &ble.hci())
+        ble.channels.try_send(self.cid, buf, &mut p_buf[..], ble)
     }
 
     /// Receive data on this channel and copy it into the buffer.
@@ -72,7 +72,7 @@ impl<const MTU: usize> L2capChannel<MTU> {
         ble: &BleHost<'_, T>,
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
-        ble.channels.receive(self.cid, buf, &ble.hci()).await
+        ble.channels.receive(self.cid, buf, ble).await
     }
 
     /// Await an incoming connection request matching the list of PSM.
@@ -85,14 +85,7 @@ impl<const MTU: usize> L2capChannel<MTU> {
         let handle = connection.handle();
         let cid = ble
             .channels
-            .accept(
-                handle,
-                psm,
-                MTU as u16,
-                config.flow_policy,
-                config.initial_credits,
-                &ble.hci(),
-            )
+            .accept(handle, psm, MTU as u16, config.flow_policy, config.initial_credits, ble)
             .await?;
 
         Ok(Self { cid })
@@ -129,7 +122,7 @@ where {
                 MTU as u16,
                 config.flow_policy,
                 config.initial_credits,
-                &ble.hci(),
+                ble,
             )
             .await?;
 
