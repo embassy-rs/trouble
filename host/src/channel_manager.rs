@@ -36,6 +36,7 @@ pub struct ChannelManager<'d> {
 }
 
 pub(crate) type RxChannel = Channel<NoopRawMutex, Option<Pdu>, 1>;
+#[allow(clippy::declare_interior_mutable_const)]
 pub(crate) const RX_CHANNEL: RxChannel = Channel::new();
 
 impl<'d> State<'d> {

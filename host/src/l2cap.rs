@@ -17,20 +17,12 @@ pub struct L2capChannel<const MTU: usize = 23> {
 }
 
 /// Configuration for an L2CAP channel.
+#[derive(Default)]
 pub struct L2capChannelConfig {
     /// Flow control policy for connection oriented channels.
     pub flow_policy: CreditFlowPolicy,
     /// Initial credits for connection oriented channels.
     pub initial_credits: Option<u16>,
-}
-
-impl Default for L2capChannelConfig {
-    fn default() -> Self {
-        Self {
-            flow_policy: Default::default(),
-            initial_credits: None,
-        }
-    }
 }
 
 impl<const MTU: usize> L2capChannel<MTU> {

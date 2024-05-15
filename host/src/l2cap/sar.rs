@@ -45,7 +45,7 @@ pub(crate) const EMPTY_SAR: Option<(ConnHandle, L2capHeader, AssembledPacket)> =
 
 // Handles reassembling of packets
 pub struct PacketReassembly<'d> {
-    handles: RefCell<&'d mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>]>,
+    handles: RefCell<&'d mut [SarType]>,
 }
 impl<'d> PacketReassembly<'d> {
     pub fn new(handles: &'d mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>]) -> Self {

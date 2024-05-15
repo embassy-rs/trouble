@@ -573,7 +573,7 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    self.channels.signal(acl.handle(), &data).await?;
+                    self.channels.signal(acl.handle(), data).await?;
                     return Ok(());
                 }
 
@@ -711,7 +711,7 @@ where
             let _ = self.initialized.init(());
 
             loop {
-                let mut it = poll_fn(|cx| self.connections.poll_disconnecting(cx)).await;
+                let it = poll_fn(|cx| self.connections.poll_disconnecting(cx)).await;
                 for entry in it {
                     self.command(Disconnect::new(entry.0, entry.1)).await?;
                 }
