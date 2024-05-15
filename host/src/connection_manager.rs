@@ -20,8 +20,8 @@ struct State<'d> {
 impl<'d> State<'d> {
     fn print(&self) {
         for (idx, storage) in self.connections.iter().enumerate() {
-            if let ConnectionState::Connected = storage.state {
-                trace!("[link][idx = {}] state = {:?}", idx, storage);
+            if storage.state != ConnectionState::Disconnected {
+                debug!("[link][idx = {}] state = {:?}", idx, storage);
             }
         }
     }
@@ -166,6 +166,11 @@ impl<'d> ConnectionManager<'d> {
         Poll::Pending
     }
 
+    pub(crate) fn log_status(&self) {
+        let state = self.state.borrow();
+        state.print();
+    }
+
     pub(crate) async fn accept(&self, peers: &[(AddrKind, &BdAddr)]) -> ConnHandle {
         poll_fn(move |cx| self.poll_accept(peers, cx)).await
     }
@@ -190,7 +195,7 @@ impl<'d> ConnectionManager<'d> {
                 _ => {}
             }
         }
-        trace!("[link][confirm_sent] connection {:?} not found", handle);
+        warn!("[link][confirm_sent] connection {:?} not found", handle);
         Err(Error::NotFound)
     }
 
@@ -212,15 +217,14 @@ impl<'d> ConnectionManager<'d> {
                         if let Some(cx) = cx {
                             storage.link_credit_waker.register(cx.waker());
                         }
-                        trace!("[link][poll_request_to_send][conn = {}]", handle);
-                        state.print();
+                        debug!("[link][poll_request_to_send][conn = {}]", handle);
                         return Poll::Pending;
                     }
                 }
                 _ => {}
             }
         }
-        trace!("[link][pool_request_to_send] connection {:?} not found", handle);
+        warn!("[link][pool_request_to_send] connection {:?} not found", handle);
         Poll::Ready(Err(Error::NotFound))
     }
 }
@@ -356,7 +360,7 @@ impl<'a, 'd> Drop for PacketGrant<'a, 'd> {
                 }
             }
             // make it an assert?
-            trace!("[link] connection {:?} not found", self.handle);
+            warn!("[link] connection {:?} not found", self.handle);
         }
     }
 }

@@ -42,8 +42,8 @@ pub(crate) const RX_CHANNEL: RxChannel = Channel::new();
 impl<'d> State<'d> {
     fn print(&self) {
         for (idx, storage) in self.channels.iter().enumerate() {
-            if let ChannelState::Connected = storage.state {
-                trace!("[l2cap][idx = {}] state = {:?}", idx, storage);
+            if storage.state != ChannelState::Disconnected {
+                debug!("[l2cap][idx = {}] state = {:?}", idx, storage);
             }
         }
     }
@@ -292,7 +292,6 @@ impl<'d> ChannelManager<'d> {
                     ChannelState::Connected if header.channel == storage.cid => {
                         if storage.flow_control.available() == 0 {
                             trace!("[l2cap][cid = {}] no credits available", header.channel);
-                            state.print();
                             return Err(Error::OutOfMemory);
                         }
                         storage.flow_control.received(1);
@@ -318,7 +317,6 @@ impl<'d> ChannelManager<'d> {
             header.identifier,
             header.code
         );
-        self.state.borrow().print();
         match header.code {
             L2capSignalCode::LeCreditConnReq => {
                 let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
@@ -413,7 +411,6 @@ impl<'d> ChannelManager<'d> {
                     );
                     storage.peer_credits = storage.peer_credits.saturating_add(req.credits);
                     storage.credit_waker.wake();
-                    state.print();
                     return Ok(());
                 }
                 _ => {}
@@ -578,7 +575,6 @@ impl<'d> ChannelManager<'d> {
             Poll::Ready(res) => res?,
             Poll::Pending => {
                 warn!("[l2cap][cid = {}]: not enough credits for {} packets", cid, n_packets);
-                self.state.borrow().print();
                 return Err(Error::Busy.into());
             }
         };
@@ -712,6 +708,11 @@ impl<'d> ChannelManager<'d> {
         }
         trace!("[l2cap][pool_request_to_send] channel {} not found", cid);
         Poll::Ready(Err(Error::NotFound))
+    }
+
+    pub(crate) fn log_status(&self) {
+        let state = self.state.borrow();
+        state.print();
     }
 }
 
