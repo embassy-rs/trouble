@@ -185,8 +185,6 @@ impl<'d> ConnectionManager<'d> {
                 ConnectionState::Connected if handle == storage.handle.unwrap() => {
                     storage.link_credits += packets;
                     storage.link_credit_waker.wake();
-                    trace!("[link][confirm_sent][conn = {}]", handle);
-                    state.print();
                     return Ok(());
                 }
                 _ => {}
