@@ -1,6 +1,7 @@
 //! BleHost
 //!
 //! The host module contains the main entry point for the TrouBLE host.
+use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::Poll;
 
@@ -86,6 +87,7 @@ pub trait VendorEventHandler {
 pub struct BleHost<'d, T> {
     address: Option<Address>,
     initialized: OnceLock<()>,
+    metrics: RefCell<Metrics>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
@@ -94,6 +96,14 @@ pub struct BleHost<'d, T> {
     pub(crate) pool: &'static dyn GlobalPacketPool,
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
+}
+
+#[derive(Default)]
+struct Metrics {
+    connect_events: u32,
+    disconnect_events: u32,
+    rx_errors: u32,
+    tx_blocked: u32,
 }
 
 impl<'d, T> BleHost<'d, T>
@@ -111,6 +121,7 @@ where
         Self {
             address: None,
             initialized: OnceLock::new(),
+            metrics: RefCell::new(Metrics::default()),
             controller,
             connections: ConnectionManager::new(&mut host_resources.connections[..]),
             reassembly: PacketReassembly::new(&mut host_resources.sar[..]),
@@ -578,7 +589,7 @@ where
                 }
 
                 let Some(mut p) = self.pool.alloc(AllocId::from_channel(header.channel)) else {
-                    trace!("No memory for packets on channel {}", header.channel);
+                    info!("No memory for packets on channel {}", header.channel);
                     return Err(Error::OutOfMemory);
                 };
                 p.as_mut()[..data.len()].copy_from_slice(data);
@@ -661,7 +672,6 @@ where
             + ControllerCmdSync<LeReadBufferSize>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
-        let mut disconnects = 0;
 
         // Control future that initializes system and handles controller changes.
         let control_fut = async {
@@ -729,6 +739,8 @@ where
                         Ok(_) => {}
                         Err(e) => {
                             info!("Error processing ACL packet: {:?}", e);
+                            let mut m = self.metrics.borrow_mut();
+                            m.rx_errors = m.rx_errors.wrapping_add(1);
                         }
                     },
                     Ok(ControllerToHostPacket::Event(event)) => match event {
@@ -743,6 +755,9 @@ where
                                                 DisconnectReason::RemoteDeviceTerminatedConnLowResources,
                                             ))
                                             .await;
+                                    } else {
+                                        let mut m = self.metrics.borrow_mut();
+                                        m.connect_events = m.connect_events.wrapping_add(1);
                                     }
                                 }
                                 Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
@@ -771,11 +786,12 @@ where
                             }
                         },
                         Event::DisconnectionComplete(e) => {
-                            disconnects += 1;
                             let handle = e.handle;
-                            info!("Disconnected {:?} (total {})", handle, disconnects);
                             let _ = self.connections.disconnect(handle);
                             let _ = self.channels.disconnected(handle);
+                            self.reassembly.disconnected(handle);
+                            let mut m = self.metrics.borrow_mut();
+                            m.disconnect_events = m.disconnect_events.wrapping_add(1);
                         }
                         Event::NumberOfCompletedPackets(c) => {
                             // Explicitly ignoring for now
@@ -817,7 +833,7 @@ where
     pub(crate) async fn acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
         let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n as usize, Some(cx))).await?;
         Ok(AclSender {
-            controller: &self.controller,
+            ble: &self,
             handle,
             grant,
         })
@@ -832,15 +848,27 @@ where
             }
         };
         Ok(AclSender {
-            controller: &self.controller,
+            ble: &self,
             handle,
             grant,
         })
     }
+
+    /// Log status information of the host
+    pub fn log_status(&self) {
+        debug!("[host] status");
+        let m = self.metrics.borrow();
+        debug!("[host] connect events: {}", m.connect_events);
+        debug!("[host] disconnect events: {}", m.disconnect_events);
+        debug!("[host] tx blocked: {}", m.tx_blocked);
+        debug!("[host] rx errors: {}", m.rx_errors);
+        self.connections.log_status();
+        self.channels.log_status();
+    }
 }
 
 pub struct AclSender<'a, 'd, T: Controller> {
-    pub(crate) controller: &'a T,
+    pub(crate) ble: &'a BleHost<'d, T>,
     pub(crate) handle: ConnHandle,
     pub(crate) grant: PacketGrant<'a, 'd>,
 }
@@ -857,12 +885,14 @@ impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
             pdu,
         );
         // info!("Sent ACL {:?}", acl);
-        match self.controller.try_write_acl_data(&acl) {
+        match self.ble.controller.try_write_acl_data(&acl) {
             Ok(result) => {
                 self.grant.confirm(1);
                 Ok(result)
             }
             Err(blocking::TryError::Busy) => {
+                let mut m = self.ble.metrics.borrow_mut();
+                m.tx_blocked = m.tx_blocked.wrapping_add(1);
                 warn!("hci: acl data send busy");
                 Err(Error::Busy.into())
             }
@@ -877,7 +907,8 @@ impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
             AclBroadcastFlag::PointToPoint,
             pdu,
         );
-        self.controller
+        self.ble
+            .controller
             .write_acl_data(&acl)
             .await
             .map_err(BleHostError::Controller)?;

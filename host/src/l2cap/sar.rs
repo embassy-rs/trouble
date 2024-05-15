@@ -78,6 +78,19 @@ impl<'d> PacketReassembly<'d> {
         Err(Error::InsufficientSpace)
     }
 
+    /// Deletes any reassemblies for the disconnected handle.
+    pub fn disconnected(&self, handle: ConnHandle) {
+        let mut state = self.handles.borrow_mut();
+        for entry in state.iter_mut() {
+            match entry {
+                Some((conn, header, packet)) if *conn == handle => {
+                    entry.take();
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Updates any in progress packet assembly for the connection
     ///
     /// If the reassembly is complete, the l2cap header + packet is returned.
