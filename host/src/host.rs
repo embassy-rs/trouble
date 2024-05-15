@@ -773,9 +773,7 @@ where
                         Event::DisconnectionComplete(e) => {
                             disconnects += 1;
                             let handle = e.handle;
-                            #[cfg(feature = "defmt")]
-                            let e = defmt::Debug2Format(&e);
-                            info!("Disconnected (total {}): {:?}", disconnects, e);
+                            info!("Disconnected {:?} (total {})", handle, disconnects);
                             let _ = self.connections.disconnect(handle);
                             let _ = self.channels.disconnected(handle);
                         }
@@ -800,9 +798,7 @@ where
                         warn!("Ignoring packet: {:?}", p);
                     }
                     Err(e) => {
-                        #[cfg(feature = "defmt")]
-                        let e = defmt::Debug2Format(&e);
-                        warn!("Error from controller: {:?}", e);
+                        return Err(BleHostError::Controller(e));
                     }
                 }
                 Ok(())
