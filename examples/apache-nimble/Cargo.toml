@@ -19,7 +19,7 @@ trouble-host = { version = "0.1.0", features = ["gatt"] }
 static_cell = "1.0.0"
 
 [patch.crates-io]
-apache-nimble = { git = "https://github.com/rumcake-rs/apache-nimble-sys", branch = "controller-bindings" }
+apache-nimble = { git = "https://github.com/benbrittain/apache-nimble-sys", branch = "master" }
 bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
 trouble-host = { git = "https://github.com/embassy-rs/trouble", branch = "main" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main" }

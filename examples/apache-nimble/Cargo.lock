@@ -14,7 +14,7 @@ dependencies = [
 [[package]]
 name = "apache-nimble"
 version = "0.1.0"
-source = "git+https://github.com/rumcake-rs/apache-nimble-sys?branch=controller-bindings#ed06481fcdffcb7cf5fe11e1b70dfd5444f7c1a1"
+source = "git+https://github.com/benbrittain/apache-nimble-sys?branch=master#bb8ac9c8ba9a26210c77f36b321cee69c105c31e"
 dependencies = [
  "apache-nimble-sys",
  "bindgen",
@@ -33,7 +33,7 @@ dependencies = [
 [[package]]
 name = "apache-nimble-sys"
 version = "0.0.1"
-source = "git+https://github.com/rumcake-rs/apache-nimble-sys?branch=controller-bindings#ed06481fcdffcb7cf5fe11e1b70dfd5444f7c1a1"
+source = "git+https://github.com/benbrittain/apache-nimble-sys?branch=master#bb8ac9c8ba9a26210c77f36b321cee69c105c31e"
 dependencies = [
  "bindgen",
  "cbindgen",
