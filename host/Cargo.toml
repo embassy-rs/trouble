@@ -34,11 +34,12 @@ embedded-io-async = { version = "0.6.1" }
 tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] }
+static_cell = "2.1.0"
 
 [features]
 defmt = [ "dep:defmt" ]
 gatt = []
 
 [patch.crates-io]
-bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "try-controller" }
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }

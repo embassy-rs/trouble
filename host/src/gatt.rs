@@ -5,30 +5,30 @@ use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::DynamicReceiver;
 
-use crate::adapter::HciController;
 use crate::att::{self, Att, ATT_HANDLE_VALUE_NTF_OPTCODE};
 use crate::attribute::CharacteristicHandle;
 use crate::attribute_server::AttributeServer;
 use crate::connection::Connection;
 use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::WriteCursor;
-use crate::packet_pool::{AllocId, DynamicPacketPool};
+use crate::host::BleHost;
+use crate::packet_pool::{AllocId, GlobalPacketPool};
 use crate::pdu::Pdu;
-use crate::{AdapterError, Error};
+use crate::{BleHostError, Error};
 
 pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize> {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
-    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'resources>)>,
-    pub(crate) tx: HciController<'reference, T>,
+    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
+    pub(crate) tx: &'reference BleHost<'resources, T>,
     pub(crate) pool_id: AllocId,
-    pub(crate) pool: &'resources dyn DynamicPacketPool<'resources>,
+    pub(crate) pool: &'static dyn GlobalPacketPool,
     pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 
 impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize>
     GattServer<'reference, 'values, 'resources, M, T, MAX>
 {
-    pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, AdapterError<T::Error>> {
+    pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, BleHostError<T::Error>> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             match Att::decode(pdu.as_ref()) {
@@ -48,7 +48,11 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                             header.write(data.len() as u16)?;
                             header.write(4_u16)?;
                             let len = header.len() + data.len();
-                            self.tx.send(handle, Pdu::new(response, len).as_ref()).await?;
+                            self.tx
+                                .acl(handle, 1)
+                                .await?
+                                .send(Pdu::new(response, len).as_ref())
+                                .await?;
                         }
                         _ => match self.server.process(handle, att, data.write_buf()) {
                             Ok(Some(written)) => {
@@ -58,7 +62,11 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                                 header.write(written as u16)?;
                                 header.write(4_u16)?;
                                 let len = header.len() + data.len();
-                                self.tx.send(handle, Pdu::new(response, len).as_ref()).await?;
+                                self.tx
+                                    .acl(handle, 1)
+                                    .await?
+                                    .send(Pdu::new(response, len).as_ref())
+                                    .await?;
                             }
                             Ok(None) => {
                                 debug!("No response sent");
@@ -86,7 +94,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
         handle: CharacteristicHandle,
         connection: &Connection,
         value: &[u8],
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), BleHostError<T::Error>> {
         let conn = connection.handle();
         self.server.table.set(handle, value)?;
 
@@ -109,7 +117,11 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let total = header.len() + data.len();
-        self.tx.send(conn, Pdu::new(packet, total).as_ref()).await?;
+        self.tx
+            .acl(conn, 1)
+            .await?
+            .send(Pdu::new(packet, total).as_ref())
+            .await?;
         Ok(())
     }
 }

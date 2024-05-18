@@ -16,7 +16,7 @@ pub struct L2capHeader {
 
 unsafe impl FixedSizeValue for L2capHeader {
     fn is_valid(data: &[u8]) -> bool {
-        return true;
+        true
     }
 }
 
@@ -31,11 +31,20 @@ pub struct L2capSignalHeader {
 
 unsafe impl FixedSizeValue for L2capSignalHeader {
     fn is_valid(data: &[u8]) -> bool {
-        return true;
+        true
     }
 }
 
-pub trait L2capSignal: WriteHci + FixedSizeValue {
+#[cfg(not(feature = "defmt"))]
+pub trait L2capSignal: WriteHci + FixedSizeValue + core::fmt::Debug {
+    fn channel() -> u16 {
+        L2CAP_CID_LE_U_SIGNAL
+    }
+    fn code() -> L2capSignalCode;
+}
+
+#[cfg(feature = "defmt")]
+pub trait L2capSignal: WriteHci + FixedSizeValue + defmt::Format {
     fn channel() -> u16 {
         L2CAP_CID_LE_U_SIGNAL
     }
@@ -109,7 +118,7 @@ pub struct LeCreditConnReq {
 
 unsafe impl FixedSizeValue for LeCreditConnReq {
     fn is_valid(data: &[u8]) -> bool {
-        return true;
+        true
     }
 }
 
@@ -154,7 +163,7 @@ impl L2capSignal for LeCreditConnRes {
 
 unsafe impl FixedSizeValue for LeCreditConnRes {
     fn is_valid(data: &[u8]) -> bool {
-        return true;
+        true
     }
 }
 
@@ -168,7 +177,7 @@ pub struct LeCreditFlowInd {
 
 unsafe impl FixedSizeValue for LeCreditFlowInd {
     fn is_valid(data: &[u8]) -> bool {
-        return true;
+        true
     }
 }
 
@@ -188,7 +197,7 @@ pub struct CommandRejectRes {
 
 unsafe impl FixedSizeValue for CommandRejectRes {
     fn is_valid(data: &[u8]) -> bool {
-        return true;
+        true
     }
 }
 
@@ -202,7 +211,7 @@ pub struct DisconnectionReq {
 
 unsafe impl FixedSizeValue for DisconnectionReq {
     fn is_valid(data: &[u8]) -> bool {
-        return true;
+        true
     }
 }
 
@@ -216,7 +225,7 @@ pub struct DisconnectionRes {
 
 unsafe impl FixedSizeValue for DisconnectionRes {
     fn is_valid(data: &[u8]) -> bool {
-        return true;
+        true
     }
 }
 

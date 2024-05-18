@@ -1,7 +1,9 @@
-//! Adapter
+//! BleHost
 //!
-//! The adapter module contains the main entry point for the TrouBLE host.
+//! The host module contains the main entry point for the TrouBLE host.
+use core::cell::RefCell;
 use core::future::poll_fn;
+use core::task::Poll;
 
 use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
 use bt_hci::cmd::le::{
@@ -22,19 +24,18 @@ use bt_hci::param::{
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::once_lock::OnceLock;
-use embassy_sync::semaphore::{GreedySemaphore, Semaphore as _};
 use futures::pin_mut;
 
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
-use crate::channel_manager::ChannelManager;
+use crate::channel_manager::{ChannelManager, ChannelStorage, RxChannel, RX_CHANNEL};
 use crate::connection::{ConnectConfig, Connection};
-use crate::connection_manager::ConnectionManager;
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
-use crate::l2cap::sar::PacketReassembly;
-use crate::packet_pool::{AllocId, DynamicPacketPool, PacketPool, Qos};
+use crate::l2cap::sar::{PacketReassembly, SarType, EMPTY_SAR};
+use crate::packet_pool::{AllocId, GlobalPacketPool, PacketPool, Qos};
 use crate::pdu::Pdu;
 use crate::scan::{PhySet, ScanConfig, ScanReport};
 use crate::types::l2cap::{
@@ -42,101 +43,100 @@ use crate::types::l2cap::{
 };
 #[cfg(feature = "gatt")]
 use crate::{attribute::AttributeTable, gatt::GattServer};
-use crate::{AdapterError, Address, Error};
+use crate::{Address, BleHostError, Error};
 
-/// HostResources holds the resources used by the host.
+/// BleHostResources holds the resources used by the host.
 ///
-/// The packet pool is used by the adapter to multiplex data streams, by allocating space for
+/// The packet pool is used by the host to multiplex data streams, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
-    pool: PacketPool<M, L2CAP_MTU, PACKETS, CHANNELS>,
+pub struct BleHostResources<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
+    pool: PacketPool<NoopRawMutex, L2CAP_MTU, PACKETS, CHANNELS>,
+    connections: [ConnectionStorage; CONNS],
+    channels: [ChannelStorage; CHANNELS],
+    channels_rx: [RxChannel; CHANNELS],
+    sar: [SarType; CONNS],
 }
 
-impl<M: RawMutex, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
-    HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>
+impl<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
+    BleHostResources<CONNS, CHANNELS, PACKETS, L2CAP_MTU>
 {
     /// Create a new instance of host resources with the provided QoS requirements for packets.
     pub fn new(qos: Qos) -> Self {
         Self {
             pool: PacketPool::new(qos),
+            connections: [ConnectionStorage::DISCONNECTED; CONNS],
+            sar: [EMPTY_SAR; CONNS],
+            channels: [ChannelStorage::DISCONNECTED; CHANNELS],
+            channels_rx: [RX_CHANNEL; CHANNELS],
         }
     }
 }
 
-/// Event handler for vendor-specific events handled outside the adapter.
+/// Event handler for vendor-specific events handled outside the host.
 pub trait VendorEventHandler {
     fn on_event(&self, event: &Vendor<'_>);
 }
 
-/// A BLE Host adapter.
+/// A BLE Host.
 ///
-/// The adapter holds the runtime state of the host, and is the entry point
+/// The BleHost holds the runtime state of the host, and is the entry point
 /// for all interactions with the controller.
 ///
-/// The adapter performs connection management, l2cap channel management, and
+/// The host performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
-pub struct Adapter<
-    'd,
-    M,
-    T,
-    const CONNS: usize,
-    const CHANNELS: usize,
-    const L2CAP_MTU: usize,
-    const L2CAP_TXQ: usize = 1,
-    const L2CAP_RXQ: usize = 1,
-> where
-    M: RawMutex,
-{
+pub struct BleHost<'d, T> {
     address: Option<Address>,
     initialized: OnceLock<()>,
+    metrics: RefCell<Metrics>,
     pub(crate) controller: T,
-    pub(crate) connections: ConnectionManager<M, CONNS>,
-    pub(crate) reassembly: PacketReassembly<'d, CONNS>,
-    pub(crate) channels: ChannelManager<'d, M, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>,
-    pub(crate) att_inbound: Channel<M, (ConnHandle, Pdu<'d>), L2CAP_RXQ>,
-    pub(crate) pool: &'d dyn DynamicPacketPool<'d>,
-    pub(crate) permits: GreedySemaphore<NoopRawMutex>,
+    pub(crate) connections: ConnectionManager<'d>,
+    pub(crate) reassembly: PacketReassembly<'d>,
+    pub(crate) channels: ChannelManager<'d>,
+    pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
+    pub(crate) pool: &'static dyn GlobalPacketPool,
 
-    pub(crate) scanner: Channel<M, Option<ScanReport>, 1>,
+    pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
 }
 
-impl<
-        'd,
-        M,
-        T,
-        const CONNS: usize,
-        const CHANNELS: usize,
-        const L2CAP_MTU: usize,
-        const L2CAP_TXQ: usize,
-        const L2CAP_RXQ: usize,
-    > Adapter<'d, M, T, CONNS, CHANNELS, L2CAP_MTU, L2CAP_TXQ, L2CAP_RXQ>
+#[derive(Default)]
+struct Metrics {
+    connect_events: u32,
+    disconnect_events: u32,
+    rx_errors: u32,
+    tx_blocked: u32,
+}
+
+impl<'d, T> BleHost<'d, T>
 where
-    M: RawMutex,
     T: Controller,
 {
-    /// Create a new instance of the BLE host adapter.
+    /// Create a new instance of the BLE host.
     ///
-    /// The adapter requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
-    /// a reference to resources that are created outside the adapter but which the adapter is the only accessor of.
-    pub fn new<const PACKETS: usize>(
+    /// The host requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
+    /// a reference to resources that are created outside the host but which the host is the only accessor of.
+    pub fn new<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>(
         controller: T,
-        host_resources: &'d mut HostResources<M, CHANNELS, PACKETS, L2CAP_MTU>,
+        host_resources: &'static mut BleHostResources<CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
     ) -> Self {
         Self {
             address: None,
             initialized: OnceLock::new(),
+            metrics: RefCell::new(Metrics::default()),
             controller,
-            connections: ConnectionManager::new(),
-            reassembly: PacketReassembly::new(),
-            channels: ChannelManager::new(&host_resources.pool),
+            connections: ConnectionManager::new(&mut host_resources.connections[..]),
+            reassembly: PacketReassembly::new(&mut host_resources.sar[..]),
+            channels: ChannelManager::new(
+                &host_resources.pool,
+                &mut host_resources.channels[..],
+                &mut host_resources.channels_rx[..],
+            ),
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
-            permits: GreedySemaphore::new(0),
         }
     }
 
-    /// Set the random address used by this adapter.
+    /// Set the random address used by this host.
     pub fn set_random_address(&mut self, address: Address) {
         self.address.replace(address);
     }
@@ -144,7 +144,7 @@ where
     pub(crate) async fn set_accept_filter(
         &self,
         filter_accept_list: &[(AddrKind, &BdAddr)],
-    ) -> Result<(), AdapterError<T::Error>>
+    ) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList> + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
@@ -157,7 +157,7 @@ where
     }
 
     /// Run a HCI command and return the response.
-    pub async fn command<C>(&self, cmd: C) -> Result<C::Return, AdapterError<T::Error>>
+    pub async fn command<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
     where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
@@ -168,7 +168,7 @@ where
     }
 
     /// Run an async HCI command where the response will generate an event later.
-    pub async fn async_command<C>(&self, cmd: C) -> Result<(), AdapterError<T::Error>>
+    pub async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Error>>
     where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
@@ -179,7 +179,7 @@ where
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection, AdapterError<T::Error>>
+    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -218,7 +218,7 @@ where
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection, AdapterError<T::Error>>
+    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -280,7 +280,7 @@ where
         phy_params
     }
 
-    async fn start_scan(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    async fn start_scan(&self, config: &ScanConfig<'_>) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanParams>
             + ControllerCmdSync<LeSetScanEnable>
@@ -309,7 +309,7 @@ where
         Ok(())
     }
 
-    async fn start_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    async fn start_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeSetExtScanParams>
@@ -344,7 +344,7 @@ where
         Ok(())
     }
 
-    async fn stop_scan(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    async fn stop_scan(&self, config: &ScanConfig<'_>) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanEnable>,
     {
@@ -352,7 +352,7 @@ where
         Ok(())
     }
 
-    async fn stop_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), AdapterError<T::Error>>
+    async fn stop_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>,
     {
@@ -369,7 +369,7 @@ where
     /// Performs an extended BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan_ext(&self, config: &ScanConfig<'_>) -> Result<ScanReport, AdapterError<T::Error>>
+    pub async fn scan_ext(&self, config: &ScanConfig<'_>) -> Result<ScanReport, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeSetExtScanParams>
@@ -387,7 +387,7 @@ where
     /// Performs a BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan(&self, config: &ScanConfig<'_>) -> Result<ScanReport, AdapterError<T::Error>>
+    pub async fn scan(&self, config: &ScanConfig<'_>) -> Result<ScanReport, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanParams>
             + ControllerCmdSync<LeSetScanEnable>
@@ -407,7 +407,7 @@ where
         &self,
         config: &AdvertisementConfig,
         params: Advertisement<'k>,
-    ) -> Result<Connection, AdapterError<T::Error>>
+    ) -> Result<Connection, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
@@ -482,7 +482,7 @@ where
         &self,
         config: &AdvertisementConfig,
         params: impl Into<RawAdvertisement<'k>>,
-    ) -> Result<Connection, AdapterError<T::Error>>
+    ) -> Result<Connection, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
@@ -561,7 +561,7 @@ where
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
     #[cfg(feature = "gatt")]
-    pub fn gatt_server<'reference, 'values, const MAX: usize>(
+    pub fn gatt_server<'reference, 'values, M: embassy_sync::blocking_mutex::raw::RawMutex, const MAX: usize>(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
     ) -> GattServer<'reference, 'values, 'd, M, T, MAX> {
@@ -571,7 +571,7 @@ where
             pool: self.pool,
             pool_id: crate::packet_pool::ATT_ID,
             rx: self.att_inbound.receiver().into(),
-            tx: self.hci(),
+            tx: self,
             connections: &self.connections,
         }
     }
@@ -584,11 +584,12 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    self.channels.signal(acl.handle(), &data).await?;
+                    self.channels.signal(acl.handle(), data).await?;
                     return Ok(());
                 }
 
                 let Some(mut p) = self.pool.alloc(AllocId::from_channel(header.channel)) else {
+                    info!("No memory for packets on channel {}", header.channel);
                     return Err(Error::OutOfMemory);
                 };
                 p.as_mut()[..data.len()].copy_from_slice(data);
@@ -640,7 +641,7 @@ where
         Ok(())
     }
 
-    pub async fn run(&self) -> Result<(), AdapterError<T::Error>>
+    pub async fn run(&self) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -658,7 +659,7 @@ where
     pub async fn run_with_handler(
         &self,
         vendor_handler: Option<&dyn VendorEventHandler>,
-    ) -> Result<(), AdapterError<T::Error>>
+    ) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -671,7 +672,6 @@ where
             + ControllerCmdSync<LeReadBufferSize>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
-        let mut disconnects = 0;
 
         // Control future that initializes system and handles controller changes.
         let control_fut = async {
@@ -679,17 +679,12 @@ where
 
             if let Some(addr) = self.address {
                 LeSetRandomAddr::new(addr.addr).exec(&self.controller).await?;
-                info!("Adapter address set to {:?}", addr.addr);
+                info!("BleHost address set to {:?}", addr.addr);
             }
 
-            HostBufferSize::new(
-                self.pool.mtu() as u16,
-                self.pool.mtu() as u8,
-                L2CAP_RXQ as u16,
-                L2CAP_RXQ as u16,
-            )
-            .exec(&self.controller)
-            .await?;
+            HostBufferSize::new(self.pool.mtu() as u16, self.pool.mtu() as u8, 1, 1)
+                .exec(&self.controller)
+                .await?;
 
             SetEventMask::new(
                 EventMask::new()
@@ -719,14 +714,15 @@ where
             .await?;
 
             let ret = LeReadBufferSize::new().exec(&self.controller).await?;
-            self.permits.set(ret.total_num_le_acl_data_packets as usize);
+            info!("[host] setting txq to {}", ret.total_num_le_acl_data_packets as usize);
+            self.connections
+                .set_link_credits(ret.total_num_le_acl_data_packets as usize);
             // TODO: Configure ACL max buffer size as well?
-
             let _ = self.initialized.init(());
 
             loop {
-                let mut it = poll_fn(|cx| self.connections.poll_disconnecting(cx)).await;
-                while let Some(entry) = it.next() {
+                let it = poll_fn(|cx| self.connections.poll_disconnecting(cx)).await;
+                for entry in it {
                     self.command(Disconnect::new(entry.0, entry.1)).await?;
                 }
             }
@@ -737,11 +733,14 @@ where
             // Task handling receiving data from the controller.
             let rx_fut = async {
                 let mut rx = [0u8; MAX_HCI_PACKET_LEN];
-                match self.controller.read(&mut rx).await {
+                let result = self.controller.read(&mut rx).await;
+                match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
                         Ok(_) => {}
                         Err(e) => {
                             info!("Error processing ACL packet: {:?}", e);
+                            let mut m = self.metrics.borrow_mut();
+                            m.rx_errors = m.rx_errors.wrapping_add(1);
                         }
                     },
                     Ok(ControllerToHostPacket::Event(event)) => match event {
@@ -750,17 +749,22 @@ where
                                 Ok(_) => {
                                     if let Err(err) = self.connections.connect(e.handle, &e) {
                                         warn!("Error establishing connection: {:?}", err);
-                                        self.command(Disconnect::new(
-                                            e.handle,
-                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                        ))
-                                        .await?;
+                                        let _ = self
+                                            .command(Disconnect::new(
+                                                e.handle,
+                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                            ))
+                                            .await;
+                                    } else {
+                                        let mut m = self.metrics.borrow_mut();
+                                        m.connect_events = m.connect_events.wrapping_add(1);
                                     }
                                 }
                                 Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
                                     self.connections.canceled();
                                 }
                                 Err(e) => {
+                                    warn!("Error connection complete");
                                     warn!("Error connection complete event: {:?}", e);
                                 }
                             },
@@ -782,14 +786,20 @@ where
                             }
                         },
                         Event::DisconnectionComplete(e) => {
-                            disconnects += 1;
-                            info!("Disconnected (total {}): {:?}", disconnects, e);
-                            let _ = self.connections.disconnect(e.handle);
-                            let _ = self.channels.disconnected(e.handle);
+                            let handle = e.handle;
+                            let _ = self.connections.disconnect(handle);
+                            let _ = self.channels.disconnected(handle);
+                            self.reassembly.disconnected(handle);
+                            let mut m = self.metrics.borrow_mut();
+                            m.disconnect_events = m.disconnect_events.wrapping_add(1);
                         }
                         Event::NumberOfCompletedPackets(c) => {
-                            // info!("Confirmed {} packets sent", c.completed_packets.len());
-                            self.permits.release(c.completed_packets.len());
+                            // Explicitly ignoring for now
+                            for entry in c.completed_packets.iter() {
+                                if let (Ok(handle), Ok(completed)) = (entry.handle(), entry.num_completed_packets()) {
+                                    let _ = self.connections.confirm_sent(handle, completed as usize);
+                                }
+                            }
                         }
                         Event::Vendor(vendor) => {
                             if let Some(handler) = vendor_handler {
@@ -801,19 +811,17 @@ where
                         }
                     },
                     Ok(p) => {
-                        info!("Ignoring packet: {:?}", p);
+                        warn!("Ignoring packet: {:?}", p);
                     }
                     Err(e) => {
-                        #[cfg(feature = "defmt")]
-                        let e = defmt::Debug2Format(&e);
-                        info!("Error from controller: {:?}", e);
+                        return Err(BleHostError::Controller(e));
                     }
                 }
                 Ok(())
             };
 
             // info!("Entering select loop");
-            let result: Result<(), AdapterError<T::Error>> = match select(&mut control_fut, rx_fut).await {
+            let result: Result<(), BleHostError<T::Error>> = match select(&mut control_fut, rx_fut).await {
                 Either::First(result) => result,
                 Either::Second(result) => result,
             };
@@ -821,86 +829,104 @@ where
         }
     }
 
-    pub(crate) fn hci(&self) -> HciController<'_, T> {
-        HciController {
-            controller: &self.controller,
-            permits: &self.permits,
-        }
+    // Request to send n ACL packets to the HCI controller for a connection
+    pub(crate) async fn acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
+        let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n as usize, Some(cx))).await?;
+        Ok(AclSender {
+            ble: &self,
+            handle,
+            grant,
+        })
+    }
+
+    // Request to send n ACL packets to the HCI controller for a connection
+    pub(crate) fn try_acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
+        let grant = match self.connections.poll_request_to_send(handle, n as usize, None) {
+            Poll::Ready(res) => res?,
+            Poll::Pending => {
+                return Err(Error::Busy.into());
+            }
+        };
+        Ok(AclSender {
+            ble: &self,
+            handle,
+            grant,
+        })
+    }
+
+    /// Log status information of the host
+    pub fn log_status(&self) {
+        debug!("[host] status");
+        let m = self.metrics.borrow();
+        debug!("[host] connect events: {}", m.connect_events);
+        debug!("[host] disconnect events: {}", m.disconnect_events);
+        debug!("[host] tx blocked: {}", m.tx_blocked);
+        debug!("[host] rx errors: {}", m.rx_errors);
+        self.connections.log_status();
+        self.channels.log_status();
     }
 }
 
-pub struct HciController<'d, T: Controller> {
-    pub(crate) controller: &'d T,
-    pub(crate) permits: &'d GreedySemaphore<NoopRawMutex>,
+pub struct AclSender<'a, 'd, T: Controller> {
+    pub(crate) ble: &'a BleHost<'d, T>,
+    pub(crate) handle: ConnHandle,
+    pub(crate) grant: PacketGrant<'a, 'd>,
 }
 
-impl<'d, T: Controller> Clone for HciController<'d, T> {
-    fn clone(&self) -> Self {
-        Self {
-            controller: self.controller,
-            permits: self.permits,
-        }
-    }
-}
-
-impl<'d, T: Controller> HciController<'d, T> {
-    pub(crate) fn try_send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>>
+impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
+    pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
     where
         T: blocking::Controller,
     {
-        // info!("[try_send] permits: {}", self.permits.permits());
-        let permit = self
-            .permits
-            .try_acquire(1)
-            .ok_or::<AdapterError<T::Error>>(Error::NoPermits.into())?;
         let acl = AclPacket::new(
-            handle,
+            self.handle,
             AclPacketBoundary::FirstNonFlushable,
             AclBroadcastFlag::PointToPoint,
             pdu,
         );
         // info!("Sent ACL {:?}", acl);
-        match self.controller.try_write_acl_data(&acl) {
+        match self.ble.controller.try_write_acl_data(&acl) {
             Ok(result) => {
-                permit.disarm();
+                self.grant.confirm(1);
                 Ok(result)
             }
             Err(blocking::TryError::Busy) => {
+                let mut m = self.ble.metrics.borrow_mut();
+                m.tx_blocked = m.tx_blocked.wrapping_add(1);
                 warn!("hci: acl data send busy");
                 Err(Error::Busy.into())
             }
-            Err(blocking::TryError::Error(e)) => Err(AdapterError::Controller(e)),
+            Err(blocking::TryError::Error(e)) => Err(BleHostError::Controller(e)),
         }
     }
 
-    pub(crate) async fn send(&self, handle: ConnHandle, pdu: &[u8]) -> Result<(), AdapterError<T::Error>> {
-        // info!("[send] permits: {}", self.permits.permits());
-        let permit = self
-            .permits
-            .acquire(1)
-            .await
-            .map_err(|_| AdapterError::Adapter(Error::NoPermits))?;
+    pub(crate) async fn send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
         let acl = AclPacket::new(
-            handle,
+            self.handle,
             AclPacketBoundary::FirstNonFlushable,
             AclBroadcastFlag::PointToPoint,
             pdu,
         );
-        self.controller
+        self.ble
+            .controller
             .write_acl_data(&acl)
             .await
-            .map_err(AdapterError::Controller)?;
-        permit.disarm();
+            .map_err(BleHostError::Controller)?;
+        self.grant.confirm(1);
         Ok(())
     }
 
     pub(crate) async fn signal<D: L2capSignal>(
-        &self,
-        handle: ConnHandle,
+        &mut self,
         identifier: u8,
         signal: &D,
         p_buf: &mut [u8],
-    ) -> Result<(), AdapterError<T::Error>> {
+    ) -> Result<(), BleHostError<T::Error>> {
+        trace!(
+            "[l2cap] sending control signal (req = {}) signal: {:?}",
+            identifier,
+            signal
+        );
         let header = L2capSignalHeader {
             identifier,
             code: D::code(),
@@ -916,7 +942,7 @@ impl<'d, T: Controller> HciController<'d, T> {
         w.write_hci(&header)?;
         w.write_hci(signal)?;
 
-        self.send(handle, w.finish()).await?;
+        self.send(w.finish()).await?;
 
         Ok(())
     }
