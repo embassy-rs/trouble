@@ -15,13 +15,12 @@ embassy-sync = "0.5.0"
 embassy-futures = "0.1.0"
 embassy-executor = { version = "0.5.0", features = ["defmt", "integrated-timers", "executor-thread", "arch-cortex-m"] }
 embassy-nrf = { version = "0.1.0", features = ["defmt", "nfc-pins-as-gpio", "time-driver-rtc1", "nrf52840"] }
-trouble-host = { version = "0.1.0", features = ["gatt"] }
+trouble-host = { version = "0.1.0", path = "../../host", features = ["gatt"] }
 static_cell = "1.0.0"
 
 [patch.crates-io]
 apache-nimble = { git = "https://github.com/benbrittain/apache-nimble-sys", branch = "master" }
 bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
-trouble-host = { git = "https://github.com/embassy-rs/trouble", branch = "main" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main" }

@@ -7,11 +7,10 @@ use embassy_futures::join::join4;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::{Duration, Timer};
 use static_cell::StaticCell;
-use trouble_host::adapter::{Adapter, HostResources};
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
 use trouble_host::gatt::GattEvent;
-use trouble_host::{Address, PacketQos};
+use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
 
 #[::embassy_executor::task]
@@ -31,15 +30,15 @@ async fn main(spawner: embassy_executor::Spawner) {
     embassy_nrf::init(conf);
     apache_nimble::initialize_nimble();
 
-    static HOST_RESOURCE: StaticCell<HostResources<CriticalSectionRawMutex, 2, 2, 27>> = StaticCell::new();
-    let host_resources = HOST_RESOURCE.init(HostResources::new(PacketQos::None));
+    static HOST_RESOURCE: StaticCell<BleHostResources<2, 2, 2, 27>> = StaticCell::new();
+    let host_resources = HOST_RESOURCE.init(BleHostResources::new(PacketQos::None));
 
     let controller = apache_nimble::controller::NimbleController::new();
     let controller_task = controller.create_task();
 
     // wait for RNG to calm down
     Timer::after(Duration::from_secs(1)).await;
-    let mut adapter = Adapter::<'_, _, _, 2, 2, 27>::new(controller, host_resources);
+    let mut adapter = BleHost::new(controller, host_resources);
     adapter.set_random_address(Address::random([0x41, 0x5A, 0xE3, 0x1E, 0x83, 0xE7]));
 
     let mut table = AttributeTable::<'_, CriticalSectionRawMutex, 10>::new();
