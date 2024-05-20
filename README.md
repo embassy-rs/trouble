@@ -19,6 +19,7 @@ TrouBLE can use any controller that implements the traits from `bt-hci`. At pres
 * [nRF Softdevice Controller](https://github.com/alexmoon/nrf-sdc). Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE Rust stack for nRF.
 * [Zephyr UART HCI](https://docs.zephyrproject.org/latest/samples/bluetooth/hci_uart/README.html).
 * [Raspberry Pi Pico W](https://github.com/embassy-rs/embassy/pull/2865) - This is still WIP and largely untested.
+* [Apache NimBLE Controller](https://github.com/benbrittain/apache-nimble-sys).
 
 
 ## Current status
@@ -34,10 +35,11 @@ See the [issues](https://github.com/embassy-rs/trouble/issues) for a list of TOD
 
 ## Examples
 
-See `examples` for example applications. Currently there are two examples:
+See `examples` for example applications. Currently there are three examples:
 
 * `nrf-sdc` for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
 * `serial-hci` which runs on std using a controller attached via a serial port (Such as [this Zephyr sample](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/samples/bluetooth/hci_uart/README.html)).
+* `apache-nimble` which uses the controller from the [NimBLE stack](https://github.com/apache/mynewt-nimble) through high-level bindings from the [`apache-nimble`](https://github.com/benbrittain/apache-nimble-sys) crate.
 
 ## License
 

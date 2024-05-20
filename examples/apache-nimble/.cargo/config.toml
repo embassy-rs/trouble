@@ -1,0 +1,16 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = [
+  "probe-rs",
+  "run",
+  "--chip",
+  "nRF52840_xxAA",
+  "--log-format",
+  "{t} [ {L}] {f}:{l} {s}"
+]
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[env]
+DEFMT_LOG = "trace"
+BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=/usr/arm-none-eabi"
