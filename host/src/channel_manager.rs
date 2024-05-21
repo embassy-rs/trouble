@@ -42,12 +42,8 @@ pub(crate) struct PacketChannel<const QLEN: usize> {
 impl<const QLEN: usize> PacketChannel<QLEN> {
     pub(crate) const NEW: PacketChannel<QLEN> = PacketChannel { chan: Channel::new() };
 
-    pub fn try_close(&self) -> Result<(), ()> {
+    pub fn close(&self) -> Result<(), ()> {
         self.chan.try_send(None).map_err(|_| ())
-    }
-
-    pub async fn close(&self) {
-        self.chan.send(None).await;
     }
 
     pub async fn send(&self, pdu: Pdu) {
