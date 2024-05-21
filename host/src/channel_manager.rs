@@ -132,12 +132,15 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
             match storage.state {
                 ChannelState::PeerConnecting(_) if conn.raw() == storage.conn => {
                     storage.state = ChannelState::Disconnecting;
+                    let _ = self.inbound[idx].close();
                 }
                 ChannelState::Connecting(_) if conn.raw() == storage.conn => {
                     storage.state = ChannelState::Disconnecting;
+                    let _ = self.inbound[idx].close();
                 }
                 ChannelState::Connected if conn.raw() == storage.conn => {
                     storage.state = ChannelState::Disconnecting;
+                    let _ = self.inbound[idx].close();
                 }
                 _ => {}
             }
