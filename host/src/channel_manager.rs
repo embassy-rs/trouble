@@ -590,7 +590,6 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         let mut grant = match self.poll_request_to_send(cid, n_packets, None) {
             Poll::Ready(res) => res?,
             Poll::Pending => {
-                warn!("[l2cap][cid = {}]: not enough credits for {} packets", cid, n_packets);
                 return Err(Error::Busy.into());
             }
         };
@@ -716,6 +715,10 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                         storage.peer_credits -= credits;
                         return Poll::Ready(Ok(CreditGrant::new(&self.state, cid, credits)));
                     } else {
+                        warn!(
+                            "[l2cap][poll_request_to_send][cid = {}]: not enough credits, requested {} available {}",
+                            cid, credits, storage.peer_credits
+                        );
                         return Poll::Pending;
                     }
                 }

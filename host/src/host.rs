@@ -924,11 +924,11 @@ impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
         signal: &D,
         p_buf: &mut [u8],
     ) -> Result<(), BleHostError<T::Error>> {
-        trace!(
-            "[l2cap] sending control signal (req = {}) signal: {:?}",
-            identifier,
-            signal
-        );
+        //trace!(
+        //    "[l2cap] sending control signal (req = {}) signal: {:?}",
+        //    identifier,
+        //    signal
+        //);
         let header = L2capSignalHeader {
             identifier,
             code: D::code(),
