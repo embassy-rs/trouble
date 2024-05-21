@@ -82,7 +82,7 @@ impl Connection {
     }
 
     /// Update connection parameters for this connection.
-    pub async fn set_connection_params<T>(
+    pub async fn update_connection_params<T>(
         &self,
         ble: &BleHost<'_, T>,
         params: ConnectParams,
@@ -90,16 +90,23 @@ impl Connection {
     where
         T: ControllerCmdAsync<LeConnUpdate>,
     {
-        ble.async_command(LeConnUpdate::new(
-            self.handle,
-            params.min_connection_interval.into(),
-            params.max_connection_interval.into(),
-            params.max_latency,
-            params.supervision_timeout.into(),
-            bt_hci::param::Duration::from_secs(0),
-            bt_hci::param::Duration::from_secs(0),
-        ))
-        .await?;
-        Ok(())
+        match ble
+            .async_command(LeConnUpdate::new(
+                self.handle,
+                params.min_connection_interval.into(),
+                params.max_connection_interval.into(),
+                params.max_latency,
+                params.supervision_timeout.into(),
+                params.event_length.into(),
+                params.event_length.into(),
+            ))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(BleHostError::BleHost(crate::Error::HciEncode(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                Err(crate::Error::Disconnected.into())
+            }
+            Err(e) => Err(e),
+        }
     }
 }
