@@ -219,7 +219,9 @@ impl<'d> ConnectionManager<'d> {
                         }
                         debug!(
                             "[link][poll_request_to_send][conn = {}] requested {} available {}",
-                            handle, packets, storage.link_credits
+                            handle.raw(),
+                            packets,
+                            storage.link_credits
                         );
                         return Poll::Pending;
                     }
