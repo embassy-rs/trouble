@@ -514,8 +514,8 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                 return Ok(idx);
             }
         }
-        trace!("[l2cap][connected_channel_index] channel {} not found", cid);
-        Err(Error::NotFound)
+        trace!("[l2cap][connected_channel_index] channel {} closed", cid);
+        Err(Error::ChannelClosed)
     }
 
     async fn receive_pdu<T: Controller>(
@@ -625,8 +625,8 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                 _ => {}
             }
         }
-        trace!("[l2cap][connected_channel_params] channel {} not found", cid);
-        Err(Error::NotFound)
+        trace!("[l2cap][connected_channel_params] channel {} closed", cid);
+        Err(Error::ChannelClosed)
     }
 
     // Check the current state of flow control and send flow indications if
