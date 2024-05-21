@@ -312,10 +312,11 @@ impl defmt::Format for ConnectionStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, credits = {}",
+            "state = {}, conn = {}, credits = {}, peer = {:?}",
             self.state,
             self.handle,
             self.link_credits,
+            self.peer_addr,
         );
     }
 }
