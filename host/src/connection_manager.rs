@@ -217,7 +217,10 @@ impl<'d> ConnectionManager<'d> {
                         if let Some(cx) = cx {
                             storage.link_credit_waker.register(cx.waker());
                         }
-                        debug!("[link][poll_request_to_send][conn = {}]", handle);
+                        debug!(
+                            "[link][poll_request_to_send][conn = {}] requested {} available {}",
+                            handle, packets, storage.link_credits
+                        );
                         return Poll::Pending;
                     }
                 }

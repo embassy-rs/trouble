@@ -30,7 +30,7 @@ use embassy_sync::once_lock::OnceLock;
 use futures::pin_mut;
 
 use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
-use crate::channel_manager::{ChannelManager, ChannelStorage, RxChannel, RX_CHANNEL};
+use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
@@ -45,6 +45,8 @@ use crate::types::l2cap::{
 use crate::{attribute::AttributeTable, gatt::GattServer};
 use crate::{Address, BleHostError, Error};
 
+const L2CAP_RXQ: usize = 1;
+
 /// BleHostResources holds the resources used by the host.
 ///
 /// The packet pool is used by the host to multiplex data streams, by allocating space for
@@ -53,7 +55,7 @@ pub struct BleHostResources<const CONNS: usize, const CHANNELS: usize, const PAC
     pool: PacketPool<NoopRawMutex, L2CAP_MTU, PACKETS, CHANNELS>,
     connections: [ConnectionStorage; CONNS],
     channels: [ChannelStorage; CHANNELS],
-    channels_rx: [RxChannel; CHANNELS],
+    channels_rx: [PacketChannel<L2CAP_RXQ>; CHANNELS],
     sar: [SarType; CONNS],
 }
 
@@ -67,7 +69,7 @@ impl<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CA
             connections: [ConnectionStorage::DISCONNECTED; CONNS],
             sar: [EMPTY_SAR; CONNS],
             channels: [ChannelStorage::DISCONNECTED; CHANNELS],
-            channels_rx: [RX_CHANNEL; CHANNELS],
+            channels_rx: [PacketChannel::NEW; CHANNELS],
         }
     }
 }
@@ -91,7 +93,7 @@ pub struct BleHost<'d, T> {
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
-    pub(crate) channels: ChannelManager<'d>,
+    pub(crate) channels: ChannelManager<'d, L2CAP_RXQ>,
     pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
     pub(crate) pool: &'static dyn GlobalPacketPool,
 

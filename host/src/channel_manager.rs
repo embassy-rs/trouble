@@ -29,15 +29,35 @@ struct State<'d> {
 }
 
 /// Channel manager for L2CAP channels used directly by clients.
-pub struct ChannelManager<'d> {
+pub struct ChannelManager<'d, const RXQ: usize> {
     pool: &'static dyn GlobalPacketPool,
     state: RefCell<State<'d>>,
-    inbound: &'d mut [RxChannel],
+    inbound: &'d mut [PacketChannel<RXQ>],
 }
 
-pub(crate) type RxChannel = Channel<NoopRawMutex, Option<Pdu>, 1>;
-#[allow(clippy::declare_interior_mutable_const)]
-pub(crate) const RX_CHANNEL: RxChannel = Channel::new();
+pub(crate) struct PacketChannel<const QLEN: usize> {
+    chan: Channel<NoopRawMutex, Option<Pdu>, QLEN>,
+}
+
+impl<const QLEN: usize> PacketChannel<QLEN> {
+    pub(crate) const NEW: PacketChannel<QLEN> = PacketChannel { chan: Channel::new() };
+
+    pub fn try_close(&self) -> Result<(), ()> {
+        self.chan.try_send(None).map_err(|_| ())
+    }
+
+    pub async fn close(&self) {
+        self.chan.send(None).await;
+    }
+
+    pub async fn send(&self, pdu: Pdu) {
+        self.chan.send(Some(pdu)).await;
+    }
+
+    pub async fn receive(&self) -> Option<Pdu> {
+        self.chan.receive().await
+    }
+}
 
 impl<'d> State<'d> {
     fn print(&self) {
@@ -49,11 +69,11 @@ impl<'d> State<'d> {
     }
 }
 
-impl<'d> ChannelManager<'d> {
+impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
     pub fn new(
         pool: &'static dyn GlobalPacketPool,
         channels: &'d mut [ChannelStorage],
-        inbound: &'d mut [RxChannel],
+        inbound: &'d mut [PacketChannel<RXQ>],
     ) -> Self {
         Self {
             pool,
@@ -79,34 +99,35 @@ impl<'d> ChannelManager<'d> {
     }
 
     pub(crate) fn disconnect(&self, cid: u16) -> Result<ConnHandle, Error> {
-        let mut state = self.state.borrow_mut();
-        for (idx, storage) in state.channels.iter_mut().enumerate() {
-            match storage.state {
-                ChannelState::Disconnecting if cid == storage.cid => {
-                    storage.state = ChannelState::Disconnected;
-                    storage.cid = 0;
-                    return Ok(ConnHandle::new(storage.conn));
+        self.with_mut(|state| {
+            for (idx, storage) in state.channels.iter_mut().enumerate() {
+                match storage.state {
+                    ChannelState::Disconnecting if cid == storage.cid => {
+                        storage.state = ChannelState::Disconnected;
+                        storage.cid = 0;
+                        return Ok(ConnHandle::new(storage.conn));
+                    }
+                    ChannelState::PeerConnecting(_) if cid == storage.cid => {
+                        storage.state = ChannelState::Disconnecting;
+                        let _ = self.inbound[idx].close();
+                        return Ok(ConnHandle::new(storage.conn));
+                    }
+                    ChannelState::Connecting(_) if cid == storage.cid => {
+                        storage.state = ChannelState::Disconnecting;
+                        let _ = self.inbound[idx].close();
+                        return Ok(ConnHandle::new(storage.conn));
+                    }
+                    ChannelState::Connected if cid == storage.cid => {
+                        storage.state = ChannelState::Disconnecting;
+                        let _ = self.inbound[idx].close();
+                        return Ok(ConnHandle::new(storage.conn));
+                    }
+                    _ => {}
                 }
-                ChannelState::PeerConnecting(_) if cid == storage.cid => {
-                    storage.state = ChannelState::Disconnecting;
-                    let _ = self.inbound[idx].try_send(None);
-                    return Ok(ConnHandle::new(storage.conn));
-                }
-                ChannelState::Connecting(_) if cid == storage.cid => {
-                    storage.state = ChannelState::Disconnecting;
-                    let _ = self.inbound[idx].try_send(None);
-                    return Ok(ConnHandle::new(storage.conn));
-                }
-                ChannelState::Connected if cid == storage.cid => {
-                    storage.state = ChannelState::Disconnecting;
-                    let _ = self.inbound[idx].try_send(None);
-                    return Ok(ConnHandle::new(storage.conn));
-                }
-                _ => {}
             }
-        }
-        trace!("[l2cap][disconnect] channel {} not found", cid);
-        Err(Error::NotFound)
+            trace!("[l2cap][disconnect] channel {} not found", cid);
+            Err(Error::NotFound)
+        })
     }
 
     pub(crate) fn disconnected(&self, conn: ConnHandle) -> Result<(), Error> {
@@ -115,15 +136,12 @@ impl<'d> ChannelManager<'d> {
             match storage.state {
                 ChannelState::PeerConnecting(_) if conn.raw() == storage.conn => {
                     storage.state = ChannelState::Disconnecting;
-                    let _ = self.inbound[idx].try_send(None);
                 }
                 ChannelState::Connecting(_) if conn.raw() == storage.conn => {
                     storage.state = ChannelState::Disconnecting;
-                    let _ = self.inbound[idx].try_send(None);
                 }
                 ChannelState::Connected if conn.raw() == storage.conn => {
                     storage.state = ChannelState::Disconnecting;
-                    let _ = self.inbound[idx].try_send(None);
                 }
                 _ => {}
             }
@@ -302,9 +320,7 @@ impl<'d> ChannelManager<'d> {
             Ok(())
         })?;
 
-        self.inbound[chan]
-            .send(Some(Pdu::new(packet, header.length as usize)))
-            .await;
+        self.inbound[chan].send(Pdu::new(packet, header.length as usize)).await;
         Ok(())
     }
 
