@@ -217,7 +217,12 @@ impl<'d> ConnectionManager<'d> {
                         if let Some(cx) = cx {
                             storage.link_credit_waker.register(cx.waker());
                         }
-                        debug!("[link][poll_request_to_send][conn = {}]", handle);
+                        debug!(
+                            "[link][poll_request_to_send][conn = {}] requested {} available {}",
+                            handle.raw(),
+                            packets,
+                            storage.link_credits
+                        );
                         return Poll::Pending;
                     }
                 }
@@ -312,10 +317,11 @@ impl defmt::Format for ConnectionStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, credits = {}",
+            "state = {}, conn = {}, credits = {}, peer = {:?}",
             self.state,
             self.handle,
             self.link_credits,
+            self.peer_addr,
         );
     }
 }

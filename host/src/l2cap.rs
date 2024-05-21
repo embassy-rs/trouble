@@ -12,20 +12,31 @@ pub(crate) mod sar;
 
 /// Handle representing an L2CAP channel.
 #[derive(Clone)]
-pub struct L2capChannel<const MTU: usize = 23> {
+pub struct L2capChannel<const TX_MTU: usize = 23> {
     cid: u16,
 }
 
 /// Configuration for an L2CAP channel.
-#[derive(Default)]
 pub struct L2capChannelConfig {
+    /// Size of Service Data Unit
+    pub mtu: u16,
     /// Flow control policy for connection oriented channels.
     pub flow_policy: CreditFlowPolicy,
     /// Initial credits for connection oriented channels.
     pub initial_credits: Option<u16>,
 }
 
-impl<const MTU: usize> L2capChannel<MTU> {
+impl Default for L2capChannelConfig {
+    fn default() -> Self {
+        Self {
+            mtu: 23,
+            flow_policy: Default::default(),
+            initial_credits: None,
+        }
+    }
+}
+
+impl<const TX_MTU: usize> L2capChannel<TX_MTU> {
     /// Send the provided buffer over this l2cap channel.
     ///
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
@@ -37,7 +48,7 @@ impl<const MTU: usize> L2capChannel<MTU> {
         ble: &BleHost<'_, T>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; MTU];
+        let mut p_buf = [0u8; TX_MTU];
         ble.channels.send(self.cid, buf, &mut p_buf[..], ble).await
     }
 
@@ -52,7 +63,7 @@ impl<const MTU: usize> L2capChannel<MTU> {
         ble: &BleHost<'_, T>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; MTU];
+        let mut p_buf = [0u8; TX_MTU];
         ble.channels.try_send(self.cid, buf, &mut p_buf[..], ble)
     }
 
@@ -73,11 +84,11 @@ impl<const MTU: usize> L2capChannel<MTU> {
         connection: &Connection,
         psm: &[u16],
         config: &L2capChannelConfig,
-    ) -> Result<L2capChannel<MTU>, BleHostError<T::Error>> {
+    ) -> Result<L2capChannel<TX_MTU>, BleHostError<T::Error>> {
         let handle = connection.handle();
         let cid = ble
             .channels
-            .accept(handle, psm, MTU as u16, config.flow_policy, config.initial_credits, ble)
+            .accept(handle, psm, config.mtu, config.flow_policy, config.initial_credits, ble)
             .await?;
 
         Ok(Self { cid })
@@ -111,7 +122,7 @@ where {
             .create(
                 connection.handle(),
                 psm,
-                MTU as u16,
+                config.mtu,
                 config.flow_policy,
                 config.initial_credits,
                 ble,
