@@ -5,7 +5,7 @@ use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::DynamicReceiver;
 
-use crate::att::{self, Att, ATT_HANDLE_VALUE_NTF_OPTCODE};
+use crate::att::{Att, ATT_HANDLE_VALUE_NTF_OPTCODE};
 use crate::attribute::CharacteristicHandle;
 use crate::attribute_server::AttributeServer;
 use crate::connection::Connection;
@@ -39,13 +39,12 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                     let mut w = WriteCursor::new(response.as_mut());
                     let (mut header, mut data) = w.split(4)?;
 
-                    match att {
-                        Att::ExchangeMtu { mtu } => {
-                            let mtu = self.connections.exchange_att_mtu(handle, mtu);
-                            data.write(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE)?;
-                            data.write(mtu)?;
-
-                            header.write(data.len() as u16)?;
+                    match self.server.process(handle, att, data.write_buf()) {
+                        Ok(Some(written)) => {
+                            let mtu = self.connections.get_att_mtu(handle);
+                            data.commit(written)?;
+                            data.truncate(mtu as usize);
+                            header.write(written as u16)?;
                             header.write(4_u16)?;
                             let len = header.len() + data.len();
                             self.tx
@@ -54,27 +53,12 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                                 .send(Pdu::new(response, len).as_ref())
                                 .await?;
                         }
-                        _ => match self.server.process(handle, att, data.write_buf()) {
-                            Ok(Some(written)) => {
-                                let mtu = self.connections.get_att_mtu(handle);
-                                data.commit(written)?;
-                                data.truncate(mtu as usize);
-                                header.write(written as u16)?;
-                                header.write(4_u16)?;
-                                let len = header.len() + data.len();
-                                self.tx
-                                    .acl(handle, 1)
-                                    .await?
-                                    .send(Pdu::new(response, len).as_ref())
-                                    .await?;
-                            }
-                            Ok(None) => {
-                                debug!("No response sent");
-                            }
-                            Err(e) => {
-                                warn!("Error processing attribute: {:?}", e);
-                            }
-                        },
+                        Ok(None) => {
+                            debug!("No response sent");
+                        }
+                        Err(e) => {
+                            warn!("Error processing attribute: {:?}", e);
+                        }
                     }
                 }
                 Err(e) => {

@@ -24,7 +24,7 @@ use bt_hci::param::{
     FilterDuplicates, InitiatingPhy, LeEventMask, Operation, PhyParams, ScanningPhy,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, TryReceiveError};
 use embassy_sync::once_lock::OnceLock;
@@ -33,7 +33,7 @@ use futures::pin_mut;
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::connection::{ConnectConfig, Connection};
-use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, DynamicConnectionManager, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType, EMPTY_SAR};
 use crate::packet_pool::{AllocId, GlobalPacketPool, PacketPool, Qos};
@@ -42,9 +42,9 @@ use crate::scan::{PhySet, ScanConfig, ScanReport};
 use crate::types::l2cap::{
     L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL,
 };
+use crate::{att, Address, BleHostError, Error};
 #[cfg(feature = "gatt")]
 use crate::{attribute::AttributeTable, gatt::GattServer};
-use crate::{Address, BleHostError, Error};
 
 const L2CAP_RXQ: usize = 1;
 
@@ -97,6 +97,7 @@ pub struct BleHost<'d, T> {
     pub(crate) channels: ChannelManager<'d, L2CAP_RXQ>,
     pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
     pub(crate) pool: &'static dyn GlobalPacketPool,
+    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
     advertiser_terminations: Channel<NoopRawMutex, AdvHandle, 1>,
@@ -138,6 +139,7 @@ where
             att_inbound: Channel::new(),
             scanner: Channel::new(),
             advertiser_terminations: Channel::new(),
+            outbound: Channel::new(),
         }
     }
 
@@ -601,9 +603,17 @@ where
     }
 
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
-        let (header, packet) = match acl.boundary_flag() {
+        let (header, mut packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
                 let (header, data) = L2capHeader::from_hci_bytes(acl.data())?;
+
+                // Ignore channels we don't support
+                if header.channel < L2CAP_CID_DYN_START
+                    && !(&[L2CAP_CID_LE_U_SIGNAL, L2CAP_CID_ATT].contains(&header.channel))
+                {
+                    warn!("[host] unsupported l2cap channel id {}", header.channel);
+                    return Ok(());
+                }
 
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
@@ -614,7 +624,7 @@ where
 
                 let Some(mut p) = self.pool.alloc(AllocId::from_channel(header.channel)) else {
                     info!("No memory for packets on channel {}", header.channel);
-                    return Err(Error::OutOfMemory);
+                    return Err(Error::OutOfMemory.into());
                 };
                 p.as_mut()[..data.len()].copy_from_slice(data);
 
@@ -636,18 +646,40 @@ where
             }
             other => {
                 warn!("Unexpected boundary flag: {:?}!", other);
-                return Err(Error::NotSupported);
+                return Err(Error::NotSupported.into());
             }
         };
 
         match header.channel {
             L2CAP_CID_ATT => {
-                #[cfg(feature = "gatt")]
-                self.att_inbound
-                    .send((acl.handle(), Pdu::new(packet, header.length as usize)))
-                    .await;
-                #[cfg(not(feature = "gatt"))]
-                return Err(Error::NotSupported);
+                // Handle ATT MTU exchange here since it doesn't strictly require
+                // gatt to be enabled.
+                if let att::Att::ExchangeMtu { mtu } = att::Att::decode(&packet.as_ref()[..header.length as usize])? {
+                    let mut w = WriteCursor::new(packet.as_mut());
+
+                    let mtu = self.connections.exchange_att_mtu(acl.handle(), mtu);
+
+                    let l2cap = L2capHeader {
+                        channel: L2CAP_CID_ATT,
+                        length: 3,
+                    };
+
+                    w.write_hci(&l2cap)?;
+                    w.write(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE)?;
+                    w.write(mtu)?;
+                    let len = w.len();
+                    w.finish();
+
+                    self.outbound.send((acl.handle(), Pdu::new(packet, len))).await;
+                } else {
+                    #[cfg(feature = "gatt")]
+                    self.att_inbound
+                        .send((acl.handle(), Pdu::new(packet, header.length as usize)))
+                        .await;
+
+                    #[cfg(not(feature = "gatt"))]
+                    return Err(Error::NotSupported.into());
+                }
             }
             L2CAP_CID_LE_U_SIGNAL => {
                 panic!("le signalling channel was fragmented, impossible!");
@@ -753,6 +785,25 @@ where
         };
         pin_mut!(control_fut);
 
+        let tx_fut = async {
+            loop {
+                let (conn, pdu) = self.outbound.receive().await;
+                match self.acl(conn, 1).await {
+                    Ok(mut sender) => {
+                        if let Err(e) = sender.send(pdu.as_ref()).await {
+                            warn!("[host] error sending outbound pdu");
+                            return Err(e);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("[host] error requesting sending outbound pdu");
+                        return Err(e);
+                    }
+                }
+            }
+        };
+        pin_mut!(tx_fut);
+
         loop {
             // Task handling receiving data from the controller.
             let rx_fut = async {
@@ -848,9 +899,11 @@ where
             };
 
             // info!("Entering select loop");
-            let result: Result<(), BleHostError<T::Error>> = match select(&mut control_fut, rx_fut).await {
-                Either::First(result) => result,
-                Either::Second(result) => result,
+            let result: Result<(), BleHostError<T::Error>> = match select3(&mut control_fut, rx_fut, &mut tx_fut).await
+            {
+                Either3::First(result) => result,
+                Either3::Second(result) => result,
+                Either3::Third(result) => result,
             };
             result?;
         }

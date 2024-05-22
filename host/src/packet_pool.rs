@@ -6,7 +6,6 @@ use embassy_sync::blocking_mutex::Mutex;
 use crate::types::l2cap::{L2CAP_CID_ATT, L2CAP_CID_DYN_START};
 
 // Generic client ID used by ATT PDU
-#[cfg(feature = "gatt")]
 pub(crate) const ATT_ID: AllocId = AllocId(0);
 
 #[derive(Clone, Copy, Debug)]
@@ -16,22 +15,18 @@ pub struct AllocId(usize);
 impl AllocId {
     pub fn dynamic(idx: usize) -> AllocId {
         // Dynamic range starts at 2
-        #[cfg(feature = "gatt")]
         return AllocId(1 + idx);
-        #[cfg(not(feature = "gatt"))]
-        return AllocId(idx);
     }
 
     pub fn from_channel(cid: u16) -> AllocId {
         match cid {
             L2CAP_CID_ATT => {
-                #[cfg(feature = "gatt")]
                 return ATT_ID;
-                #[cfg(not(feature = "gatt"))]
-                panic!("gatt feature must be enabled to support gatt");
             }
             cid if cid >= L2CAP_CID_DYN_START => Self::dynamic((cid - L2CAP_CID_DYN_START) as usize),
-            _ => unimplemented!(),
+            cid => {
+                panic!("unexpected channel id {}", cid);
+            }
         }
     }
 }
@@ -147,7 +142,6 @@ pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIEN
 impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> PacketPool<M, MTU, N, CLIENTS> {
     pub fn new(qos: Qos) -> Self {
         // Need at least 1 for gatt
-        #[cfg(feature = "gatt")]
         assert!(CLIENTS >= 1);
         Self {
             state: Mutex::new(State::new()),

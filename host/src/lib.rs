@@ -72,6 +72,7 @@ pub enum BleHostError<E> {
 pub enum Error {
     HciEncode(bt_hci::param::Error),
     HciDecode(FromHciBytesError),
+    Att(att::AttDecodeError),
     InsufficientSpace,
     InvalidValue,
     Advertisement(AdvertisementDataError),
@@ -92,6 +93,12 @@ pub enum Error {
 impl<E> From<Error> for BleHostError<E> {
     fn from(value: Error) -> Self {
         Self::BleHost(value)
+    }
+}
+
+impl From<att::AttDecodeError> for Error {
+    fn from(error: att::AttDecodeError) -> Self {
+        Self::Att(error)
     }
 }
 
