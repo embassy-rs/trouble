@@ -1,6 +1,6 @@
 //! Advertisement config.
+use bt_hci::param::AdvEventProps;
 pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, PhyKind};
-use bt_hci::param::{AdvEventProps, AdvHandle, AdvSet};
 use embassy_time::Duration;
 
 use crate::cursor::{ReadCursor, WriteCursor};
@@ -8,7 +8,7 @@ use crate::types::uuid::Uuid;
 use crate::{codec, Address};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
 #[repr(i8)]
 pub enum TxPower {
     Minus40dBm = -40,
@@ -27,8 +27,17 @@ pub enum TxPower {
     Plus8dBm = 8,
 }
 
-#[derive(Copy, Clone)]
-pub struct AdvertisementConfig {
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AdvertisementSet<'d> {
+    pub handle: u8,
+    pub params: &'d AdvertisementParameters,
+    pub data: Advertisement<'d>,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug)]
+pub struct AdvertisementParameters {
     pub primary_phy: PhyKind,
     pub secondary_phy: PhyKind,
     pub tx_power: TxPower,
@@ -45,7 +54,7 @@ pub struct AdvertisementConfig {
     pub filter_policy: AdvFilterPolicy,
 }
 
-impl Default for AdvertisementConfig {
+impl Default for AdvertisementParameters {
     fn default() -> Self {
         Self {
             primary_phy: PhyKind::Le1M,
@@ -61,14 +70,13 @@ impl Default for AdvertisementConfig {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawAdvertisement<'d> {
     pub(crate) props: AdvEventProps,
     pub(crate) adv_data: &'d [u8],
     pub(crate) scan_data: &'d [u8],
     pub(crate) peer: Option<Address>,
-    pub(crate) set: AdvSet,
 }
 
 impl<'d> Default for RawAdvertisement<'d> {
@@ -81,52 +89,50 @@ impl<'d> Default for RawAdvertisement<'d> {
             adv_data: &[],
             scan_data: &[],
             peer: None,
-            set: AdvSet {
-                adv_handle: AdvHandle::new(0),
-                duration: bt_hci::param::Duration::from_millis(0),
-                max_ext_adv_events: 0,
-            },
         }
     }
 }
 
-/// Legacy advertisement types, which works with BLE 4.0 and newer
+/// Advertisement payload depending on which advertisement kind requested.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Advertisement<'d> {
-    ConnectableScannableUndirected { adv_data: &'d [u8], scan_data: &'d [u8] },
-    ConnectableNonscannableDirected { peer: Address },
-    ConnectableNonscannableDirectedHighDuty { peer: Address },
-    NonconnectableScannableUndirected { adv_data: &'d [u8], scan_data: &'d [u8] },
-    NonconnectableNonscannableUndirected { adv_data: &'d [u8] },
-    Extended(ExtendedAdvertisement<'d>),
-}
-
-/// Extended advertisement types, which works with BLE 5.0 and newer
-pub enum ExtendedAdvertisement<'d> {
-    ConnectableNonscannableUndirected {
-        set_id: u8,
+    ConnectableScannableUndirected {
         adv_data: &'d [u8],
-    },
-    ConnectableNonscannableDirected {
-        set_id: u8,
-        peer: Address,
-        adv_data: &'d [u8],
-    },
-    NonconnectableScannableUndirected {
-        set_id: u8,
         scan_data: &'d [u8],
     },
-    NonconnectableScannableDirected {
-        set_id: u8,
+    ConnectableNonscannableDirected {
         peer: Address,
+    },
+    ConnectableNonscannableDirectedHighDuty {
+        peer: Address,
+    },
+    NonconnectableScannableUndirected {
+        adv_data: &'d [u8],
         scan_data: &'d [u8],
     },
     NonconnectableNonscannableUndirected {
-        set_id: u8,
+        adv_data: &'d [u8],
+    },
+    ExtConnectableNonscannableUndirected {
+        adv_data: &'d [u8],
+    },
+    ExtConnectableNonscannableDirected {
+        peer: Address,
+        adv_data: &'d [u8],
+    },
+    ExtNonconnectableScannableUndirected {
+        scan_data: &'d [u8],
+    },
+    ExtNonconnectableScannableDirected {
+        peer: Address,
+        scan_data: &'d [u8],
+    },
+    ExtNonconnectableNonscannableUndirected {
         anonymous: bool,
         adv_data: &'d [u8],
     },
-    NonconnectableNonscannableDirected {
-        set_id: u8,
+    ExtNonconnectableNonscannableDirected {
         anonymous: bool,
         peer: Address,
         adv_data: &'d [u8],
@@ -145,11 +151,6 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
                 adv_data,
                 scan_data,
                 peer: None,
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(0),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
             Advertisement::ConnectableNonscannableDirected { peer } => RawAdvertisement {
                 props: AdvEventProps::new()
@@ -161,11 +162,6 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
                 adv_data: &[],
                 scan_data: &[],
                 peer: Some(peer),
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(0),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
             Advertisement::ConnectableNonscannableDirectedHighDuty { peer } => RawAdvertisement {
                 props: AdvEventProps::new()
@@ -177,11 +173,6 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
                 adv_data: &[],
                 scan_data: &[],
                 peer: Some(peer),
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(0),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
             Advertisement::NonconnectableScannableUndirected { adv_data, scan_data } => RawAdvertisement {
                 props: AdvEventProps::new()
@@ -192,11 +183,6 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
                 adv_data,
                 scan_data,
                 peer: None,
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(0),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
             Advertisement::NonconnectableNonscannableUndirected { adv_data } => RawAdvertisement {
                 props: AdvEventProps::new()
@@ -207,59 +193,27 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
                 adv_data,
                 scan_data: &[],
                 peer: None,
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(0),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
-            Advertisement::Extended(ext) => ext.into(),
-        }
-    }
-}
-
-impl<'d> From<ExtendedAdvertisement<'d>> for RawAdvertisement<'d> {
-    fn from(val: ExtendedAdvertisement<'d>) -> RawAdvertisement<'d> {
-        match val {
-            ExtendedAdvertisement::ConnectableNonscannableUndirected { adv_data, set_id } => RawAdvertisement {
+            Advertisement::ExtConnectableNonscannableUndirected { adv_data } => RawAdvertisement {
                 props: AdvEventProps::new().set_connectable_adv(true).set_scannable_adv(false),
                 adv_data,
                 scan_data: &[],
                 peer: None,
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(set_id),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
-            ExtendedAdvertisement::ConnectableNonscannableDirected { adv_data, peer, set_id } => RawAdvertisement {
+            Advertisement::ExtConnectableNonscannableDirected { adv_data, peer } => RawAdvertisement {
                 props: AdvEventProps::new().set_connectable_adv(true).set_scannable_adv(false),
                 adv_data,
                 scan_data: &[],
                 peer: Some(peer),
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(set_id),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
 
-            ExtendedAdvertisement::NonconnectableScannableUndirected { scan_data, set_id } => RawAdvertisement {
-                props: AdvEventProps::new().set_connectable_adv(false).set_scannable_adv(false),
+            Advertisement::ExtNonconnectableScannableUndirected { scan_data } => RawAdvertisement {
+                props: AdvEventProps::new().set_connectable_adv(false).set_scannable_adv(true),
                 adv_data: &[],
                 scan_data,
                 peer: None,
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(set_id),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
-            ExtendedAdvertisement::NonconnectableScannableDirected {
-                scan_data,
-                peer,
-                set_id,
-            } => RawAdvertisement {
+            Advertisement::ExtNonconnectableScannableDirected { scan_data, peer } => RawAdvertisement {
                 props: AdvEventProps::new()
                     .set_connectable_adv(false)
                     .set_scannable_adv(true)
@@ -267,17 +221,8 @@ impl<'d> From<ExtendedAdvertisement<'d>> for RawAdvertisement<'d> {
                 adv_data: &[],
                 scan_data,
                 peer: Some(peer),
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(set_id),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
-            ExtendedAdvertisement::NonconnectableNonscannableUndirected {
-                adv_data,
-                anonymous,
-                set_id,
-            } => RawAdvertisement {
+            Advertisement::ExtNonconnectableNonscannableUndirected { adv_data, anonymous } => RawAdvertisement {
                 props: AdvEventProps::new()
                     .set_connectable_adv(false)
                     .set_scannable_adv(false)
@@ -286,17 +231,11 @@ impl<'d> From<ExtendedAdvertisement<'d>> for RawAdvertisement<'d> {
                 adv_data,
                 scan_data: &[],
                 peer: None,
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(set_id),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
-            ExtendedAdvertisement::NonconnectableNonscannableDirected {
+            Advertisement::ExtNonconnectableNonscannableDirected {
                 adv_data,
                 peer,
                 anonymous,
-                set_id,
             } => RawAdvertisement {
                 props: AdvEventProps::new()
                     .set_connectable_adv(false)
@@ -306,11 +245,6 @@ impl<'d> From<ExtendedAdvertisement<'d>> for RawAdvertisement<'d> {
                 adv_data,
                 scan_data: &[],
                 peer: Some(peer),
-                set: AdvSet {
-                    adv_handle: AdvHandle::new(set_id),
-                    duration: bt_hci::param::Duration::from_millis(0),
-                    max_ext_adv_events: 0,
-                },
             },
         }
     }

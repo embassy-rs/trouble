@@ -8,9 +8,10 @@ use core::task::Poll;
 use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnCancel,
-    LeExtCreateConn, LeReadBufferSize, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetAdvSetRandomAddr,
-    LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanEnable, LeSetExtScanParams,
-    LeSetExtScanResponseData, LeSetRandomAddr, LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
+    LeExtCreateConn, LeReadBufferSize, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
+    LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanEnable,
+    LeSetExtScanParams, LeSetExtScanResponseData, LeSetRandomAddr, LeSetScanEnable, LeSetScanParams,
+    LeSetScanResponseData,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -19,17 +20,17 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
-    AddrKind, AdvChannelMap, AdvHandle, AdvKind, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates,
-    InitiatingPhy, LeEventMask, Operation, PhyParams, ScanningPhy,
+    AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask,
+    FilterDuplicates, InitiatingPhy, LeEventMask, Operation, PhyParams, ScanningPhy,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::channel::Channel;
+use embassy_sync::channel::{Channel, TryReceiveError};
 use embassy_sync::once_lock::OnceLock;
 use futures::pin_mut;
 
-use crate::advertise::{Advertisement, AdvertisementConfig, RawAdvertisement};
+use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
@@ -98,6 +99,7 @@ pub struct BleHost<'d, T> {
     pub(crate) pool: &'static dyn GlobalPacketPool,
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
+    advertiser_terminations: Channel<NoopRawMutex, AdvHandle, 1>,
 }
 
 #[derive(Default)]
@@ -135,6 +137,7 @@ where
             pool: &host_resources.pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
+            advertiser_terminations: Channel::new(),
         }
     }
 
@@ -407,8 +410,8 @@ where
     //
     pub async fn advertise<'k>(
         &self,
-        config: &AdvertisementConfig,
-        params: Advertisement<'k>,
+        params: &AdvertisementParameters,
+        data: Advertisement<'k>,
     ) -> Result<Connection, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetAdvData>
@@ -419,146 +422,165 @@ where
         // May fail if already disabled
         let _ = self.command(LeSetAdvEnable::new(false)).await;
 
-        let mut params: RawAdvertisement = params.into();
-        let timeout = config
-            .timeout
-            .map(|m| m.into())
-            .unwrap_or(bt_hci::param::Duration::from_secs(0));
-        let max_events = config.max_events.unwrap_or(0);
-
-        params.set.duration = timeout;
-        params.set.max_ext_adv_events = max_events;
-
-        if !params.props.legacy_adv() {
+        let data: RawAdvertisement = data.into();
+        if !data.props.legacy_adv() {
             return Err(Error::InvalidValue.into());
         }
 
-        let kind = match (params.props.connectable_adv(), params.props.scannable_adv()) {
+        let kind = match (data.props.connectable_adv(), data.props.scannable_adv()) {
             (true, true) => AdvKind::AdvInd,
             (true, false) => AdvKind::AdvDirectIndLow,
             (false, true) => AdvKind::AdvScanInd,
             (false, false) => AdvKind::AdvNonconnInd,
         };
-        let peer = params.peer.unwrap_or(Address {
+        let peer = data.peer.unwrap_or(Address {
             kind: AddrKind::PUBLIC,
             addr: BdAddr::default(),
         });
 
         self.command(LeSetAdvParams::new(
-            config.interval_min.into(),
-            config.interval_max.into(),
+            params.interval_min.into(),
+            params.interval_max.into(),
             kind,
             self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             peer.kind,
             peer.addr,
-            config.channel_map.unwrap_or(AdvChannelMap::ALL),
-            config.filter_policy,
+            params.channel_map.unwrap_or(AdvChannelMap::ALL),
+            params.filter_policy,
         ))
         .await?;
 
-        if !params.adv_data.is_empty() {
-            let mut data = [0; 31];
-            let to_copy = params.adv_data.len().min(data.len());
-            data[..to_copy].copy_from_slice(&params.adv_data[..to_copy]);
-            self.command(LeSetAdvData::new(to_copy as u8, data)).await?;
+        if !data.adv_data.is_empty() {
+            let mut buf = [0; 31];
+            let to_copy = data.adv_data.len().min(buf.len());
+            buf[..to_copy].copy_from_slice(&data.adv_data[..to_copy]);
+            self.command(LeSetAdvData::new(to_copy as u8, buf)).await?;
         }
 
-        if !params.scan_data.is_empty() {
-            let mut data = [0; 31];
-            let to_copy = params.scan_data.len().min(data.len());
-            data[..to_copy].copy_from_slice(&params.scan_data[..to_copy]);
-            self.command(LeSetScanResponseData::new(to_copy as u8, data)).await?;
+        if !data.scan_data.is_empty() {
+            let mut buf = [0; 31];
+            let to_copy = data.scan_data.len().min(buf.len());
+            buf[..to_copy].copy_from_slice(&data.scan_data[..to_copy]);
+            self.command(LeSetScanResponseData::new(to_copy as u8, buf)).await?;
         }
 
         self.command(LeSetAdvEnable::new(true)).await?;
-        let handle = self.connections.accept(&[]).await;
-        self.command(LeSetAdvEnable::new(false)).await?;
-        Ok(Connection::new(handle))
+        match select(self.advertiser_terminations.receive(), self.connections.accept(&[])).await {
+            Either::First(handle) => Err(Error::Timeout.into()),
+            Either::Second(handle) => {
+                self.command(LeSetAdvEnable::new(false)).await?;
+                Ok(Connection::new(handle))
+            }
+        }
     }
 
     /// Starts sending BLE advertisements according to the provided config.
     ///
     /// Advertisements are stopped when a connection is made against this host,
     /// in which case a handle for the connection is returned.
-    pub async fn advertise_ext<'k>(
+    pub async fn advertise_ext<'k, const N: usize>(
         &self,
-        config: &AdvertisementConfig,
-        params: impl Into<RawAdvertisement<'k>>,
+        sets: &[AdvertisementSet<'k>; N],
     ) -> Result<Connection, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
             + ControllerCmdSync<LeSetExtAdvParams>
             + ControllerCmdSync<LeSetAdvSetRandomAddr>
+            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
         // May fail if already disabled
         let _ = self.command(LeSetExtAdvEnable::new(false, &[])).await;
         let _ = self.command(LeClearAdvSets::new()).await;
-        let handle = AdvHandle::new(0); // TODO: Configurable?
 
-        let mut params: RawAdvertisement = params.into();
-        let timeout = config
-            .timeout
-            .map(|m| m.into())
-            .unwrap_or(bt_hci::param::Duration::from_secs(0));
-        let max_events = config.max_events.unwrap_or(0);
+        // Check host supports the required advertisement sets
+        let result = self.command(LeReadNumberOfSupportedAdvSets::new()).await?;
+        if result < N as u8 {
+            return Err(Error::InsufficientSpace.into());
+        }
 
-        params.set.duration = timeout;
-        params.set.max_ext_adv_events = max_events;
+        while self.advertiser_terminations.try_receive() != Err(TryReceiveError::Empty) {}
 
-        let peer = params.peer.unwrap_or(Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::default(),
+        for set in sets {
+            let handle = AdvHandle::new(set.handle);
+            let data: RawAdvertisement<'k> = set.data.into();
+            let params = set.params;
+            let peer = data.peer.unwrap_or(Address {
+                kind: AddrKind::PUBLIC,
+                addr: BdAddr::default(),
+            });
+            self.command(LeSetExtAdvParams::new(
+                handle,
+                data.props,
+                params.interval_min.into(),
+                params.interval_max.into(),
+                params.channel_map.unwrap_or(AdvChannelMap::ALL),
+                self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+                peer.kind,
+                peer.addr,
+                params.filter_policy,
+                params.tx_power as i8,
+                params.primary_phy,
+                0,
+                params.secondary_phy,
+                0,
+                false,
+            ))
+            .await?;
+
+            if let Some(address) = self.address {
+                self.command(LeSetAdvSetRandomAddr::new(handle, address.addr)).await?;
+            }
+
+            if !data.adv_data.is_empty() {
+                self.command(LeSetExtAdvData::new(handle, Operation::Complete, false, data.adv_data))
+                    .await?;
+            }
+
+            if !data.scan_data.is_empty() {
+                self.command(LeSetExtScanResponseData::new(
+                    handle,
+                    Operation::Complete,
+                    false,
+                    data.scan_data,
+                ))
+                .await?;
+            }
+        }
+
+        let advset: [AdvSet; N] = sets.map(|set| AdvSet {
+            adv_handle: AdvHandle::new(set.handle),
+            duration: set
+                .params
+                .timeout
+                .unwrap_or(embassy_time::Duration::from_micros(0))
+                .into(),
+            max_ext_adv_events: set.params.max_events.unwrap_or(0),
         });
-        self.command(LeSetExtAdvParams::new(
-            handle,
-            params.props,
-            config.interval_min.into(),
-            config.interval_max.into(),
-            config.channel_map.unwrap_or(AdvChannelMap::ALL),
-            self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
-            peer.kind,
-            peer.addr,
-            config.filter_policy,
-            config.tx_power as i8,
-            config.primary_phy,
-            0,
-            config.secondary_phy,
-            0,
-            false,
-        ))
-        .await?;
 
-        if let Some(address) = self.address {
-            self.command(LeSetAdvSetRandomAddr::new(handle, address.addr)).await?;
+        self.command(LeSetExtAdvEnable::new(true, &advset)).await?;
+
+        let mut terminated: [bool; N] = [false; N];
+        loop {
+            match select(self.advertiser_terminations.receive(), self.connections.accept(&[])).await {
+                Either::First(handle) => {
+                    for (i, s) in advset.iter().enumerate() {
+                        if s.adv_handle == handle {
+                            terminated[i] = true;
+                        }
+                    }
+                    if !terminated.contains(&false) {
+                        return Err(Error::Timeout.into());
+                    }
+                }
+                Either::Second(handle) => {
+                    self.command(LeSetExtAdvEnable::new(false, &[])).await?;
+                    return Ok(Connection::new(handle));
+                }
+            }
         }
-
-        if !params.adv_data.is_empty() {
-            self.command(LeSetExtAdvData::new(
-                handle,
-                Operation::Complete,
-                false,
-                params.adv_data,
-            ))
-            .await?;
-        }
-
-        if !params.scan_data.is_empty() {
-            self.command(LeSetExtScanResponseData::new(
-                handle,
-                Operation::Complete,
-                false,
-                params.scan_data,
-            ))
-            .await?;
-        }
-
-        self.command(LeSetExtAdvEnable::new(true, &[params.set])).await?;
-        let handle = self.connections.accept(&[]).await;
-        self.command(LeSetExtAdvEnable::new(false, &[])).await?;
-        Ok(Connection::new(handle))
     }
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
@@ -707,7 +729,7 @@ where
                     //                    .enable_le_conn_iq_report(true)
                     //                    .enable_le_transmit_power_reporting(true)
                     //                    .enable_le_enhanced_conn_complete_v2(true)
-                    //                    .enable_le_adv_set_terminated(true)
+                    .enable_le_adv_set_terminated(true)
                     .enable_le_adv_report(true)
                     .enable_le_scan_timeout(true)
                     .enable_le_ext_adv_report(true),
@@ -773,6 +795,9 @@ where
                             LeEvent::LeScanTimeout(_) => {
                                 self.scanner.send(None).await;
                             }
+                            LeEvent::LeAdvertisingSetTerminated(set) => {
+                                self.advertiser_terminations.send(set.adv_handle).await;
+                            }
                             LeEvent::LeExtendedAdvertisingReport(data) => {
                                 self.scanner
                                     .send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)))
@@ -835,7 +860,7 @@ where
     pub(crate) async fn acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
         let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n as usize, Some(cx))).await?;
         Ok(AclSender {
-            ble: &self,
+            ble: self,
             handle,
             grant,
         })
@@ -850,7 +875,7 @@ where
             }
         };
         Ok(AclSender {
-            ble: &self,
+            ble: self,
             handle,
             grant,
         })
