@@ -732,9 +732,14 @@ where
                 info!("BleHost address set to {:?}", addr.addr);
             }
 
-            HostBufferSize::new(self.rx_pool.mtu() as u16, 0, config::L2CAP_RX_QUEUE_SIZE as u16, 0)
-                .exec(&self.controller)
-                .await?;
+            HostBufferSize::new(
+                self.rx_pool.mtu() as u16,
+                0,
+                config::L2CAP_RX_PACKET_POOL_SIZE as u16,
+                0,
+            )
+            .exec(&self.controller)
+            .await?;
 
             SetEventMask::new(
                 EventMask::new()
