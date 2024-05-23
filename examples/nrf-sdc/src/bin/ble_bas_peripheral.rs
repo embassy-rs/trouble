@@ -49,9 +49,6 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
-/// Number of packets available in the pool
-const PACKET_POOL_SIZE: usize = 10;
-
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
     rng: &'d RngPool,
@@ -105,9 +102,8 @@ async fn main(spawner: Spawner) {
     info!("Our address = {:02x}", my_addr());
     Timer::after(Duration::from_millis(200)).await;
 
-    static HOST_RESOURCES: StaticCell<
-        BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, PACKET_POOL_SIZE, L2CAP_MTU>,
-    > = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>> =
+        StaticCell::new();
     let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
 
     let mut ble: BleHost<'_, _> = BleHost::new(sdc, host_resources);

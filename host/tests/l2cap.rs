@@ -70,8 +70,8 @@ async fn l2cap_connection_oriented_channels() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = create_controller(&peripheral).await;
 
-        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 32, 27>> = StaticCell::new();
-        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
+        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27>> = StaticCell::new();
+        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::None));
         let mut adapter: BleHost<'_, _> = BleHost::new(controller_peripheral, host_resources);
 
         adapter.set_random_address(peripheral_address);
@@ -114,7 +114,6 @@ async fn l2cap_connection_oriented_channels() {
                     }
                     println!("[peripheral] data received");
 
-                    tokio::time::sleep(Duration::from_secs(1)).await;
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
                         ch1.send(&adapter, &tx).await?;
@@ -132,8 +131,8 @@ async fn l2cap_connection_oriented_channels() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = create_controller(&central).await;
-        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 32, 27>> = StaticCell::new();
-        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
+        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27>> = StaticCell::new();
+        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::None));
 
         let adapter: BleHost<'_, _> = BleHost::new(controller_central, host_resources);
 

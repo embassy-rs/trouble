@@ -30,7 +30,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     embassy_nrf::init(conf);
     apache_nimble::initialize_nimble();
 
-    static HOST_RESOURCE: StaticCell<BleHostResources<2, 2, 2, 27>> = StaticCell::new();
+    static HOST_RESOURCE: StaticCell<BleHostResources<2, 2, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCE.init(BleHostResources::new(PacketQos::None));
 
     let controller = apache_nimble::controller::NimbleController::new();

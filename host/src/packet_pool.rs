@@ -143,6 +143,15 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
     pub fn new(qos: Qos) -> Self {
         // Need at least 1 for gatt
         assert!(CLIENTS >= 1);
+        match qos {
+            Qos::None => {}
+            Qos::Fair => {
+                assert!(N >= CLIENTS);
+            }
+            Qos::Guaranteed(n) => {
+                assert!(N >= n);
+            }
+        }
         Self {
             state: Mutex::new(State::new()),
             qos,

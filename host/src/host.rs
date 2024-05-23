@@ -42,31 +42,27 @@ use crate::scan::{PhySet, ScanConfig, ScanReport};
 use crate::types::l2cap::{
     L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL,
 };
-use crate::{att, Address, BleHostError, Error};
+use crate::{att, config, Address, BleHostError, Error};
 #[cfg(feature = "gatt")]
 use crate::{attribute::AttributeTable, gatt::GattServer};
 
-const L2CAP_RXQ: usize = 1;
-
 /// BleHostResources holds the resources used by the host.
 ///
-/// The packet pool is used by the host to multiplex data streams, by allocating space for
+/// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct BleHostResources<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize> {
-    pool: PacketPool<NoopRawMutex, L2CAP_MTU, PACKETS, CHANNELS>,
+pub struct BleHostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize> {
+    rx_pool: PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }, CHANNELS>,
     connections: [ConnectionStorage; CONNS],
     channels: [ChannelStorage; CHANNELS],
-    channels_rx: [PacketChannel<L2CAP_RXQ>; CHANNELS],
+    channels_rx: [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>; CHANNELS],
     sar: [SarType; CONNS],
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>
-    BleHostResources<CONNS, CHANNELS, PACKETS, L2CAP_MTU>
-{
+impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize> BleHostResources<CONNS, CHANNELS, L2CAP_MTU> {
     /// Create a new instance of host resources with the provided QoS requirements for packets.
     pub fn new(qos: Qos) -> Self {
         Self {
-            pool: PacketPool::new(qos),
+            rx_pool: PacketPool::new(qos),
             connections: [ConnectionStorage::DISCONNECTED; CONNS],
             sar: [EMPTY_SAR; CONNS],
             channels: [ChannelStorage::DISCONNECTED; CHANNELS],
@@ -94,9 +90,9 @@ pub struct BleHost<'d, T> {
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
-    pub(crate) channels: ChannelManager<'d, L2CAP_RXQ>,
+    pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
-    pub(crate) pool: &'static dyn GlobalPacketPool,
+    pub(crate) rx_pool: &'static dyn GlobalPacketPool,
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
@@ -119,9 +115,9 @@ where
     ///
     /// The host requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
-    pub fn new<const CONNS: usize, const CHANNELS: usize, const PACKETS: usize, const L2CAP_MTU: usize>(
+    pub fn new<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize>(
         controller: T,
-        host_resources: &'static mut BleHostResources<CONNS, CHANNELS, PACKETS, L2CAP_MTU>,
+        host_resources: &'static mut BleHostResources<CONNS, CHANNELS, L2CAP_MTU>,
     ) -> Self {
         Self {
             address: None,
@@ -131,11 +127,11 @@ where
             connections: ConnectionManager::new(&mut host_resources.connections[..]),
             reassembly: PacketReassembly::new(&mut host_resources.sar[..]),
             channels: ChannelManager::new(
-                &host_resources.pool,
+                &host_resources.rx_pool,
                 &mut host_resources.channels[..],
                 &mut host_resources.channels_rx[..],
             ),
-            pool: &host_resources.pool,
+            rx_pool: &host_resources.rx_pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
             advertiser_terminations: Channel::new(),
@@ -594,8 +590,6 @@ where
         use crate::attribute_server::AttributeServer;
         GattServer {
             server: AttributeServer::new(table),
-            pool: self.pool,
-            pool_id: crate::packet_pool::ATT_ID,
             rx: self.att_inbound.receiver().into(),
             tx: self,
             connections: &self.connections,
@@ -622,7 +616,7 @@ where
                     return Ok(());
                 }
 
-                let Some(mut p) = self.pool.alloc(AllocId::from_channel(header.channel)) else {
+                let Some(mut p) = self.rx_pool.alloc(AllocId::from_channel(header.channel)) else {
                     info!("No memory for packets on channel {}", header.channel);
                     return Err(Error::OutOfMemory.into());
                 };
@@ -738,9 +732,14 @@ where
                 info!("BleHost address set to {:?}", addr.addr);
             }
 
-            HostBufferSize::new(self.pool.mtu() as u16, self.pool.mtu() as u8, 1, 1)
-                .exec(&self.controller)
-                .await?;
+            HostBufferSize::new(
+                self.rx_pool.mtu() as u16,
+                0,
+                config::L2CAP_RX_PACKET_POOL_SIZE as u16,
+                0,
+            )
+            .exec(&self.controller)
+            .await?;
 
             SetEventMask::new(
                 EventMask::new()

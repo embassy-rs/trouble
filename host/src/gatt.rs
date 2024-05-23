@@ -12,31 +12,34 @@ use crate::connection::Connection;
 use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::BleHost;
-use crate::packet_pool::{AllocId, GlobalPacketPool};
 use crate::pdu::Pdu;
 use crate::{BleHostError, Error};
 
-pub struct GattServer<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize> {
+pub struct GattServer<
+    'reference,
+    'values,
+    'resources,
+    M: RawMutex,
+    T: Controller,
+    const MAX: usize,
+    const ATT_MTU: usize = 23,
+> {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
     pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
     pub(crate) tx: &'reference BleHost<'resources, T>,
-    pub(crate) pool_id: AllocId,
-    pub(crate) pool: &'static dyn GlobalPacketPool,
     pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 
-impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize>
-    GattServer<'reference, 'values, 'resources, M, T, MAX>
+impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize, const ATT_MTU: usize>
+    GattServer<'reference, 'values, 'resources, M, T, MAX, ATT_MTU>
 {
     pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, BleHostError<T::Error>> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             match Att::decode(pdu.as_ref()) {
                 Ok(att) => {
-                    let Some(mut response) = self.pool.alloc(self.pool_id) else {
-                        return Err(Error::OutOfMemory.into());
-                    };
-                    let mut w = WriteCursor::new(response.as_mut());
+                    let mut tx = [0; ATT_MTU];
+                    let mut w = WriteCursor::new(&mut tx);
                     let (mut header, mut data) = w.split(4)?;
 
                     match self.server.process(handle, att, data.write_buf()) {
@@ -47,11 +50,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
                             header.write(written as u16)?;
                             header.write(4_u16)?;
                             let len = header.len() + data.len();
-                            self.tx
-                                .acl(handle, 1)
-                                .await?
-                                .send(Pdu::new(response, len).as_ref())
-                                .await?;
+                            self.tx.acl(handle, 1).await?.send(&tx[..len]).await?;
                         }
                         Ok(None) => {
                             debug!("No response sent");
@@ -89,10 +88,8 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
             return Ok(());
         }
 
-        let Some(mut packet) = self.pool.alloc(self.pool_id) else {
-            return Err(Error::OutOfMemory.into());
-        };
-        let mut w = WriteCursor::new(packet.as_mut());
+        let mut tx = [0; ATT_MTU];
+        let mut w = WriteCursor::new(&mut tx[..]);
         let (mut header, mut data) = w.split(4)?;
         data.write(ATT_HANDLE_VALUE_NTF_OPTCODE)?;
         data.write(handle.handle)?;
@@ -101,11 +98,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let total = header.len() + data.len();
-        self.tx
-            .acl(conn, 1)
-            .await?
-            .send(Pdu::new(packet, total).as_ref())
-            .await?;
+        self.tx.acl(conn, 1).await?.send(&tx[..total]).await?;
         Ok(())
     }
 }
