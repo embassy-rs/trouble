@@ -110,7 +110,7 @@ async fn main(spawner: Spawner) {
 
     static HOST_RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>> =
         StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
+    let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
 
     let mut ble: BleHost<'_, _> = BleHost::new(sdc, host_resources);
     ble.set_random_address(my_addr());

@@ -71,7 +71,7 @@ async fn l2cap_connection_oriented_channels() {
         let controller_peripheral = create_controller(&peripheral).await;
 
         static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27>> = StaticCell::new();
-        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::Guaranteed(4)));
+        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::None));
         let mut adapter: BleHost<'_, _> = BleHost::new(controller_peripheral, host_resources);
 
         adapter.set_random_address(peripheral_address);
