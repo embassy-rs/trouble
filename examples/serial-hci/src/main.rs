@@ -54,7 +54,7 @@ async fn main() {
 
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
-    static HOST_RESOURCES: StaticCell<BleHostResources<2, 4, 32, 27>> = StaticCell::new();
+    static HOST_RESOURCES: StaticCell<BleHostResources<2, 4, 27>> = StaticCell::new();
     let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
 
     let mut ble: BleHost<'_, _> = BleHost::new(controller, host_resources);
