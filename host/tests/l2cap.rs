@@ -114,7 +114,6 @@ async fn l2cap_connection_oriented_channels() {
                     }
                     println!("[peripheral] data received");
 
-                    tokio::time::sleep(Duration::from_secs(1)).await;
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
                         ch1.send(&adapter, &tx).await?;
