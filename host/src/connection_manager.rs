@@ -264,12 +264,36 @@ impl<'d> ConnectionManager<'d> {
     }
 }
 
-pub trait DynamicConnectionManager {
+pub(crate) trait DynamicConnectionManager {
+    fn role(&self, index: u8) -> LeConnRole;
+    fn handle(&self, index: u8) -> ConnHandle;
+    fn peer_address(&self, index: u8) -> BdAddr;
+    fn inc_ref(&self, index: u8);
+    fn dec_ref(&self, index: u8);
+    fn disconnect(&self, index: u8, reason: DisconnectReason);
     fn get_att_mtu(&self, conn: ConnHandle) -> u16;
     fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16;
 }
 
 impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
+    fn role(&self, index: u8) -> LeConnRole {
+        ConnectionManager::role(self, index)
+    }
+    fn handle(&self, index: u8) -> ConnHandle {
+        ConnectionManager::handle(self, index)
+    }
+    fn peer_address(&self, index: u8) -> BdAddr {
+        ConnectionManager::peer_address(self, index)
+    }
+    fn inc_ref(&self, index: u8) {
+        ConnectionManager::inc_ref(self, index)
+    }
+    fn dec_ref(&self, index: u8) {
+        ConnectionManager::dec_ref(self, index)
+    }
+    fn disconnect(&self, index: u8, reason: DisconnectReason) {
+        ConnectionManager::request_disconnect(self, index, reason)
+    }
     fn get_att_mtu(&self, conn: ConnHandle) -> u16 {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {

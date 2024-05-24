@@ -182,7 +182,7 @@ where
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_, 'd>, BleHostError<T::Error>>
+    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -221,7 +221,7 @@ where
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_, 'd>, BleHostError<T::Error>>
+    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -410,7 +410,7 @@ where
         &self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
-    ) -> Result<Connection<'_, 'd>, BleHostError<T::Error>>
+    ) -> Result<Connection<'_>, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
@@ -479,7 +479,7 @@ where
     pub async fn advertise_ext<'k, const N: usize>(
         &self,
         sets: &[AdvertisementSet<'k>; N],
-    ) -> Result<Connection<'_, 'd>, BleHostError<T::Error>>
+    ) -> Result<Connection<'_>, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>

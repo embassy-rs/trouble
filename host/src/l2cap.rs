@@ -79,7 +79,7 @@ impl<const TX_MTU: usize> L2capChannel<TX_MTU> {
     /// Await an incoming connection request matching the list of PSM.
     pub async fn accept<T: Controller>(
         ble: &BleHost<'_, T>,
-        connection: &Connection<'_, '_>,
+        connection: &Connection<'_>,
         psm: &[u16],
         config: &L2capChannelConfig,
     ) -> Result<L2capChannel<TX_MTU>, BleHostError<T::Error>> {
@@ -101,7 +101,7 @@ impl<const TX_MTU: usize> L2capChannel<TX_MTU> {
     /// Create a new connection request with the provided PSM.
     pub async fn create<T: Controller>(
         ble: &BleHost<'_, T>,
-        connection: &Connection<'_, '_>,
+        connection: &Connection<'_>,
         psm: u16,
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>>

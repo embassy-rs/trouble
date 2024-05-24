@@ -5,31 +5,10 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole};
 use embassy_time::Duration;
 
-use crate::connection_manager::ConnectionManager;
+use crate::connection_manager::DynamicConnectionManager;
 use crate::host::BleHost;
 use crate::scan::ScanConfig;
 use crate::BleHostError;
-
-pub struct Connection<'r, 'res> {
-    index: u8,
-    manager: &'r ConnectionManager<'res>,
-}
-
-impl<'r, 'res> Clone for Connection<'r, 'res> {
-    fn clone(&self) -> Self {
-        self.manager.inc_ref(self.index);
-        Self {
-            index: self.index,
-            manager: self.manager,
-        }
-    }
-}
-
-impl<'r, 'res> Drop for Connection<'r, 'res> {
-    fn drop(&mut self) {
-        self.manager.dec_ref(self.index);
-    }
-}
 
 pub struct ConnectConfig<'d> {
     pub scan_config: ScanConfig<'d>,
@@ -56,8 +35,29 @@ impl Default for ConnectParams {
     }
 }
 
-impl<'r, 'res> Connection<'r, 'res> {
-    pub(crate) fn new(index: u8, manager: &'r ConnectionManager<'res>) -> Self {
+pub struct Connection<'d> {
+    index: u8,
+    manager: &'d dyn DynamicConnectionManager,
+}
+
+impl<'d> Clone for Connection<'d> {
+    fn clone(&self) -> Self {
+        self.manager.inc_ref(self.index);
+        Self {
+            index: self.index,
+            manager: self.manager,
+        }
+    }
+}
+
+impl<'d> Drop for Connection<'d> {
+    fn drop(&mut self) {
+        self.manager.dec_ref(self.index);
+    }
+}
+
+impl<'d> Connection<'d> {
+    pub(crate) fn new(index: u8, manager: &'d dyn DynamicConnectionManager) -> Self {
         manager.inc_ref(index);
         Self { index, manager }
     }
@@ -79,7 +79,7 @@ impl<'r, 'res> Connection<'r, 'res> {
 
     pub fn disconnect(&self) {
         self.manager
-            .request_disconnect(self.index, DisconnectReason::RemoteUserTerminatedConn);
+            .disconnect(self.index, DisconnectReason::RemoteUserTerminatedConn);
     }
 
     /// The RSSI value for this connection.
