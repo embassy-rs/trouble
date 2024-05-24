@@ -21,7 +21,7 @@ use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
     AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask,
-    FilterDuplicates, InitiatingPhy, LeEventMask, Operation, PhyParams, ScanningPhy,
+    FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask, Operation, PhyParams, ScanningPhy, Status,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, select3, Either, Either3};
@@ -182,7 +182,7 @@ where
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection, BleHostError<T::Error>>
+    pub async fn connect(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_, 'd>, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -216,12 +216,12 @@ where
             config.connect_params.event_length.into(),
         ))
         .await?;
-        let handle = self.connections.accept(config.scan_config.filter_accept_list).await;
-        Ok(Connection::new(handle))
+        let index = self.connections.accept(config.scan_config.filter_accept_list).await;
+        Ok(Connection::new(index, &self.connections))
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection, BleHostError<T::Error>>
+    pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_, 'd>, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -261,8 +261,8 @@ where
             phy_params,
         ))
         .await?;
-        let handle = self.connections.accept(config.scan_config.filter_accept_list).await;
-        Ok(Connection::new(handle))
+        let index = self.connections.accept(config.scan_config.filter_accept_list).await;
+        Ok(Connection::new(index, &self.connections))
     }
 
     fn create_phy_params<P: Copy>(phy: P, phys: PhySet) -> PhyParams<P> {
@@ -410,7 +410,7 @@ where
         &self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
-    ) -> Result<Connection, BleHostError<T::Error>>
+    ) -> Result<Connection<'_, 'd>, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
@@ -465,9 +465,9 @@ where
         self.command(LeSetAdvEnable::new(true)).await?;
         match select(self.advertiser_terminations.receive(), self.connections.accept(&[])).await {
             Either::First(handle) => Err(Error::Timeout.into()),
-            Either::Second(handle) => {
+            Either::Second(index) => {
                 self.command(LeSetAdvEnable::new(false)).await?;
-                Ok(Connection::new(handle))
+                Ok(Connection::new(index, &self.connections))
             }
         }
     }
@@ -479,7 +479,7 @@ where
     pub async fn advertise_ext<'k, const N: usize>(
         &self,
         sets: &[AdvertisementSet<'k>; N],
-    ) -> Result<Connection, BleHostError<T::Error>>
+    ) -> Result<Connection<'_, 'd>, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
@@ -573,9 +573,9 @@ where
                         return Err(Error::Timeout.into());
                     }
                 }
-                Either::Second(handle) => {
+                Either::Second(index) => {
                     self.command(LeSetExtAdvEnable::new(false, &[])).await?;
-                    return Ok(Connection::new(handle));
+                    return Ok(Connection::new(index, &self.connections));
                 }
             }
         }
@@ -593,6 +593,42 @@ where
             rx: self.att_inbound.receiver().into(),
             tx: self,
             connections: &self.connections,
+        }
+    }
+
+    async fn handle_connection(
+        &self,
+        status: Status,
+        handle: ConnHandle,
+        peer_addr_kind: AddrKind,
+        peer_addr: BdAddr,
+        role: LeConnRole,
+    ) where
+        T: ControllerCmdSync<Disconnect>,
+    {
+        match status.to_result() {
+            Ok(_) => {
+                if let Err(err) = self.connections.connect(handle, peer_addr_kind, peer_addr, role) {
+                    warn!("Error establishing connection: {:?}", err);
+                    let _ = self
+                        .command(Disconnect::new(
+                            handle,
+                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                        ))
+                        .await;
+                } else {
+                    let mut m = self.metrics.borrow_mut();
+                    m.connect_events = m.connect_events.wrapping_add(1);
+                }
+            }
+            Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
+                warn!("Connect cancelled");
+                self.connections.canceled();
+            }
+            Err(e) => {
+                warn!("Error connection complete");
+                warn!("Error connection complete event: {:?}", e);
+            }
         }
     }
 
@@ -755,8 +791,8 @@ where
             LeSetEventMask::new(
                 LeEventMask::new()
                     .enable_le_conn_complete(true)
+                    .enable_le_enhanced_conn_complete(true)
                     //                    .enable_le_conn_update_complete(true)
-                    //                    .enable_le_enhanced_conn_complete(true)
                     //                    .enable_le_conn_iq_report(true)
                     //                    .enable_le_transmit_power_reporting(true)
                     //                    .enable_le_enhanced_conn_complete_v2(true)
@@ -819,29 +855,14 @@ where
                     },
                     Ok(ControllerToHostPacket::Event(event)) => match event {
                         Event::Le(event) => match event {
-                            LeEvent::LeConnectionComplete(e) => match e.status.to_result() {
-                                Ok(_) => {
-                                    if let Err(err) = self.connections.connect(e.handle, &e) {
-                                        warn!("Error establishing connection: {:?}", err);
-                                        let _ = self
-                                            .command(Disconnect::new(
-                                                e.handle,
-                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                            ))
-                                            .await;
-                                    } else {
-                                        let mut m = self.metrics.borrow_mut();
-                                        m.connect_events = m.connect_events.wrapping_add(1);
-                                    }
-                                }
-                                Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
-                                    self.connections.canceled();
-                                }
-                                Err(e) => {
-                                    warn!("Error connection complete");
-                                    warn!("Error connection complete event: {:?}", e);
-                                }
-                            },
+                            LeEvent::LeConnectionComplete(e) => {
+                                self.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role)
+                                    .await;
+                            }
+                            LeEvent::LeEnhancedConnectionComplete(e) => {
+                                self.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role)
+                                    .await;
+                            }
                             LeEvent::LeScanTimeout(_) => {
                                 self.scanner.send(None).await;
                             }
@@ -864,6 +885,7 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             let handle = e.handle;
+                            info!("Disconnection event from {}", handle.raw());
                             let _ = self.connections.disconnect(handle);
                             let _ = self.channels.disconnected(handle);
                             self.reassembly.disconnected(handle);

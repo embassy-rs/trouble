@@ -1,7 +1,5 @@
 //! L2CAP channels.
-use bt_hci::cmd::link_control::Disconnect;
-use bt_hci::controller::{blocking, Controller, ControllerCmdSync};
-use bt_hci::param::DisconnectReason;
+use bt_hci::controller::{blocking, Controller};
 
 pub use crate::channel_manager::CreditFlowPolicy;
 use crate::connection::Connection;
@@ -81,7 +79,7 @@ impl<const TX_MTU: usize> L2capChannel<TX_MTU> {
     /// Await an incoming connection request matching the list of PSM.
     pub async fn accept<T: Controller>(
         ble: &BleHost<'_, T>,
-        connection: &Connection,
+        connection: &Connection<'_, '_>,
         psm: &[u16],
         config: &L2capChannelConfig,
     ) -> Result<L2capChannel<TX_MTU>, BleHostError<T::Error>> {
@@ -95,23 +93,15 @@ impl<const TX_MTU: usize> L2capChannel<TX_MTU> {
     }
 
     /// Disconnect this channel.
-    pub fn disconnect<T: Controller + ControllerCmdSync<Disconnect>>(
-        &mut self,
-        ble: &BleHost<'_, T>,
-        close_connection: bool,
-    ) -> Result<(), BleHostError<T::Error>> {
-        let handle = ble.channels.disconnect(self.cid)?;
-        if close_connection {
-            ble.connections
-                .request_disconnect(handle, DisconnectReason::RemoteUserTerminatedConn)?;
-        }
+    pub fn disconnect<T: Controller>(&mut self, ble: &BleHost<'_, T>) -> Result<(), BleHostError<T::Error>> {
+        ble.channels.disconnect(self.cid)?;
         Ok(())
     }
 
     /// Create a new connection request with the provided PSM.
     pub async fn create<T: Controller>(
         ble: &BleHost<'_, T>,
-        connection: &Connection,
+        connection: &Connection<'_, '_>,
         psm: u16,
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>>
