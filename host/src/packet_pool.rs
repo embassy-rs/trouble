@@ -15,14 +15,12 @@ pub struct AllocId(usize);
 impl AllocId {
     pub fn dynamic(idx: usize) -> AllocId {
         // Dynamic range starts at 2
-        return AllocId(1 + idx);
+        AllocId(1 + idx)
     }
 
     pub fn from_channel(cid: u16) -> AllocId {
         match cid {
-            L2CAP_CID_ATT => {
-                return ATT_ID;
-            }
+            L2CAP_CID_ATT => ATT_ID,
             cid if cid >= L2CAP_CID_DYN_START => Self::dynamic((cid - L2CAP_CID_DYN_START) as usize),
             cid => {
                 panic!("unexpected channel id {}", cid);

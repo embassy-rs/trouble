@@ -180,10 +180,8 @@ impl<'d> ConnectionManager<'d> {
                 state.refcount.checked_sub(1),
                 "bug: dropping a connection with refcount 0"
             );
-            if state.refcount == 0 {
-                if state.state == ConnectionState::Connected {
-                    state.state = ConnectionState::Disconnecting(DisconnectReason::RemoteUserTerminatedConn);
-                }
+            if state.refcount == 0 && state.state == ConnectionState::Connected {
+                state.state = ConnectionState::Disconnecting(DisconnectReason::RemoteUserTerminatedConn);
             }
         });
     }

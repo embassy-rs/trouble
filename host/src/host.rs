@@ -693,7 +693,7 @@ where
 
                 let Some(mut p) = self.rx_pool.alloc(AllocId::from_channel(header.channel)) else {
                     info!("No memory for packets on channel {}", header.channel);
-                    return Err(Error::OutOfMemory.into());
+                    return Err(Error::OutOfMemory);
                 };
                 p.as_mut()[..data.len()].copy_from_slice(data);
 
@@ -715,7 +715,7 @@ where
             }
             other => {
                 warn!("Unexpected boundary flag: {:?}!", other);
-                return Err(Error::NotSupported.into());
+                return Err(Error::NotSupported);
             }
         };
 
@@ -747,7 +747,7 @@ where
                         .await;
 
                     #[cfg(not(feature = "gatt"))]
-                    return Err(Error::NotSupported.into());
+                    return Err(Error::NotSupported);
                 }
             }
             L2CAP_CID_LE_U_SIGNAL => {
