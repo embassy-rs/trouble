@@ -999,7 +999,6 @@ where
 
     /// Log status information of the host
     pub fn log_status(&self) {
-        debug!("[host] status");
         let m = self.metrics.borrow();
         debug!("[host] connect events: {}", m.connect_events);
         debug!("[host] disconnect events: {}", m.disconnect_events);
