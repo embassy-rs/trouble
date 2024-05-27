@@ -220,6 +220,17 @@ where
         Ok(Connection::new(index, &self.connections))
     }
 
+    async fn connect_cancel(&self)
+    where
+        T: ControllerCmdSync<LeCreateConnCancel>,
+    {
+        // Cancel any ongoing connection process
+        let r = self.command(LeCreateConnCancel::new()).await;
+        if let Ok(()) = r {
+            self.connections.wait_canceled().await;
+        }
+    }
+
     /// Attempt to create a connection with the provided config.
     pub async fn connect_ext(&self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, BleHostError<T::Error>>
     where
@@ -230,12 +241,7 @@ where
             + ControllerCmdSync<LeSetExtScanParams>
             + ControllerCmdSync<LeCreateConnCancel>,
     {
-        // Cancel any ongoing connection process
-        let r = self.command(LeCreateConnCancel::new()).await;
-        if let Ok(()) = r {
-            self.connections.wait_canceled().await;
-        }
-
+        self.connect_cancel().await;
         if config.scan_config.filter_accept_list.is_empty() {
             return Err(Error::InvalidValue.into());
         }
