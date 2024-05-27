@@ -4,26 +4,24 @@ use core::task::{Context, Poll};
 
 use embassy_sync::waitqueue::WakerRegistration;
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum State {
+pub enum State<CTX> {
     Active,
-    Cancel,
+    Cancel(CTX),
     Idle,
 }
 
-pub struct Inner {
-    state: State,
+pub struct Inner<CTX> {
+    state: State<CTX>,
     host: WakerRegistration,
     controller: WakerRegistration,
 }
 
 /// A helper type for keeping track of the state of a controller command.
-pub struct CommandState {
-    inner: RefCell<Inner>,
+pub struct CommandState<CTX> {
+    inner: RefCell<Inner<CTX>>,
 }
 
-impl CommandState {
+impl<CTX: Clone + Copy> CommandState<CTX> {
     pub fn new() -> Self {
         Self {
             inner: RefCell::new(Inner {
@@ -34,7 +32,7 @@ impl CommandState {
         }
     }
 
-    fn with_inner<F: FnMut(&mut Inner) -> R, R>(&self, mut f: F) -> R {
+    fn with_inner<F: FnMut(&mut Inner<CTX>) -> R, R>(&self, mut f: F) -> R {
         let mut inner = self.inner.borrow_mut();
         f(&mut inner)
     }
@@ -46,14 +44,10 @@ impl CommandState {
                 inner.host.register(cx.waker());
                 match inner.state {
                     State::Idle => {
-                        info!("command in state {:?}, ready", inner.state);
                         inner.state = State::Active;
                         Poll::Ready(())
                     }
-                    _ => {
-                        info!("command in state {:?}, waiting", inner.state);
-                        Poll::Pending
-                    }
+                    _ => Poll::Pending,
                 }
             })
         })
@@ -75,20 +69,20 @@ impl CommandState {
     }
 
     /// Poll if the command should be canceled
-    pub fn poll_cancelled(&self, cx: &mut Context<'_>) -> Poll<()> {
+    pub fn poll_cancelled(&self, cx: &mut Context<'_>) -> Poll<CTX> {
         self.with_inner(|inner| {
             inner.controller.register(cx.waker());
             match inner.state {
-                State::Cancel => Poll::Ready(()),
+                State::Cancel(ctx) => Poll::Ready(ctx),
                 _ => Poll::Pending,
             }
         })
     }
 
     /// Request that any pending command be canceled
-    pub fn cancel(&self) {
+    pub fn cancel(&self, ctx: CTX) {
         self.with_inner(|inner| {
-            inner.state = State::Cancel;
+            inner.state = State::Cancel(ctx);
             inner.controller.wake();
         })
     }
