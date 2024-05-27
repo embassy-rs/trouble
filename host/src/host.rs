@@ -98,8 +98,9 @@ pub struct BleHost<'d, T> {
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
-    advertiser_terminations: Channel<NoopRawMutex, AdvHandle, 1>,
-    connect_state: CommandState,
+    advertise_terminated: Channel<NoopRawMutex, Option<AdvHandle>, 1>,
+    advertise_state: CommandState<bool>,
+    connect_state: CommandState<bool>,
 }
 
 #[derive(Default)]
@@ -137,7 +138,8 @@ where
             rx_pool: &host_resources.rx_pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
-            advertiser_terminations: Channel::new(),
+            advertise_terminated: Channel::new(),
+            advertise_state: CommandState::new(),
             connect_state: CommandState::new(),
             outbound: Channel::new(),
         }
@@ -197,7 +199,7 @@ where
         }
 
         let _drop = OnDrop::new(|| {
-            self.connect_state.cancel();
+            self.connect_state.cancel(true);
         });
         self.connect_state.request().await;
 
@@ -248,7 +250,7 @@ where
 
         // Ensure no other connect ongoing.
         let _drop = OnDrop::new(|| {
-            self.connect_state.cancel();
+            self.connect_state.cancel(true);
         });
         self.connect_state.request().await;
 
@@ -442,8 +444,14 @@ where
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
-        // May fail if already disabled
-        let _ = self.command(LeSetAdvEnable::new(false)).await;
+        // Ensure no other advertise ongoing.
+        let _drop = OnDrop::new(|| {
+            self.advertise_state.cancel(false);
+        });
+        self.advertise_state.request().await;
+
+        // Clear current advertising terminations
+        while self.advertise_terminated.try_receive() != Err(TryReceiveError::Empty) {}
 
         let data: RawAdvertisement = data.into();
         if !data.props.legacy_adv() {
@@ -488,12 +496,9 @@ where
         }
 
         self.command(LeSetAdvEnable::new(true)).await?;
-        match select(self.advertiser_terminations.receive(), self.connections.accept(&[])).await {
+        match select(self.advertise_terminated.receive(), self.connections.accept(&[])).await {
             Either::First(handle) => Err(Error::Timeout.into()),
-            Either::Second(index) => {
-                self.command(LeSetAdvEnable::new(false)).await?;
-                Ok(Connection::new(index, &self.connections))
-            }
+            Either::Second(index) => Ok(Connection::new(index, &self.connections)),
         }
     }
 
@@ -514,17 +519,20 @@ where
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
-        // May fail if already disabled
-        let _ = self.command(LeSetExtAdvEnable::new(false, &[])).await;
-        let _ = self.command(LeClearAdvSets::new()).await;
-
         // Check host supports the required advertisement sets
         let result = self.command(LeReadNumberOfSupportedAdvSets::new()).await?;
         if result < N as u8 {
             return Err(Error::InsufficientSpace.into());
         }
 
-        while self.advertiser_terminations.try_receive() != Err(TryReceiveError::Empty) {}
+        // Ensure no other advertise ongoing.
+        let _drop = OnDrop::new(|| {
+            self.advertise_state.cancel(true);
+        });
+        self.advertise_state.request().await;
+
+        // Clear current advertising terminations
+        while self.advertise_terminated.try_receive() != Err(TryReceiveError::Empty) {}
 
         for set in sets {
             let handle = AdvHandle::new(set.handle);
@@ -587,8 +595,11 @@ where
 
         let mut terminated: [bool; N] = [false; N];
         loop {
-            match select(self.advertiser_terminations.receive(), self.connections.accept(&[])).await {
-                Either::First(handle) => {
+            match select(self.advertise_terminated.receive(), self.connections.accept(&[])).await {
+                Either::First(None) => {
+                    return Err(Error::Timeout.into());
+                }
+                Either::First(Some(handle)) => {
                     for (i, s) in advset.iter().enumerate() {
                         if s.adv_handle == handle {
                             terminated[i] = true;
@@ -599,7 +610,6 @@ where
                     }
                 }
                 Either::Second(index) => {
-                    self.command(LeSetExtAdvEnable::new(false, &[])).await?;
                     return Ok(Connection::new(index, &self.connections));
                 }
             }
@@ -647,6 +657,9 @@ where
                     m.connect_events = m.connect_events.wrapping_add(1);
                 }
             }
+            Err(bt_hci::param::Error::ADV_TIMEOUT) => {
+                self.advertise_terminated.send(None).await;
+            }
             Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
                 warn!("[host] connect cancelled");
                 self.connect_state.canceled();
@@ -680,7 +693,7 @@ where
 
                 let Some(mut p) = self.rx_pool.alloc(AllocId::from_channel(header.channel)) else {
                     info!("No memory for packets on channel {}", header.channel);
-                    return Err(Error::OutOfMemory.into());
+                    return Err(Error::OutOfMemory);
                 };
                 p.as_mut()[..data.len()].copy_from_slice(data);
 
@@ -702,7 +715,7 @@ where
             }
             other => {
                 warn!("Unexpected boundary flag: {:?}!", other);
-                return Err(Error::NotSupported.into());
+                return Err(Error::NotSupported);
             }
         };
 
@@ -734,7 +747,7 @@ where
                         .await;
 
                     #[cfg(not(feature = "gatt"))]
-                    return Err(Error::NotSupported.into());
+                    return Err(Error::NotSupported);
                 }
             }
             L2CAP_CID_LE_U_SIGNAL => {
@@ -762,6 +775,8 @@ where
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
+            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
             //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
@@ -779,6 +794,8 @@ where
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
+            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
             //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
@@ -840,22 +857,31 @@ where
             let _ = self.initialized.init(());
 
             loop {
-                match select(
+                match select3(
                     poll_fn(|cx| self.connections.poll_disconnecting(cx)),
                     poll_fn(|cx| self.connect_state.poll_cancelled(cx)),
+                    poll_fn(|cx| self.advertise_state.poll_cancelled(cx)),
                 )
                 .await
                 {
-                    Either::First(it) => {
+                    Either3::First(it) => {
                         for entry in it {
                             self.command(Disconnect::new(entry.0, entry.1)).await?;
                         }
                     }
-                    Either::Second(_) => {
+                    Either3::Second(_) => {
                         if let Err(e) = self.command(LeCreateConnCancel::new()).await {
                             // Signal to ensure no one is stuck
                             self.connect_state.canceled();
                         }
+                    }
+                    Either3::Third(ext) => {
+                        if ext {
+                            self.command(LeSetExtAdvEnable::new(false, &[])).await?
+                        } else {
+                            self.command(LeSetAdvEnable::new(false)).await?
+                        }
+                        self.advertise_state.canceled();
                     }
                 }
             }
@@ -909,7 +935,7 @@ where
                                 self.scanner.send(None).await;
                             }
                             LeEvent::LeAdvertisingSetTerminated(set) => {
-                                self.advertiser_terminations.send(set.adv_handle).await;
+                                self.advertise_terminated.send(Some(set.adv_handle)).await;
                             }
                             LeEvent::LeExtendedAdvertisingReport(data) => {
                                 self.scanner
