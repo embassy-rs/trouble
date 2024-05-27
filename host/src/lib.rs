@@ -18,6 +18,7 @@ mod fmt;
 mod att;
 mod channel_manager;
 mod codec;
+mod command;
 pub mod config;
 mod connection_manager;
 mod cursor;
