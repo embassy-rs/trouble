@@ -131,22 +131,30 @@ impl<'d> ConnectionManager<'d> {
         Err(Error::NotFound)
     }
 
-    pub(crate) fn poll_accept(&self, peers: &[(AddrKind, &BdAddr)], cx: &mut Context<'_>) -> Poll<u8> {
+    pub(crate) fn poll_accept(
+        &self,
+        role: LeConnRole,
+        peers: &[(AddrKind, &BdAddr)],
+        cx: &mut Context<'_>,
+    ) -> Poll<u8> {
         let mut state = self.state.borrow_mut();
         state.accept_waker.register(cx.waker());
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if let ConnectionState::Connecting = storage.state {
                 let handle = storage.handle.unwrap();
-                if !peers.is_empty() {
-                    for peer in peers.iter() {
-                        if storage.peer_addr_kind.unwrap() == peer.0 && &storage.peer_addr.unwrap() == peer.1 {
-                            storage.state = ConnectionState::Connected;
-                            return Poll::Ready(idx as u8);
+                let r = storage.role.unwrap();
+                if r == role {
+                    if !peers.is_empty() {
+                        for peer in peers.iter() {
+                            if storage.peer_addr_kind.unwrap() == peer.0 && &storage.peer_addr.unwrap() == peer.1 {
+                                storage.state = ConnectionState::Connected;
+                                return Poll::Ready(idx as u8);
+                            }
                         }
+                    } else {
+                        storage.state = ConnectionState::Connected;
+                        return Poll::Ready(idx as u8);
                     }
-                } else {
-                    storage.state = ConnectionState::Connected;
-                    return Poll::Ready(idx as u8);
                 }
             }
         }
@@ -186,8 +194,8 @@ impl<'d> ConnectionManager<'d> {
         });
     }
 
-    pub(crate) async fn accept(&self, peers: &[(AddrKind, &BdAddr)]) -> u8 {
-        poll_fn(move |cx| self.poll_accept(peers, cx)).await
+    pub(crate) async fn accept(&self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> u8 {
+        poll_fn(move |cx| self.poll_accept(role, peers, cx)).await
     }
 
     pub(crate) fn set_link_credits(&self, credits: usize) {
