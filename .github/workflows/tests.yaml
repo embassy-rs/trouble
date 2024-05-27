@@ -31,7 +31,7 @@ jobs:
         env:
           TEST_ADAPTER_ONE: /dev/ttyACM0
           TEST_ADAPTER_TWO: /dev/ttyACM1
-          RUST_LOG: info
+          RUST_LOG: trace
         run: |
           cd host
           cargo test --test '*' -- --nocapture
