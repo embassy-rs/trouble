@@ -3,6 +3,7 @@
 //! The host module contains the main entry point for the TrouBLE host.
 use core::cell::RefCell;
 use core::future::poll_fn;
+use core::mem::MaybeUninit;
 use core::task::Poll;
 
 use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
@@ -32,6 +33,7 @@ use futures::pin_mut;
 
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
+use crate::command::CommandState;
 use crate::connection::{ConnectConfig, Connection};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, DynamicConnectionManager, PacketGrant};
 use crate::cursor::WriteCursor;
@@ -97,6 +99,7 @@ pub struct BleHost<'d, T> {
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
     advertiser_terminations: Channel<NoopRawMutex, AdvHandle, 1>,
+    connect_state: CommandState,
 }
 
 #[derive(Default)]
@@ -135,6 +138,7 @@ where
             att_inbound: Channel::new(),
             scanner: Channel::new(),
             advertiser_terminations: Channel::new(),
+            connect_state: CommandState::new(),
             outbound: Channel::new(),
         }
     }
@@ -186,18 +190,16 @@ where
     where
         T: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
-            + ControllerCmdAsync<LeCreateConn>
-            + ControllerCmdSync<LeCreateConnCancel>,
+            + ControllerCmdAsync<LeCreateConn>,
     {
-        // Cancel any ongoing connection process
-        let r = self.command(LeCreateConnCancel::new()).await;
-        if let Ok(()) = r {
-            self.connections.wait_canceled().await;
-        }
-
         if config.scan_config.filter_accept_list.is_empty() {
             return Err(Error::InvalidValue.into());
         }
+
+        let _drop = OnDrop::new(|| {
+            self.connect_state.cancel();
+        });
+        self.connect_state.request().await;
 
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
@@ -216,18 +218,18 @@ where
             config.connect_params.event_length.into(),
         ))
         .await?;
-        let index = self.connections.accept(config.scan_config.filter_accept_list).await;
-        Ok(Connection::new(index, &self.connections))
-    }
-
-    async fn connect_cancel(&self)
-    where
-        T: ControllerCmdSync<LeCreateConnCancel>,
-    {
-        // Cancel any ongoing connection process
-        let r = self.command(LeCreateConnCancel::new()).await;
-        if let Ok(()) = r {
-            self.connections.wait_canceled().await;
+        match select(
+            self.connections.accept(config.scan_config.filter_accept_list),
+            self.connect_state.wait_idle(),
+        )
+        .await
+        {
+            Either::First(index) => {
+                _drop.defuse();
+                self.connect_state.done();
+                Ok(Connection::new(index, &self.connections))
+            }
+            Either::Second(_) => Err(Error::Timeout.into()),
         }
     }
 
@@ -238,13 +240,17 @@ where
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
             + ControllerCmdAsync<LeExtCreateConn>
             + ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeSetExtScanParams>
-            + ControllerCmdSync<LeCreateConnCancel>,
+            + ControllerCmdSync<LeSetExtScanParams>,
     {
-        self.connect_cancel().await;
         if config.scan_config.filter_accept_list.is_empty() {
             return Err(Error::InvalidValue.into());
         }
+
+        // Ensure no other connect ongoing.
+        let _drop = OnDrop::new(|| {
+            self.connect_state.cancel();
+        });
+        self.connect_state.request().await;
 
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
@@ -259,6 +265,7 @@ where
             max_ce_len: config.connect_params.event_length.into(),
         };
         let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
+
         self.async_command(LeExtCreateConn::new(
             true,
             self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
@@ -267,8 +274,20 @@ where
             phy_params,
         ))
         .await?;
-        let index = self.connections.accept(config.scan_config.filter_accept_list).await;
-        Ok(Connection::new(index, &self.connections))
+
+        match select(
+            self.connections.accept(config.scan_config.filter_accept_list),
+            self.connect_state.wait_idle(),
+        )
+        .await
+        {
+            Either::First(index) => {
+                _drop.defuse();
+                self.connect_state.done();
+                Ok(Connection::new(index, &self.connections))
+            }
+            Either::Second(_) => Err(Error::Timeout.into()),
+        }
     }
 
     fn create_phy_params<P: Copy>(phy: P, phys: PhySet) -> PhyParams<P> {
@@ -622,18 +641,19 @@ where
                             DisconnectReason::RemoteDeviceTerminatedConnLowResources,
                         ))
                         .await;
+                    self.connect_state.canceled();
                 } else {
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
                 }
             }
             Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
-                warn!("Connect cancelled");
-                self.connections.canceled();
+                warn!("[host] connect cancelled");
+                self.connect_state.canceled();
             }
             Err(e) => {
-                warn!("Error connection complete");
                 warn!("Error connection complete event: {:?}", e);
+                self.connect_state.canceled();
             }
         }
     }
@@ -741,6 +761,7 @@ where
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdSync<Reset>
+            + ControllerCmdSync<LeCreateConnCancel>
             //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
             //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
@@ -759,6 +780,7 @@ where
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdSync<Reset>
+            + ControllerCmdSync<LeCreateConnCancel>
             //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
             //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
@@ -818,9 +840,23 @@ where
             let _ = self.initialized.init(());
 
             loop {
-                let it = poll_fn(|cx| self.connections.poll_disconnecting(cx)).await;
-                for entry in it {
-                    self.command(Disconnect::new(entry.0, entry.1)).await?;
+                match select(
+                    poll_fn(|cx| self.connections.poll_disconnecting(cx)),
+                    poll_fn(|cx| self.connect_state.poll_cancelled(cx)),
+                )
+                .await
+                {
+                    Either::First(it) => {
+                        for entry in it {
+                            self.command(Disconnect::new(entry.0, entry.1)).await?;
+                        }
+                    }
+                    Either::Second(_) => {
+                        if let Err(e) = self.command(LeCreateConnCancel::new()).await {
+                            // Signal to ensure no one is stuck
+                            self.connect_state.canceled();
+                        }
+                    }
                 }
             }
         };
@@ -1052,5 +1088,29 @@ impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
         self.send(w.finish()).await?;
 
         Ok(())
+    }
+}
+
+/// A type to delay the drop handler invocation.
+#[must_use = "to delay the drop handler invocation to the end of the scope"]
+pub struct OnDrop<F: FnOnce()> {
+    f: MaybeUninit<F>,
+}
+
+impl<F: FnOnce()> OnDrop<F> {
+    /// Create a new instance.
+    pub fn new(f: F) -> Self {
+        Self { f: MaybeUninit::new(f) }
+    }
+
+    /// Prevent drop handler from running.
+    pub fn defuse(self) {
+        core::mem::forget(self)
+    }
+}
+
+impl<F: FnOnce()> Drop for OnDrop<F> {
+    fn drop(&mut self) {
+        unsafe { self.f.as_ptr().read()() }
     }
 }

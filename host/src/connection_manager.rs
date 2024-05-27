@@ -3,8 +3,6 @@ use core::future::poll_fn;
 use core::task::{Context, Poll};
 
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::signal::Signal;
 use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::Error;
@@ -28,7 +26,6 @@ impl<'d> State<'d> {
 
 pub(crate) struct ConnectionManager<'d> {
     state: RefCell<State<'d>>,
-    canceled: Signal<NoopRawMutex, ()>,
 }
 
 impl<'d> ConnectionManager<'d> {
@@ -40,7 +37,6 @@ impl<'d> ConnectionManager<'d> {
                 disconnect_waker: WakerRegistration::new(),
                 default_link_credits: 0,
             }),
-            canceled: Signal::new(),
         }
     }
 
@@ -133,15 +129,6 @@ impl<'d> ConnectionManager<'d> {
             }
         }
         Err(Error::NotFound)
-    }
-
-    pub(crate) async fn wait_canceled(&self) {
-        self.canceled.wait().await;
-        self.canceled.reset();
-    }
-
-    pub(crate) fn canceled(&self) {
-        self.canceled.signal(());
     }
 
     pub(crate) fn poll_accept(&self, peers: &[(AddrKind, &BdAddr)], cx: &mut Context<'_>) -> Poll<u8> {
