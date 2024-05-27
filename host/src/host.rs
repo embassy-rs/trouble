@@ -446,7 +446,7 @@ where
     {
         // Ensure no other advertise ongoing.
         let _drop = OnDrop::new(|| {
-            self.advertise_state.cancel(true);
+            self.advertise_state.cancel(false);
         });
         self.advertise_state.request().await;
 
