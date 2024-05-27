@@ -221,7 +221,8 @@ where
         ))
         .await?;
         match select(
-            self.connections.accept(config.scan_config.filter_accept_list),
+            self.connections
+                .accept(LeConnRole::Central, config.scan_config.filter_accept_list),
             self.connect_state.wait_idle(),
         )
         .await
@@ -278,7 +279,8 @@ where
         .await?;
 
         match select(
-            self.connections.accept(config.scan_config.filter_accept_list),
+            self.connections
+                .accept(LeConnRole::Central, config.scan_config.filter_accept_list),
             self.connect_state.wait_idle(),
         )
         .await
@@ -496,7 +498,12 @@ where
         }
 
         self.command(LeSetAdvEnable::new(true)).await?;
-        match select(self.advertise_terminated.receive(), self.connections.accept(&[])).await {
+        match select(
+            self.advertise_terminated.receive(),
+            self.connections.accept(LeConnRole::Peripheral, &[]),
+        )
+        .await
+        {
             Either::First(handle) => Err(Error::Timeout.into()),
             Either::Second(index) => Ok(Connection::new(index, &self.connections)),
         }
@@ -595,7 +602,12 @@ where
 
         let mut terminated: [bool; N] = [false; N];
         loop {
-            match select(self.advertise_terminated.receive(), self.connections.accept(&[])).await {
+            match select(
+                self.advertise_terminated.receive(),
+                self.connections.accept(LeConnRole::Peripheral, &[]),
+            )
+            .await
+            {
                 Either::First(None) => {
                     return Err(Error::Timeout.into());
                 }
