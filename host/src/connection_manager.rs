@@ -43,7 +43,6 @@ impl<'d> ConnectionManager<'d> {
     pub(crate) fn role(&self, index: u8) -> LeConnRole {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
-            assert_eq!(state.state, ConnectionState::Connected);
             state.role.unwrap()
         })
     }
@@ -51,7 +50,6 @@ impl<'d> ConnectionManager<'d> {
     pub(crate) fn handle(&self, index: u8) -> ConnHandle {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
-            assert_eq!(state.state, ConnectionState::Connected);
             state.handle.unwrap()
         })
     }
@@ -59,7 +57,6 @@ impl<'d> ConnectionManager<'d> {
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
-            assert_eq!(state.state, ConnectionState::Connected);
             state.peer_addr.unwrap()
         })
     }

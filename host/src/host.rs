@@ -269,6 +269,7 @@ where
         };
         let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
 
+        trace!("[host] enabling connection create");
         self.async_command(LeExtCreateConn::new(
             true,
             self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
@@ -288,6 +289,7 @@ where
             Either::First(index) => {
                 _drop.defuse();
                 self.connect_state.done();
+                trace!("[host] connection to peripheral established");
                 Ok(Connection::new(index, &self.connections))
             }
             Either::Second(_) => Err(Error::Timeout.into()),
@@ -598,6 +600,7 @@ where
             max_ext_adv_events: set.params.max_events.unwrap_or(0),
         });
 
+        trace!("[host] enabling advertising");
         self.command(LeSetExtAdvEnable::new(true, &advset)).await?;
 
         let mut terminated: [bool; N] = [false; N];
@@ -622,6 +625,7 @@ where
                     }
                 }
                 Either::Second(index) => {
+                    trace!("[host] connection to central established");
                     return Ok(Connection::new(index, &self.connections));
                 }
             }
@@ -878,16 +882,22 @@ where
                 {
                     Either3::First(it) => {
                         for entry in it {
-                            self.command(Disconnect::new(entry.0, entry.1)).await?;
+                            trace!("[host] disconnecting handle {:?}", entry.0);
+                            if let Err(e) = self.command(Disconnect::new(entry.0, entry.1)).await {
+                                warn!("[host] disconnect error for {:?}", entry.0);
+                                return Err(e);
+                            }
                         }
                     }
                     Either3::Second(_) => {
+                        trace!("[host] cancelling create connection");
                         if let Err(e) = self.command(LeCreateConnCancel::new()).await {
                             // Signal to ensure no one is stuck
                             self.connect_state.canceled();
                         }
                     }
                     Either3::Third(ext) => {
+                        trace!("[host] turning off advertising (extended = {})", ext);
                         if ext {
                             self.command(LeSetExtAdvEnable::new(false, &[])).await?
                         } else {
@@ -1002,9 +1012,18 @@ where
             // info!("Entering select loop");
             let result: Result<(), BleHostError<T::Error>> = match select3(&mut control_fut, rx_fut, &mut tx_fut).await
             {
-                Either3::First(result) => result,
-                Either3::Second(result) => result,
-                Either3::Third(result) => result,
+                Either3::First(result) => {
+                    trace!("[host] control future finished");
+                    result
+                }
+                Either3::Second(result) => {
+                    trace!("[host] rx future finished");
+                    result
+                }
+                Either3::Third(result) => {
+                    trace!("[host] tx future finished");
+                    result
+                }
             };
             result?;
         }
