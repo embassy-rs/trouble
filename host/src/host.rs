@@ -929,9 +929,9 @@ where
         };
         pin_mut!(tx_fut);
 
-        loop {
-            // Task handling receiving data from the controller.
-            let rx_fut = async {
+        let rx_fut = async {
+            loop {
+                // Task handling receiving data from the controller.
                 let mut rx = [0u8; MAX_HCI_PACKET_LEN];
                 let result = self.controller.read(&mut rx).await;
                 match result {
@@ -1006,27 +1006,28 @@ where
                         return Err(BleHostError::Controller(e));
                     }
                 }
-                Ok(())
-            };
+            }
+        };
+        pin_mut!(rx_fut);
 
-            // info!("Entering select loop");
-            let result: Result<(), BleHostError<T::Error>> = match select3(&mut control_fut, rx_fut, &mut tx_fut).await
-            {
-                Either3::First(result) => {
-                    trace!("[host] control future finished");
-                    result
-                }
-                Either3::Second(result) => {
-                    trace!("[host] rx future finished");
-                    result
-                }
-                Either3::Third(result) => {
-                    trace!("[host] tx future finished");
-                    result
-                }
-            };
-            result?;
-        }
+        // info!("Entering select loop");
+        let result: Result<(), BleHostError<T::Error>> = match select3(&mut control_fut, &mut rx_fut, &mut tx_fut).await
+        {
+            Either3::First(result) => {
+                trace!("[host] control future finished");
+                result
+            }
+            Either3::Second(result) => {
+                trace!("[host] rx future finished");
+                result
+            }
+            Either3::Third(result) => {
+                trace!("[host] tx future finished");
+                result
+            }
+        };
+        result?;
+        Ok(())
     }
 
     // Request to send n ACL packets to the HCI controller for a connection
