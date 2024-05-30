@@ -65,6 +65,11 @@ impl<'d> ConnectionManager<'d> {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
             if state.state == ConnectionState::Connected {
+                trace!(
+                    "[host] requesting {} (handle {:?}) to be disconnected",
+                    index,
+                    state.handle.unwrap()
+                );
                 state.state = ConnectionState::Disconnecting(reason);
             }
         })
@@ -322,7 +327,7 @@ impl<'a, 'd> Iterator for DisconnectIter<'a, 'd> {
         let state = self.state.borrow();
         for idx in self.idx..state.connections.len() {
             if let ConnectionState::Disconnecting(reason) = state.connections[idx].state {
-                self.idx = idx;
+                self.idx = idx + 1;
                 return state.connections[idx].handle.map(|h| (h, reason));
             }
         }
