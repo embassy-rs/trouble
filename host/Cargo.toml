@@ -17,7 +17,7 @@ resolver = "2"
 [dependencies]
 bt-hci = { version = "0.1.0", features = ["embassy-time"] }
 embedded-io-async = { version = "0.6" }
-embassy-sync = "0.5"
+embassy-sync = "0.6"
 embassy-time = "0.3"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
@@ -39,8 +39,6 @@ static_cell = "2.1.0"
 
 [patch.crates-io]
 bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-
 
 [features]
 defmt = [ "dep:defmt" ]

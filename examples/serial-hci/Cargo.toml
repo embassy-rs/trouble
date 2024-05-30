@@ -12,7 +12,7 @@ rand_core = { version = "0.6.4", features = ["std"] }
 # embassy-executor = { version = "0.5.0", features = ["task-arena-size-32768", "arch-std", "executor-thread", "log", "integrated-timers"] }
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embedded-io-async = { version = "0.6.1" }
-embassy-sync = { version = "0.5.0", features = ["log"] }
+embassy-sync = { version = "0.6.0", features = ["log"] }
 critical-section = { version = "1.1", features = ["std"] }
 embassy-futures = { version = "0.1" }
 nix = "0.26.2"
@@ -25,6 +25,5 @@ trouble-host = { version = "0.1.0", path = "../../host", features = ["log", "gat
 
 [patch.crates-io]
 bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
 #embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
 #bt-hci = { path = "../../../bt-hci" }
