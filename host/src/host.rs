@@ -885,6 +885,7 @@ where
                             trace!("[host] disconnecting handle {:?}", entry.0);
                             if let Err(e) = self.command(Disconnect::new(entry.0, entry.1)).await {
                                 warn!("[host] disconnect error for {:?}", entry.0);
+                                return Err(e);
                             }
                         }
                     }
