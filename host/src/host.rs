@@ -883,7 +883,9 @@ where
                     Either3::First(it) => {
                         for entry in it {
                             trace!("[host] disconnecting handle {:?}", entry.0);
-                            self.command(Disconnect::new(entry.0, entry.1)).await?;
+                            if let Err(e) = self.command(Disconnect::new(entry.0, entry.1)).await {
+                                warn!("[host] disconnect error for {:?}", entry.0);
+                            }
                         }
                     }
                     Either3::Second(_) => {
@@ -1009,9 +1011,18 @@ where
             // info!("Entering select loop");
             let result: Result<(), BleHostError<T::Error>> = match select3(&mut control_fut, rx_fut, &mut tx_fut).await
             {
-                Either3::First(result) => result,
-                Either3::Second(result) => result,
-                Either3::Third(result) => result,
+                Either3::First(result) => {
+                    trace!("[host] control future finished");
+                    result
+                }
+                Either3::Second(result) => {
+                    trace!("[host] rx future finished");
+                    result
+                }
+                Either3::Third(result) => {
+                    trace!("[host] tx future finished");
+                    result
+                }
             };
             result?;
         }
