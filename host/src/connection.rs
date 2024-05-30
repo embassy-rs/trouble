@@ -102,6 +102,7 @@ impl<'d> Connection<'d> {
         T: ControllerCmdAsync<LeConnUpdate>,
     {
         let handle = self.handle();
+        trace!("[host] updating connection params for {:?}", handle);
         match ble
             .async_command(LeConnUpdate::new(
                 handle,

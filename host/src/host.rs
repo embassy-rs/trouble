@@ -166,7 +166,6 @@ where
     }
 
     /// Run a HCI command and return the response.
-    #[cfg(not(feature = "defmt"))]
     pub async fn command<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
     where
         C: SyncCmd,
@@ -177,40 +176,13 @@ where
         Ok(ret)
     }
 
-    /// Run a HCI command and return the response.
-    #[cfg(feature = "defmt")]
-    pub async fn command<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
-    where
-        C: SyncCmd + defmt::Format,
-        T: ControllerCmdSync<C>,
-    {
-        let _ = self.initialized.get().await;
-        trace!("[host] executing controller sync command {:?}", cmd);
-        let ret = cmd.exec(&self.controller).await?;
-        Ok(ret)
-    }
-
     /// Run an async HCI command where the response will generate an event later.
-    #[cfg(not(feature = "defmt"))]
     pub async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Error>>
     where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
         let _ = self.initialized.get().await;
-        cmd.exec(&self.controller).await?;
-        Ok(())
-    }
-
-    /// Run an async HCI command where the response will generate an event later.
-    #[cfg(feature = "defmt")]
-    pub async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Error>>
-    where
-        C: AsyncCmd + defmt::Format,
-        T: ControllerCmdAsync<C>,
-    {
-        let _ = self.initialized.get().await;
-        trace!("[host] executing controller async command {:?}", cmd);
         cmd.exec(&self.controller).await?;
         Ok(())
     }
@@ -297,6 +269,7 @@ where
         };
         let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
 
+        trace!("[host] enabling connection create");
         self.async_command(LeExtCreateConn::new(
             true,
             self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
@@ -316,6 +289,7 @@ where
             Either::First(index) => {
                 _drop.defuse();
                 self.connect_state.done();
+                trace!("[host] connection to peripheral established");
                 Ok(Connection::new(index, &self.connections))
             }
             Either::Second(_) => Err(Error::Timeout.into()),
@@ -626,6 +600,7 @@ where
             max_ext_adv_events: set.params.max_events.unwrap_or(0),
         });
 
+        trace!("[host] enabling advertising");
         self.command(LeSetExtAdvEnable::new(true, &advset)).await?;
 
         let mut terminated: [bool; N] = [false; N];
@@ -650,6 +625,7 @@ where
                     }
                 }
                 Either::Second(index) => {
+                    trace!("[host] connection to central established");
                     return Ok(Connection::new(index, &self.connections));
                 }
             }
