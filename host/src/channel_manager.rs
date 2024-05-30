@@ -326,12 +326,12 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
     /// Handle incoming L2CAP signal
     pub(crate) async fn signal(&self, conn: ConnHandle, data: &[u8]) -> Result<(), Error> {
         let (header, data) = L2capSignalHeader::from_hci_bytes(data)?;
-        trace!(
-            "[l2cap][conn = {:?}] received signal (req {}) code {:?}",
-            conn,
-            header.identifier,
-            header.code
-        );
+        //trace!(
+        //    "[l2cap][conn = {:?}] received signal (req {}) code {:?}",
+        //    conn,
+        //    header.identifier,
+        //    header.code
+        //);
         match header.code {
             L2capSignalCode::LeCreditConnReq => {
                 let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
@@ -343,7 +343,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
             }
             L2capSignalCode::LeCreditFlowInd => {
                 let req = LeCreditFlowInd::from_hci_bytes_complete(data)?;
-                trace!("[l2cap] credit flow: {:?}", req);
+                //trace!("[l2cap] credit flow: {:?}", req);
                 self.handle_credit_flow(conn, &req)?;
                 Ok(())
             }
@@ -418,12 +418,12 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         for storage in state.channels.iter_mut() {
             match storage.state {
                 ChannelState::Connected if storage.peer_cid == req.cid && conn.raw() == storage.conn => {
-                    trace!(
-                        "[l2cap][handle_credit_flow][cid = {}] {} += {} credits",
-                        req.cid,
-                        storage.peer_credits,
-                        req.credits
-                    );
+                    //trace!(
+                    //    "[l2cap][handle_credit_flow][cid = {}] {} += {} credits",
+                    //    req.cid,
+                    //    storage.peer_credits,
+                    //    req.credits
+                    //);
                     storage.peer_credits = storage.peer_credits.saturating_add(req.credits);
                     storage.credit_waker.wake();
                     return Ok(());
@@ -916,9 +916,7 @@ impl<'reference, 'state> Drop for CreditGrant<'reference, 'state> {
                 }
             }
             // make it an assert?
-            trace!("[l2cap][credit grant drop] channel {} not found", self.cid);
-            state.print();
-            panic!("Uh Oh!");
+            warn!("[l2cap][credit grant drop] channel {} not found", self.cid);
         }
     }
 }

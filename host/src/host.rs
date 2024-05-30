@@ -793,8 +793,6 @@ where
             + ControllerCmdSync<LeCreateConnCancel>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
-            //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
-            //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
     {
         self.run_with_handler(None).await
@@ -814,8 +812,6 @@ where
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
-            //            + ControllerCmdSync<LeReadLocalSupportedFeatures>
-            //            + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
             + ControllerCmdSync<LeReadBufferSize>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
@@ -853,10 +849,6 @@ where
                 LeEventMask::new()
                     .enable_le_conn_complete(true)
                     .enable_le_enhanced_conn_complete(true)
-                    //                    .enable_le_conn_update_complete(true)
-                    //                    .enable_le_conn_iq_report(true)
-                    //                    .enable_le_transmit_power_reporting(true)
-                    //                    .enable_le_enhanced_conn_complete_v2(true)
                     .enable_le_adv_set_terminated(true)
                     .enable_le_adv_report(true)
                     .enable_le_scan_timeout(true)
@@ -883,10 +875,7 @@ where
                     Either3::First(it) => {
                         for entry in it {
                             trace!("[host] disconnecting handle {:?}", entry.0);
-                            if let Err(e) = self.command(Disconnect::new(entry.0, entry.1)).await {
-                                warn!("[host] disconnect error for {:?}", entry.0);
-                                return Err(e);
-                            }
+                            self.command(Disconnect::new(entry.0, entry.1)).await?;
                         }
                     }
                     Either3::Second(_) => {
@@ -938,7 +927,7 @@ where
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
                         Ok(_) => {}
                         Err(e) => {
-                            info!("Error processing ACL packet: {:?}", e);
+                            trace!("Error processing ACL packet: {:?}", e);
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);
                         }
@@ -995,13 +984,11 @@ where
                                 handler.on_event(&vendor);
                             }
                         }
-                        _ => {
-                            warn!("Unknown event");
-                        }
+                        // Ignore
+                        _ => {}
                     },
-                    Ok(p) => {
-                        warn!("Ignoring packet: {:?}", p);
-                    }
+                    // Ignore
+                    _ => {}
                     Err(e) => {
                         return Err(BleHostError::Controller(e));
                     }
@@ -1011,23 +998,11 @@ where
         pin_mut!(rx_fut);
 
         // info!("Entering select loop");
-        let result: Result<(), BleHostError<T::Error>> = match select3(&mut control_fut, &mut rx_fut, &mut tx_fut).await
-        {
-            Either3::First(result) => {
-                trace!("[host] control future finished");
-                result
-            }
-            Either3::Second(result) => {
-                trace!("[host] rx future finished");
-                result
-            }
-            Either3::Third(result) => {
-                trace!("[host] tx future finished");
-                result
-            }
-        };
-        result?;
-        Ok(())
+        match select3(&mut control_fut, &mut rx_fut, &mut tx_fut).await {
+            Either3::First(result) => result,
+            Either3::Second(result) => result,
+            Either3::Third(result) => result,
+        }
     }
 
     // Request to send n ACL packets to the HCI controller for a connection
