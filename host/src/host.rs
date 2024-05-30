@@ -876,6 +876,7 @@ where
                         for entry in it {
                             trace!("[host] disconnecting handle {:?}", entry.0);
                             self.command(Disconnect::new(entry.0, entry.1)).await?;
+                            let _ = self.connections.disconnect(entry.0);
                         }
                     }
                     Either3::Second(_) => {
@@ -988,7 +989,7 @@ where
                         _ => {}
                     },
                     // Ignore
-                    _ => {}
+                    Ok(_) => {}
                     Err(e) => {
                         return Err(BleHostError::Controller(e));
                     }

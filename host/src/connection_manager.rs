@@ -103,6 +103,11 @@ impl<'d> ConnectionManager<'d> {
                     state.disconnect_waker.wake();
                     return Ok(());
                 }
+                ConnectionState::Disconnecting(_) if storage.handle.unwrap() == h => {
+                    storage.state = ConnectionState::Disconnected;
+                    state.disconnect_waker.wake();
+                    return Ok(());
+                }
                 _ => {}
             }
         }
