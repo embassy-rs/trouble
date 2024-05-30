@@ -166,6 +166,7 @@ where
     }
 
     /// Run a HCI command and return the response.
+    #[cfg(not(feature = "defmt"))]
     pub async fn command<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
     where
         C: SyncCmd,
@@ -176,13 +177,40 @@ where
         Ok(ret)
     }
 
+    /// Run a HCI command and return the response.
+    #[cfg(feature = "defmt")]
+    pub async fn command<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
+    where
+        C: SyncCmd + defmt::Format,
+        T: ControllerCmdSync<C>,
+    {
+        let _ = self.initialized.get().await;
+        trace!("[host] executing controller sync command {:?}", cmd);
+        let ret = cmd.exec(&self.controller).await?;
+        Ok(ret)
+    }
+
     /// Run an async HCI command where the response will generate an event later.
+    #[cfg(not(feature = "defmt"))]
     pub async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Error>>
     where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
         let _ = self.initialized.get().await;
+        cmd.exec(&self.controller).await?;
+        Ok(())
+    }
+
+    /// Run an async HCI command where the response will generate an event later.
+    #[cfg(feature = "defmt")]
+    pub async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Error>>
+    where
+        C: AsyncCmd + defmt::Format,
+        T: ControllerCmdAsync<C>,
+    {
+        let _ = self.initialized.get().await;
+        trace!("[host] executing controller async command {:?}", cmd);
         cmd.exec(&self.controller).await?;
         Ok(())
     }
@@ -878,16 +906,19 @@ where
                 {
                     Either3::First(it) => {
                         for entry in it {
+                            trace!("[host] disconnecting handle {:?}", entry.0);
                             self.command(Disconnect::new(entry.0, entry.1)).await?;
                         }
                     }
                     Either3::Second(_) => {
+                        trace!("[host] cancelling create connection");
                         if let Err(e) = self.command(LeCreateConnCancel::new()).await {
                             // Signal to ensure no one is stuck
                             self.connect_state.canceled();
                         }
                     }
                     Either3::Third(ext) => {
+                        trace!("[host] turning off advertising (extended = {})", ext);
                         if ext {
                             self.command(LeSetExtAdvEnable::new(false, &[])).await?
                         } else {
