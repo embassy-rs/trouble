@@ -25,6 +25,9 @@ pub enum TxPower {
     Plus6dBm = 6,
     Plus7dBm = 7,
     Plus8dBm = 8,
+    Plus12dBm = 12,
+    Plus16dBm = 16,
+    Plus20dBm = 20,
 }
 
 #[derive(Debug, Clone, Copy)]
