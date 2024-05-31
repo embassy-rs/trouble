@@ -227,10 +227,10 @@ where
         )
         .await
         {
-            Either::First(index) => {
+            Either::First(conn) => {
                 _drop.defuse();
                 self.connect_state.done();
-                Ok(Connection::new(index, &self.connections))
+                Ok(conn)
             }
             Either::Second(_) => Err(Error::Timeout.into()),
         }
@@ -286,10 +286,10 @@ where
         )
         .await
         {
-            Either::First(index) => {
+            Either::First(conn) => {
                 _drop.defuse();
                 self.connect_state.done();
-                Ok(Connection::new(index, &self.connections))
+                Ok(conn)
             }
             Either::Second(_) => Err(Error::Timeout.into()),
         }
@@ -506,7 +506,7 @@ where
         .await
         {
             Either::First(handle) => Err(Error::Timeout.into()),
-            Either::Second(index) => Ok(Connection::new(index, &self.connections)),
+            Either::Second(conn) => Ok(conn),
         }
     }
 
@@ -623,9 +623,7 @@ where
                         return Err(Error::Timeout.into());
                     }
                 }
-                Either::Second(index) => {
-                    return Ok(Connection::new(index, &self.connections));
-                }
+                Either::Second(conn) => return Ok(conn),
             }
         }
     }
@@ -691,7 +689,7 @@ where
     }
 
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
-        if !self.connections.is_connected(acl.handle()) {
+        if !self.connections.is_handle_connected(acl.handle()) {
             return Err(Error::Disconnected);
         }
         let (header, mut packet) = match acl.boundary_flag() {

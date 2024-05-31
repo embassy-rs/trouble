@@ -58,8 +58,12 @@ impl<'d> Drop for Connection<'d> {
 
 impl<'d> Connection<'d> {
     pub(crate) fn new(index: u8, manager: &'d dyn DynamicConnectionManager) -> Self {
-        manager.inc_ref(index);
         Self { index, manager }
+    }
+
+    /// Check if still connected
+    pub fn is_connected(&self) -> bool {
+        self.manager.is_connected(self.index)
     }
 
     /// Connection handle of this connection.

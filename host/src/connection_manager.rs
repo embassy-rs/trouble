@@ -5,6 +5,7 @@ use core::task::{Context, Poll};
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole};
 use embassy_sync::waitqueue::WakerRegistration;
 
+use crate::connection::Connection;
 use crate::Error;
 
 struct State<'d> {
@@ -54,6 +55,13 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
+    pub(crate) fn is_connected(&self, index: u8) -> bool {
+        self.with_mut(|state| {
+            let state = &mut state.connections[index as usize];
+            state.state == ConnectionState::Connected
+        })
+    }
+
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
@@ -65,11 +73,6 @@ impl<'d> ConnectionManager<'d> {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
             if state.state == ConnectionState::Connected {
-                trace!(
-                    "[host] requesting {} (handle {:?}) to be disconnected",
-                    index,
-                    state.handle.unwrap()
-                );
                 state.state = ConnectionState::DisconnectRequest(reason);
             }
         })
@@ -94,7 +97,7 @@ impl<'d> ConnectionManager<'d> {
         Poll::Pending
     }
 
-    pub(crate) fn is_connected(&self, h: ConnHandle) -> bool {
+    pub(crate) fn is_handle_connected(&self, h: ConnHandle) -> bool {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match (storage.handle, &storage.state) {
@@ -109,9 +112,9 @@ impl<'d> ConnectionManager<'d> {
 
     pub(crate) fn disconnected(&self, h: ConnHandle) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
-        for storage in state.connections.iter_mut() {
+        for (idx, storage) in state.connections.iter_mut().enumerate() {
             if let Some(handle) = storage.handle {
-                if handle == h {
+                if handle == h && storage.state != ConnectionState::Disconnected {
                     storage.state = ConnectionState::Disconnected;
                     state.disconnect_waker.wake();
                     return Ok(());
@@ -152,7 +155,7 @@ impl<'d> ConnectionManager<'d> {
         role: LeConnRole,
         peers: &[(AddrKind, &BdAddr)],
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<u8> {
+    ) -> Poll<Connection<'_>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
             state.accept_waker.register(cx.waker());
@@ -166,22 +169,25 @@ impl<'d> ConnectionManager<'d> {
                         for peer in peers.iter() {
                             if storage.peer_addr_kind.unwrap() == peer.0 && &storage.peer_addr.unwrap() == peer.1 {
                                 storage.state = ConnectionState::Connected;
+                                storage.refcount = 1;
                                 trace!(
-                                    "[link][poll_accept] connection handle {:?} in role {} accepted",
+                                    "[link][poll_accept] connection handle {:?} in role {:?} accepted",
                                     handle,
                                     role
                                 );
-                                return Poll::Ready(idx as u8);
+                                return Poll::Ready(Connection::new(idx as u8, self));
                             }
                         }
                     } else {
                         storage.state = ConnectionState::Connected;
+                        storage.refcount = 1;
                         trace!(
-                            "[link][poll_accept] connection handle {:?} in role {} accepted",
+                            "[link][poll_accept] connection handle {:?} in role {:?} accepted",
                             handle,
                             role
                         );
-                        return Poll::Ready(idx as u8);
+
+                        return Poll::Ready(Connection::new(idx as u8, self));
                     }
                 }
             }
@@ -217,12 +223,14 @@ impl<'d> ConnectionManager<'d> {
                 "bug: dropping a connection with refcount 0"
             );
             if state.refcount == 0 && state.state == ConnectionState::Connected {
-                state.state = ConnectionState::Disconnecting(DisconnectReason::RemoteUserTerminatedConn);
+                state.state = ConnectionState::DisconnectRequest(DisconnectReason::RemoteUserTerminatedConn);
+                // ensure it is never reused
+                state.handle.take();
             }
         });
     }
 
-    pub(crate) async fn accept(&self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> u8 {
+    pub(crate) async fn accept(&self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> Connection<'_> {
         poll_fn(move |cx| self.poll_accept(role, peers, Some(cx))).await
     }
 
@@ -286,6 +294,7 @@ impl<'d> ConnectionManager<'d> {
 
 pub(crate) trait DynamicConnectionManager {
     fn role(&self, index: u8) -> LeConnRole;
+    fn is_connected(&self, index: u8) -> bool;
     fn handle(&self, index: u8) -> ConnHandle;
     fn peer_address(&self, index: u8) -> BdAddr;
     fn inc_ref(&self, index: u8);
@@ -301,6 +310,9 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
     }
     fn handle(&self, index: u8) -> ConnHandle {
         ConnectionManager::handle(self, index)
+    }
+    fn is_connected(&self, index: u8) -> bool {
+        ConnectionManager::is_connected(self, index)
     }
     fn peer_address(&self, index: u8) -> BdAddr {
         ConnectionManager::peer_address(self, index)
@@ -420,7 +432,7 @@ impl defmt::Format for ConnectionStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, credits = {}, role = {}, peer = {:?}",
+            "state = {}, conn = {}, credits = {}, role = {:?}, peer = {:?}",
             self.state,
             self.handle,
             self.link_credits,
@@ -488,7 +500,7 @@ mod tests {
         let mut storage = [ConnectionStorage::DISCONNECTED; 3];
         let mgr = ConnectionManager::new(&mut storage[..]);
 
-        assert_eq!(Poll::Pending, mgr.poll_accept(LeConnRole::Peripheral, &[], None));
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
 
         unwrap!(mgr.connect(
             ConnHandle::new(0),
@@ -497,13 +509,13 @@ mod tests {
             LeConnRole::Peripheral
         ));
 
-        let Poll::Ready(index) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+        let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
             panic!("expected connection to be accepted");
         };
-        assert_eq!(mgr.role(index), LeConnRole::Peripheral);
-        assert_eq!(mgr.peer_address(index), BdAddr::new(ADDR_1));
+        assert_eq!(handle.role(), LeConnRole::Peripheral);
+        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_1));
 
-        mgr.request_disconnect(index, DisconnectReason::RemoteUserTerminatedConn);
+        handle.disconnect();
     }
 
     #[test]
@@ -511,7 +523,7 @@ mod tests {
         let mut storage = [ConnectionStorage::DISCONNECTED; 3];
         let mgr = ConnectionManager::new(&mut storage[..]);
 
-        assert_eq!(Poll::Pending, mgr.poll_accept(LeConnRole::Central, &[], None));
+        assert!(mgr.poll_accept(LeConnRole::Central, &[], None).is_pending());
 
         unwrap!(mgr.connect(
             ConnHandle::new(0),
@@ -520,11 +532,11 @@ mod tests {
             LeConnRole::Central
         ));
 
-        let Poll::Ready(index) = mgr.poll_accept(LeConnRole::Central, &[], None) else {
+        let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Central, &[], None) else {
             panic!("expected connection to be accepted");
         };
-        assert_eq!(mgr.role(index), LeConnRole::Central);
-        assert_eq!(mgr.peer_address(index), BdAddr::new(ADDR_2));
+        assert_eq!(handle.role(), LeConnRole::Central);
+        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_2));
     }
 
     #[test]
@@ -554,11 +566,11 @@ mod tests {
             panic!("expected connection to be accepted");
         };
 
-        assert_eq!(ConnHandle::new(3), mgr.handle(central));
-        assert_eq!(ConnHandle::new(2), mgr.handle(peripheral));
+        assert_eq!(ConnHandle::new(3), central.handle());
+        assert_eq!(ConnHandle::new(2), peripheral.handle());
 
         // Disconnect request from us
-        mgr.request_disconnect(peripheral, DisconnectReason::RemoteUserTerminatedConn);
+        peripheral.disconnect();
 
         // Polling should return the disconnecting handle
         let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
@@ -605,11 +617,11 @@ mod tests {
             panic!("expected connection to be accepted");
         };
 
-        assert_eq!(ConnHandle::new(3), mgr.handle(central));
-        assert_eq!(ConnHandle::new(2), mgr.handle(peripheral));
+        assert_eq!(ConnHandle::new(3), central.handle());
+        assert_eq!(ConnHandle::new(2), peripheral.handle());
 
         // Disconnect request from us
-        mgr.request_disconnect(peripheral, DisconnectReason::RemoteUserTerminatedConn);
+        peripheral.disconnect();
 
         // Polling should return the disconnecting handle
         let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
@@ -630,5 +642,79 @@ mod tests {
 
         // Polling should not return anything
         assert!(mgr.poll_disconnecting(None).is_pending());
+    }
+
+    #[test]
+    fn referenced_handle_not_reused() {
+        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
+        let mgr = ConnectionManager::new(&mut storage[..]);
+
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+
+        let handle = ConnHandle::new(42);
+        unwrap!(mgr.connect(handle, AddrKind::RANDOM, BdAddr::new(ADDR_1), LeConnRole::Peripheral));
+
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        assert_eq!(conn.role(), LeConnRole::Peripheral);
+        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+
+        unwrap!(mgr.disconnected(handle));
+
+        // New incoming connection reusing handle
+        let handle = ConnHandle::new(42);
+        unwrap!(mgr.connect(handle, AddrKind::RANDOM, BdAddr::new(ADDR_2), LeConnRole::Peripheral));
+
+        let Poll::Ready(conn2) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        // Ensure existing connection doesnt panic things
+        assert_eq!(conn.handle(), ConnHandle::new(42));
+        assert_eq!(conn.role(), LeConnRole::Peripheral);
+        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+        assert!(!conn.is_connected());
+
+        assert_eq!(conn2.handle(), ConnHandle::new(42));
+        assert_eq!(conn2.role(), LeConnRole::Peripheral);
+        assert_eq!(conn2.peer_address(), BdAddr::new(ADDR_2));
+        assert!(conn2.is_connected());
+    }
+
+    #[test]
+    fn disconnect_correct_handle() {
+        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
+        let mgr = ConnectionManager::new(&mut storage[..]);
+
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+
+        let handle = ConnHandle::new(42);
+        unwrap!(mgr.connect(handle, AddrKind::RANDOM, BdAddr::new(ADDR_1), LeConnRole::Peripheral));
+
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        assert_eq!(conn.role(), LeConnRole::Peripheral);
+        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+
+        unwrap!(mgr.disconnected(handle));
+
+        // New incoming connection reusing handle
+        let handle = ConnHandle::new(42);
+        unwrap!(mgr.connect(handle, AddrKind::RANDOM, BdAddr::new(ADDR_2), LeConnRole::Peripheral));
+
+        let Poll::Ready(conn2) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        assert_eq!(conn2.handle(), ConnHandle::new(42));
+        assert_eq!(conn2.role(), LeConnRole::Peripheral);
+        assert_eq!(conn2.peer_address(), BdAddr::new(ADDR_2));
+        assert!(conn2.is_connected());
+
+        unwrap!(mgr.disconnected(handle));
+
+        assert!(!conn2.is_connected());
     }
 }
