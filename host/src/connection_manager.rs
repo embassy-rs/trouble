@@ -70,18 +70,23 @@ impl<'d> ConnectionManager<'d> {
                     index,
                     state.handle.unwrap()
                 );
-                state.state = ConnectionState::Disconnecting(reason);
+                state.state = ConnectionState::DisconnectRequest(reason);
             }
         })
     }
 
-    pub(crate) fn poll_disconnecting<'m>(&'m self, cx: &mut Context<'_>) -> Poll<DisconnectIter<'m, 'd>> {
+    pub(crate) fn poll_disconnecting<'m>(
+        &'m self,
+        cx: Option<&mut Context<'_>>,
+    ) -> Poll<DisconnectRequestIter<'m, 'd>> {
         let mut state = self.state.borrow_mut();
-        state.disconnect_waker.register(cx.waker());
+        if let Some(cx) = cx {
+            state.disconnect_waker.register(cx.waker());
+        }
         for storage in state.connections.iter() {
-            if let ConnectionState::Disconnecting(_) = storage.state {
-                return Poll::Ready(DisconnectIter {
-                    idx: 0,
+            if let ConnectionState::DisconnectRequest(_) = storage.state {
+                return Poll::Ready(DisconnectRequestIter {
+                    next: 0,
                     state: &self.state,
                 });
             }
@@ -89,28 +94,31 @@ impl<'d> ConnectionManager<'d> {
         Poll::Pending
     }
 
-    pub(crate) fn disconnect(&self, h: ConnHandle) -> Result<(), Error> {
+    pub(crate) fn is_connected(&self, h: ConnHandle) -> bool {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
-            match storage.state {
-                ConnectionState::Connecting if storage.handle.unwrap() == h => {
-                    storage.state = ConnectionState::Disconnected;
-                    state.disconnect_waker.wake();
-                    return Ok(());
-                }
-                ConnectionState::Connected if storage.handle.unwrap() == h => {
-                    storage.state = ConnectionState::Disconnected;
-                    state.disconnect_waker.wake();
-                    return Ok(());
-                }
-                ConnectionState::Disconnecting(_) if storage.handle.unwrap() == h => {
-                    storage.state = ConnectionState::Disconnected;
-                    state.disconnect_waker.wake();
-                    return Ok(());
+            match (storage.handle, &storage.state) {
+                (Some(handle), ConnectionState::Connected) if handle == h => {
+                    return true;
                 }
                 _ => {}
             }
         }
+        false
+    }
+
+    pub(crate) fn disconnected(&self, h: ConnHandle) -> Result<(), Error> {
+        let mut state = self.state.borrow_mut();
+        for storage in state.connections.iter_mut() {
+            if let Some(handle) = storage.handle {
+                if handle == h {
+                    storage.state = ConnectionState::Disconnected;
+                    state.disconnect_waker.wake();
+                    return Ok(());
+                }
+            }
+        }
+        trace!("[link][disconnect] connection handle {:?} not found", h);
         Err(Error::NotFound)
     }
 
@@ -135,6 +143,7 @@ impl<'d> ConnectionManager<'d> {
                 return Ok(());
             }
         }
+        trace!("[link][connect] no available slot found for handle {:?}", handle);
         Err(Error::NotFound)
     }
 
@@ -142,10 +151,12 @@ impl<'d> ConnectionManager<'d> {
         &self,
         role: LeConnRole,
         peers: &[(AddrKind, &BdAddr)],
-        cx: &mut Context<'_>,
+        cx: Option<&mut Context<'_>>,
     ) -> Poll<u8> {
         let mut state = self.state.borrow_mut();
-        state.accept_waker.register(cx.waker());
+        if let Some(cx) = cx {
+            state.accept_waker.register(cx.waker());
+        }
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if let ConnectionState::Connecting = storage.state {
                 let handle = storage.handle.unwrap();
@@ -155,11 +166,21 @@ impl<'d> ConnectionManager<'d> {
                         for peer in peers.iter() {
                             if storage.peer_addr_kind.unwrap() == peer.0 && &storage.peer_addr.unwrap() == peer.1 {
                                 storage.state = ConnectionState::Connected;
+                                trace!(
+                                    "[link][poll_accept] connection handle {:?} in role {} accepted",
+                                    handle,
+                                    role
+                                );
                                 return Poll::Ready(idx as u8);
                             }
                         }
                     } else {
                         storage.state = ConnectionState::Connected;
+                        trace!(
+                            "[link][poll_accept] connection handle {:?} in role {} accepted",
+                            handle,
+                            role
+                        );
                         return Poll::Ready(idx as u8);
                     }
                 }
@@ -202,7 +223,7 @@ impl<'d> ConnectionManager<'d> {
     }
 
     pub(crate) async fn accept(&self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> u8 {
-        poll_fn(move |cx| self.poll_accept(role, peers, cx)).await
+        poll_fn(move |cx| self.poll_accept(role, peers, Some(cx))).await
     }
 
     pub(crate) fn set_link_credits(&self, credits: usize) {
@@ -225,7 +246,7 @@ impl<'d> ConnectionManager<'d> {
                 _ => {}
             }
         }
-        warn!("[link][confirm_sent] connection {:?} not found", handle);
+        trace!("[link][confirm_sent] connection {:?} not found", handle);
         Err(Error::NotFound)
     }
 
@@ -259,7 +280,7 @@ impl<'d> ConnectionManager<'d> {
                 _ => {}
             }
         }
-        warn!("[link][pool_request_to_send] connection {:?} not found", handle);
+        trace!("[link][pool_request_to_send] connection {:?} not found", handle);
         Poll::Ready(Err(Error::NotFound))
     }
 }
@@ -321,22 +342,49 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
     }
 }
 
-pub struct DisconnectIter<'a, 'd> {
+pub struct DisconnectRequest<'a, 'd> {
+    index: usize,
+    handle: ConnHandle,
+    reason: DisconnectReason,
     state: &'a RefCell<State<'d>>,
-    idx: usize,
 }
 
-impl<'a, 'd> Iterator for DisconnectIter<'a, 'd> {
-    type Item = (ConnHandle, DisconnectReason);
+impl<'a, 'd> DisconnectRequest<'a, 'd> {
+    pub fn handle(&self) -> ConnHandle {
+        self.handle
+    }
+
+    pub fn reason(&self) -> DisconnectReason {
+        self.reason
+    }
+
+    pub fn confirm(self) {
+        let mut state = self.state.borrow_mut();
+        state.connections[self.index].state = ConnectionState::Disconnecting(self.reason);
+    }
+}
+
+pub struct DisconnectRequestIter<'a, 'd> {
+    state: &'a RefCell<State<'d>>,
+    next: usize,
+}
+
+impl<'a, 'd> Iterator for DisconnectRequestIter<'a, 'd> {
+    type Item = DisconnectRequest<'a, 'd>;
     fn next(&mut self) -> Option<Self::Item> {
         let state = self.state.borrow();
-        for idx in self.idx..state.connections.len() {
-            if let ConnectionState::Disconnecting(reason) = state.connections[idx].state {
-                self.idx = idx + 1;
-                return state.connections[idx].handle.map(|h| (h, reason));
+        for idx in self.next..state.connections.len() {
+            if let ConnectionState::DisconnectRequest(reason) = state.connections[idx].state {
+                self.next = idx + 1;
+                return state.connections[idx].handle.map(|handle| DisconnectRequest {
+                    index: idx,
+                    handle,
+                    reason,
+                    state: self.state,
+                });
             }
         }
-        self.idx = state.connections.len();
+        self.next = state.connections.len();
         None
     }
 }
@@ -373,10 +421,11 @@ impl defmt::Format for ConnectionStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, credits = {}, peer = {:?}",
+            "state = {}, conn = {}, credits = {}, role = {}, peer = {:?}",
             self.state,
             self.handle,
             self.link_credits,
+            self.role,
             self.peer_addr,
         );
     }
@@ -385,6 +434,7 @@ impl defmt::Format for ConnectionStorage {
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConnectionState {
+    DisconnectRequest(DisconnectReason),
     Disconnecting(DisconnectReason),
     Disconnected,
     Connecting,
@@ -424,5 +474,162 @@ impl<'a, 'd> Drop for PacketGrant<'a, 'd> {
             // make it an assert?
             warn!("[link] connection {:?} not found", self.handle);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ADDR_1: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+    const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+
+    #[test]
+    fn peripheral_connection_established() {
+        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
+        let mgr = ConnectionManager::new(&mut storage[..]);
+
+        assert_eq!(Poll::Pending, mgr.poll_accept(LeConnRole::Peripheral, &[], None));
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Peripheral
+        ));
+
+        let Poll::Ready(index) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        assert_eq!(mgr.role(index), LeConnRole::Peripheral);
+        assert_eq!(mgr.peer_address(index), BdAddr::new(ADDR_1));
+
+        mgr.request_disconnect(index, DisconnectReason::RemoteUserTerminatedConn);
+    }
+
+    #[test]
+    fn central_connection_established() {
+        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
+        let mgr = ConnectionManager::new(&mut storage[..]);
+
+        assert_eq!(Poll::Pending, mgr.poll_accept(LeConnRole::Central, &[], None));
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_2),
+            LeConnRole::Central
+        ));
+
+        let Poll::Ready(index) = mgr.poll_accept(LeConnRole::Central, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        assert_eq!(mgr.role(index), LeConnRole::Central);
+        assert_eq!(mgr.peer_address(index), BdAddr::new(ADDR_2));
+    }
+
+    #[test]
+    fn controller_disconnects_before_host() {
+        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
+        let mgr = ConnectionManager::new(&mut storage[..]);
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(3),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Central
+        ));
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(2),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_2),
+            LeConnRole::Peripheral
+        ));
+
+        let Poll::Ready(central) = mgr.poll_accept(LeConnRole::Central, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        let Poll::Ready(peripheral) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        assert_eq!(ConnHandle::new(3), mgr.handle(central));
+        assert_eq!(ConnHandle::new(2), mgr.handle(peripheral));
+
+        // Disconnect request from us
+        mgr.request_disconnect(peripheral, DisconnectReason::RemoteUserTerminatedConn);
+
+        // Polling should return the disconnecting handle
+        let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        let next = unwrap!(it.next());
+        assert!(it.next().is_none());
+
+        // Disconnection event from host arrives before we confirm
+        unwrap!(mgr.disconnected(ConnHandle::new(2)));
+
+        // This should be a noop
+        next.confirm();
+
+        // Polling should not return anything
+        assert!(mgr.poll_disconnecting(None).is_pending());
+    }
+
+    #[test]
+    fn controller_disconnects_after_host() {
+        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
+        let mgr = ConnectionManager::new(&mut storage[..]);
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(3),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Central
+        ));
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(2),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_2),
+            LeConnRole::Peripheral
+        ));
+
+        let Poll::Ready(central) = mgr.poll_accept(LeConnRole::Central, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        let Poll::Ready(peripheral) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        assert_eq!(ConnHandle::new(3), mgr.handle(central));
+        assert_eq!(ConnHandle::new(2), mgr.handle(peripheral));
+
+        // Disconnect request from us
+        mgr.request_disconnect(peripheral, DisconnectReason::RemoteUserTerminatedConn);
+
+        // Polling should return the disconnecting handle
+        let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        let next = unwrap!(it.next());
+        assert!(it.next().is_none());
+
+        // This should remove it from the list
+        next.confirm();
+
+        // Polling should not return anything
+        assert!(mgr.poll_disconnecting(None).is_pending());
+
+        // Disconnection event from host arrives before we confirm
+        unwrap!(mgr.disconnected(ConnHandle::new(2)));
+
+        // Polling should not return anything
+        assert!(mgr.poll_disconnecting(None).is_pending());
     }
 }
