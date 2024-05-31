@@ -289,7 +289,6 @@ where
             Either::First(index) => {
                 _drop.defuse();
                 self.connect_state.done();
-                trace!("[host] connection to peripheral established");
                 Ok(Connection::new(index, &self.connections))
             }
             Either::Second(_) => Err(Error::Timeout.into()),
@@ -625,7 +624,6 @@ where
                     }
                 }
                 Either::Second(index) => {
-                    trace!("[host] connection to central established");
                     return Ok(Connection::new(index, &self.connections));
                 }
             }
@@ -669,6 +667,11 @@ where
                         .await;
                     self.connect_state.canceled();
                 } else {
+                    trace!(
+                        "[host] connection established with handle {:?} to {:?}",
+                        handle,
+                        peer_addr
+                    );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
                 }
@@ -688,6 +691,9 @@ where
     }
 
     async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
+        if !self.connections.is_connected(acl.handle()) {
+            return Err(Error::Disconnected);
+        }
         let (header, mut packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
                 let (header, data) = L2capHeader::from_hci_bytes(acl.data())?;
@@ -866,7 +872,7 @@ where
 
             loop {
                 match select3(
-                    poll_fn(|cx| self.connections.poll_disconnecting(cx)),
+                    poll_fn(|cx| self.connections.poll_disconnecting(Some(cx))),
                     poll_fn(|cx| self.connect_state.poll_cancelled(cx)),
                     poll_fn(|cx| self.advertise_state.poll_cancelled(cx)),
                 )
@@ -874,9 +880,9 @@ where
                 {
                     Either3::First(it) => {
                         for entry in it {
-                            trace!("[host] disconnecting handle {:?}", entry.0);
-                            self.command(Disconnect::new(entry.0, entry.1)).await?;
-                            let _ = self.connections.disconnect(entry.0);
+                            trace!("[host] disconnecting handle {:?}", entry.handle());
+                            self.command(Disconnect::new(entry.handle(), entry.reason())).await?;
+                            entry.confirm();
                         }
                     }
                     Either3::Second(_) => {
@@ -965,8 +971,8 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             let handle = e.handle;
-                            info!("Disconnection event from {}", handle.raw());
-                            let _ = self.connections.disconnect(handle);
+                            info!("Disconnection event on handle {}", handle.raw());
+                            let _ = self.connections.disconnected(handle);
                             let _ = self.channels.disconnected(handle);
                             self.reassembly.disconnected(handle);
                             let mut m = self.metrics.borrow_mut();
