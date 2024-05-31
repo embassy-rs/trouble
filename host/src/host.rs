@@ -879,6 +879,7 @@ where
                 .await
                 {
                     Either3::First(it) => {
+                        trace!("[host] disconnecting handles");
                         for entry in it {
                             self.command(Disconnect::new(entry.handle(), entry.reason())).await?;
                             entry.confirm();
