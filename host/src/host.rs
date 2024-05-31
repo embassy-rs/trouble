@@ -880,7 +880,6 @@ where
                 {
                     Either3::First(it) => {
                         for entry in it {
-                            trace!("[host] disconnecting handle {:?}", entry.handle());
                             self.command(Disconnect::new(entry.handle(), entry.reason())).await?;
                             entry.confirm();
                         }
@@ -893,7 +892,7 @@ where
                         }
                     }
                     Either3::Third(ext) => {
-                        trace!("[host] turning off advertising (extended = {})", ext);
+                        trace!("[host] turning off advertising");
                         if ext {
                             self.command(LeSetExtAdvEnable::new(false, &[])).await?
                         } else {

@@ -246,7 +246,6 @@ impl<'d> ConnectionManager<'d> {
                 _ => {}
             }
         }
-        trace!("[link][confirm_sent] connection {:?} not found", handle);
         Err(Error::NotFound)
     }
 
