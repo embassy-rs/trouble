@@ -28,7 +28,7 @@ log = { version = "0.4.16", optional = true }
 defmt = {version = "0.3", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", default-features = false, features = ["time", "rt-multi-thread", "macros"] }
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embedded-io-async = { version = "0.6.1" }
 tokio-serial = "5.4"
