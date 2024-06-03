@@ -87,10 +87,10 @@ impl<'d> ConnectionManager<'d> {
         if let Some(cx) = cx {
             state.disconnect_waker.register(cx.waker());
         }
-        for storage in state.connections.iter() {
+        for (idx, storage) in state.connections.iter().enumerate() {
             if let ConnectionState::DisconnectRequest(_) = storage.state {
                 return Poll::Ready(DisconnectRequestIter {
-                    next: 0,
+                    next: idx,
                     state: &self.state,
                 });
             }
