@@ -71,9 +71,10 @@ impl<'d> ConnectionManager<'d> {
 
     pub(crate) fn request_disconnect(&self, index: u8, reason: DisconnectReason) {
         self.with_mut(|state| {
-            let state = &mut state.connections[index as usize];
-            if state.state == ConnectionState::Connected {
-                state.state = ConnectionState::DisconnectRequest(reason);
+            let entry = &mut state.connections[index as usize];
+            if entry.state == ConnectionState::Connected {
+                entry.state = ConnectionState::DisconnectRequest(reason);
+                state.disconnect_waker.wake();
             }
         })
     }
@@ -86,10 +87,10 @@ impl<'d> ConnectionManager<'d> {
         if let Some(cx) = cx {
             state.disconnect_waker.register(cx.waker());
         }
-        for storage in state.connections.iter() {
+        for (idx, storage) in state.connections.iter().enumerate() {
             if let ConnectionState::DisconnectRequest(_) = storage.state {
                 return Poll::Ready(DisconnectRequestIter {
-                    next: 0,
+                    next: idx,
                     state: &self.state,
                 });
             }
@@ -116,7 +117,6 @@ impl<'d> ConnectionManager<'d> {
             if let Some(handle) = storage.handle {
                 if handle == h && storage.state != ConnectionState::Disconnected {
                     storage.state = ConnectionState::Disconnected;
-                    state.disconnect_waker.wake();
                     return Ok(());
                 }
             }
@@ -224,8 +224,6 @@ impl<'d> ConnectionManager<'d> {
             );
             if state.refcount == 0 && state.state == ConnectionState::Connected {
                 state.state = ConnectionState::DisconnectRequest(DisconnectReason::RemoteUserTerminatedConn);
-                // ensure it is never reused
-                state.handle.take();
             }
         });
     }
@@ -580,6 +578,14 @@ mod tests {
         let next = unwrap!(it.next());
         assert!(it.next().is_none());
 
+        // If nothing happens, polling should behave the same way
+        let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        let next = unwrap!(it.next());
+        assert!(it.next().is_none());
+
         // Disconnection event from host arrives before we confirm
         unwrap!(mgr.disconnected(ConnHandle::new(2)));
 
@@ -716,5 +722,44 @@ mod tests {
         unwrap!(mgr.disconnected(handle));
 
         assert!(!conn2.is_connected());
+    }
+
+    #[test]
+    fn disconnecting_iterator_invalid() {
+        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
+        let mgr = ConnectionManager::new(&mut storage[..]);
+
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(3),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Peripheral
+        ));
+
+        let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        assert_eq!(handle.role(), LeConnRole::Peripheral);
+        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_1));
+
+        assert!(mgr.poll_disconnecting(None).is_pending());
+
+        // Disconnect request from us
+        drop(handle);
+
+        // Polling should return the disconnecting handle
+        let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        //        unwrap!(mgr.disconnected(ConnHandle::new(3)));
+
+        let n = it.next();
+        assert!(n.is_some());
+        n.map(|n| n.confirm());
+
+        assert!(mgr.poll_disconnecting(None).is_pending());
     }
 }
