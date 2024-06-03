@@ -71,9 +71,10 @@ impl<'d> ConnectionManager<'d> {
 
     pub(crate) fn request_disconnect(&self, index: u8, reason: DisconnectReason) {
         self.with_mut(|state| {
-            let state = &mut state.connections[index as usize];
-            if state.state == ConnectionState::Connected {
-                state.state = ConnectionState::DisconnectRequest(reason);
+            let entry = &mut state.connections[index as usize];
+            if entry.state == ConnectionState::Connected {
+                entry.state = ConnectionState::DisconnectRequest(reason);
+                state.disconnect_waker.wake();
             }
         })
     }
@@ -116,7 +117,6 @@ impl<'d> ConnectionManager<'d> {
             if let Some(handle) = storage.handle {
                 if handle == h && storage.state != ConnectionState::Disconnected {
                     storage.state = ConnectionState::Disconnected;
-                    state.disconnect_waker.wake();
                     return Ok(());
                 }
             }
