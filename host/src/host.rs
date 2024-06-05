@@ -876,22 +876,22 @@ where
                 )
                 .await
                 {
-                    Either3::First(it) => {
-                        trace!("[host] disconnecting handles");
-                        for entry in it {
-                            self.command(Disconnect::new(entry.handle(), entry.reason())).await?;
-                            entry.confirm();
-                        }
+                    Either3::First(request) => {
+                        trace!("[host] disconnect request handle {:?}", request.handle());
+                        self.command(Disconnect::new(request.handle(), request.reason()))
+                            .await?;
+                        trace!("[host] disconnect sent, confirming");
+                        request.confirm();
                     }
                     Either3::Second(_) => {
-                        trace!("[host] cancelling create connection");
+                        // trace!("[host] cancelling create connection");
                         if let Err(e) = self.command(LeCreateConnCancel::new()).await {
                             // Signal to ensure no one is stuck
                             self.connect_state.canceled();
                         }
                     }
                     Either3::Third(ext) => {
-                        trace!("[host] turning off advertising");
+                        // trace!("[host] turning off advertising");
                         if ext {
                             self.command(LeSetExtAdvEnable::new(false, &[])).await?
                         } else {

@@ -79,18 +79,17 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
-    pub(crate) fn poll_disconnecting<'m>(
-        &'m self,
-        cx: Option<&mut Context<'_>>,
-    ) -> Poll<DisconnectRequestIter<'m, 'd>> {
+    pub(crate) fn poll_disconnecting<'m>(&'m self, cx: Option<&mut Context<'_>>) -> Poll<DisconnectRequest<'m, 'd>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
             state.disconnect_waker.register(cx.waker());
         }
         for (idx, storage) in state.connections.iter().enumerate() {
-            if let ConnectionState::DisconnectRequest(_) = storage.state {
-                return Poll::Ready(DisconnectRequestIter {
-                    next: idx,
+            if let ConnectionState::DisconnectRequest(reason) = storage.state {
+                return Poll::Ready(DisconnectRequest {
+                    index: idx,
+                    handle: storage.handle.unwrap(),
+                    reason,
                     state: &self.state,
                 });
             }
@@ -373,31 +372,6 @@ impl<'a, 'd> DisconnectRequest<'a, 'd> {
     }
 }
 
-pub struct DisconnectRequestIter<'a, 'd> {
-    state: &'a RefCell<State<'d>>,
-    next: usize,
-}
-
-impl<'a, 'd> Iterator for DisconnectRequestIter<'a, 'd> {
-    type Item = DisconnectRequest<'a, 'd>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let state = self.state.borrow();
-        for idx in self.next..state.connections.len() {
-            if let ConnectionState::DisconnectRequest(reason) = state.connections[idx].state {
-                self.next = idx + 1;
-                return state.connections[idx].handle.map(|handle| DisconnectRequest {
-                    index: idx,
-                    handle,
-                    reason,
-                    state: self.state,
-                });
-            }
-        }
-        self.next = state.connections.len();
-        None
-    }
-}
-
 #[derive(Debug)]
 pub struct ConnectionStorage {
     pub state: ConnectionState,
@@ -571,26 +545,20 @@ mod tests {
         peripheral.disconnect();
 
         // Polling should return the disconnecting handle
-        let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
+        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
             panic!("expected connection to be accepted");
         };
-
-        let next = unwrap!(it.next());
-        assert!(it.next().is_none());
 
         // If nothing happens, polling should behave the same way
-        let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
+        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
             panic!("expected connection to be accepted");
         };
-
-        let next = unwrap!(it.next());
-        assert!(it.next().is_none());
 
         // Disconnection event from host arrives before we confirm
         unwrap!(mgr.disconnected(ConnHandle::new(2)));
 
         // This should be a noop
-        next.confirm();
+        req.confirm();
 
         // Polling should not return anything
         assert!(mgr.poll_disconnecting(None).is_pending());
@@ -630,15 +598,12 @@ mod tests {
         peripheral.disconnect();
 
         // Polling should return the disconnecting handle
-        let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
+        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
             panic!("expected connection to be accepted");
         };
 
-        let next = unwrap!(it.next());
-        assert!(it.next().is_none());
-
         // This should remove it from the list
-        next.confirm();
+        req.confirm();
 
         // Polling should not return anything
         assert!(mgr.poll_disconnecting(None).is_pending());
@@ -750,15 +715,13 @@ mod tests {
         drop(handle);
 
         // Polling should return the disconnecting handle
-        let Poll::Ready(mut it) = mgr.poll_disconnecting(None) else {
+        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
             panic!("expected connection to be accepted");
         };
 
         //        unwrap!(mgr.disconnected(ConnHandle::new(3)));
 
-        let n = it.next();
-        assert!(n.is_some());
-        n.map(|n| n.confirm());
+        req.confirm();
 
         assert!(mgr.poll_disconnecting(None).is_pending());
     }
