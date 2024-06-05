@@ -439,24 +439,12 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         let cid = res.scid;
         let mut state = self.state.borrow_mut();
         for storage in state.channels.iter_mut() {
-            match storage.state {
-                ChannelState::Disconnecting if cid == storage.cid => {
-                    storage.state = ChannelState::Disconnected;
-                    break;
-                }
-                ChannelState::PeerConnecting(_) if cid == storage.cid => {
-                    storage.state = ChannelState::Disconnecting;
-                    break;
-                }
-                ChannelState::Connecting(_) if cid == storage.cid => {
-                    storage.state = ChannelState::Disconnecting;
-                    break;
-                }
-                ChannelState::Connected if cid == storage.cid => {
-                    storage.state = ChannelState::Disconnecting;
-                    break;
-                }
-                _ => {}
+            if cid == storage.cid {
+                storage.state = ChannelState::Disconnected;
+                storage.cid = 0;
+                storage.peer_cid = 0;
+                storage.conn = 0;
+                break;
             }
         }
         Ok(())
