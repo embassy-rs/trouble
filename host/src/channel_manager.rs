@@ -569,11 +569,8 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
     fn connected_channel_params(&self, index: ChannelIndex) -> Result<(ConnHandle, u16, u16), Error> {
         let state = self.state.borrow();
         let chan = &state.channels[index.0 as usize];
-        match chan.state {
-            ChannelState::Connected => {
-                return Ok((ConnHandle::new(chan.conn), chan.mps, chan.peer_cid));
-            }
-            _ => {}
+        if chan.state == ChannelState::Connected {
+            return Ok((ConnHandle::new(chan.conn), chan.mps, chan.peer_cid));
         }
         //trace!("[l2cap][connected_channel_params] channel {} closed", index);
         Err(Error::ChannelClosed)
@@ -930,7 +927,6 @@ impl<'reference, 'state> Drop for CreditGrant<'reference, 'state> {
             if chan.state == ChannelState::Connected {
                 chan.peer_credits += self.credits;
                 chan.credit_waker.wake();
-                return;
             }
             // make it an assert?
             //        warn!("[l2cap][credit grant drop] channel {} not found", self.index);

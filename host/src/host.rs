@@ -714,18 +714,14 @@ where
         self.advertise_state.start(&advset[..]);
         self.command(LeSetExtAdvEnable::new(true, &advset)).await?;
 
-        loop {
-            match select(
-                self.advertise_state.wait(&advset[..]),
-                self.connections.accept(LeConnRole::Peripheral, &[]),
-            )
-            .await
-            {
-                Either::First(_) => {
-                    return Err(Error::Timeout.into());
-                }
-                Either::Second(conn) => return Ok(conn),
-            }
+        match select(
+            self.advertise_state.wait(&advset[..]),
+            self.connections.accept(LeConnRole::Peripheral, &[]),
+        )
+        .await
+        {
+            Either::First(_) => Err(Error::Timeout.into()),
+            Either::Second(conn) => Ok(conn),
         }
     }
 
