@@ -25,10 +25,11 @@ use bt_hci::param::{
     FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask, Operation, PhyParams, ScanningPhy, Status,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::channel::{Channel, TryReceiveError};
+use embassy_sync::channel::Channel;
 use embassy_sync::once_lock::OnceLock;
+use embassy_sync::waitqueue::WakerRegistration;
 use futures::pin_mut;
 
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
@@ -52,15 +53,23 @@ use crate::{attribute::AttributeTable, gatt::GattServer};
 ///
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct BleHostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize> {
+pub struct BleHostResources<
+    const CONNS: usize,
+    const CHANNELS: usize,
+    const L2CAP_MTU: usize,
+    const ADV_SETS: usize = 1,
+> {
     rx_pool: PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }, CHANNELS>,
     connections: [ConnectionStorage; CONNS],
     channels: [ChannelStorage; CHANNELS],
     channels_rx: [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>; CHANNELS],
     sar: [SarType; CONNS],
+    advertise_handles: [AdvHandleState; ADV_SETS],
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize> BleHostResources<CONNS, CHANNELS, L2CAP_MTU> {
+impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
+    BleHostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+{
     /// Create a new instance of host resources with the provided QoS requirements for packets.
     pub fn new(qos: Qos) -> Self {
         Self {
@@ -69,6 +78,7 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize> BleHostR
             sar: [EMPTY_SAR; CONNS],
             channels: [ChannelStorage::DISCONNECTED; CHANNELS],
             channels_rx: [PacketChannel::NEW; CHANNELS],
+            advertise_handles: [AdvHandleState::None; ADV_SETS],
         }
     }
 }
@@ -98,9 +108,102 @@ pub struct BleHost<'d, T> {
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
-    advertise_terminated: Channel<NoopRawMutex, Option<AdvHandle>, 1>,
-    advertise_state: CommandState<bool>,
-    connect_state: CommandState<bool>,
+    advertise_state: AdvState<'d>,
+    advertise_command_state: CommandState<bool>,
+    connect_command_state: CommandState<bool>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum AdvHandleState {
+    None,
+    Advertising(AdvHandle),
+    Terminated(AdvHandle),
+}
+
+pub(crate) struct AdvInnerState<'d> {
+    handles: &'d mut [AdvHandleState],
+    waker: WakerRegistration,
+}
+
+pub(crate) struct AdvState<'d> {
+    state: RefCell<AdvInnerState<'d>>,
+}
+
+impl<'d> AdvState<'d> {
+    pub fn new(handles: &'d mut [AdvHandleState]) -> Self {
+        Self {
+            state: RefCell::new(AdvInnerState {
+                handles,
+                waker: WakerRegistration::new(),
+            }),
+        }
+    }
+
+    pub fn reset(&self) {
+        let mut state = self.state.borrow_mut();
+        for entry in state.handles.iter_mut() {
+            *entry = AdvHandleState::None;
+        }
+        state.waker.wake();
+    }
+
+    // Terminate handle
+    pub fn terminate(&self, handle: AdvHandle) {
+        let mut state = self.state.borrow_mut();
+        for entry in state.handles.iter_mut() {
+            match entry {
+                AdvHandleState::Advertising(h) if *h == handle => {
+                    *entry = AdvHandleState::Terminated(handle);
+                }
+                _ => {}
+            }
+        }
+        state.waker.wake();
+    }
+
+    pub fn len(&self) -> usize {
+        let state = self.state.borrow();
+        state.handles.len()
+    }
+
+    pub fn start(&self, sets: &[AdvSet]) {
+        let mut state = self.state.borrow_mut();
+        assert_eq!(sets.len(), state.handles.len());
+        for (idx, entry) in state.handles.iter_mut().enumerate() {
+            *entry = AdvHandleState::Advertising(sets[idx].adv_handle);
+        }
+    }
+
+    pub async fn wait(&self, sets: &[AdvSet]) {
+        poll_fn(|cx| {
+            let mut state = self.state.borrow_mut();
+            state.waker.register(cx.waker());
+
+            let mut terminated = 0;
+            for entry in state.handles.iter() {
+                match entry {
+                    AdvHandleState::Terminated(handle) => {
+                        for set in sets.iter() {
+                            if *handle == set.adv_handle {
+                                terminated += 1;
+                                break;
+                            }
+                        }
+                    }
+                    AdvHandleState::None => {
+                        terminated += 1;
+                    }
+                    _ => {}
+                }
+            }
+            if terminated == sets.len() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+    }
 }
 
 #[derive(Default)]
@@ -108,7 +211,6 @@ struct Metrics {
     connect_events: u32,
     disconnect_events: u32,
     rx_errors: u32,
-    tx_blocked: u32,
 }
 
 impl<'d, T> BleHost<'d, T>
@@ -119,9 +221,9 @@ where
     ///
     /// The host requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
-    pub fn new<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize>(
+    pub fn new<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>(
         controller: T,
-        host_resources: &'static mut BleHostResources<CONNS, CHANNELS, L2CAP_MTU>,
+        host_resources: &'static mut BleHostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
     ) -> Self {
         Self {
             address: None,
@@ -138,9 +240,9 @@ where
             rx_pool: &host_resources.rx_pool,
             att_inbound: Channel::new(),
             scanner: Channel::new(),
-            advertise_terminated: Channel::new(),
-            advertise_state: CommandState::new(),
-            connect_state: CommandState::new(),
+            advertise_state: AdvState::new(&mut host_resources.advertise_handles[..]),
+            advertise_command_state: CommandState::new(),
+            connect_command_state: CommandState::new(),
             outbound: Channel::new(),
         }
     }
@@ -199,9 +301,9 @@ where
         }
 
         let _drop = OnDrop::new(|| {
-            self.connect_state.cancel(true);
+            self.connect_command_state.cancel(true);
         });
-        self.connect_state.request().await;
+        self.connect_command_state.request().await;
 
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
@@ -223,13 +325,13 @@ where
         match select(
             self.connections
                 .accept(LeConnRole::Central, config.scan_config.filter_accept_list),
-            self.connect_state.wait_idle(),
+            self.connect_command_state.wait_idle(),
         )
         .await
         {
             Either::First(conn) => {
                 _drop.defuse();
-                self.connect_state.done();
+                self.connect_command_state.done();
                 Ok(conn)
             }
             Either::Second(_) => Err(Error::Timeout.into()),
@@ -251,9 +353,9 @@ where
 
         // Ensure no other connect ongoing.
         let _drop = OnDrop::new(|| {
-            self.connect_state.cancel(true);
+            self.connect_command_state.cancel(true);
         });
-        self.connect_state.request().await;
+        self.connect_command_state.request().await;
 
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
@@ -282,13 +384,13 @@ where
         match select(
             self.connections
                 .accept(LeConnRole::Central, config.scan_config.filter_accept_list),
-            self.connect_state.wait_idle(),
+            self.connect_command_state.wait_idle(),
         )
         .await
         {
             Either::First(conn) => {
                 _drop.defuse();
-                self.connect_state.done();
+                self.connect_command_state.done();
                 Ok(conn)
             }
             Either::Second(_) => Err(Error::Timeout.into()),
@@ -449,12 +551,12 @@ where
     {
         // Ensure no other advertise ongoing.
         let _drop = OnDrop::new(|| {
-            self.advertise_state.cancel(false);
+            self.advertise_command_state.cancel(false);
         });
-        self.advertise_state.request().await;
+        self.advertise_command_state.request().await;
 
         // Clear current advertising terminations
-        while self.advertise_terminated.try_receive() != Err(TryReceiveError::Empty) {}
+        self.advertise_state.reset();
 
         let data: RawAdvertisement = data.into();
         if !data.props.legacy_adv() {
@@ -498,14 +600,21 @@ where
             self.command(LeSetScanResponseData::new(to_copy as u8, buf)).await?;
         }
 
+        let advsets: [AdvSet; 1] = [AdvSet {
+            adv_handle: AdvHandle::new(0),
+            duration: bt_hci::param::Duration::from_secs(0),
+            max_ext_adv_events: 0,
+        }];
+
+        self.advertise_state.start(&advsets[..]);
         self.command(LeSetAdvEnable::new(true)).await?;
         match select(
-            self.advertise_terminated.receive(),
+            self.advertise_state.wait(&advsets[..]),
             self.connections.accept(LeConnRole::Peripheral, &[]),
         )
         .await
         {
-            Either::First(handle) => Err(Error::Timeout.into()),
+            Either::First(_) => Err(Error::Timeout.into()),
             Either::Second(conn) => Ok(conn),
         }
     }
@@ -528,19 +637,21 @@ where
             + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
         // Check host supports the required advertisement sets
-        let result = self.command(LeReadNumberOfSupportedAdvSets::new()).await?;
-        if result < N as u8 {
-            return Err(Error::InsufficientSpace.into());
+        {
+            let result = self.command(LeReadNumberOfSupportedAdvSets::new()).await?;
+            if result < N as u8 || self.advertise_state.len() < N {
+                return Err(Error::InsufficientSpace.into());
+            }
         }
 
         // Ensure no other advertise ongoing.
         let _drop = OnDrop::new(|| {
-            self.advertise_state.cancel(true);
+            self.advertise_command_state.cancel(true);
         });
-        self.advertise_state.request().await;
+        self.advertise_command_state.request().await;
 
         // Clear current advertising terminations
-        while self.advertise_terminated.try_receive() != Err(TryReceiveError::Empty) {}
+        self.advertise_state.reset();
 
         for set in sets {
             let handle = AdvHandle::new(set.handle);
@@ -600,28 +711,18 @@ where
         });
 
         trace!("[host] enabling advertising");
+        self.advertise_state.start(&advset[..]);
         self.command(LeSetExtAdvEnable::new(true, &advset)).await?;
 
-        let mut terminated: [bool; N] = [false; N];
         loop {
             match select(
-                self.advertise_terminated.receive(),
+                self.advertise_state.wait(&advset[..]),
                 self.connections.accept(LeConnRole::Peripheral, &[]),
             )
             .await
             {
-                Either::First(None) => {
+                Either::First(_) => {
                     return Err(Error::Timeout.into());
-                }
-                Either::First(Some(handle)) => {
-                    for (i, s) in advset.iter().enumerate() {
-                        if s.adv_handle == handle {
-                            terminated[i] = true;
-                        }
-                    }
-                    if !terminated.contains(&false) {
-                        return Err(Error::Timeout.into());
-                    }
                 }
                 Either::Second(conn) => return Ok(conn),
             }
@@ -643,27 +744,19 @@ where
         }
     }
 
-    async fn handle_connection(
+    fn handle_connection(
         &self,
         status: Status,
         handle: ConnHandle,
         peer_addr_kind: AddrKind,
         peer_addr: BdAddr,
         role: LeConnRole,
-    ) where
-        T: ControllerCmdSync<Disconnect>,
-    {
+    ) -> bool {
         match status.to_result() {
             Ok(_) => {
                 if let Err(err) = self.connections.connect(handle, peer_addr_kind, peer_addr, role) {
                     warn!("Error establishing connection: {:?}", err);
-                    let _ = self
-                        .command(Disconnect::new(
-                            handle,
-                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                        ))
-                        .await;
-                    self.connect_state.canceled();
+                    return false;
                 } else {
                     trace!(
                         "[host] connection established with handle {:?} to {:?}",
@@ -675,20 +768,21 @@ where
                 }
             }
             Err(bt_hci::param::Error::ADV_TIMEOUT) => {
-                self.advertise_terminated.send(None).await;
+                self.advertise_state.reset();
             }
             Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
                 warn!("[host] connect cancelled");
-                self.connect_state.canceled();
+                self.connect_command_state.canceled();
             }
             Err(e) => {
                 warn!("Error connection complete event: {:?}", e);
-                self.connect_state.canceled();
+                self.connect_command_state.canceled();
             }
         }
+        true
     }
 
-    async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         if !self.connections.is_handle_connected(acl.handle()) {
             return Err(Error::Disconnected);
         }
@@ -707,7 +801,7 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    self.channels.signal(acl.handle(), data).await?;
+                    self.channels.signal(acl.handle(), data)?;
                     return Ok(());
                 }
 
@@ -759,12 +853,17 @@ where
                     let len = w.len();
                     w.finish();
 
-                    self.outbound.send((acl.handle(), Pdu::new(packet, len))).await;
+                    if let Err(e) = self.outbound.try_send((acl.handle(), Pdu::new(packet, len))) {
+                        return Err(Error::OutOfMemory);
+                    }
                 } else {
                     #[cfg(feature = "gatt")]
-                    self.att_inbound
-                        .send((acl.handle(), Pdu::new(packet, header.length as usize)))
-                        .await;
+                    if let Err(e) = self
+                        .att_inbound
+                        .try_send((acl.handle(), Pdu::new(packet, header.length as usize)))
+                    {
+                        return Err(Error::OutOfMemory);
+                    }
 
                     #[cfg(not(feature = "gatt"))]
                     return Err(Error::NotSupported);
@@ -773,7 +872,7 @@ where
             L2CAP_CID_LE_U_SIGNAL => {
                 panic!("le signalling channel was fragmented, impossible!");
             }
-            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, packet).await {
+            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, packet) {
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
@@ -869,35 +968,39 @@ where
             let _ = self.initialized.init(());
 
             loop {
-                match select3(
+                match select4(
                     poll_fn(|cx| self.connections.poll_disconnecting(Some(cx))),
-                    poll_fn(|cx| self.connect_state.poll_cancelled(cx)),
-                    poll_fn(|cx| self.advertise_state.poll_cancelled(cx)),
+                    poll_fn(|cx| self.channels.poll_disconnecting(Some(cx))),
+                    poll_fn(|cx| self.connect_command_state.poll_cancelled(cx)),
+                    poll_fn(|cx| self.advertise_command_state.poll_cancelled(cx)),
                 )
                 .await
                 {
-                    Either3::First(request) => {
-                        trace!("[host] disconnect request handle {:?}", request.handle());
+                    Either4::First(request) => {
                         self.command(Disconnect::new(request.handle(), request.reason()))
                             .await?;
-                        trace!("[host] disconnect sent, confirming");
                         request.confirm();
                     }
-                    Either3::Second(_) => {
+                    Either4::Second(request) => {
+                        let mut grant = self.acl(request.handle(), 1).await?;
+                        request.send(&mut grant).await?;
+                        request.confirm();
+                    }
+                    Either4::Third(_) => {
                         // trace!("[host] cancelling create connection");
                         if let Err(e) = self.command(LeCreateConnCancel::new()).await {
                             // Signal to ensure no one is stuck
-                            self.connect_state.canceled();
+                            self.connect_command_state.canceled();
                         }
                     }
-                    Either3::Third(ext) => {
+                    Either4::Fourth(ext) => {
                         // trace!("[host] turning off advertising");
                         if ext {
                             self.command(LeSetExtAdvEnable::new(false, &[])).await?
                         } else {
                             self.command(LeSetAdvEnable::new(false)).await?
                         }
-                        self.advertise_state.canceled();
+                        self.advertise_command_state.canceled();
                     }
                 }
             }
@@ -929,7 +1032,7 @@ where
                 let mut rx = [0u8; MAX_HCI_PACKET_LEN];
                 let result = self.controller.read(&mut rx).await;
                 match result {
-                    Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl).await {
+                    Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl) {
                         Ok(_) => {}
                         Err(e) => {
                             trace!("Error processing ACL packet: {:?}", e);
@@ -940,28 +1043,42 @@ where
                     Ok(ControllerToHostPacket::Event(event)) => match event {
                         Event::Le(event) => match event {
                             LeEvent::LeConnectionComplete(e) => {
-                                self.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role)
-                                    .await;
+                                if !self.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
+                                    let _ = self
+                                        .command(Disconnect::new(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        ))
+                                        .await;
+                                    self.connect_command_state.canceled();
+                                }
                             }
                             LeEvent::LeEnhancedConnectionComplete(e) => {
-                                self.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role)
-                                    .await;
+                                if !self.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
+                                    let _ = self
+                                        .command(Disconnect::new(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        ))
+                                        .await;
+                                    self.connect_command_state.canceled();
+                                }
                             }
                             LeEvent::LeScanTimeout(_) => {
-                                self.scanner.send(None).await;
+                                let _ = self.scanner.try_send(None);
                             }
                             LeEvent::LeAdvertisingSetTerminated(set) => {
-                                self.advertise_terminated.send(Some(set.adv_handle)).await;
+                                self.advertise_state.terminate(set.adv_handle);
                             }
                             LeEvent::LeExtendedAdvertisingReport(data) => {
-                                self.scanner
-                                    .send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)))
-                                    .await;
+                                let _ = self
+                                    .scanner
+                                    .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
                             }
                             LeEvent::LeAdvertisingReport(data) => {
-                                self.scanner
-                                    .send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)))
-                                    .await;
+                                let _ = self
+                                    .scanner
+                                    .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
                             }
                             _ => {
                                 warn!("Unknown LE event!");
@@ -1014,7 +1131,7 @@ where
     pub(crate) async fn acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
         let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n as usize, Some(cx))).await?;
         Ok(AclSender {
-            ble: self,
+            controller: &self.controller,
             handle,
             grant,
         })
@@ -1029,7 +1146,7 @@ where
             }
         };
         Ok(AclSender {
-            ble: self,
+            controller: &self.controller,
             handle,
             grant,
         })
@@ -1040,7 +1157,6 @@ where
         let m = self.metrics.borrow();
         debug!("[host] connect events: {}", m.connect_events);
         debug!("[host] disconnect events: {}", m.disconnect_events);
-        debug!("[host] tx blocked: {}", m.tx_blocked);
         debug!("[host] rx errors: {}", m.rx_errors);
         self.connections.log_status();
         self.channels.log_status();
@@ -1048,7 +1164,7 @@ where
 }
 
 pub struct AclSender<'a, 'd, T: Controller> {
-    pub(crate) ble: &'a BleHost<'d, T>,
+    pub(crate) controller: &'a T,
     pub(crate) handle: ConnHandle,
     pub(crate) grant: PacketGrant<'a, 'd>,
 }
@@ -1065,14 +1181,12 @@ impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
             pdu,
         );
         // info!("Sent ACL {:?}", acl);
-        match self.ble.controller.try_write_acl_data(&acl) {
+        match self.controller.try_write_acl_data(&acl) {
             Ok(result) => {
                 self.grant.confirm(1);
                 Ok(result)
             }
             Err(blocking::TryError::Busy) => {
-                let mut m = self.ble.metrics.borrow_mut();
-                m.tx_blocked = m.tx_blocked.wrapping_add(1);
                 warn!("hci: acl data send busy");
                 Err(Error::Busy.into())
             }
@@ -1087,8 +1201,7 @@ impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
             AclBroadcastFlag::PointToPoint,
             pdu,
         );
-        self.ble
-            .controller
+        self.controller
             .write_acl_data(&acl)
             .await
             .map_err(BleHostError::Controller)?;
