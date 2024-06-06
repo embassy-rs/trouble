@@ -215,6 +215,12 @@ unsafe impl FixedSizeValue for DisconnectionReq {
     }
 }
 
+impl L2capSignal for DisconnectionReq {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::DisconnectionReq
+    }
+}
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
