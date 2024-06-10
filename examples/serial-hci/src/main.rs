@@ -123,6 +123,9 @@ async fn main() {
                     },
                 )
                 .await
+                .unwrap()
+                .accept()
+                .await
                 .unwrap();
             // Keep connection alive
             let mut tick: u8 = 0;

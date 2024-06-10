@@ -542,7 +542,7 @@ where
         &self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
-    ) -> Result<Connection<'_>, BleHostError<T::Error>>
+    ) -> Result<Advertiser<'_, 'd, 1>, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
@@ -550,7 +550,7 @@ where
             + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
         // Ensure no other advertise ongoing.
-        let _drop = OnDrop::new(|| {
+        let drop = OnDrop::new(|| {
             self.advertise_command_state.cancel(false);
         });
         self.advertise_command_state.request().await;
@@ -600,23 +600,21 @@ where
             self.command(LeSetScanResponseData::new(to_copy as u8, buf)).await?;
         }
 
-        let advsets: [AdvSet; 1] = [AdvSet {
+        let advset: [AdvSet; 1] = [AdvSet {
             adv_handle: AdvHandle::new(0),
             duration: bt_hci::param::Duration::from_secs(0),
             max_ext_adv_events: 0,
         }];
 
-        self.advertise_state.start(&advsets[..]);
+        self.advertise_state.start(&advset[..]);
         self.command(LeSetAdvEnable::new(true)).await?;
-        match select(
-            self.advertise_state.wait(&advsets[..]),
-            self.connections.accept(LeConnRole::Peripheral, &[]),
-        )
-        .await
-        {
-            Either::First(_) => Err(Error::Timeout.into()),
-            Either::Second(conn) => Ok(conn),
-        }
+        drop.defuse();
+        Ok(Advertiser {
+            advset,
+            advertise_state: &self.advertise_state,
+            advertise_command_state: &self.advertise_command_state,
+            connections: &self.connections,
+        })
     }
 
     /// Starts sending BLE advertisements according to the provided config.

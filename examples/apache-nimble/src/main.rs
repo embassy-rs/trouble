@@ -103,6 +103,9 @@ async fn main(spawner: embassy_executor::Spawner) {
                     },
                 )
                 .await
+                .unwrap()
+                .accept()
+                .await
                 .unwrap();
 
             let mut test = 0;
