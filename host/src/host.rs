@@ -626,7 +626,7 @@ where
     pub async fn advertise_ext<'k, const N: usize>(
         &self,
         sets: &[AdvertisementSet<'k>; N],
-    ) -> Result<Connection<'_>, BleHostError<T::Error>>
+    ) -> Result<Advertiser<'_, 'd, N>, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
@@ -713,16 +713,11 @@ where
         trace!("[host] enabling advertising");
         self.advertise_state.start(&advset[..]);
         self.command(LeSetExtAdvEnable::new(true, &advset)).await?;
-
-        match select(
-            self.advertise_state.wait(&advset[..]),
-            self.connections.accept(LeConnRole::Peripheral, &[]),
-        )
-        .await
-        {
-            Either::First(_) => Err(Error::Timeout.into()),
-            Either::Second(conn) => Ok(conn),
-        }
+        Ok(Advertiser {
+            advset,
+            advertise_state: &self.advertise_state,
+            connections: &self.connections,
+        })
     }
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
@@ -1156,6 +1151,30 @@ where
         debug!("[host] rx errors: {}", m.rx_errors);
         self.connections.log_status();
         self.channels.log_status();
+    }
+}
+
+/// Handle to an active advertiser which can accept connections.
+pub struct Advertiser<'a, 'd, const N: usize> {
+    advertise_state: &'a AdvState<'d>,
+    connections: &'a ConnectionManager<'d>,
+    advset: [AdvSet; N],
+}
+
+impl<'a, 'd, const N: usize> Advertiser<'a, 'd, N> {
+    /// Accept the next peripheral connection for this advertiser.
+    ///
+    /// Returns Error::Timeout if advertiser stopped.
+    pub async fn accept(&mut self) -> Result<Connection<'a>, Error> {
+        match select(
+            self.advertise_state.wait(&self.advset[..]),
+            self.connections.accept(LeConnRole::Peripheral, &[]),
+        )
+        .await
+        {
+            Either::First(_) => Err(Error::Timeout),
+            Either::Second(conn) => Ok(conn),
+        }
     }
 }
 
