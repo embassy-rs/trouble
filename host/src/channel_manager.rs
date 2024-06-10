@@ -580,16 +580,16 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
     // our policy says so.
     async fn flow_control<T: Controller>(
         &self,
-        chan: ChannelIndex,
+        index: ChannelIndex,
         ble: &BleHost<'d, T>,
         mut packet: Packet,
     ) -> Result<(), BleHostError<T::Error>> {
         let (conn, cid, credits) = self.with_mut(|state| {
-            let chan = &mut state.channels[chan.0 as usize];
+            let chan = &mut state.channels[index.0 as usize];
             if chan.state == ChannelState::Connected {
                 return Ok((chan.conn, chan.cid, chan.flow_control.process()));
             }
-            trace!("[l2cap][flow_control] channel {} not found", chan);
+            trace!("[l2cap][flow_control] channel {:?} not found", index);
             Err(Error::NotFound)
         })?;
 
@@ -632,7 +632,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                 return Poll::Pending;
             }
         }
-        trace!("[l2cap][pool_request_to_send] channel index {} not found", index);
+        trace!("[l2cap][pool_request_to_send] channel index {:?} not found", index);
         Poll::Ready(Err(Error::NotFound))
     }
 
