@@ -25,8 +25,11 @@ pub enum TxPower {
     Plus6dBm = 6,
     Plus7dBm = 7,
     Plus8dBm = 8,
+    Plus10dBm = 10,
     Plus12dBm = 12,
+    Plus14dBm = 14,
     Plus16dBm = 16,
+    Plus18dBm = 18,
     Plus20dBm = 20,
 }
 
