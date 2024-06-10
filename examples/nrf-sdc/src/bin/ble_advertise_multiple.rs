@@ -162,9 +162,10 @@ async fn main(spawner: Spawner) {
     let _ = join(ble.run(), async {
         loop {
             let start = Instant::now();
-            match ble.advertise_ext(&sets).await {
+            let mut advertiser = unwrap!(ble.advertise_ext(&sets).await);
+            match advertiser.accept().await {
                 Ok(_) => {}
-                Err(trouble_host::BleHostError::BleHost(trouble_host::Error::Timeout)) => {
+                Err(trouble_host::Error::Timeout) => {
                     let d: Duration = Instant::now() - start;
                     defmt::info!("timeout/done after {} millis", d.as_millis());
                     Timer::after(Duration::from_secs(2)).await;

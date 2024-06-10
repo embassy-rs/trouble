@@ -645,7 +645,7 @@ where
         }
 
         // Ensure no other advertise ongoing.
-        let _drop = OnDrop::new(|| {
+        let drop = OnDrop::new(|| {
             self.advertise_command_state.cancel(true);
         });
         self.advertise_command_state.request().await;
@@ -713,9 +713,11 @@ where
         trace!("[host] enabling advertising");
         self.advertise_state.start(&advset[..]);
         self.command(LeSetExtAdvEnable::new(true, &advset)).await?;
+        drop.defuse();
         Ok(Advertiser {
             advset,
             advertise_state: &self.advertise_state,
+            advertise_command_state: &self.advertise_command_state,
             connections: &self.connections,
         })
     }
@@ -1157,6 +1159,7 @@ where
 /// Handle to an active advertiser which can accept connections.
 pub struct Advertiser<'a, 'd, const N: usize> {
     advertise_state: &'a AdvState<'d>,
+    advertise_command_state: &'a CommandState<bool>,
     connections: &'a ConnectionManager<'d>,
     advset: [AdvSet; N],
 }
@@ -1175,6 +1178,12 @@ impl<'a, 'd, const N: usize> Advertiser<'a, 'd, N> {
             Either::First(_) => Err(Error::Timeout),
             Either::Second(conn) => Ok(conn),
         }
+    }
+}
+
+impl<'a, 'd, const N: usize> Drop for Advertiser<'a, 'd, N> {
+    fn drop(&mut self) {
+        self.advertise_command_state.cancel(true);
     }
 }
 
