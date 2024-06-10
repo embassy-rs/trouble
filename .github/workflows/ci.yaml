@@ -27,4 +27,4 @@ jobs:
           cargo test --lib -- --nocapture
 
       - name: Build examples
-        run: for i in nrf-sdc; do pushd examples/$i; cargo fmt --check && cargo clippy && cargo build --release; popd; done;
+        run: for i in nrf-sdc serial-hci apache-nimble; do pushd examples/$i; cargo fmt --check && cargo clippy && cargo build --release; popd; done;

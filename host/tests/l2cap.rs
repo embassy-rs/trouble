@@ -95,10 +95,11 @@ async fn l2cap_connection_oriented_channels() {
 
                 loop {
                     println!("[peripheral] advertising");
-                    let conn = adapter.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                    let mut acceptor = adapter.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
+                    let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
 
                     let mut ch1 = L2capChannel::<MTU>::accept(&adapter, &conn, &[0x2349], &Default::default()).await?;

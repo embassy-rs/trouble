@@ -162,13 +162,17 @@ async fn main(spawner: Spawner) {
         },
         async {
             let conn = unwrap!(
-                ble.advertise(
-                    &Default::default(),
-                    Advertisement::ConnectableScannableUndirected {
-                        adv_data: &adv_data[..],
-                        scan_data: &[],
-                    }
+                unwrap!(
+                    ble.advertise(
+                        &Default::default(),
+                        Advertisement::ConnectableScannableUndirected {
+                            adv_data: &adv_data[..],
+                            scan_data: &[],
+                        }
+                    )
+                    .await
                 )
+                .accept()
                 .await
             );
             // Keep connection alive

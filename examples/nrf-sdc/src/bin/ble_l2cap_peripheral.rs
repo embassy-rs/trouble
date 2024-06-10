@@ -130,13 +130,17 @@ async fn main(spawner: Spawner) {
         loop {
             info!("Advertising, waiting for connection...");
             let conn = unwrap!(
-                ble.advertise(
-                    &Default::default(),
-                    Advertisement::ConnectableScannableUndirected {
-                        adv_data: &adv_data[..],
-                        scan_data: &scan_data[..],
-                    }
+                unwrap!(
+                    ble.advertise(
+                        &Default::default(),
+                        Advertisement::ConnectableScannableUndirected {
+                            adv_data: &adv_data[..],
+                            scan_data: &scan_data[..],
+                        }
+                    )
+                    .await
                 )
+                .accept()
                 .await
             );
 
