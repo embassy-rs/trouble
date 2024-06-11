@@ -69,9 +69,9 @@ impl<const QLEN: usize> PacketChannel<QLEN> {
 }
 
 impl<'d> State<'d> {
-    fn print(&self) {
+    fn print(&self, verbose: bool) {
         for (idx, storage) in self.channels.iter().enumerate() {
-            if storage.state != ChannelState::Disconnected {
+            if verbose || storage.state != ChannelState::Disconnected {
                 debug!("[l2cap][idx = {}] state = {:?}", idx, storage);
             }
         }
@@ -673,9 +673,9 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         });
     }
 
-    pub(crate) fn log_status(&self) {
+    pub(crate) fn log_status(&self, verbose: bool) {
         let state = self.state.borrow();
-        state.print();
+        state.print(verbose);
     }
 }
 

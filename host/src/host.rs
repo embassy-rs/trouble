@@ -745,6 +745,7 @@ where
     ) -> bool {
         match status.to_result() {
             Ok(_) => {
+                trace!("[host] connected event on handle {:?}", handle);
                 if let Err(err) = self.connections.connect(handle, peer_addr_kind, peer_addr, role) {
                     warn!("Error establishing connection: {:?}", err);
                     return false;
@@ -1144,13 +1145,13 @@ where
     }
 
     /// Log status information of the host
-    pub fn log_status(&self) {
+    pub fn log_status(&self, verbose: bool) {
         let m = self.metrics.borrow();
         debug!("[host] connect events: {}", m.connect_events);
         debug!("[host] disconnect events: {}", m.disconnect_events);
         debug!("[host] rx errors: {}", m.rx_errors);
-        self.connections.log_status();
-        self.channels.log_status();
+        self.connections.log_status(verbose);
+        self.channels.log_status(verbose);
     }
 }
 

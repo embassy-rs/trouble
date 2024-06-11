@@ -16,9 +16,9 @@ struct State<'d> {
 }
 
 impl<'d> State<'d> {
-    fn print(&self) {
+    fn print(&self, verbose: bool) {
         for (idx, storage) in self.connections.iter().enumerate() {
-            if storage.state != ConnectionState::Disconnected {
+            if verbose || storage.state != ConnectionState::Disconnected {
                 debug!("[link][idx = {}] state = {:?}", idx, storage);
             }
         }
@@ -199,9 +199,9 @@ impl<'d> ConnectionManager<'d> {
         f(&mut state)
     }
 
-    pub(crate) fn log_status(&self) {
+    pub(crate) fn log_status(&self, verbose: bool) {
         let state = self.state.borrow();
-        state.print();
+        state.print(verbose);
     }
 
     pub(crate) fn inc_ref(&self, index: u8) {
