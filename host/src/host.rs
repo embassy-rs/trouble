@@ -83,11 +83,6 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
     }
 }
 
-/// Event handler for vendor-specific events handled outside the host.
-pub trait VendorEventHandler {
-    fn on_event(&self, event: &Vendor<'_>);
-}
-
 /// A BLE Host.
 ///
 /// The BleHost holds the runtime state of the host, and is the entry point
@@ -890,13 +885,10 @@ where
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + ControllerCmdSync<LeReadBufferSize>,
     {
-        self.run_with_handler(None).await
+        self.run_with_handler(|_| {}).await
     }
 
-    pub async fn run_with_handler(
-        &self,
-        vendor_handler: Option<&dyn VendorEventHandler>,
-    ) -> Result<(), BleHostError<T::Error>>
+    pub async fn run_with_handler<F: Fn(&Vendor)>(&self, vendor_handler: F) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -1094,9 +1086,7 @@ where
                             }
                         }
                         Event::Vendor(vendor) => {
-                            if let Some(handler) = vendor_handler {
-                                handler.on_event(&vendor);
-                            }
+                            vendor_handler(&vendor);
                         }
                         // Ignore
                         _ => {}
