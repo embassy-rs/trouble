@@ -94,7 +94,7 @@ async fn main(spawner: embassy_executor::Spawner) {
             )
             .unwrap();
 
-            let conn = adapter
+            let mut advertiser = adapter
                 .advertise(
                     &Default::default(),
                     Advertisement::ConnectableScannableUndirected {
@@ -103,10 +103,8 @@ async fn main(spawner: embassy_executor::Spawner) {
                     },
                 )
                 .await
-                .unwrap()
-                .accept()
-                .await
                 .unwrap();
+            let conn = advertiser.accept().await.unwrap();
 
             let mut test = 0;
             loop {
