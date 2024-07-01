@@ -311,6 +311,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
+        let handle = self.handle;
         self.push(Attribute {
             uuid: PRIMARY_SERVICE_UUID16,
             handle: 0,
@@ -318,6 +319,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             data: AttributeData::Service { uuid: service.uuid },
         });
         ServiceBuilder {
+            handle: ServiceHandle { handle },
             start: len,
             table: self,
         }
@@ -364,7 +366,14 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug)]
+pub struct ServiceHandle {
+    pub(crate) handle: u16,
+}
+
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
+    handle: ServiceHandle,
     start: usize,
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
@@ -375,7 +384,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
-    ) -> CharacteristicHandle {
+    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
         // First the characteristic declaration
         let next = self.table.handle + 1;
         let cccd = self.table.handle + 2;
@@ -414,9 +423,12 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             None
         };
 
-        CharacteristicHandle {
-            handle: next,
-            cccd_handle,
+        CharacteristicBuilder {
+            handle: CharacteristicHandle {
+                handle: next,
+                cccd_handle,
+            },
+            table: self.table,
         }
     }
 
@@ -425,14 +437,22 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: U,
         props: &[CharacteristicProp],
         storage: &'d mut [u8],
-    ) -> CharacteristicHandle {
+    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
         let props = props.into();
         self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
     }
 
-    pub fn add_characteristic_ro<U: Into<Uuid>>(&mut self, uuid: U, value: &'d [u8]) -> CharacteristicHandle {
+    pub fn add_characteristic_ro<U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        value: &'d [u8],
+    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
         let props = [CharacteristicProp::Read].into();
         self.add_characteristic_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value })
+    }
+
+    pub fn build(self) -> ServiceHandle {
+        self.handle
     }
 }
 
@@ -454,6 +474,55 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
 #[derive(Clone, Copy, Debug)]
 pub struct CharacteristicHandle {
     pub(crate) cccd_handle: Option<u16>,
+    pub(crate) handle: u16,
+}
+
+pub struct CharacteristicBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
+    handle: CharacteristicHandle,
+    table: &'r mut AttributeTable<'d, M, MAX>,
+}
+
+impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX> {
+    fn add_descriptor_internal(
+        &mut self,
+        uuid: Uuid,
+        props: CharacteristicProps,
+        data: AttributeData<'d>,
+    ) -> DescriptorHandle {
+        let handle = self.table.handle;
+        self.table.push(Attribute {
+            uuid,
+            handle: 0,
+            last_handle_in_group: 0,
+            data,
+        });
+
+        DescriptorHandle { handle }
+    }
+
+    pub fn add_descriptor<U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        props: &[CharacteristicProp],
+        data: &'d mut [u8],
+    ) -> DescriptorHandle {
+        let props = props.into();
+        self.add_descriptor_internal(uuid.into(), props, AttributeData::Data { props, value: data })
+    }
+
+    pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> DescriptorHandle {
+        let props = [CharacteristicProp::Read].into();
+        self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
+    }
+
+    pub fn build(self) -> CharacteristicHandle {
+        self.handle
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug)]
+pub struct DescriptorHandle {
     pub(crate) handle: u16,
 }
 

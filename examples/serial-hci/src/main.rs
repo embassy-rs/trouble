@@ -70,7 +70,7 @@ async fn main() {
         let mut svc = table.add_service(Service::new(0x1800));
         let _ = svc.add_characteristic_ro(0x2a00, id);
         let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
-        drop(svc);
+        svc.build();
 
         // Generic attribute service (mandatory)
         table.add_service(Service::new(0x1801));
@@ -83,6 +83,7 @@ async fn main() {
             &[CharacteristicProp::Read, CharacteristicProp::Notify],
             &mut bat_level,
         )
+        .build()
     };
 
     let mut adv_data = [0; 31];

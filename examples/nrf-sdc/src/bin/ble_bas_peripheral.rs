@@ -119,7 +119,7 @@ async fn main(spawner: Spawner) {
         let mut svc = table.add_service(Service::new(0x1800));
         let _ = svc.add_characteristic_ro(0x2a00, id);
         let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
-        drop(svc);
+        svc.build();
 
         // Generic attribute service (mandatory)
         table.add_service(Service::new(0x1801));
@@ -132,6 +132,7 @@ async fn main(spawner: Spawner) {
             &[CharacteristicProp::Read, CharacteristicProp::Notify],
             &mut bat_level,
         )
+        .build()
     };
 
     let server = ble.gatt_server(&table);
