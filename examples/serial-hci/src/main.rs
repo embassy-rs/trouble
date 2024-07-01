@@ -114,7 +114,7 @@ async fn main() {
             }
         },
         async {
-            let conn = ble
+            let mut advertiser = ble
                 .advertise(
                     &Default::default(),
                     Advertisement::ConnectableScannableUndirected {
@@ -123,10 +123,8 @@ async fn main() {
                     },
                 )
                 .await
-                .unwrap()
-                .accept()
-                .await
                 .unwrap();
+            let conn = advertiser.accept().await.unwrap();
             // Keep connection alive
             let mut tick: u8 = 0;
             loop {

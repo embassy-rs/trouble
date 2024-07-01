@@ -161,20 +161,17 @@ async fn main(spawner: Spawner) {
             }
         },
         async {
-            let conn = unwrap!(
-                unwrap!(
-                    ble.advertise(
-                        &Default::default(),
-                        Advertisement::ConnectableScannableUndirected {
-                            adv_data: &adv_data[..],
-                            scan_data: &[],
-                        }
-                    )
-                    .await
+            let mut advertiser = unwrap!(
+                ble.advertise(
+                    &Default::default(),
+                    Advertisement::ConnectableScannableUndirected {
+                        adv_data: &adv_data[..],
+                        scan_data: &[],
+                    }
                 )
-                .accept()
                 .await
             );
+            let conn = unwrap!(advertiser.accept().await);
             // Keep connection alive
             let mut tick: u8 = 0;
             loop {
