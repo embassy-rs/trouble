@@ -679,15 +679,20 @@ where
             }
 
             if !data.adv_data.is_empty() {
-                self.command(LeSetExtAdvData::new(handle, Operation::Complete, false, data.adv_data))
-                    .await?;
+                self.command(LeSetExtAdvData::new(
+                    handle,
+                    Operation::Complete,
+                    params.fragment,
+                    data.adv_data,
+                ))
+                .await?;
             }
 
             if !data.scan_data.is_empty() {
                 self.command(LeSetExtScanResponseData::new(
                     handle,
                     Operation::Complete,
-                    false,
+                    params.fragment,
                     data.scan_data,
                 ))
                 .await?;
