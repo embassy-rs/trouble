@@ -609,6 +609,7 @@ where
             advertise_state: &self.advertise_state,
             advertise_command_state: &self.advertise_command_state,
             connections: &self.connections,
+            extended: false,
         })
     }
 
@@ -712,6 +713,7 @@ where
             advertise_state: &self.advertise_state,
             advertise_command_state: &self.advertise_command_state,
             connections: &self.connections,
+            extended: true,
         })
     }
 
@@ -1151,6 +1153,7 @@ pub struct Advertiser<'a, 'd, const N: usize> {
     advertise_command_state: &'a CommandState<bool>,
     connections: &'a ConnectionManager<'d>,
     advset: [AdvSet; N],
+    extended: bool,
 }
 
 impl<'a, 'd, const N: usize> Advertiser<'a, 'd, N> {
@@ -1172,7 +1175,7 @@ impl<'a, 'd, const N: usize> Advertiser<'a, 'd, N> {
 
 impl<'a, 'd, const N: usize> Drop for Advertiser<'a, 'd, N> {
     fn drop(&mut self) {
-        self.advertise_command_state.cancel(true);
+        self.advertise_command_state.cancel(self.extended);
     }
 }
 
