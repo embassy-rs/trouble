@@ -44,8 +44,11 @@ pub struct AdvertisementSet<'d> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Copy, Clone, Debug)]
 pub struct AdvertisementParameters {
+    /// Phy selection
     pub primary_phy: PhyKind,
     pub secondary_phy: PhyKind,
+
+    /// Transmission power
     pub tx_power: TxPower,
 
     /// Timeout duration
@@ -56,8 +59,14 @@ pub struct AdvertisementParameters {
     pub interval_min: Duration,
     pub interval_max: Duration,
 
+    /// Which advertising channels to use
     pub channel_map: Option<AdvChannelMap>,
+
+    /// Filtering policy
     pub filter_policy: AdvFilterPolicy,
+
+    /// Fragmentation preference
+    pub fragment: bool,
 }
 
 impl Default for AdvertisementParameters {
@@ -72,6 +81,7 @@ impl Default for AdvertisementParameters {
             interval_max: Duration::from_millis(250),
             filter_policy: AdvFilterPolicy::default(),
             channel_map: None,
+            fragment: false,
         }
     }
 }
