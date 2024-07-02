@@ -37,7 +37,7 @@ pub enum TxPower {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdvertisementSet<'d> {
     pub handle: u8,
-    pub params: &'d AdvertisementParameters,
+    pub params: AdvertisementParameters,
     pub data: Advertisement<'d>,
 }
 

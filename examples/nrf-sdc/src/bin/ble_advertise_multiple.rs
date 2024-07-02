@@ -123,7 +123,7 @@ async fn main(spawner: Spawner) {
     let sets = [
         AdvertisementSet {
             handle: 0,
-            params: &AdvertisementParameters {
+            params: AdvertisementParameters {
                 tx_power: TxPower::Plus8dBm,
                 primary_phy: PhyKind::Le1M,
                 secondary_phy: PhyKind::Le1M,
@@ -140,7 +140,7 @@ async fn main(spawner: Spawner) {
         },
         AdvertisementSet {
             handle: 1,
-            params: &AdvertisementParameters {
+            params: AdvertisementParameters {
                 tx_power: TxPower::Plus8dBm,
                 primary_phy: PhyKind::LeCoded,
                 secondary_phy: PhyKind::LeCoded,
