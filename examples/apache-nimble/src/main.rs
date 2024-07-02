@@ -48,7 +48,7 @@ async fn main(spawner: embassy_executor::Spawner) {
         let mut svc = table.add_service(Service::new(0x1800));
         svc.add_characteristic_ro(0x2a00, b"Trouble");
         svc.add_characteristic_ro(0x2a01, &[0x80, 0x07]);
-        drop(svc);
+        svc.build();
 
         table.add_service(Service::new(0x1801));
 
@@ -58,6 +58,7 @@ async fn main(spawner: embassy_executor::Spawner) {
             &[CharacteristicProp::Read, CharacteristicProp::Notify],
             &mut bat_level,
         )
+        .build()
     };
 
     let server = adapter.gatt_server(&table);
