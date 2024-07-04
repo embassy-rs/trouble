@@ -1,6 +1,6 @@
 //! Advertisement config.
 use bt_hci::param::AdvEventProps;
-pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, PhyKind};
+pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, AdvHandle, AdvSet, PhyKind};
 use embassy_time::Duration;
 
 use crate::cursor::{ReadCursor, WriteCursor};
@@ -39,6 +39,20 @@ pub struct AdvertisementSet<'d> {
     pub handle: u8,
     pub params: AdvertisementParameters,
     pub data: Advertisement<'d>,
+}
+
+impl<'d> AdvertisementSet<'d> {
+    pub fn handles<const N: usize>(sets: &[AdvertisementSet<'d>; N]) -> [AdvSet; N] {
+        sets.map(|set| AdvSet {
+            adv_handle: AdvHandle::new(set.handle),
+            duration: set
+                .params
+                .timeout
+                .unwrap_or(embassy_time::Duration::from_micros(0))
+                .into(),
+            max_ext_adv_events: set.params.max_events.unwrap_or(0),
+        })
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

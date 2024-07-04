@@ -108,7 +108,8 @@ pub struct BleHost<'d, T> {
     connect_command_state: CommandState<bool>,
 }
 
-#[derive(Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum AdvHandleState {
     None,
     Advertising(AdvHandle),
@@ -163,13 +164,13 @@ impl<'d> AdvState<'d> {
 
     pub fn start(&self, sets: &[AdvSet]) {
         let mut state = self.state.borrow_mut();
-        assert_eq!(sets.len(), state.handles.len());
-        for (idx, entry) in state.handles.iter_mut().enumerate() {
-            *entry = AdvHandleState::Advertising(sets[idx].adv_handle);
+        assert!(sets.len() <= state.handles.len());
+        for (idx, entry) in sets.iter().enumerate() {
+            state.handles[idx] = AdvHandleState::Advertising(entry.adv_handle);
         }
     }
 
-    pub async fn wait(&self, sets: &[AdvSet]) {
+    pub async fn wait(&self) {
         poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
             state.waker.register(cx.waker());
@@ -178,12 +179,7 @@ impl<'d> AdvState<'d> {
             for entry in state.handles.iter() {
                 match entry {
                     AdvHandleState::Terminated(handle) => {
-                        for set in sets.iter() {
-                            if *handle == set.adv_handle {
-                                terminated += 1;
-                                break;
-                            }
-                        }
+                        terminated += 1;
                     }
                     AdvHandleState::None => {
                         terminated += 1;
@@ -191,7 +187,7 @@ impl<'d> AdvState<'d> {
                     _ => {}
                 }
             }
-            if terminated == sets.len() {
+            if terminated == state.handles.len() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -537,7 +533,7 @@ where
         &self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
-    ) -> Result<Advertiser<'_, 'd, 1>, BleHostError<T::Error>>
+    ) -> Result<Advertiser<'_, 'd>, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
@@ -605,7 +601,6 @@ where
         self.command(LeSetAdvEnable::new(true)).await?;
         drop.defuse();
         Ok(Advertiser {
-            advset,
             advertise_state: &self.advertise_state,
             advertise_command_state: &self.advertise_command_state,
             connections: &self.connections,
@@ -615,12 +610,16 @@ where
 
     /// Starts sending BLE advertisements according to the provided config.
     ///
+    /// The handles are required to provide the storage while advertising, and
+    /// can be created by calling AdvertisementSet::handles(sets).
+    ///
     /// Advertisements are stopped when a connection is made against this host,
     /// in which case a handle for the connection is returned.
-    pub async fn advertise_ext<'k, const N: usize>(
+    pub async fn advertise_ext<'k>(
         &self,
-        sets: &[AdvertisementSet<'k>; N],
-    ) -> Result<Advertiser<'_, 'd, N>, BleHostError<T::Error>>
+        sets: &[AdvertisementSet<'k>],
+        handles: &mut [AdvSet],
+    ) -> Result<Advertiser<'_, 'd>, BleHostError<T::Error>>
     where
         T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
@@ -630,10 +629,11 @@ where
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
+        assert_eq!(sets.len(), handles.len());
         // Check host supports the required advertisement sets
         {
             let result = self.command(LeReadNumberOfSupportedAdvSets::new()).await?;
-            if result < N as u8 || self.advertise_state.len() < N {
+            if result < sets.len() as u8 || self.advertise_state.len() < sets.len() {
                 return Err(Error::InsufficientSpace.into());
             }
         }
@@ -647,7 +647,7 @@ where
         // Clear current advertising terminations
         self.advertise_state.reset();
 
-        for set in sets {
+        for (i, set) in sets.iter().enumerate() {
             let handle = AdvHandle::new(set.handle);
             let data: RawAdvertisement<'k> = set.data.into();
             let params = set.params;
@@ -697,24 +697,20 @@ where
                 ))
                 .await?;
             }
-        }
-
-        let advset: [AdvSet; N] = sets.map(|set| AdvSet {
-            adv_handle: AdvHandle::new(set.handle),
-            duration: set
+            handles[i].adv_handle = handle;
+            handles[i].duration = set
                 .params
                 .timeout
                 .unwrap_or(embassy_time::Duration::from_micros(0))
-                .into(),
-            max_ext_adv_events: set.params.max_events.unwrap_or(0),
-        });
+                .into();
+            handles[i].max_ext_adv_events = set.params.max_events.unwrap_or(0);
+        }
 
         trace!("[host] enabling advertising");
-        self.advertise_state.start(&advset[..]);
-        self.command(LeSetExtAdvEnable::new(true, &advset)).await?;
+        self.advertise_state.start(&handles[..]);
+        self.command(LeSetExtAdvEnable::new(true, &handles)).await?;
         drop.defuse();
         Ok(Advertiser {
-            advset,
             advertise_state: &self.advertise_state,
             advertise_command_state: &self.advertise_command_state,
             connections: &self.connections,
@@ -985,7 +981,7 @@ where
                         }
                     }
                     Either4::Fourth(ext) => {
-                        // trace!("[host] turning off advertising");
+                        trace!("[host] disabling advertising");
                         if ext {
                             self.command(LeSetExtAdvEnable::new(false, &[])).await?
                         } else {
@@ -1153,22 +1149,21 @@ where
 }
 
 /// Handle to an active advertiser which can accept connections.
-pub struct Advertiser<'a, 'd, const N: usize> {
+pub struct Advertiser<'a, 'd> {
     advertise_state: &'a AdvState<'d>,
     advertise_command_state: &'a CommandState<bool>,
     connections: &'a ConnectionManager<'d>,
-    advset: [AdvSet; N],
     extended: bool,
 }
 
-impl<'a, 'd, const N: usize> Advertiser<'a, 'd, N> {
+impl<'a, 'd> Advertiser<'a, 'd> {
     /// Accept the next peripheral connection for this advertiser.
     ///
     /// Returns Error::Timeout if advertiser stopped.
     pub async fn accept(&mut self) -> Result<Connection<'a>, Error> {
         match select(
             self.connections.accept(LeConnRole::Peripheral, &[]),
-            self.advertise_state.wait(&self.advset[..]),
+            self.advertise_state.wait(),
         )
         .await
         {
@@ -1178,7 +1173,7 @@ impl<'a, 'd, const N: usize> Advertiser<'a, 'd, N> {
     }
 }
 
-impl<'a, 'd, const N: usize> Drop for Advertiser<'a, 'd, N> {
+impl<'a, 'd> Drop for Advertiser<'a, 'd> {
     fn drop(&mut self) {
         self.advertise_command_state.cancel(self.extended);
     }
