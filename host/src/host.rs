@@ -1167,13 +1167,13 @@ impl<'a, 'd, const N: usize> Advertiser<'a, 'd, N> {
     /// Returns Error::Timeout if advertiser stopped.
     pub async fn accept(&mut self) -> Result<Connection<'a>, Error> {
         match select(
-            self.advertise_state.wait(&self.advset[..]),
             self.connections.accept(LeConnRole::Peripheral, &[]),
+            self.advertise_state.wait(&self.advset[..]),
         )
         .await
         {
-            Either::First(_) => Err(Error::Timeout),
-            Either::Second(conn) => Ok(conn),
+            Either::First(conn) => Ok(conn),
+            Either::Second(_) => Err(Error::Timeout),
         }
     }
 }
