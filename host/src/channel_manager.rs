@@ -659,14 +659,18 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
     pub(crate) fn inc_ref(&self, index: ChannelIndex) {
         self.with_mut(|state| {
             let state = &mut state.channels[index.0 as usize];
-            state.refcount = unwrap!(state.refcount.checked_add(1), "Too many references to the same channel");
+            state.refcount = unwrap!(state.refcount.checked_add(1), "too many references to the same channel");
         });
     }
 
     pub(crate) fn dec_ref(&self, index: ChannelIndex) {
         self.with_mut(|state| {
             let state = &mut state.channels[index.0 as usize];
-            state.refcount = unwrap!(state.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
+            state.refcount = unwrap!(
+                state.refcount.checked_sub(1),
+                "bug: dropping a channel (i = {}) with refcount 0",
+                index.0
+            );
             if state.refcount == 0 && state.state == ChannelState::Connected {
                 state.state = ChannelState::Disconnecting;
             }
@@ -776,7 +780,7 @@ impl defmt::Format for ChannelStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, cid = {}, peer = {}, mps = {}, mtu = {}, our credits {}, their credits = {}",
+            "state = {}, conn = {}, cid = {}, peer = {}, mps = {}, mtu = {}, our credits {}, their credits = {}, refs = {}",
             self.state,
             self.conn,
             self.cid,
@@ -784,7 +788,8 @@ impl defmt::Format for ChannelStorage {
             self.mps,
             self.mtu,
             self.peer_credits,
-            self.flow_control.available()
+            self.flow_control.available(),
+            self.refcount,
         );
     }
 }
