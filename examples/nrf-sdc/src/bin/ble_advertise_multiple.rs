@@ -122,7 +122,6 @@ async fn main(spawner: Spawner) {
 
     let sets = [
         AdvertisementSet {
-            handle: 0,
             params: AdvertisementParameters {
                 tx_power: TxPower::Plus8dBm,
                 primary_phy: PhyKind::Le1M,
@@ -133,13 +132,13 @@ async fn main(spawner: Spawner) {
                 interval_max: Duration::from_secs(1),
                 channel_map: None,
                 filter_policy: AdvFilterPolicy::Unfiltered,
+                fragment: false,
             },
             data: Advertisement::ExtNonconnectableScannableUndirected {
                 scan_data: &adv_data[..len],
             },
         },
         AdvertisementSet {
-            handle: 1,
             params: AdvertisementParameters {
                 tx_power: TxPower::Plus8dBm,
                 primary_phy: PhyKind::LeCoded,
@@ -149,6 +148,7 @@ async fn main(spawner: Spawner) {
                 interval_min: Duration::from_secs(1),
                 interval_max: Duration::from_secs(1),
                 channel_map: None,
+                fragment: false,
                 filter_policy: AdvFilterPolicy::Unfiltered,
                 ..Default::default()
             },
@@ -157,12 +157,13 @@ async fn main(spawner: Spawner) {
             },
         },
     ];
+    let mut handles = AdvertisementSet::handles(&sets);
 
     info!("Starting advertising");
     let _ = join(ble.run(), async {
         loop {
             let start = Instant::now();
-            let mut advertiser = unwrap!(ble.advertise_ext(&sets).await);
+            let mut advertiser = unwrap!(ble.advertise_ext(&sets, &mut handles).await);
             match advertiser.accept().await {
                 Ok(_) => {}
                 Err(trouble_host::Error::Timeout) => {

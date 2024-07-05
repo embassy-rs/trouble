@@ -75,7 +75,7 @@ checksum = "cf4b9d6a944f767f8e5e0db018570623c85f3d925ac718db4e06d0187adb21c1"
 [[package]]
 name = "bt-hci"
 version = "0.1.0"
-source = "git+https://github.com/alexmoon/bt-hci.git?branch=main#bcf4b48dd1681e145635cf7d552be48fd664eab9"
+source = "git+https://github.com/alexmoon/bt-hci.git?branch=main#b9cd5954f6bd89b535cad9c418e9fdf12812d7c3"
 dependencies = [
  "defmt",
  "embassy-sync 0.6.0",
