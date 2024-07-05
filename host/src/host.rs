@@ -165,6 +165,10 @@ impl<'d> AdvState<'d> {
     pub fn start(&self, sets: &[AdvSet]) {
         let mut state = self.state.borrow_mut();
         assert!(sets.len() <= state.handles.len());
+        for handle in state.handles.iter_mut() {
+            *handle = AdvHandleState::None;
+        }
+
         for (idx, entry) in sets.iter().enumerate() {
             state.handles[idx] = AdvHandleState::Advertising(entry.adv_handle);
         }
@@ -648,7 +652,7 @@ where
         self.advertise_state.reset();
 
         for (i, set) in sets.iter().enumerate() {
-            let handle = AdvHandle::new(set.handle);
+            let handle = AdvHandle::new(i as u8);
             let data: RawAdvertisement<'k> = set.data.into();
             let params = set.params;
             let peer = data.peer.unwrap_or(Address {
