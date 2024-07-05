@@ -1,6 +1,6 @@
 //! Advertisement config.
 use bt_hci::param::AdvEventProps;
-pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, PhyKind};
+pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, AdvHandle, AdvSet, PhyKind};
 use embassy_time::Duration;
 
 use crate::cursor::{ReadCursor, WriteCursor};
@@ -33,12 +33,33 @@ pub enum TxPower {
     Plus20dBm = 20,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdvertisementSet<'d> {
-    pub handle: u8,
     pub params: AdvertisementParameters,
     pub data: Advertisement<'d>,
+}
+
+impl<'d> AdvertisementSet<'d> {
+    pub fn handles<const N: usize>(sets: &[AdvertisementSet<'d>; N]) -> [AdvSet; N] {
+        const NEW_SET: AdvSet = AdvSet {
+            adv_handle: AdvHandle::new(0),
+            duration: bt_hci::param::Duration::from_u16(0),
+            max_ext_adv_events: 0,
+        };
+
+        let mut ret = [NEW_SET; N];
+        for (i, set) in sets.iter().enumerate() {
+            ret[i].adv_handle = AdvHandle::new(i as u8);
+            ret[i].duration = set
+                .params
+                .timeout
+                .unwrap_or(embassy_time::Duration::from_micros(0))
+                .into();
+            ret[i].max_ext_adv_events = set.params.max_events.unwrap_or(0);
+        }
+        ret
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
