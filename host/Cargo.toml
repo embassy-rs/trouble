@@ -31,6 +31,7 @@ defmt = {version = "0.3", optional = true }
 tokio = { version = "1", default-features = false, features = ["time", "rt-multi-thread", "macros"] }
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embedded-io-async = { version = "0.6.1" }
+embedded-io = { version = "0.6.1" }
 tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] }
