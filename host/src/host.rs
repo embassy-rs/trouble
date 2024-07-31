@@ -714,8 +714,8 @@ where
         }
 
         trace!("[host] enabling advertising");
-        self.advertise_state.start(&handles[..]);
-        self.command(LeSetExtAdvEnable::new(true, &handles)).await?;
+        self.advertise_state.start(handles);
+        self.command(LeSetExtAdvEnable::new(true, handles)).await?;
         drop.defuse();
         Ok(Advertiser {
             advertise_state: &self.advertise_state,

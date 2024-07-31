@@ -1,7 +1,7 @@
 use crate::codec::{Decode, Encode, Error, Type};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Uuid {
     Uuid16([u8; 2]),
     Uuid128([u8; 16]),

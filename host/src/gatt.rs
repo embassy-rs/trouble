@@ -303,10 +303,10 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const ATT_MTU: usi
             AttRsp::Read { data } => {
                 let to_copy = data.len().min(dest.len());
                 dest[..to_copy].copy_from_slice(&data[..to_copy]);
-                return Ok(to_copy);
+                Ok(to_copy)
             }
-            AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
-            _ => return Err(Error::InvalidValue.into()),
+            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
+            _ => Err(Error::InvalidValue.into()),
         }
     }
 
@@ -329,16 +329,16 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const ATT_MTU: usi
 
         match AttRsp::decode(pdu.as_ref())? {
             AttRsp::ReadByType { mut it } => {
-                while let Some(item) = it.next() {
+                let mut to_copy = 0;
+                if let Some(item) = it.next() {
                     let (_handle, data) = item?;
-                    let to_copy = data.len().min(dest.len());
+                    to_copy = data.len().min(dest.len());
                     dest[..to_copy].copy_from_slice(&data[..to_copy]);
-                    return Ok(to_copy);
                 }
-                return Ok(0);
+                Ok(to_copy)
             }
-            AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
-            _ => return Err(Error::InvalidValue.into()),
+            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
+            _ => Err(Error::InvalidValue.into()),
         }
     }
 
@@ -356,8 +356,8 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const ATT_MTU: usi
         let pdu = self.request(data).await?;
         match AttRsp::decode(pdu.as_ref())? {
             AttRsp::Write => Ok(()),
-            AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
-            _ => return Err(Error::InvalidValue.into()),
+            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
+            _ => Err(Error::InvalidValue.into()),
         }
     }
 }

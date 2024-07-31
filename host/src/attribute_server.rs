@@ -77,7 +77,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         buf: &mut [u8],
         start: u16,
         end: u16,
-        attribute_type: Uuid,
+        attribute_type: &Uuid,
     ) -> Result<usize, codec::Error> {
         let mut handle = start;
         let mut data = WriteCursor::new(buf);
@@ -87,7 +87,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 //trace!("Check attribute {:?} {}", att.uuid, att.handle);
-                if att.uuid == attribute_type && att.handle >= start && att.handle <= end {
+                if &att.uuid == attribute_type && att.handle >= start && att.handle <= end {
                     body.write(att.handle)?;
                     handle = att.handle;
 
@@ -120,7 +120,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         buf: &mut [u8],
         start: u16,
         end: u16,
-        group_type: Uuid,
+        group_type: &Uuid,
     ) -> Result<usize, codec::Error> {
         // TODO respond with all finds - not just one
         let mut handle = start;
@@ -131,7 +131,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 //            trace!("Check attribute {:x} {}", att.uuid, att.handle);
-                if att.uuid == group_type && att.handle >= start && att.handle <= end {
+                if &att.uuid == group_type && att.handle >= start && att.handle <= end {
                     //debug!("found! {:x} {}", att.uuid, att.handle);
                     handle = att.handle;
 
@@ -257,14 +257,14 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         self.table.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle >= start && att.handle <= end && att.uuid == attr_type {
-                    if let AttributeData::Service { uuid } = att.data {
+                    if let AttributeData::Service { uuid } = &att.data {
                         if uuid.as_raw() == attr_value {
                             if w.available() < 4 + uuid.as_raw().len() {
                                 break;
                             }
                             w.write(att.handle)?;
                             w.write(att.last_handle_in_group)?;
-                            w.append(uuid.as_raw())?;
+                            w.write_ref(uuid)?;
                         }
                     }
                 }
@@ -399,12 +399,12 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
 
     fn handle_read_multiple(&self, buf: &mut [u8], handles: &[u8]) -> Result<usize, codec::Error> {
         let w = WriteCursor::new(buf);
-        Ok(Self::error_response(
+        Self::error_response(
             w,
             att::ATT_READ_MULTIPLE_REQ,
             u16::from_le_bytes([handles[0], handles[1]]),
             AttErrorCode::AttributeNotFound,
-        )?)
+        )
     }
 
     /// Process an event and produce a response if necessary
@@ -414,10 +414,10 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                 start,
                 end,
                 attribute_type,
-            } => self.handle_read_by_type_req(rx, *start, *end, *attribute_type)?,
+            } => self.handle_read_by_type_req(rx, *start, *end, attribute_type)?,
 
             AttReq::ReadByGroupType { start, end, group_type } => {
-                self.handle_read_by_group_type_req(rx, *start, *end, *group_type)?
+                self.handle_read_by_group_type_req(rx, *start, *end, group_type)?
             }
             AttReq::FindInformation {
                 start_handle,
@@ -448,7 +448,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
 
             AttReq::ReadBlob { handle, offset } => self.handle_read_blob(rx, *handle, *offset)?,
 
-            AttReq::ReadMultiple { handles } => self.handle_read_multiple(rx, *handles)?,
+            AttReq::ReadMultiple { handles } => self.handle_read_multiple(rx, handles)?,
         };
         if len > 0 {
             Ok(Some(len))

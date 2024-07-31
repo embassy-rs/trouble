@@ -401,7 +401,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             data: AttributeData::Declaration {
                 props,
                 handle: next,
-                uuid,
+                uuid: uuid.clone(),
             },
         });
 

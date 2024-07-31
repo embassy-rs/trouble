@@ -386,7 +386,7 @@ impl<'d> AttReq<'d> {
                 w.write(ATT_READ_BY_TYPE_REQ)?;
                 w.write(*start)?;
                 w.write(*end)?;
-                w.write(*attribute_type)?;
+                w.write_ref(attribute_type)?;
             }
             Self::Read { handle } => {
                 w.write(ATT_READ_REQ)?;

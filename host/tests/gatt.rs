@@ -7,7 +7,6 @@ use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, 
 use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
 use trouble_host::connection::ConnectConfig;
 use trouble_host::gatt::GattEvent;
-use trouble_host::l2cap::L2capChannel;
 use trouble_host::scan::ScanConfig;
 use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 
@@ -15,7 +14,6 @@ mod common;
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3;
-const MTU: usize = 23;
 
 const SERVICE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x00, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
@@ -50,7 +48,7 @@ async fn gatt_client_server() {
         // Random starting value to 'prove' the incremented value is correct
         let mut value: [u8; 1] = [rand::prelude::random(); 1];
         let mut expected = value[0].wrapping_add(1);
-        let handle = {
+        {
             let mut svc = table.add_service(Service::new(0x1800));
             let _ = svc.add_characteristic_ro(0x2a00, id);
             let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
@@ -67,8 +65,8 @@ async fn gatt_client_server() {
                 &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 &mut value,
             )
-            .build()
-        };
+            .build();
+        }
 
         let server = adapter.gatt_server(&table);
 
@@ -81,13 +79,13 @@ async fn gatt_client_server() {
                 loop {
                     match server.next().await {
                         Ok(GattEvent::Write {
-                            connection,
+                            connection: _,
                             handle,
                         }) => {
-                            table.get(handle, |value| {
+                            let _ = table.get(handle, |value| {
                                 assert_eq!(expected, value[0]);
                                 expected += 1;
-                                writes += 1 ;
+                                writes += 1;
                             });
                             if writes == 2 {
                                 println!("expected value written twice, test pass");
@@ -123,7 +121,7 @@ async fn gatt_client_server() {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
-                    let conn = acceptor.accept().await?;
+                    let _conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
                     // Keep it alive
                     loop {
