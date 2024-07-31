@@ -61,6 +61,10 @@ impl<'d> Connection<'d> {
         Self { index, manager }
     }
 
+    pub(crate) fn set_att_mtu(&self, mtu: u16) {
+        self.manager.set_att_mtu(self.index, mtu);
+    }
+
     /// Check if still connected
     pub fn is_connected(&self) -> bool {
         self.manager.is_connected(self.index)

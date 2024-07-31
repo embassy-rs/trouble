@@ -30,15 +30,6 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-fn my_addr() -> Address {
-    unsafe {
-        let ficr = &*pac::FICR::ptr();
-        let high = u64::from((ficr.deviceaddr[1].read().bits() & 0x0000ffff) | 0x0000c000);
-        let addr = high << 32 | u64::from(ficr.deviceaddr[0].read().bits());
-        Address::random(unwrap!(addr.to_le_bytes()[..6].try_into()))
-    }
-}
-
 /// How many outgoing L2CAP buffers per link
 const L2CAP_TXQ: u8 = 20;
 
@@ -105,7 +96,8 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<6224>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
-    info!("Our address = {:02x}", my_addr());
+    let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    info!("Our address = {:02x}", address);
     Timer::after(Duration::from_millis(200)).await;
 
     static HOST_RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>> =
@@ -113,7 +105,7 @@ async fn main(spawner: Spawner) {
     let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
 
     let mut ble: BleHost<'_, _> = BleHost::new(sdc, host_resources);
-    ble.set_random_address(my_addr());
+    ble.set_random_address(address);
     let mut adv_data = [0; 31];
     unwrap!(AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),],

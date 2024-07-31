@@ -183,7 +183,7 @@ impl<'d> AttributeData<'d> {
                     return Err(AttErrorCode::WriteNotPermitted);
                 }
 
-                if offset + data.len() < value.len() {
+                if offset + data.len() <= value.len() {
                     value[offset..offset + data.len()].copy_from_slice(data);
                     Ok(())
                 } else {
@@ -319,7 +319,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             data: AttributeData::Service { uuid: service.uuid },
         });
         ServiceBuilder {
-            handle: ServiceHandle { handle },
+            handle: AttributeHandle { handle },
             start: len,
             table: self,
         }
@@ -331,7 +331,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// otherwise this function will panic.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn set(&self, handle: CharacteristicHandle, input: &[u8]) -> Result<(), Error> {
+    pub fn set(&self, handle: Characteristic, input: &[u8]) -> Result<(), Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
@@ -351,7 +351,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: CharacteristicHandle, mut f: F) -> Result<T, Error> {
+    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, mut f: F) -> Result<T, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
@@ -367,13 +367,19 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Debug)]
-pub struct ServiceHandle {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AttributeHandle {
     pub(crate) handle: u16,
 }
 
+impl From<u16> for AttributeHandle {
+    fn from(handle: u16) -> Self {
+        Self { handle }
+    }
+}
+
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
-    handle: ServiceHandle,
+    handle: AttributeHandle,
     start: usize,
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
@@ -424,7 +430,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         };
 
         CharacteristicBuilder {
-            handle: CharacteristicHandle {
+            handle: Characteristic {
                 handle: next,
                 cccd_handle,
             },
@@ -451,7 +457,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         self.add_characteristic_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value })
     }
 
-    pub fn build(self) -> ServiceHandle {
+    pub fn build(self) -> AttributeHandle {
         self.handle
     }
 }
@@ -472,13 +478,13 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
-pub struct CharacteristicHandle {
+pub struct Characteristic {
     pub(crate) cccd_handle: Option<u16>,
     pub(crate) handle: u16,
 }
 
 pub struct CharacteristicBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
-    handle: CharacteristicHandle,
+    handle: Characteristic,
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
@@ -515,7 +521,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX
         self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
     }
 
-    pub fn build(self) -> CharacteristicHandle {
+    pub fn build(self) -> Characteristic {
         self.handle
     }
 }

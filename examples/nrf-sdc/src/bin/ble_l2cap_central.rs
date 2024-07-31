@@ -116,8 +116,9 @@ async fn main(spawner: Spawner) {
     let mut ble: BleHost<'_, _> = BleHost::new(sdc, host_resources);
     ble.set_random_address(my_addr());
 
-    // NOTE: Modify this to match the address of the peripheral you want to connect to
-    let target: Address = Address::random([0xf5, 0x9f, 0x1a, 0x05, 0xe4, 0xee]);
+    // NOTE: Modify this to match the address of the peripheral you want to connect to.
+    // Currently it matches the address used by the peripheral examples
+    let target: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
 
     let config = ConnectConfig {
         connect_params: Default::default(),

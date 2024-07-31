@@ -1,18 +1,18 @@
-use core::fmt;
-
 use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::DynamicReceiver;
+use heapless::Vec;
 
-use crate::att::{Att, ATT_HANDLE_VALUE_NTF_OPTCODE};
-use crate::attribute::CharacteristicHandle;
+use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
+use crate::attribute::{Characteristic, Uuid, CHARACTERISTIC_UUID16, PRIMARY_SERVICE_UUID16};
 use crate::attribute_server::AttributeServer;
 use crate::connection::Connection;
 use crate::connection_manager::DynamicConnectionManager;
-use crate::cursor::WriteCursor;
+use crate::cursor::{ReadCursor, WriteCursor};
 use crate::host::BleHost;
 use crate::pdu::Pdu;
+use crate::types::l2cap::L2capHeader;
 use crate::{BleHostError, Error};
 
 pub struct GattServer<
@@ -22,46 +22,85 @@ pub struct GattServer<
     M: RawMutex,
     T: Controller,
     const MAX: usize,
-    const ATT_MTU: usize = 23,
+    // Including l2cap header
+    const MTU: usize = 27,
 > {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
     pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
-    pub(crate) tx: &'reference BleHost<'resources, T>,
-    pub(crate) connections: &'reference dyn DynamicConnectionManager,
+    pub(crate) ble: &'reference BleHost<'resources, T>,
 }
 
-impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize, const ATT_MTU: usize>
-    GattServer<'reference, 'values, 'resources, M, T, MAX, ATT_MTU>
+impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize, const MTU: usize>
+    GattServer<'reference, 'values, 'resources, M, T, MAX, MTU>
 {
-    pub async fn next(&self) -> Result<GattEvent<'reference, 'values>, BleHostError<T::Error>> {
+    /// Process GATT requests and update the attribute table accordingly.
+    ///
+    /// If attributes are written or read, an event will be returned describing the handle
+    /// and the connection causing the event.
+    pub async fn next(&self) -> Result<GattEvent<'reference>, BleHostError<T::Error>> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
-            match Att::decode(pdu.as_ref()) {
-                Ok(att) => {
-                    let mut tx = [0; ATT_MTU];
-                    let mut w = WriteCursor::new(&mut tx);
-                    let (mut header, mut data) = w.split(4)?;
+            if let Some(connection) = self.ble.connections.get_connected_handle(handle) {
+                match AttReq::decode(pdu.as_ref()) {
+                    Ok(att) => {
+                        let mut tx = [0; MTU];
+                        let mut w = WriteCursor::new(&mut tx);
+                        let (mut header, mut data) = w.split(4)?;
 
-                    match self.server.process(handle, att, data.write_buf()) {
-                        Ok(Some(written)) => {
-                            let mtu = self.connections.get_att_mtu(handle);
-                            data.commit(written)?;
-                            data.truncate(mtu as usize);
-                            header.write(written as u16)?;
-                            header.write(4_u16)?;
-                            let len = header.len() + data.len();
-                            self.tx.acl(handle, 1).await?.send(&tx[..len]).await?;
-                        }
-                        Ok(None) => {
-                            debug!("No response sent");
-                        }
-                        Err(e) => {
-                            warn!("Error processing attribute: {:?}", e);
+                        match self.server.process(handle, &att, data.write_buf()) {
+                            Ok(Some(written)) => {
+                                let mtu = self.ble.connections.get_att_mtu(handle);
+                                data.commit(written)?;
+                                data.truncate(mtu as usize);
+                                header.write(written as u16)?;
+                                header.write(4_u16)?;
+                                let len = header.len() + data.len();
+                                self.ble.acl(handle, 1).await?.send(&tx[..len]).await?;
+
+                                match att {
+                                    AttReq::Write { handle, data } => {
+                                        return Ok(GattEvent::Write {
+                                            connection,
+                                            handle: Characteristic {
+                                                handle,
+                                                cccd_handle: None,
+                                            },
+                                        })
+                                    }
+
+                                    AttReq::Read { handle } => {
+                                        return Ok(GattEvent::Read {
+                                            connection,
+                                            handle: Characteristic {
+                                                handle,
+                                                cccd_handle: None,
+                                            },
+                                        })
+                                    }
+
+                                    AttReq::ReadBlob { handle, offset } => {
+                                        return Ok(GattEvent::Read {
+                                            connection,
+                                            handle: Characteristic {
+                                                handle,
+                                                cccd_handle: None,
+                                            },
+                                        })
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            Ok(None) => {
+                                debug!("No response sent");
+                            }
+                            Err(e) => {
+                                warn!("Error processing attribute: {:?}", e);
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    warn!("Error decoding attribute request: {:?}", e);
+                    Err(e) => {
+                        warn!("Error decoding attribute request: {:?}", e);
+                    }
                 }
             }
         }
@@ -74,7 +113,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
     /// If the characteristic for the handle cannot be found, an error is returned.
     pub async fn notify(
         &self,
-        handle: CharacteristicHandle,
+        handle: Characteristic,
         connection: &Connection<'_>,
         value: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
@@ -88,45 +127,237 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
             return Ok(());
         }
 
-        let mut tx = [0; ATT_MTU];
+        let mut tx = [0; MTU];
         let mut w = WriteCursor::new(&mut tx[..]);
         let (mut header, mut data) = w.split(4)?;
-        data.write(ATT_HANDLE_VALUE_NTF_OPTCODE)?;
+        data.write(ATT_HANDLE_VALUE_NTF)?;
         data.write(handle.handle)?;
         data.append(value)?;
 
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let total = header.len() + data.len();
-        self.tx.acl(conn, 1).await?.send(&tx[..total]).await?;
+        self.ble.acl(conn, 1).await?.send(&tx[..total]).await?;
         Ok(())
     }
 }
 
 #[derive(Clone)]
-pub enum GattEvent<'reference, 'values> {
+pub enum GattEvent<'reference> {
+    Read {
+        connection: Connection<'reference>,
+        handle: Characteristic,
+    },
     Write {
-        connection: &'reference Connection<'reference>,
-        handle: CharacteristicHandle,
-        value: &'values [u8],
+        connection: Connection<'reference>,
+        handle: Characteristic,
     },
 }
 
-impl<'reference, 'values> fmt::Debug for GattEvent<'reference, 'values> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Write {
-                connection: _,
-                handle: _,
-                value: _,
-            } => f.debug_struct("GattEvent::Write").finish(),
-        }
-    }
+pub struct GattClient<'reference, 'resources, T: Controller, const MAX: usize, const ATT_MTU: usize = 27> {
+    pub(crate) services: Vec<ServiceHandle, MAX>,
+    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
+    pub(crate) ble: &'reference BleHost<'resources, T>,
+    pub(crate) connection: Connection<'reference>,
 }
 
-#[cfg(feature = "defmt")]
-impl<'reference, 'values> defmt::Format for GattEvent<'reference, 'values> {
-    fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "{}", defmt::Debug2Format(self))
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, PartialEq, Clone)]
+pub struct ServiceHandle {
+    start: u16,
+    end: u16,
+    uuid: Uuid,
+}
+
+impl<'reference, 'resources, T: Controller, const MAX: usize, const ATT_MTU: usize>
+    GattClient<'reference, 'resources, T, MAX, ATT_MTU>
+{
+    async fn request(&mut self, req: AttReq<'_>) -> Result<Pdu, BleHostError<T::Error>> {
+        let header = L2capHeader {
+            channel: crate::types::l2cap::L2CAP_CID_ATT,
+            length: req.size() as u16,
+        };
+
+        let mut buf = [0; ATT_MTU];
+        let mut w = WriteCursor::new(&mut buf);
+        w.write_hci(&header)?;
+        w.write(req)?;
+
+        let mut grant = self.ble.acl(self.connection.handle(), 1).await?;
+        grant.send(w.finish()).await?;
+
+        let (h, pdu) = self.rx.receive().await;
+        assert_eq!(h, self.connection.handle());
+        Ok(pdu)
+    }
+
+    /// Discover primary services associated with a UUID.
+    pub async fn services_by_uuid(&mut self, uuid: &Uuid) -> Result<&[ServiceHandle], BleHostError<T::Error>> {
+        let mut start: u16 = 0x0001;
+
+        loop {
+            let data = att::AttReq::FindByTypeValue {
+                start_handle: start,
+                end_handle: 0xffff,
+                att_type: PRIMARY_SERVICE_UUID16.as_short(),
+                att_value: uuid.as_raw(),
+            };
+
+            let pdu = self.request(data).await?;
+            match AttRsp::decode(pdu.as_ref())? {
+                AttRsp::Error { request, handle, code } => {
+                    if code == att::AttErrorCode::AttributeNotFound {
+                        break;
+                    }
+                    return Err(Error::Att(code).into());
+                }
+                AttRsp::FindByTypeValue { mut it } => {
+                    let mut end: u16 = 0;
+                    while let Some(res) = it.next() {
+                        let (handle, e) = res?;
+                        end = e;
+                        self.services
+                            .push(ServiceHandle {
+                                start: handle,
+                                end,
+                                uuid: uuid.clone(),
+                            })
+                            .unwrap();
+                    }
+                    if end == 0xFFFF {
+                        break;
+                    }
+                    start = end + 1;
+                }
+                _ => {
+                    return Err(Error::InvalidValue.into());
+                }
+            }
+        }
+
+        Ok(&self.services[..])
+    }
+
+    /// Discover characteristics in a given service using a UUID.
+    pub async fn characteristic_by_uuid(
+        &mut self,
+        service: &ServiceHandle,
+        uuid: &Uuid,
+    ) -> Result<Characteristic, BleHostError<T::Error>> {
+        let mut start: u16 = service.start;
+        loop {
+            let data = att::AttReq::ReadByType {
+                start,
+                end: service.end,
+                attribute_type: CHARACTERISTIC_UUID16,
+            };
+            let pdu = self.request(data).await?;
+
+            match AttRsp::decode(pdu.as_ref())? {
+                AttRsp::ReadByType { mut it } => {
+                    while let Some(Ok((handle, item))) = it.next() {
+                        if item.len() < 5 {
+                            return Err(Error::InvalidValue.into());
+                        }
+                        let mut r = ReadCursor::new(item);
+                        let _props: u8 = r.read()?;
+                        let value_handle: u16 = r.read()?;
+                        let value_uuid: Uuid = r.read()?;
+
+                        if uuid == &value_uuid {
+                            return Ok(Characteristic {
+                                handle: value_handle,
+                                cccd_handle: None,
+                            });
+                        }
+
+                        if handle == 0xFFFF {
+                            return Err(Error::NotFound.into());
+                        }
+                        start = handle + 1;
+                    }
+                }
+                AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
+                _ => {
+                    return Err(Error::InvalidValue.into());
+                }
+            }
+        }
+    }
+
+    /// Read a characteristic described by a handle.
+    ///
+    /// The number of bytes copied into the provided buffer is returned.
+    pub async fn read_characteristic(
+        &mut self,
+        characteristic: &Characteristic,
+        dest: &mut [u8],
+    ) -> Result<usize, BleHostError<T::Error>> {
+        let data = att::AttReq::Read {
+            handle: characteristic.handle,
+        };
+
+        let pdu = self.request(data).await?;
+
+        match AttRsp::decode(pdu.as_ref())? {
+            AttRsp::Read { data } => {
+                let to_copy = data.len().min(dest.len());
+                dest[..to_copy].copy_from_slice(&data[..to_copy]);
+                return Ok(to_copy);
+            }
+            AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
+            _ => return Err(Error::InvalidValue.into()),
+        }
+    }
+
+    /// Read a characteristic described by a UUID.
+    ///
+    /// The number of bytes copied into the provided buffer is returned.
+    pub async fn read_characteristic_by_uuid(
+        &mut self,
+        service: &ServiceHandle,
+        uuid: &Uuid,
+        dest: &mut [u8],
+    ) -> Result<usize, BleHostError<T::Error>> {
+        let data = att::AttReq::ReadByType {
+            start: service.start,
+            end: service.end,
+            attribute_type: uuid.clone(),
+        };
+
+        let pdu = self.request(data).await?;
+
+        match AttRsp::decode(pdu.as_ref())? {
+            AttRsp::ReadByType { mut it } => {
+                while let Some(item) = it.next() {
+                    let (_handle, data) = item?;
+                    let to_copy = data.len().min(dest.len());
+                    dest[..to_copy].copy_from_slice(&data[..to_copy]);
+                    return Ok(to_copy);
+                }
+                return Ok(0);
+            }
+            AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
+            _ => return Err(Error::InvalidValue.into()),
+        }
+    }
+
+    /// Write to a characteristic described by a handle.
+    pub async fn write_characteristic(
+        &mut self,
+        handle: &Characteristic,
+        buf: &[u8],
+    ) -> Result<(), BleHostError<T::Error>> {
+        let data = att::AttReq::Write {
+            handle: handle.handle,
+            data: buf,
+        };
+
+        let pdu = self.request(data).await?;
+        match AttRsp::decode(pdu.as_ref())? {
+            AttRsp::Write => Ok(()),
+            AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
+            _ => return Err(Error::InvalidValue.into()),
+        }
     }
 }

@@ -23,6 +23,14 @@ impl<'d> State<'d> {
             }
         }
     }
+
+    fn inc_ref(&mut self, index: u8) {
+        let state = &mut self.connections[index as usize];
+        state.refcount = unwrap!(
+            state.refcount.checked_add(1),
+            "Too many references to the same connection"
+        );
+    }
 }
 
 pub(crate) struct ConnectionManager<'d> {
@@ -69,6 +77,12 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
+    pub(crate) fn set_att_mtu(&self, index: u8, mtu: u16) {
+        self.with_mut(|state| {
+            state.connections[index as usize].att_mtu = mtu;
+        })
+    }
+
     pub(crate) fn request_disconnect(&self, index: u8, reason: DisconnectReason) {
         self.with_mut(|state| {
             let entry = &mut state.connections[index as usize];
@@ -95,6 +109,20 @@ impl<'d> ConnectionManager<'d> {
             }
         }
         Poll::Pending
+    }
+
+    pub(crate) fn get_connected_handle(&self, h: ConnHandle) -> Option<Connection<'_>> {
+        let mut state = self.state.borrow_mut();
+        for (index, storage) in state.connections.iter().enumerate() {
+            match (storage.handle, &storage.state) {
+                (Some(handle), ConnectionState::Connected) if handle == h => {
+                    state.inc_ref(index as u8);
+                    return Some(Connection::new(index as u8, self));
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     pub(crate) fn is_handle_connected(&self, h: ConnHandle) -> bool {
@@ -206,11 +234,7 @@ impl<'d> ConnectionManager<'d> {
 
     pub(crate) fn inc_ref(&self, index: u8) {
         self.with_mut(|state| {
-            let state = &mut state.connections[index as usize];
-            state.refcount = unwrap!(
-                state.refcount.checked_add(1),
-                "Too many references to the same connection"
-            );
+            state.inc_ref(index);
         });
     }
 
@@ -294,6 +318,7 @@ pub(crate) trait DynamicConnectionManager {
     fn is_connected(&self, index: u8) -> bool;
     fn handle(&self, index: u8) -> ConnHandle;
     fn peer_address(&self, index: u8) -> BdAddr;
+    fn set_att_mtu(&self, index: u8, mtu: u16);
     fn inc_ref(&self, index: u8);
     fn dec_ref(&self, index: u8);
     fn disconnect(&self, index: u8, reason: DisconnectReason);
@@ -319,6 +344,9 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
     }
     fn dec_ref(&self, index: u8) {
         ConnectionManager::dec_ref(self, index)
+    }
+    fn set_att_mtu(&self, index: u8, mtu: u16) {
+        ConnectionManager::set_att_mtu(self, index, mtu);
     }
     fn disconnect(&self, index: u8, reason: DisconnectReason) {
         ConnectionManager::request_disconnect(self, index, reason)

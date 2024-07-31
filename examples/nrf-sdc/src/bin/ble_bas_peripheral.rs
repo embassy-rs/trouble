@@ -14,6 +14,7 @@ use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
 use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
 use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
+use trouble_host::gatt::GattEvent;
 use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
 
@@ -29,15 +30,6 @@ bind_interrupts!(struct Irqs {
 #[embassy_executor::task]
 async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
-}
-
-fn my_addr() -> Address {
-    unsafe {
-        let ficr = &*pac::FICR::ptr();
-        let high = u64::from((ficr.deviceaddr[1].read().bits() & 0x0000ffff) | 0x0000c000);
-        let addr = high << 32 | u64::from(ficr.deviceaddr[0].read().bits());
-        Address::random(unwrap!(addr.to_le_bytes()[..6].try_into()))
-    }
 }
 
 /// Size of L2CAP packets (ATT MTU is this - 4)
@@ -99,7 +91,8 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<3312>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &rng, mpsl, &mut sdc_mem));
 
-    info!("Our address = {:02x}", my_addr());
+    let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    info!("Our address = {:02x}", address);
     Timer::after(Duration::from_millis(200)).await;
 
     static HOST_RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>> =
@@ -107,14 +100,14 @@ async fn main(spawner: Spawner) {
     let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
 
     let mut ble: BleHost<'_, _> = BleHost::new(sdc, host_resources);
-    ble.set_random_address(my_addr());
+    ble.set_random_address(address);
 
     let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
     // Generic Access Service (mandatory)
     let id = b"Trouble";
     let appearance = [0x80, 0x07];
-    let mut bat_level = [0; 1];
+    let mut bat_level = [23; 1];
     let handle = {
         let mut svc = table.add_service(Service::new(0x1800));
         let _ = svc.add_characteristic_ro(0x2a00, id);
@@ -152,8 +145,11 @@ async fn main(spawner: Spawner) {
         async {
             loop {
                 match server.next().await {
-                    Ok(event) => {
-                        info!("Gatt event: {:?}", event);
+                    Ok(GattEvent::Write { .. }) => {
+                        info!("Write event");
+                    }
+                    Ok(GattEvent::Read { .. }) => {
+                        info!("Read event");
                     }
                     Err(e) => {
                         error!("Error processing GATT events: {:?}", e);

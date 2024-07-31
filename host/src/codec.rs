@@ -14,8 +14,8 @@ pub trait Encode: Type {
     fn encode(&self, dest: &mut [u8]) -> Result<(), Error>;
 }
 
-pub trait Decode: Type {
-    fn decode(src: &[u8]) -> Result<Self, Error>;
+pub trait Decode<'d>: Type {
+    fn decode(src: &'d [u8]) -> Result<Self, Error>;
 }
 
 impl<T: FixedSize> Type for T {
