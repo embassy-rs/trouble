@@ -145,8 +145,10 @@ async fn main(spawner: Spawner) {
         async {
             loop {
                 match server.next().await {
-                    Ok(GattEvent::Write { .. }) => {
-                        info!("Write event");
+                    Ok(GattEvent::Write { handle, connection: _ }) => {
+                        let _ = table.get(handle, |value| {
+                            info!("Write event. Value written: {:?}", value);
+                        });
                     }
                     Ok(GattEvent::Read { .. }) => {
                         info!("Read event");
