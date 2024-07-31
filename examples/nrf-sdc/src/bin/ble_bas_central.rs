@@ -11,8 +11,8 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use sdc::rng_pool::RngPool;
 use static_cell::StaticCell;
+use trouble_host::attribute::Uuid;
 use trouble_host::connection::ConnectConfig;
-use trouble_host::l2cap::L2capChannel;
 use trouble_host::scan::ScanConfig;
 use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 use {defmt_rtt as _, panic_probe as _};
@@ -132,25 +132,23 @@ async fn main(spawner: Spawner) {
     let _ = join(ble.run(), async {
         loop {
             let conn = unwrap!(ble.connect(&config).await);
-            info!("Connected, creating l2cap channel");
-            const PAYLOAD_LEN: usize = 27;
-            let mut ch1 = unwrap!(L2capChannel::<PAYLOAD_LEN>::create(&ble, &conn, 0x2349, &Default::default(),).await);
-            info!("New l2cap channel created, sending some data!");
-            for i in 0..10 {
-                let tx = [i; PAYLOAD_LEN];
-                unwrap!(ch1.send(&ble, &tx).await);
-            }
-            info!("Sent data, waiting for them to be sent back");
-            let mut rx = [0; PAYLOAD_LEN];
-            for i in 0..10 {
-                let len = unwrap!(ch1.receive(&ble, &mut rx).await);
-                assert_eq!(len, rx.len());
-                assert_eq!(rx, [i; PAYLOAD_LEN]);
-            }
+            info!("Connected, creating gatt client");
 
-            info!("Received successfully!");
+            let mut client = ble.gatt_client::<10, 128>(&conn).await.unwrap();
 
-            Timer::after(Duration::from_secs(60)).await;
+            info!("Looking for battery service");
+            let services = unwrap!(client.services_by_uuid(&Uuid::new_short(0x180f)).await);
+            let service = unwrap!(services.first()).clone();
+
+            info!("Looking for value handle");
+            let c = unwrap!(client.characteristic_by_uuid(&service, &Uuid::new_short(0x2a19)).await);
+
+            loop {
+                let mut data = [0; 1];
+                unwrap!(client.read_characteristic(&c, &mut data[..]).await);
+                info!("Read value: {}", data[0]);
+                Timer::after(Duration::from_secs(10)).await;
+            }
         }
     })
     .await;

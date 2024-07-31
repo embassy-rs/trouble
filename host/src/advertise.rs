@@ -361,13 +361,13 @@ impl<'d> AdStructure<'d> {
             AdStructure::ServiceUuids16(uuids) => {
                 w.append(&[(uuids.len() * 2 + 1) as u8, 0x02])?;
                 for uuid in uuids.iter() {
-                    w.write(*uuid)?;
+                    w.write_ref(uuid)?;
                 }
             }
             AdStructure::ServiceUuids128(uuids) => {
                 w.append(&[(uuids.len() * 16 + 1) as u8, 0x07])?;
                 for uuid in uuids.iter() {
-                    w.write(*uuid)?;
+                    w.write_ref(uuid)?;
                 }
             }
             AdStructure::ShortenedLocalName(name) => {

@@ -1,7 +1,7 @@
 use crate::codec::{Decode, Encode, Error, Type};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Uuid {
     Uuid16([u8; 2]),
     Uuid128([u8; 16]),
@@ -14,6 +14,19 @@ impl Uuid {
 
     pub const fn new_long(val: [u8; 16]) -> Self {
         Self::Uuid128(val)
+    }
+
+    pub fn from_slice(val: &[u8]) -> Self {
+        if val.len() == 2 {
+            Self::Uuid16([val[0], val[1]])
+        } else if val.len() == 16 {
+            Self::Uuid128([
+                val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7], val[8], val[9], val[10], val[11],
+                val[12], val[13], val[14], val[15],
+            ])
+        } else {
+            panic!("unexpected input");
+        }
     }
 
     pub fn bytes(&self, data: &mut [u8]) {
@@ -34,6 +47,13 @@ impl Uuid {
         match self {
             Uuid::Uuid16(_) => 6,
             Uuid::Uuid128(_) => 20,
+        }
+    }
+
+    pub fn as_short(&self) -> u16 {
+        match self {
+            Uuid::Uuid16(data) => u16::from_le_bytes([data[0], data[1]]),
+            _ => panic!("wrong type"),
         }
     }
 
@@ -70,7 +90,7 @@ impl Type for Uuid {
     }
 }
 
-impl Decode for Uuid {
+impl Decode<'_> for Uuid {
     fn decode(src: &[u8]) -> Result<Self, Error> {
         if src.len() < 2 {
             Err(Error::InvalidValue)

@@ -47,7 +47,10 @@ use crate::types::l2cap::{
 };
 use crate::{att, config, Address, BleHostError, Error};
 #[cfg(feature = "gatt")]
-use crate::{attribute::AttributeTable, gatt::GattServer};
+use crate::{
+    attribute::AttributeTable,
+    gatt::{GattClient, GattServer},
+};
 
 /// BleHostResources holds the resources used by the host.
 ///
@@ -711,8 +714,8 @@ where
         }
 
         trace!("[host] enabling advertising");
-        self.advertise_state.start(&handles[..]);
-        self.command(LeSetExtAdvEnable::new(true, &handles)).await?;
+        self.advertise_state.start(handles);
+        self.command(LeSetExtAdvEnable::new(true, handles)).await?;
         drop.defuse();
         Ok(Advertiser {
             advertise_state: &self.advertise_state,
@@ -732,9 +735,32 @@ where
         GattServer {
             server: AttributeServer::new(table),
             rx: self.att_inbound.receiver().into(),
-            tx: self,
-            connections: &self.connections,
+            ble: self,
         }
+    }
+
+    /// Creates a GATT client capable of processing the GATT protocol using the provided table of attributes.
+    #[cfg(feature = "gatt")]
+    pub async fn gatt_client<'reference, const MAX: usize, const ATT_MTU: usize>(
+        &'reference self,
+        connection: &Connection<'reference>,
+    ) -> Result<GattClient<'reference, 'd, T, MAX, ATT_MTU>, BleHostError<T::Error>> {
+        let l2cap = L2capHeader { channel: 4, length: 3 };
+        let mut buf = [0; 7];
+        let mut w = WriteCursor::new(&mut buf);
+        w.write_hci(&l2cap)?;
+        w.write(att::AttReq::ExchangeMtu { mtu: ATT_MTU as u16 })?;
+
+        let mut grant = self.acl(connection.handle(), 1).await?;
+
+        grant.send(w.finish()).await?;
+
+        Ok(GattClient {
+            services: heapless::Vec::new(),
+            rx: self.att_inbound.receiver().into(),
+            ble: self,
+            connection: connection.clone(),
+        })
     }
 
     fn handle_connection(
@@ -831,25 +857,29 @@ where
             L2CAP_CID_ATT => {
                 // Handle ATT MTU exchange here since it doesn't strictly require
                 // gatt to be enabled.
-                if let att::Att::ExchangeMtu { mtu } = att::Att::decode(&packet.as_ref()[..header.length as usize])? {
-                    let mut w = WriteCursor::new(packet.as_mut());
-
+                if let Ok(att::AttReq::ExchangeMtu { mtu }) =
+                    att::AttReq::decode(&packet.as_ref()[..header.length as usize])
+                {
                     let mtu = self.connections.exchange_att_mtu(acl.handle(), mtu);
 
+                    let rsp = att::AttRsp::ExchangeMtu { mtu };
                     let l2cap = L2capHeader {
                         channel: L2CAP_CID_ATT,
                         length: 3,
                     };
 
+                    let mut w = WriteCursor::new(packet.as_mut());
                     w.write_hci(&l2cap)?;
-                    w.write(att::ATT_EXCHANGE_MTU_RESPONSE_OPCODE)?;
-                    w.write(mtu)?;
-                    let len = w.len();
-                    w.finish();
+                    w.write(rsp)?;
 
+                    let len = w.len();
                     if let Err(e) = self.outbound.try_send((acl.handle(), Pdu::new(packet, len))) {
                         return Err(Error::OutOfMemory);
                     }
+                } else if let Ok(att::AttRsp::ExchangeMtu { mtu }) =
+                    att::AttRsp::decode(&packet.as_ref()[..header.length as usize])
+                {
+                    self.connections.exchange_att_mtu(acl.handle(), mtu);
                 } else {
                     #[cfg(feature = "gatt")]
                     if let Err(e) = self

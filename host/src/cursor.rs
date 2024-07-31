@@ -108,7 +108,7 @@ impl<'d> WriteCursor<'d> {
     }
 }
 
-// Not a byte reader. It is just a cursor to track where a byte slice is being written.
+#[derive(Clone)]
 pub struct ReadCursor<'d> {
     pos: usize,
     data: &'d [u8],
@@ -119,7 +119,7 @@ impl<'d> ReadCursor<'d> {
         Self { pos: 0, data }
     }
 
-    pub fn read<T: Decode>(&mut self) -> Result<T, Error> {
+    pub fn read<T: Decode<'d>>(&mut self) -> Result<T, Error> {
         let src = &self.data[self.pos..];
         let val = T::decode(src)?;
         self.pos += val.size();

@@ -13,6 +13,8 @@ use advertise::AdvertisementDataError;
 pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
 use bt_hci::FromHciBytesError;
 
+use crate::att::AttErrorCode;
+
 mod fmt;
 
 mod att;
@@ -74,7 +76,7 @@ pub enum BleHostError<E> {
 pub enum Error {
     HciEncode(bt_hci::param::Error),
     HciDecode(FromHciBytesError),
-    Att(att::AttDecodeError),
+    Att(AttErrorCode),
     InsufficientSpace,
     InvalidValue,
     Advertisement(AdvertisementDataError),
@@ -98,15 +100,15 @@ impl<E> From<Error> for BleHostError<E> {
     }
 }
 
-impl From<att::AttDecodeError> for Error {
-    fn from(error: att::AttDecodeError) -> Self {
-        Self::Att(error)
-    }
-}
-
 impl From<FromHciBytesError> for Error {
     fn from(error: FromHciBytesError) -> Self {
         Self::HciDecode(error)
+    }
+}
+
+impl From<AttErrorCode> for Error {
+    fn from(error: AttErrorCode) -> Self {
+        Self::Att(error)
     }
 }
 
