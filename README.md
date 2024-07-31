@@ -29,6 +29,7 @@ The implementation has the following functionality working:
 * Peripheral role - advertise as a peripheral and accept connections.
 * Central role - scan for devices and establish connections.
 * Basic GATT server supporting write, read, notifications
+* Basic GATT client supporting service and characteristic lookup and read + write
 * L2CAP CoC (Connection oriented Channels) with credit management (for both central and peripheral)
 
 See the [issues](https://github.com/embassy-rs/trouble/issues) for a list of TODOs.
