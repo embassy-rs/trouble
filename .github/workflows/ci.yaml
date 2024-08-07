@@ -34,6 +34,9 @@ jobs:
         example: [nrf-sdc, serial-hci, apache-nimble]
     steps:
       - uses: actions/checkout@v4
+      - name: Add dependencies
+        run: |
+          sudo apt-get install libudev-dev
 
       - name: Build example ${{ matrix.example }}
         working-directory: examples/${{ matrix.example }}
