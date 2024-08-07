@@ -143,7 +143,7 @@ impl<'d> ConnectionManager<'d> {
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if let Some(handle) = storage.handle {
                 if handle == h && storage.state != ConnectionState::Disconnected {
-                    storage.close();
+                    storage.state = ConnectionState::Disconnected;
                     return Ok(());
                 }
             }
@@ -165,6 +165,7 @@ impl<'d> ConnectionManager<'d> {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 {
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
+                storage.att_mtu = 23;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
                 storage.peer_addr.replace(peer_addr);
@@ -425,16 +426,6 @@ impl ConnectionStorage {
         link_credit_waker: WakerRegistration::new(),
         refcount: 0,
     };
-
-    fn close(&mut self) {
-        self.state = ConnectionState::Disconnected;
-        self.handle = None;
-        self.role = None;
-        self.peer_addr_kind = None;
-        self.peer_addr = None;
-        self.att_mtu = 23;
-        self.link_credits = 0;
-    }
 }
 
 #[cfg(feature = "defmt")]
