@@ -378,7 +378,8 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                     }
                 }
                 trace!(
-                    "[l2cap][handle_connect_response] request with id {} not found",
+                    "[l2cap][handle_connect_response][link = {}] request with id {} not found",
+                    conn.raw(),
                     identifier
                 );
                 Err(Error::NotFound)
@@ -780,7 +781,7 @@ impl defmt::Format for ChannelStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, cid = {}, peer = {}, mps = {}, mtu = {}, our credits {}, their credits = {}, refs = {}",
+            "state = {}, conn = {}, cid = {}, peer = {:02x}, mps = {}, mtu = {}, our credits {}, their credits = {}, refs = {}",
             self.state,
             self.conn,
             self.cid,
