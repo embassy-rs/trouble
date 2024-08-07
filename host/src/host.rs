@@ -779,7 +779,7 @@ where
                     return false;
                 } else {
                     trace!(
-                        "[host] connection established with handle {:?} to {:?}",
+                        "[host] connection established with handle {:?} to {:02x}",
                         handle,
                         peer_addr
                     );
