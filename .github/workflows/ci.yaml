@@ -40,6 +40,8 @@ jobs:
 
       - name: Build example ${{ matrix.example }}
         working-directory: examples/${{ matrix.example }}
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           cargo fmt --check
           cargo clippy --locked
