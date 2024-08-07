@@ -39,5 +39,5 @@ jobs:
         working-directory: examples/${{ matrix.example }}
         run: |
           cargo fmt --check
-          cargo clippy
-          cargo build --release
+          cargo clippy --locked
+          cargo build --release --locked
