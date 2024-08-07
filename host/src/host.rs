@@ -777,8 +777,9 @@ where
                     warn!("Error establishing connection: {:?}", err);
                     return false;
                 } else {
+                    #[cfg(feature = "defmt")]
                     trace!(
-                        "[host] connection established with handle {:?} to {:02x}",
+                        "[host] connection with handle {:?} established to {:02x}",
                         handle,
                         peer_addr
                     );
