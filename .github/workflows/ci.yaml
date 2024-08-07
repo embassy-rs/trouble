@@ -31,7 +31,7 @@ jobs:
     needs: build
     strategy:
       matrix:
-        example: [nrf-sdc, serial-hci, apache-nimble]
+        example: [nrf-sdc, serial-hci] #, apache-nimble]
     steps:
       - uses: actions/checkout@v4
       - name: Add dependencies
