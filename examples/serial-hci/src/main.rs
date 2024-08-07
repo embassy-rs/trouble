@@ -105,8 +105,8 @@ async fn main() {
         async {
             loop {
                 match server.next().await {
-                    Ok(event) => {
-                        info!("Gatt event: {:?}", event);
+                    Ok(_event) => {
+                        info!("Gatt event!");
                     }
                     Err(e) => {
                         error!("Error processing GATT events: {:?}", e);

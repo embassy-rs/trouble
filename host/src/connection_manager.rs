@@ -165,6 +165,7 @@ impl<'d> ConnectionManager<'d> {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 {
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
+                storage.att_mtu = 23;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
                 storage.peer_addr.replace(peer_addr);
@@ -432,7 +433,7 @@ impl defmt::Format for ConnectionStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, credits = {}, role = {:?}, peer = {:?}, refs = {}",
+            "state = {}, conn = {}, credits = {}, role = {:?}, peer = {:02x}, refs = {}",
             self.state,
             self.handle,
             self.link_credits,

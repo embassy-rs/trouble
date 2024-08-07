@@ -369,7 +369,6 @@ where
         };
         let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
 
-        trace!("[host] enabling connection create");
         self.async_command(LeExtCreateConn::new(
             true,
             self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
@@ -778,8 +777,9 @@ where
                     warn!("Error establishing connection: {:?}", err);
                     return false;
                 } else {
+                    #[cfg(feature = "defmt")]
                     trace!(
-                        "[host] connection established with handle {:?} to {:?}",
+                        "[host] connection with handle {:?} established to {:02x}",
                         handle,
                         peer_addr
                     );
@@ -946,7 +946,6 @@ where
 
             if let Some(addr) = self.address {
                 LeSetRandomAddr::new(addr.addr).exec(&self.controller).await?;
-                info!("BleHost address set to {:?}", addr.addr);
             }
 
             HostBufferSize::new(
