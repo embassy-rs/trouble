@@ -369,7 +369,6 @@ where
         };
         let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
 
-        trace!("[host] enabling connection create");
         self.async_command(LeExtCreateConn::new(
             true,
             self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
@@ -946,7 +945,6 @@ where
 
             if let Some(addr) = self.address {
                 LeSetRandomAddr::new(addr.addr).exec(&self.controller).await?;
-                info!("BleHost address set to {:?}", addr.addr);
             }
 
             HostBufferSize::new(
