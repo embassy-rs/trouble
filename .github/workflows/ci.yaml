@@ -26,5 +26,17 @@ jobs:
           cd host
           cargo test --lib -- --nocapture
 
-      - name: Build examples
-        run: for i in nrf-sdc serial-hci apache-nimble; do pushd examples/$i; cargo fmt --check && cargo clippy && cargo build --release; popd; done;
+  examples:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [nrf-sdc, serial-hci, apache-nimble]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build example ${{ matrix.example }}
+        working-directory: examples/${{ matrix.example }}
+        run: |
+          cargo fmt --check
+          cargo clippy
+          cargo build --release
