@@ -19,13 +19,13 @@ trouble-host = { version = "0.1.0", path = "../../host", features = ["gatt"] }
 static_cell = "1.0.0"
 
 [patch.crates-io]
-apache-nimble = { git = "https://github.com/benbrittain/apache-nimble-sys", branch = "master" }
+apache-nimble = { git = "https://github.com/benbrittain/apache-nimble-sys.git", branch = "master" }
 bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
-embassy-nrf = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
-embassy-sync = { version = "0.5.0", package = "embassy-sync", git = "https://github.com/embassy-rs/embassy", rev= "53dedd2ff5076a5bb100eea26a1053cb70bf6c9d" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-sync = { version = "0.5.0", package = "embassy-sync", git = "https://github.com/embassy-rs/embassy.git", rev= "53dedd2ff5076a5bb100eea26a1053cb70bf6c9d" }
 
 [profile.dev]
 debug = 2

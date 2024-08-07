@@ -73,8 +73,11 @@ async fn main(spawner: embassy_executor::Spawner) {
             loop {
                 match server.next().await {
                     Ok(event) => match event {
-                        GattEvent::Write { value, .. } => {
-                            info!("{}", value);
+                        GattEvent::Write { .. } => {
+                            info!("Gatt write event!");
+                        }
+                        GattEvent::Read { .. } => {
+                            info!("Gatt read event!");
                         }
                     },
                     Err(e) => {
