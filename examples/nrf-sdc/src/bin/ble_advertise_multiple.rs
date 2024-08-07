@@ -150,7 +150,6 @@ async fn main(spawner: Spawner) {
                 channel_map: None,
                 fragment: false,
                 filter_policy: AdvFilterPolicy::Unfiltered,
-                ..Default::default()
             },
             data: Advertisement::ExtNonconnectableScannableUndirected {
                 scan_data: &adv_data[..len],

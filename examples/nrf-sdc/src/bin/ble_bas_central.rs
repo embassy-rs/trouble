@@ -130,25 +130,23 @@ async fn main(spawner: Spawner) {
 
     info!("Scanning for peripheral...");
     let _ = join(ble.run(), async {
+        let conn = unwrap!(ble.connect(&config).await);
+        info!("Connected, creating gatt client");
+
+        let mut client = ble.gatt_client::<10, 128>(&conn).await.unwrap();
+
+        info!("Looking for battery service");
+        let services = unwrap!(client.services_by_uuid(&Uuid::new_short(0x180f)).await);
+        let service = unwrap!(services.first()).clone();
+
+        info!("Looking for value handle");
+        let c = unwrap!(client.characteristic_by_uuid(&service, &Uuid::new_short(0x2a19)).await);
+
         loop {
-            let conn = unwrap!(ble.connect(&config).await);
-            info!("Connected, creating gatt client");
-
-            let mut client = ble.gatt_client::<10, 128>(&conn).await.unwrap();
-
-            info!("Looking for battery service");
-            let services = unwrap!(client.services_by_uuid(&Uuid::new_short(0x180f)).await);
-            let service = unwrap!(services.first()).clone();
-
-            info!("Looking for value handle");
-            let c = unwrap!(client.characteristic_by_uuid(&service, &Uuid::new_short(0x2a19)).await);
-
-            loop {
-                let mut data = [0; 1];
-                unwrap!(client.read_characteristic(&c, &mut data[..]).await);
-                info!("Read value: {}", data[0]);
-                Timer::after(Duration::from_secs(10)).await;
-            }
+            let mut data = [0; 1];
+            unwrap!(client.read_characteristic(&c, &mut data[..]).await);
+            info!("Read value: {}", data[0]);
+            Timer::after(Duration::from_secs(10)).await;
         }
     })
     .await;
