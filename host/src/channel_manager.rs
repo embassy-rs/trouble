@@ -292,7 +292,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                             trace!("[l2cap][cid = {}] no credits available", header.channel);
                             return Err(Error::OutOfMemory);
                         }
-                        storage.flow_control.received(1);
+                        storage.flow_control.confirm_received(1);
                     }
                     _ => {}
                 }
@@ -592,7 +592,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
             if chan.state == ChannelState::Connected {
                 return Ok((chan.conn.unwrap(), chan.cid, chan.flow_control.process()));
             }
-            trace!("[l2cap][flow_control] channel {:?} not found", index);
+            trace!("[l2cap][flow_control_process] channel {:?} not found", index);
             Err(Error::NotFound)
         })?;
 
@@ -603,6 +603,15 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
             // Reuse packet buffer for signalling data to save the extra TX buffer
             let mut hci = ble.acl(conn, 1).await?;
             hci.signal(identifier, &signal, packet.as_mut()).await?;
+            self.with_mut(|state| {
+                let chan = &mut state.channels[index.0 as usize];
+                if chan.state == ChannelState::Connected {
+                    chan.flow_control.confirm_granted(credits);
+                    return Ok(());
+                }
+                trace!("[l2cap][flow_control_grant] channel {:?} not found", index);
+                Err(Error::NotFound)
+            })?;
         }
         Ok(())
     }
@@ -872,29 +881,30 @@ impl CreditFlowControl {
         self.credits
     }
 
-    fn received(&mut self, n: u16) {
+    fn confirm_received(&mut self, n: u16) {
         self.credits = self.credits.saturating_sub(n);
         self.received = self.received.saturating_add(n);
     }
 
+    // Confirm that we've granted amount credits
+    fn confirm_granted(&mut self, amount: u16) {
+        self.received = self.received.saturating_sub(amount);
+        self.credits = self.credits.saturating_add(amount);
+    }
+
+    // Check if policy says we should grant more credits
     fn process(&mut self) -> Option<u16> {
         match self.policy {
             CreditFlowPolicy::Every(count) => {
                 if self.received >= count {
-                    let amount = self.received;
-                    self.received = 0;
-                    self.credits += amount;
-                    Some(amount)
+                    Some(self.received)
                 } else {
                     None
                 }
             }
             CreditFlowPolicy::MinThreshold(threshold) => {
                 if self.credits < threshold {
-                    let amount = self.received;
-                    self.received = 0;
-                    self.credits += amount;
-                    Some(amount)
+                    Some(self.received)
                 } else {
                     None
                 }
