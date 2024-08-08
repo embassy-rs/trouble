@@ -22,6 +22,14 @@ impl<'d> Clone for L2capChannel<'d> {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for L2capChannel<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{}, ", self.index);
+        self.manager.print(self.index, f);
+    }
+}
+
 impl<'d> Drop for L2capChannel<'d> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);

@@ -756,6 +756,8 @@ pub(crate) trait DynamicChannelManager {
     fn inc_ref(&self, index: ChannelIndex);
     fn dec_ref(&self, index: ChannelIndex);
     fn disconnect(&self, index: ChannelIndex);
+    #[cfg(feature = "defmt")]
+    fn print(&self, index: ChannelIndex, f: defmt::Formatter);
 }
 
 impl<'d, const RXQ: usize> DynamicChannelManager for ChannelManager<'d, RXQ> {
@@ -767,6 +769,14 @@ impl<'d, const RXQ: usize> DynamicChannelManager for ChannelManager<'d, RXQ> {
     }
     fn disconnect(&self, index: ChannelIndex) {
         ChannelManager::disconnect(self, index)
+    }
+    #[cfg(feature = "defmt")]
+    fn print(&self, index: ChannelIndex, f: defmt::Formatter) {
+        use defmt::Format;
+        self.with_mut(|state| {
+            let chan = &mut state.channels[index.0 as usize];
+            chan.format(f);
+        })
     }
 }
 
