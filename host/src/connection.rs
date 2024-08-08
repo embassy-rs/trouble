@@ -43,10 +43,7 @@ pub struct Connection<'d> {
 impl<'d> Clone for Connection<'d> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
-        Self {
-            index: self.index,
-            manager: self.manager,
-        }
+        Connection::new(self.index, self.manager)
     }
 }
 

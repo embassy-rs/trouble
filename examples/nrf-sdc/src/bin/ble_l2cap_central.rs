@@ -134,11 +134,11 @@ async fn main(spawner: Spawner) {
             let conn = unwrap!(ble.connect(&config).await);
             info!("Connected, creating l2cap channel");
             const PAYLOAD_LEN: usize = 27;
-            let mut ch1 = unwrap!(L2capChannel::<PAYLOAD_LEN>::create(&ble, &conn, 0x2349, &Default::default(),).await);
+            let mut ch1 = unwrap!(L2capChannel::create(&ble, &conn, 0x2349, &Default::default(),).await);
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                unwrap!(ch1.send(&ble, &tx).await);
+                unwrap!(ch1.send::<_, PAYLOAD_LEN>(&ble, &tx).await);
             }
             info!("Sent data, waiting for them to be sent back");
             let mut rx = [0; PAYLOAD_LEN];

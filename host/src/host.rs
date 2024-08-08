@@ -772,7 +772,6 @@ where
     ) -> bool {
         match status.to_result() {
             Ok(_) => {
-                trace!("[host] connected event on handle {:?}", handle);
                 if let Err(err) = self.connections.connect(handle, peer_addr_kind, peer_addr, role) {
                     warn!("Error establishing connection: {:?}", err);
                     return false;
