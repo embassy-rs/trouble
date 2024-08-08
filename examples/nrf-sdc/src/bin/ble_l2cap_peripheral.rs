@@ -135,8 +135,7 @@ async fn main(spawner: Spawner) {
 
             info!("Connection established");
 
-            let mut ch1 =
-                unwrap!(L2capChannel::<PAYLOAD_LEN>::accept(&ble, &conn, &[0x2349], &Default::default(),).await);
+            let mut ch1 = unwrap!(L2capChannel::accept(&ble, &conn, &[0x2349], &Default::default(),).await);
 
             info!("L2CAP channel accepted");
 
@@ -153,7 +152,7 @@ async fn main(spawner: Spawner) {
             Timer::after(Duration::from_secs(1)).await;
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                unwrap!(ch1.send(&ble, &tx).await);
+                unwrap!(ch1.send::<_, PAYLOAD_LEN>(&ble, &tx).await);
             }
             info!("L2CAP data echoed");
 

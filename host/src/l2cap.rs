@@ -10,22 +10,19 @@ use crate::BleHostError;
 pub(crate) mod sar;
 
 /// Handle representing an L2CAP channel.
-pub struct L2capChannel<'d, const TX_MTU: usize> {
+pub struct L2capChannel<'d> {
     index: ChannelIndex,
     manager: &'d dyn DynamicChannelManager,
 }
 
-impl<'d, const TX_MTU: usize> Clone for L2capChannel<'d, TX_MTU> {
+impl<'d> Clone for L2capChannel<'d> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
-        Self {
-            index: self.index,
-            manager: self.manager,
-        }
+        L2capChannel::new(self.index, self.manager)
     }
 }
 
-impl<'d, const TX_MTU: usize> Drop for L2capChannel<'d, TX_MTU> {
+impl<'d> Drop for L2capChannel<'d> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);
     }
@@ -51,7 +48,11 @@ impl Default for L2capChannelConfig {
     }
 }
 
-impl<'d, const TX_MTU: usize> L2capChannel<'d, TX_MTU> {
+impl<'d> L2capChannel<'d> {
+    pub(crate) fn new(index: ChannelIndex, manager: &'d dyn DynamicChannelManager) -> Self {
+        Self { index, manager }
+    }
+
     /// Disconnect this channel.
     pub fn disconnect(&mut self) {
         self.manager.disconnect(self.index);
@@ -63,7 +64,7 @@ impl<'d, const TX_MTU: usize> L2capChannel<'d, TX_MTU> {
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, waits until more credits are available.
-    pub async fn send<T: Controller>(
+    pub async fn send<T: Controller, const TX_MTU: usize>(
         &mut self,
         ble: &BleHost<'_, T>,
         buf: &[u8],
@@ -78,7 +79,7 @@ impl<'d, const TX_MTU: usize> L2capChannel<'d, TX_MTU> {
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, returns Error::Busy.
-    pub fn try_send<T: Controller + blocking::Controller>(
+    pub fn try_send<T: Controller + blocking::Controller, const TX_MTU: usize>(
         &mut self,
         ble: &BleHost<'_, T>,
         buf: &[u8],
@@ -106,14 +107,9 @@ impl<'d, const TX_MTU: usize> L2capChannel<'d, TX_MTU> {
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>> {
         let handle = connection.handle();
-        let index = ble
-            .channels
+        ble.channels
             .accept(handle, psm, config.mtu, config.flow_policy, config.initial_credits, ble)
-            .await?;
-        Ok(Self {
-            index,
-            manager: &ble.channels,
-        })
+            .await
     }
 
     /// Create a new connection request with the provided PSM.
@@ -125,8 +121,7 @@ impl<'d, const TX_MTU: usize> L2capChannel<'d, TX_MTU> {
     ) -> Result<Self, BleHostError<T::Error>>
 where {
         let handle = connection.handle();
-        let index = ble
-            .channels
+        ble.channels
             .create(
                 connection.handle(),
                 psm,
@@ -135,10 +130,6 @@ where {
                 config.initial_credits,
                 ble,
             )
-            .await?;
-        Ok(Self {
-            index,
-            manager: &ble.channels,
-        })
+            .await
     }
 }

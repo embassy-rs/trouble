@@ -11,6 +11,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::cursor::WriteCursor;
 use crate::host::BleHost;
+use crate::l2cap::L2capChannel;
 use crate::packet_pool::{AllocId, GlobalPacketPool, Packet};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
@@ -72,7 +73,7 @@ impl<'d> State<'d> {
     fn print(&self, verbose: bool) {
         for (idx, storage) in self.channels.iter().enumerate() {
             if verbose || storage.state != ChannelState::Disconnected {
-                debug!("[l2cap][idx = {}] state = {:?}", idx, storage);
+                debug!("[l2cap][idx = {}] {:?}", idx, storage);
             }
         }
     }
@@ -84,6 +85,11 @@ impl<'d> State<'d> {
         let next = self.next_req_id;
         self.next_req_id = self.next_req_id.wrapping_add(1);
         next
+    }
+
+    fn inc_ref(&mut self, index: ChannelIndex) {
+        let state = &mut self.channels[index.0 as usize];
+        state.refcount = unwrap!(state.refcount.checked_add(1), "Too many references to the same channel");
     }
 }
 
@@ -158,9 +164,9 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
         ble: &BleHost<'_, T>,
-    ) -> Result<ChannelIndex, BleHostError<T::Error>> {
+    ) -> Result<L2capChannel<'_>, BleHostError<T::Error>> {
         // Wait until we find a channel for our connection in the connecting state matching our PSM.
-        let (idx, req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
+        let (channel, req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
             for (idx, chan) in state.channels.iter_mut().enumerate() {
                 match chan.state {
@@ -173,15 +179,15 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                             initial_credits.unwrap_or(self.pool.min_available(AllocId::from_channel(chan.cid)) as u16),
                         );
                         chan.state = ChannelState::Connected;
+                        let mps = chan.mps;
+                        let mtu = chan.mtu;
+                        let cid = chan.cid;
+                        let available = chan.flow_control.available();
+                        assert_eq!(chan.refcount, 0);
+                        let index = ChannelIndex(idx as u8);
 
-                        return Poll::Ready((
-                            ChannelIndex(idx as u8),
-                            req_id,
-                            chan.mps,
-                            chan.mtu,
-                            chan.cid,
-                            chan.flow_control.available(),
-                        ));
+                        state.inc_ref(index);
+                        return Poll::Ready((L2capChannel::new(index, self), req_id, mps, mtu, cid, available));
                     }
                     _ => {}
                 }
@@ -206,11 +212,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
             &mut tx[..],
         )
         .await?;
-
-        self.with_mut(|state| {
-            state.channels[idx.0 as usize].refcount = 1;
-        });
-        Ok(idx)
+        Ok(channel)
     }
 
     pub(crate) async fn create<T: Controller>(
@@ -221,7 +223,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
         ble: &BleHost<'_, T>,
-    ) -> Result<ChannelIndex, BleHostError<T::Error>> {
+    ) -> Result<L2capChannel<'_>, BleHostError<T::Error>> {
         let req_id = self.next_request_id();
         let mut credits = 0;
         let mut cid: u16 = 0;
@@ -257,18 +259,18 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
             let storage = &mut state.channels[idx.0 as usize];
             match storage.state {
                 ChannelState::Disconnecting | ChannelState::PeerDisconnecting => {
-                    return Poll::Ready(Err(Error::Disconnected));
+                    return Poll::Ready(Err(Error::Disconnected.into()));
                 }
                 ChannelState::Connected => {
-                    storage.refcount = 1;
-                    return Poll::Ready(Ok(()));
+                    assert_eq!(storage.refcount, 0);
+                    state.inc_ref(idx);
+                    return Poll::Ready(Ok(L2capChannel::new(idx, self)));
                 }
                 _ => {}
             }
             Poll::Pending
         })
-        .await?;
-        Ok(idx)
+        .await
     }
 
     /// Dispatch an incoming L2CAP packet to the appropriate channel.
@@ -659,8 +661,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
 
     pub(crate) fn inc_ref(&self, index: ChannelIndex) {
         self.with_mut(|state| {
-            let state = &mut state.channels[index.0 as usize];
-            state.refcount = unwrap!(state.refcount.checked_add(1), "too many references to the same channel");
+            state.inc_ref(index);
         });
     }
 
@@ -781,7 +782,7 @@ impl defmt::Format for ChannelStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, cid = {}, peer = {}, mps = {}, mtu = {}, our credits {}, their credits = {}, refs = {}",
+            "state = {}, c = {}, cid = {}, peer = {}, mps = {}, mtu = {}, cred out {}, cred in = {}, ref = {}",
             self.state,
             self.conn,
             self.cid,

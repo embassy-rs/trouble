@@ -197,24 +197,27 @@ impl<'d> ConnectionManager<'d> {
                         for peer in peers.iter() {
                             if storage.peer_addr_kind.unwrap() == peer.0 && &storage.peer_addr.unwrap() == peer.1 {
                                 storage.state = ConnectionState::Connected;
-                                storage.refcount = 1;
                                 trace!(
                                     "[link][poll_accept] connection handle {:?} in role {:?} accepted",
                                     handle,
                                     role
                                 );
+                                assert_eq!(storage.refcount, 0);
+                                state.inc_ref(idx as u8);
                                 return Poll::Ready(Connection::new(idx as u8, self));
                             }
                         }
                     } else {
                         storage.state = ConnectionState::Connected;
-                        storage.refcount = 1;
+                        assert_eq!(storage.refcount, 0);
                         trace!(
                             "[link][poll_accept] connection handle {:?} in role {:?} accepted",
                             handle,
                             role
                         );
 
+                        assert_eq!(storage.refcount, 0);
+                        state.inc_ref(idx as u8);
                         return Poll::Ready(Connection::new(idx as u8, self));
                     }
                 }
@@ -433,7 +436,7 @@ impl defmt::Format for ConnectionStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, credits = {}, role = {:?}, peer = {:02x}, refs = {}",
+            "state = {}, conn = {}, flow = {}, role = {}, peer = {:02x}, ref = {}",
             self.state,
             self.handle,
             self.link_credits,
