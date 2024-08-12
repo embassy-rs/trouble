@@ -1076,7 +1076,7 @@ where
                                     .exec(&self.controller)
                                     .await
                             {
-                                error!("[host] error performing flow control: {:?}", e);
+                                error!("[host] error performing flow control");
                                 return Err(e.into());
                             }
                         }
