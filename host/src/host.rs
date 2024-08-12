@@ -1081,8 +1081,7 @@ where
                                     .exec(&self.controller)
                                     .await
                             {
-                                error!("[host] error performing flow control");
-                                return Err(e.into());
+                                warn!("[host] error performing flow control on {:?}", acl.handle());
                             }
                         }
                         Err(e) => {
@@ -1092,8 +1091,7 @@ where
                                     .exec(&self.controller)
                                     .await
                             {
-                                error!("[host] error performing flow control");
-                                return Err(e.into());
+                                warn!("[host] error performing flow control on {:?}", acl.handle());
                             }
                             // We disconnect on errors to ensure we don't leave the other end thinking
                             // everything is ok.
