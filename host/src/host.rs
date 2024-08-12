@@ -6,7 +6,9 @@ use core::future::poll_fn;
 use core::mem::MaybeUninit;
 use core::task::Poll;
 
-use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
+use bt_hci::cmd::controller_baseband::{
+    HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
+};
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnCancel,
     LeExtCreateConn, LeReadBufferSize, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
@@ -24,6 +26,8 @@ use bt_hci::param::{
     AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask,
     FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask, Operation, PhyParams, ScanningPhy, Status,
 };
+#[cfg(feature = "controller-host-flow-control")]
+use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -916,10 +920,12 @@ where
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>,
     {
         self.run_with_handler(|_| {}).await
@@ -932,8 +938,10 @@ where
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdSync<SetControllerToHostFlowControl>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeReadBufferSize>,
@@ -947,15 +955,6 @@ where
             if let Some(addr) = self.address {
                 LeSetRandomAddr::new(addr.addr).exec(&self.controller).await?;
             }
-
-            HostBufferSize::new(
-                self.rx_pool.mtu() as u16,
-                0,
-                config::L2CAP_RX_PACKET_POOL_SIZE as u16,
-                0,
-            )
-            .exec(&self.controller)
-            .await?;
 
             SetEventMask::new(
                 EventMask::new()
@@ -984,8 +983,30 @@ where
             info!("[host] setting txq to {}", ret.total_num_le_acl_data_packets as usize);
             self.connections
                 .set_link_credits(ret.total_num_le_acl_data_packets as usize);
-            // TODO: Configure ACL max buffer size as well?
+
+            #[cfg(feature = "controller-host-flow-control")]
+            {
+                info!(
+                    "[host] enabling flow control ({} packets of size {})",
+                    config::L2CAP_RX_PACKET_POOL_SIZE,
+                    self.rx_pool.mtu()
+                );
+                HostBufferSize::new(
+                    self.rx_pool.mtu() as u16,
+                    0,
+                    config::L2CAP_RX_PACKET_POOL_SIZE as u16,
+                    0,
+                )
+                .exec(&self.controller)
+                .await?;
+
+                SetControllerToHostFlowControl::new(ControllerToHostFlowControl::AclOnSyncOff)
+                    .exec(&self.controller)
+                    .await?;
+            }
+
             let _ = self.initialized.init(());
+            info!("[host] initialized");
 
             loop {
                 match select4(
@@ -1053,8 +1074,27 @@ where
                 let result = self.controller.read(&mut rx).await;
                 match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl) {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            #[cfg(feature = "controller-host-flow-control")]
+                            if let Err(e) =
+                                HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
+                                    .exec(&self.controller)
+                                    .await
+                            {
+                                error!("[host] error performing flow control");
+                                return Err(e.into());
+                            }
+                        }
                         Err(e) => {
+                            #[cfg(feature = "controller-host-flow-control")]
+                            if let Err(e) =
+                                HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
+                                    .exec(&self.controller)
+                                    .await
+                            {
+                                error!("[host] error performing flow control");
+                                return Err(e.into());
+                            }
                             // We disconnect on errors to ensure we don't leave the other end thinking
                             // everything is ok.
                             let reason = match e {
