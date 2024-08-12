@@ -6,7 +6,7 @@ use core::future::poll_fn;
 use core::mem::MaybeUninit;
 use core::task::Poll;
 
-use bt_hci::cmd::controller_baseband::{HostBufferSize, Reset, SetEventMask};
+use bt_hci::cmd::controller_baseband::{HostBufferSize, HostNumberOfCompletedPackets, Reset, SetEventMask};
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnCancel,
     LeExtCreateConn, LeReadBufferSize, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
@@ -21,8 +21,9 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
-    AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask,
-    FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask, Operation, PhyParams, ScanningPhy, Status,
+    AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, ConnHandle, ConnHandleCompletedPackets,
+    DisconnectReason, EventMask, FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask, Operation, PhyParams,
+    ScanningPhy, Status,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
@@ -920,6 +921,7 @@ where
             + ControllerCmdSync<LeCreateConnCancel>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>,
     {
         self.run_with_handler(|_| {}).await
@@ -934,6 +936,7 @@ where
             + ControllerCmdSync<HostBufferSize>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeReadBufferSize>,
@@ -1053,7 +1056,13 @@ where
                 let result = self.controller.read(&mut rx).await;
                 match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl) {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            unwrap!(
+                                HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
+                                    .exec(&self.controller)
+                                    .await
+                            );
+                        }
                         Err(e) => {
                             // We disconnect on errors to ensure we don't leave the other end thinking
                             // everything is ok.
