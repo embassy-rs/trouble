@@ -1062,6 +1062,7 @@ where
                                     .exec(&self.controller)
                                     .await
                             {
+                                error!("[host] error performing flow control");
                                 return Err(Error::InvalidState.into());
                             }
                         }
