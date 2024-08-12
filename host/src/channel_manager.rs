@@ -289,6 +289,9 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                 match storage.state {
                     ChannelState::Connected if header.channel == storage.cid => {
                         if storage.flow_control.available() == 0 {
+                            // NOTE: This will trigger closing of the link, which might be a bit
+                            // too strict. But it should be controllable via the credits given,
+                            // which the remote should respect.
                             trace!("[l2cap][cid = {}] no credits available", header.channel);
                             return Err(Error::OutOfMemory);
                         }

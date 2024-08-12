@@ -814,7 +814,7 @@ where
                     && !(&[L2CAP_CID_LE_U_SIGNAL, L2CAP_CID_ATT].contains(&header.channel))
                 {
                     warn!("[host] unsupported l2cap channel id {}", header.channel);
-                    return Ok(());
+                    return Err(Error::NotSupported);
                 }
 
                 // Avoids using the packet buffer for signalling packets
@@ -903,7 +903,7 @@ where
                 }
             },
             _ => {
-                unimplemented!()
+                return Err(Error::NotSupported);
             }
         }
         Ok(())
