@@ -6,7 +6,9 @@ use core::future::poll_fn;
 use core::mem::MaybeUninit;
 use core::task::Poll;
 
-use bt_hci::cmd::controller_baseband::{HostBufferSize, HostNumberOfCompletedPackets, Reset, SetEventMask};
+use bt_hci::cmd::controller_baseband::{
+    HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
+};
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnCancel,
     LeExtCreateConn, LeReadBufferSize, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
@@ -22,8 +24,8 @@ use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
     AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, ConnHandle, ConnHandleCompletedPackets,
-    DisconnectReason, EventMask, FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask, Operation, PhyParams,
-    ScanningPhy, Status,
+    ControllerToHostFlowControl, DisconnectReason, EventMask, FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask,
+    Operation, PhyParams, ScanningPhy, Status,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
@@ -917,6 +919,7 @@ where
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
@@ -934,6 +937,7 @@ where
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdSync<SetControllerToHostFlowControl>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
@@ -950,15 +954,6 @@ where
             if let Some(addr) = self.address {
                 LeSetRandomAddr::new(addr.addr).exec(&self.controller).await?;
             }
-
-            HostBufferSize::new(
-                self.rx_pool.mtu() as u16,
-                0,
-                config::L2CAP_RX_PACKET_POOL_SIZE as u16,
-                0,
-            )
-            .exec(&self.controller)
-            .await?;
 
             SetEventMask::new(
                 EventMask::new()
@@ -987,8 +982,27 @@ where
             info!("[host] setting txq to {}", ret.total_num_le_acl_data_packets as usize);
             self.connections
                 .set_link_credits(ret.total_num_le_acl_data_packets as usize);
-            // TODO: Configure ACL max buffer size as well?
+
+            info!(
+                "[host] enabling flow control ({} packets of size {})",
+                config::L2CAP_RX_PACKET_POOL_SIZE,
+                self.rx_pool.mtu()
+            );
+            HostBufferSize::new(
+                self.rx_pool.mtu() as u16,
+                0,
+                config::L2CAP_RX_PACKET_POOL_SIZE as u16,
+                0,
+            )
+            .exec(&self.controller)
+            .await?;
+
+            SetControllerToHostFlowControl::new(ControllerToHostFlowControl::AclOnSyncOff)
+                .exec(&self.controller)
+                .await?;
+
             let _ = self.initialized.init(());
+            info!("[host] initialized");
 
             loop {
                 match select4(
@@ -1057,13 +1071,13 @@ where
                 match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl) {
                         Ok(_) => {
-                            if let Err(_) =
+                            if let Err(e) =
                                 HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
                                     .exec(&self.controller)
                                     .await
                             {
-                                error!("[host] error performing flow control");
-                                return Err(Error::InvalidState.into());
+                                error!("[host] error performing flow control: {:?}", e);
+                                return Err(e.into());
                             }
                         }
                         Err(e) => {

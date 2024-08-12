@@ -46,6 +46,7 @@ pub(crate) struct PacketChannel<const QLEN: usize> {
 pub struct ChannelIndex(u8);
 
 impl<const QLEN: usize> PacketChannel<QLEN> {
+    #[allow(clippy::declare_interior_mutable_const)]
     pub(crate) const NEW: PacketChannel<QLEN> = PacketChannel { chan: Channel::new() };
 
     pub fn close(&self) -> Result<(), ()> {
