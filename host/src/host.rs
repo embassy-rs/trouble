@@ -1081,7 +1081,11 @@ where
                                     .exec(&self.controller)
                                     .await
                             {
-                                warn!("[host] error performing flow control on {:?}", acl.handle());
+                                // Only serious error if it's supposed to be connected
+                                if self.connections.get_connected_handle(acl.handle()).is_some() {
+                                    error!("[host] error performing flow control on {:?}", acl.handle());
+                                    return Err(e.into());
+                                }
                             }
                         }
                         Err(e) => {
@@ -1091,7 +1095,11 @@ where
                                     .exec(&self.controller)
                                     .await
                             {
-                                warn!("[host] error performing flow control on {:?}", acl.handle());
+                                // Only serious error if it's supposed to be connected
+                                if self.connections.get_connected_handle(acl.handle()).is_some() {
+                                    error!("[host] error performing flow control on {:?}", acl.handle());
+                                    return Err(e.into());
+                                }
                             }
                             // We disconnect on errors to ensure we don't leave the other end thinking
                             // everything is ok.
