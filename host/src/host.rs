@@ -1055,6 +1055,13 @@ where
                         Ok(_) => {}
                         Err(e) => {
                             trace!("Error processing ACL packet: {:?}", e);
+                            if let Error::OutOfMemory = e {
+                                warn!("[host] out of memory error on handle {:?}, disconnecting", acl.handle());
+                                self.connections.request_handle_disconnect(
+                                    acl.handle(),
+                                    DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                );
+                            }
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);
                         }

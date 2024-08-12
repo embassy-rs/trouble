@@ -93,6 +93,18 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
+    pub(crate) fn request_handle_disconnect(&self, handle: ConnHandle, reason: DisconnectReason) {
+        self.with_mut(|state| {
+            for entry in state.connections.iter_mut() {
+                if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+                    entry.state = ConnectionState::DisconnectRequest(reason);
+                    state.disconnect_waker.wake();
+                    break;
+                }
+            }
+        })
+    }
+
     pub(crate) fn poll_disconnecting<'m>(&'m self, cx: Option<&mut Context<'_>>) -> Poll<DisconnectRequest<'m, 'd>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
