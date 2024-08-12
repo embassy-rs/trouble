@@ -23,10 +23,11 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
-    AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, ConnHandle, ConnHandleCompletedPackets,
-    ControllerToHostFlowControl, DisconnectReason, EventMask, FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask,
-    Operation, PhyParams, ScanningPhy, Status,
+    AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask,
+    FilterDuplicates, InitiatingPhy, LeConnRole, LeEventMask, Operation, PhyParams, ScanningPhy, Status,
 };
+#[cfg(feature = "controller-host-flow-control")]
+use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -983,23 +984,26 @@ where
             self.connections
                 .set_link_credits(ret.total_num_le_acl_data_packets as usize);
 
-            info!(
-                "[host] enabling flow control ({} packets of size {})",
-                config::L2CAP_RX_PACKET_POOL_SIZE,
-                self.rx_pool.mtu()
-            );
-            HostBufferSize::new(
-                self.rx_pool.mtu() as u16,
-                0,
-                config::L2CAP_RX_PACKET_POOL_SIZE as u16,
-                0,
-            )
-            .exec(&self.controller)
-            .await?;
-
-            SetControllerToHostFlowControl::new(ControllerToHostFlowControl::AclOnSyncOff)
+            #[cfg(feature = "controller-host-flow-control")]
+            {
+                info!(
+                    "[host] enabling flow control ({} packets of size {})",
+                    config::L2CAP_RX_PACKET_POOL_SIZE,
+                    self.rx_pool.mtu()
+                );
+                HostBufferSize::new(
+                    self.rx_pool.mtu() as u16,
+                    0,
+                    config::L2CAP_RX_PACKET_POOL_SIZE as u16,
+                    0,
+                )
                 .exec(&self.controller)
                 .await?;
+
+                SetControllerToHostFlowControl::new(ControllerToHostFlowControl::AclOnSyncOff)
+                    .exec(&self.controller)
+                    .await?;
+            }
 
             let _ = self.initialized.init(());
             info!("[host] initialized");
@@ -1071,6 +1075,7 @@ where
                 match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl) {
                         Ok(_) => {
+                            #[cfg(feature = "controller-host-flow-control")]
                             if let Err(e) =
                                 HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
                                     .exec(&self.controller)
@@ -1081,6 +1086,7 @@ where
                             }
                         }
                         Err(e) => {
+                            #[cfg(feature = "controller-host-flow-control")]
                             if let Err(e) =
                                 HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
                                     .exec(&self.controller)
