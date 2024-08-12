@@ -899,6 +899,7 @@ where
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
+                    return Err(e);
                 }
             },
             _ => {
@@ -1054,14 +1055,33 @@ where
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl) {
                         Ok(_) => {}
                         Err(e) => {
-                            trace!("Error processing ACL packet: {:?}", e);
-                            if let Error::OutOfMemory = e {
-                                warn!("[host] out of memory error on handle {:?}, disconnecting", acl.handle());
-                                self.connections.request_handle_disconnect(
-                                    acl.handle(),
-                                    DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                );
-                            }
+                            // We disconnect on errors to ensure we don't leave the other end thinking
+                            // everything is ok.
+                            let reason = match e {
+                                Error::OutOfMemory => {
+                                    // Disconnect link due to low resources.
+                                    warn!("[host] out of memory error when processing ACL packet");
+                                    DisconnectReason::RemoteDeviceTerminatedConnLowResources
+                                }
+                                Error::Disconnected => {
+                                    // Already disconnected, request a disconnect to ensure we don't have
+                                    // any lingering connections, should be a noop
+                                    warn!("[host] already disconnected when processing ACL packet");
+                                    DisconnectReason::RemoteUserTerminatedConn
+                                }
+                                Error::NotSupported => {
+                                    // Attempt to use a feature not supported
+                                    warn!("[host] attempted to use unsupported feature when processing ACL packet");
+                                    DisconnectReason::UnsupportedRemoteFeature
+                                }
+                                e => {
+                                    // Otherwise blame the user.
+                                    warn!("[host] encountered error processing ACL packet: {:?}", e);
+                                    DisconnectReason::RemoteUserTerminatedConn
+                                }
+                            };
+                            warn!("[host] disconnecting handle {:?} after error", acl.handle());
+                            self.connections.request_handle_disconnect(acl.handle(), reason);
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);
                         }
