@@ -1081,6 +1081,14 @@ where
                             }
                         }
                         Err(e) => {
+                            if let Err(e) =
+                                HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
+                                    .exec(&self.controller)
+                                    .await
+                            {
+                                error!("[host] error performing flow control");
+                                return Err(e.into());
+                            }
                             // We disconnect on errors to ensure we don't leave the other end thinking
                             // everything is ok.
                             let reason = match e {
