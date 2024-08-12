@@ -34,7 +34,7 @@ jobs:
           RUST_LOG: trace
         run: |
           cd host
-          cargo test --test '*' -- --nocapture
+          cargo test --features log --test '*' -- --nocapture
       - name: Update failed status
         if: failure()
         env:
