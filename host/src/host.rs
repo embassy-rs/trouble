@@ -1057,11 +1057,13 @@ where
                 match result {
                     Ok(ControllerToHostPacket::Acl(acl)) => match self.handle_acl(acl) {
                         Ok(_) => {
-                            unwrap!(
+                            if let Err(_) =
                                 HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
                                     .exec(&self.controller)
                                     .await
-                            );
+                            {
+                                return Err(Error::InvalidState.into());
+                            }
                         }
                         Err(e) => {
                             // We disconnect on errors to ensure we don't leave the other end thinking
