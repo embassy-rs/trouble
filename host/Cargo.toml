@@ -43,6 +43,7 @@ bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
 
 [features]
 defmt = [ "dep:defmt" ]
+log = [ "dep:log" ]
 gatt = []
 default = [ "gatt" ]
 
