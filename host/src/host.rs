@@ -10,11 +10,11 @@ use bt_hci::cmd::controller_baseband::{
     HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
 };
 use bt_hci::cmd::le::{
-    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnCancel,
-    LeExtCreateConn, LeReadBufferSize, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
-    LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanEnable,
-    LeSetExtScanParams, LeSetExtScanResponseData, LeSetRandomAddr, LeSetScanEnable, LeSetScanParams,
-    LeSetScanResponseData,
+    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn,
+    LeCreateConnCancel, LeExtCreateConn, LeReadBufferSize, LeReadFilterAcceptListSize, LeReadNumberOfSupportedAdvSets,
+    LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData,
+    LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanEnable, LeSetExtScanParams, LeSetExtScanResponseData,
+    LeSetRandomAddr, LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -107,7 +107,7 @@ pub struct BleHost<'d, T> {
     pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
     pub(crate) rx_pool: &'static dyn GlobalPacketPool,
-    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
+    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 4>,
 
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
     advertise_state: AdvState<'d>,
@@ -805,7 +805,7 @@ where
         true
     }
 
-    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<Option<(u8, LeConnUpdate)>, Error> {
         if !self.connections.is_handle_connected(acl.handle()) {
             return Err(Error::Disconnected);
         }
@@ -824,8 +824,7 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    self.channels.signal(acl.handle(), data)?;
-                    return Ok(());
+                    return self.channels.signal(acl.handle(), data);
                 }
 
                 let Some(mut p) = self.rx_pool.alloc(AllocId::from_channel(header.channel)) else {
@@ -836,7 +835,7 @@ where
 
                 if header.length as usize != data.len() {
                     self.reassembly.init(acl.handle(), header, p, data.len())?;
-                    return Ok(());
+                    return Ok(None);
                 }
                 (header, p)
             }
@@ -847,7 +846,7 @@ where
                     (header, p)
                 } else {
                     // Do not process yet
-                    return Ok(());
+                    return Ok(None);
                 }
             }
             other => {
@@ -915,7 +914,7 @@ where
                 return Err(Error::NotSupported.into());
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     pub async fn run(&self) -> Result<(), BleHostError<T::Error>>
@@ -925,6 +924,8 @@ where
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdAsync<LeConnUpdate>
+            + ControllerCmdSync<LeReadFilterAcceptListSize>
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
@@ -942,7 +943,9 @@ where
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
+            + ControllerCmdSync<LeReadFilterAcceptListSize>
             + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdAsync<LeConnUpdate>
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
@@ -983,6 +986,9 @@ where
             )
             .exec(&self.controller)
             .await?;
+
+            let ret = LeReadFilterAcceptListSize::new().exec(&self.controller).await?;
+            info!("[host] filter accept list size: {}", ret);
 
             let ret = LeReadBufferSize::new().exec(&self.controller).await?;
             info!("[host] setting txq to {}", ret.total_num_le_acl_data_packets as usize);
@@ -1094,62 +1100,28 @@ where
                             }
                         }
                         Err(e) => {
-                            if let BleHostError::BleHost(e) = e {
-                                #[cfg(feature = "controller-host-flow-control")]
-                                if let Err(e) = HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(
-                                    acl.handle(),
-                                    1,
-                                )])
-                                .exec(&self.controller)
-                                .await
-                                {
-                                    // Only serious error if it's supposed to be connected
-                                    if self.connections.get_connected_handle(acl.handle()).is_some() {
-                                        error!("[host] error performing flow control on {:?}", acl.handle());
-                                        return Err(e.into());
-                                    }
+                            #[cfg(feature = "controller-host-flow-control")]
+                            if let Err(e) =
+                                HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
+                                    .exec(&self.controller)
+                                    .await
+                            {
+                                // Only serious error if it's supposed to be connected
+                                if self.connections.get_connected_handle(acl.handle()).is_some() {
+                                    error!("[host] error performing flow control on {:?}", acl.handle());
+                                    return Err(e.into());
                                 }
-                                match e {
-                                    Error::OutOfMemory => {
-                                        // Disconnect link due to low resources.
-                                        warn!(
-                                            "[host] out of memory error when processing ACL data for {:?}",
-                                            acl.handle()
-                                        );
-                                        self.connections.request_handle_disconnect(
-                                            acl.handle(),
-                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                        );
-                                    }
-                                    Error::Disconnected => {
-                                        // Already disconnected, request a disconnect to ensure we don't have
-                                        // any lingering connections, should be a noop
-                                        warn!(
-                                            "[host] already disconnected when processing ACL data for {:?}",
-                                            acl.handle()
-                                        );
-                                    }
-                                    Error::NotSupported => {
-                                        // Attempt to use a feature not supported
-                                        warn!(
-                                            "[host] attempted to use unsupported feature on handle {:?}",
-                                            acl.handle()
-                                        );
-                                        self.connections.request_handle_disconnect(
-                                            acl.handle(),
-                                            DisconnectReason::UnsupportedRemoteFeature,
-                                        );
-                                    }
-                                    e => {
-                                        // Otherwise blame the user.
-                                        warn!(
-                                            "[host] encountered error processing ACL data for {:?}: {:?}",
-                                            acl.handle(),
-                                            e
-                                        );
-                                    }
-                                };
                             }
+                            match e {
+                                e => {
+                                    // Otherwise blame the user.
+                                    warn!(
+                                        "[host] encountered error processing ACL data for {:?}: {:?}",
+                                        acl.handle(),
+                                        e
+                                    );
+                                }
+                            };
 
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);

@@ -494,7 +494,7 @@ impl<'a, 'd> Drop for PacketGrant<'a, 'd> {
                     ConnectionState::Connected if self.handle == storage.handle.unwrap() => {
                         storage.link_credits += self.packets;
                         storage.link_credit_waker.wake();
-                        break;
+                        return;
                     }
                     _ => {}
                 }
