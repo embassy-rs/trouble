@@ -3,7 +3,7 @@ use core::future::poll_fn;
 use core::task::{Context, Poll};
 
 use bt_hci::controller::{blocking, Controller};
-use bt_hci::param::ConnHandle;
+use bt_hci::param::{ConnHandle, Duration};
 use bt_hci::FromHciBytes;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -15,8 +15,8 @@ use crate::l2cap::L2capChannel;
 use crate::packet_pool::{AllocId, GlobalPacketPool, Packet};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
-    CommandRejectRes, DisconnectionReq, DisconnectionRes, L2capHeader, L2capSignalCode, L2capSignalHeader,
-    LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
+    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
+    L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
 };
 use crate::{AclSender, BleHostError, Error};
 
@@ -184,6 +184,10 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                         let mtu = chan.mtu;
                         let cid = chan.cid;
                         let available = chan.flow_control.available();
+                        if chan.refcount != 0 {
+                            state.print(true);
+                            panic!("unexpected refcount");
+                        }
                         assert_eq!(chan.refcount, 0);
                         let index = ChannelIndex(idx as u8);
 
@@ -263,6 +267,10 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                     return Poll::Ready(Err(Error::Disconnected.into()));
                 }
                 ChannelState::Connected => {
+                    if storage.refcount != 0 {
+                        state.print(true);
+                        panic!("unexpected refcount");
+                    }
                     assert_eq!(storage.refcount, 0);
                     state.inc_ref(idx);
                     return Poll::Ready(Ok(L2capChannel::new(idx, self)));
@@ -319,35 +327,52 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         match header.code {
             L2capSignalCode::LeCreditConnReq => {
                 let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
-                self.handle_connect_request(conn, header.identifier, &req)
+                self.handle_connect_request(conn, header.identifier, &req)?;
             }
             L2capSignalCode::LeCreditConnRes => {
                 let res = LeCreditConnRes::from_hci_bytes_complete(data)?;
-                self.handle_connect_response(conn, header.identifier, &res)
+                self.handle_connect_response(conn, header.identifier, &res)?;
             }
             L2capSignalCode::LeCreditFlowInd => {
                 let req = LeCreditFlowInd::from_hci_bytes_complete(data)?;
                 //trace!("[l2cap] credit flow: {:?}", req);
                 self.handle_credit_flow(conn, &req)?;
-                Ok(())
             }
             L2capSignalCode::CommandRejectRes => {
                 let (reject, _) = CommandRejectRes::from_hci_bytes(data)?;
-                Ok(())
             }
             L2capSignalCode::DisconnectionReq => {
                 let req = DisconnectionReq::from_hci_bytes_complete(data)?;
                 trace!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
                 self.handle_disconnect_request(req.dcid)?;
-                Ok(())
             }
             L2capSignalCode::DisconnectionRes => {
                 let res = DisconnectionRes::from_hci_bytes_complete(data)?;
                 trace!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
-                self.handle_disconnect_response(res.scid)
+                self.handle_disconnect_response(res.scid)?;
             }
-            _ => Err(Error::NotSupported),
+            L2capSignalCode::ConnParamUpdateReq => {
+                let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
+                trace!(
+                    "[l2cap][conn = {:?}] connection param update request: {:?}, ignored",
+                    conn,
+                    req
+                );
+            }
+            L2capSignalCode::ConnParamUpdateRes => {
+                let res = ConnParamUpdateRes::from_hci_bytes_complete(data)?;
+                trace!(
+                    "[l2cap][conn = {:?}] connection param update response: {}",
+                    conn,
+                    res.result,
+                );
+            }
+            r => {
+                warn!("[l2cap][conn = {:?}] unsupported signal: {:?}", conn, r);
+                return Err(Error::NotSupported);
+            }
         }
+        Ok(())
     }
 
     fn handle_connect_request(&self, conn: ConnHandle, identifier: u8, req: &LeCreditConnReq) -> Result<(), Error> {

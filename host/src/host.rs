@@ -10,11 +10,11 @@ use bt_hci::cmd::controller_baseband::{
     HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
 };
 use bt_hci::cmd::le::{
-    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeCreateConn, LeCreateConnCancel,
-    LeExtCreateConn, LeReadBufferSize, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
-    LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanEnable,
-    LeSetExtScanParams, LeSetExtScanResponseData, LeSetRandomAddr, LeSetScanEnable, LeSetScanParams,
-    LeSetScanResponseData,
+    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn,
+    LeCreateConnCancel, LeExtCreateConn, LeReadBufferSize, LeReadFilterAcceptListSize, LeReadNumberOfSupportedAdvSets,
+    LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetAdvSetRandomAddr, LeSetEventMask, LeSetExtAdvData,
+    LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanEnable, LeSetExtScanParams, LeSetExtScanResponseData,
+    LeSetRandomAddr, LeSetScanEnable, LeSetScanParams, LeSetScanResponseData,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -107,8 +107,9 @@ pub struct BleHost<'d, T> {
     pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
     pub(crate) rx_pool: &'static dyn GlobalPacketPool,
-    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
+    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 4>,
 
+    #[cfg(feature = "scan")]
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
     advertise_state: AdvState<'d>,
     advertise_command_state: CommandState<bool>,
@@ -241,6 +242,7 @@ where
             ),
             rx_pool: &host_resources.rx_pool,
             att_inbound: Channel::new(),
+            #[cfg(feature = "scan")]
             scanner: Channel::new(),
             advertise_state: AdvState::new(&mut host_resources.advertise_handles[..]),
             advertise_command_state: CommandState::new(),
@@ -505,6 +507,7 @@ where
     /// Performs an extended BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
+    #[cfg(feature = "scan")]
     pub async fn scan_ext(&self, config: &ScanConfig<'_>) -> Result<ScanReport, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>
@@ -523,6 +526,7 @@ where
     /// Performs a BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
+    #[cfg(feature = "scan")]
     pub async fn scan(&self, config: &ScanConfig<'_>) -> Result<ScanReport, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanParams>
@@ -903,11 +907,16 @@ where
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
-                    return Err(e);
+                    return Err(e.into());
                 }
             },
-            _ => {
-                return Err(Error::NotSupported);
+            chan => {
+                warn!(
+                    "[host] conn {:?} attempted to use unsupported l2cap channel {}",
+                    acl.handle(),
+                    chan
+                );
+                return Err(Error::NotSupported.into());
             }
         }
         Ok(())
@@ -920,6 +929,8 @@ where
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdAsync<LeConnUpdate>
+            + ControllerCmdSync<LeReadFilterAcceptListSize>
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
@@ -937,7 +948,9 @@ where
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
+            + ControllerCmdSync<LeReadFilterAcceptListSize>
             + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdAsync<LeConnUpdate>
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
@@ -978,6 +991,9 @@ where
             )
             .exec(&self.controller)
             .await?;
+
+            let ret = LeReadFilterAcceptListSize::new().exec(&self.controller).await?;
+            info!("[host] filter accept list size: {}", ret);
 
             let ret = LeReadBufferSize::new().exec(&self.controller).await?;
             info!("[host] setting txq to {}", ret.total_num_le_acl_data_packets as usize);
@@ -1101,33 +1117,12 @@ where
                                     return Err(e.into());
                                 }
                             }
-                            // We disconnect on errors to ensure we don't leave the other end thinking
-                            // everything is ok.
-                            let reason = match e {
-                                Error::OutOfMemory => {
-                                    // Disconnect link due to low resources.
-                                    warn!("[host] out of memory error when processing ACL packet");
-                                    DisconnectReason::RemoteDeviceTerminatedConnLowResources
-                                }
-                                Error::Disconnected => {
-                                    // Already disconnected, request a disconnect to ensure we don't have
-                                    // any lingering connections, should be a noop
-                                    warn!("[host] already disconnected when processing ACL packet");
-                                    DisconnectReason::RemoteUserTerminatedConn
-                                }
-                                Error::NotSupported => {
-                                    // Attempt to use a feature not supported
-                                    warn!("[host] attempted to use unsupported feature when processing ACL packet");
-                                    DisconnectReason::UnsupportedRemoteFeature
-                                }
-                                e => {
-                                    // Otherwise blame the user.
-                                    warn!("[host] encountered error processing ACL packet: {:?}", e);
-                                    DisconnectReason::RemoteUserTerminatedConn
-                                }
-                            };
-                            warn!("[host] disconnecting handle {:?} after error", acl.handle());
-                            self.connections.request_handle_disconnect(acl.handle(), reason);
+                            warn!(
+                                "[host] encountered error processing ACL data for {:?}: {:?}",
+                                acl.handle(),
+                                e
+                            );
+
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);
                         }
@@ -1157,17 +1152,20 @@ where
                                 }
                             }
                             LeEvent::LeScanTimeout(_) => {
+                                #[cfg(feature = "scan")]
                                 let _ = self.scanner.try_send(None);
                             }
                             LeEvent::LeAdvertisingSetTerminated(set) => {
                                 self.advertise_state.terminate(set.adv_handle);
                             }
                             LeEvent::LeExtendedAdvertisingReport(data) => {
+                                #[cfg(feature = "scan")]
                                 let _ = self
                                     .scanner
                                     .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
                             }
                             LeEvent::LeAdvertisingReport(data) => {
+                                #[cfg(feature = "scan")]
                                 let _ = self
                                     .scanner
                                     .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
@@ -1178,7 +1176,11 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             let handle = e.handle;
-                            info!("Disconnection event on handle {}", handle.raw());
+                            if let Err(e) = e.reason.to_result() {
+                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                            } else {
+                                info!("[host] disconnection event on handle {}", handle.raw(),);
+                            }
                             let _ = self.connections.disconnected(handle);
                             let _ = self.channels.disconnected(handle);
                             self.reassembly.disconnected(handle);
@@ -1211,9 +1213,18 @@ where
 
         // info!("Entering select loop");
         match select3(&mut control_fut, &mut rx_fut, &mut tx_fut).await {
-            Either3::First(result) => result,
-            Either3::Second(result) => result,
-            Either3::Third(result) => result,
+            Either3::First(result) => {
+                trace!("[host] control_fut exit");
+                result
+            }
+            Either3::Second(result) => {
+                trace!("[host] rx_fut exit");
+                result
+            }
+            Either3::Third(result) => {
+                trace!("[host] tx_fut exit");
+                result
+            }
         }
     }
 

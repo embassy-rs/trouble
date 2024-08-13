@@ -107,7 +107,6 @@ impl<'d> Connection<'d> {
         T: ControllerCmdAsync<LeConnUpdate>,
     {
         let handle = self.handle();
-        trace!("[host] updating connection params for {:?}", handle);
         match ble
             .async_command(LeConnUpdate::new(
                 handle,
@@ -121,7 +120,7 @@ impl<'d> Connection<'d> {
             .await
         {
             Ok(_) => Ok(()),
-            Err(BleHostError::BleHost(crate::Error::HciEncode(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+            Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                 Err(crate::Error::Disconnected.into())
             }
             Err(e) => Err(e),

@@ -240,3 +240,44 @@ impl L2capSignal for DisconnectionRes {
         L2capSignalCode::DisconnectionRes
     }
 }
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ConnParamUpdateReq {
+    pub interval_min: u16,
+    pub interval_max: u16,
+    pub latency: u16,
+    pub timeout: u16,
+}
+
+unsafe impl FixedSizeValue for ConnParamUpdateReq {
+    fn is_valid(data: &[u8]) -> bool {
+        true
+    }
+}
+
+impl L2capSignal for ConnParamUpdateReq {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::ConnParamUpdateReq
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ConnParamUpdateRes {
+    pub result: u16,
+}
+
+unsafe impl FixedSizeValue for ConnParamUpdateRes {
+    fn is_valid(data: &[u8]) -> bool {
+        true
+    }
+}
+
+impl L2capSignal for ConnParamUpdateRes {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::ConnParamUpdateRes
+    }
+}
