@@ -184,6 +184,10 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                         let mtu = chan.mtu;
                         let cid = chan.cid;
                         let available = chan.flow_control.available();
+                        if chan.refcount != 0 {
+                            state.print(true);
+                            panic!("unexpected refcount");
+                        }
                         assert_eq!(chan.refcount, 0);
                         let index = ChannelIndex(idx as u8);
 
@@ -263,6 +267,10 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                     return Poll::Ready(Err(Error::Disconnected.into()));
                 }
                 ChannelState::Connected => {
+                    if storage.refcount != 0 {
+                        state.print(true);
+                        panic!("unexpected refcount");
+                    }
                     assert_eq!(storage.refcount, 0);
                     state.inc_ref(idx);
                     return Poll::Ready(Ok(L2capChannel::new(idx, self)));

@@ -74,7 +74,7 @@ pub enum BleHostError<E> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
-    HciEncode(bt_hci::param::Error),
+    Hci(bt_hci::param::Error),
     HciDecode(FromHciBytesError),
     Att(AttErrorCode),
     InsufficientSpace,
@@ -115,7 +115,7 @@ impl From<AttErrorCode> for Error {
 impl<E> From<bt_hci::cmd::Error<E>> for BleHostError<E> {
     fn from(error: bt_hci::cmd::Error<E>) -> Self {
         match error {
-            bt_hci::cmd::Error::Hci(p) => Self::BleHost(Error::HciEncode(p)),
+            bt_hci::cmd::Error::Hci(p) => Self::BleHost(Error::Hci(p)),
             bt_hci::cmd::Error::Io(p) => Self::Controller(p),
         }
     }
@@ -123,7 +123,7 @@ impl<E> From<bt_hci::cmd::Error<E>> for BleHostError<E> {
 
 impl<E> From<bt_hci::param::Error> for BleHostError<E> {
     fn from(error: bt_hci::param::Error) -> Self {
-        Self::BleHost(Error::HciEncode(error))
+        Self::BleHost(Error::Hci(error))
     }
 }
 

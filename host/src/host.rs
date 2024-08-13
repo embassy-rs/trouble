@@ -903,11 +903,16 @@ where
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
-                    return Err(e);
+                    return Err(e.into());
                 }
             },
-            _ => {
-                return Err(Error::NotSupported);
+            chan => {
+                warn!(
+                    "[host] conn {:?} attempted to use unsupported l2cap channel {}",
+                    acl.handle(),
+                    chan
+                );
+                return Err(Error::NotSupported.into());
             }
         }
         Ok(())
@@ -1089,45 +1094,63 @@ where
                             }
                         }
                         Err(e) => {
-                            #[cfg(feature = "controller-host-flow-control")]
-                            if let Err(e) =
-                                HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
-                                    .exec(&self.controller)
-                                    .await
-                            {
-                                // Only serious error if it's supposed to be connected
-                                if self.connections.get_connected_handle(acl.handle()).is_some() {
-                                    error!("[host] error performing flow control on {:?}", acl.handle());
-                                    return Err(e.into());
+                            if let BleHostError::BleHost(e) = e {
+                                #[cfg(feature = "controller-host-flow-control")]
+                                if let Err(e) = HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(
+                                    acl.handle(),
+                                    1,
+                                )])
+                                .exec(&self.controller)
+                                .await
+                                {
+                                    // Only serious error if it's supposed to be connected
+                                    if self.connections.get_connected_handle(acl.handle()).is_some() {
+                                        error!("[host] error performing flow control on {:?}", acl.handle());
+                                        return Err(e.into());
+                                    }
                                 }
+                                match e {
+                                    Error::OutOfMemory => {
+                                        // Disconnect link due to low resources.
+                                        warn!(
+                                            "[host] out of memory error when processing ACL data for {:?}",
+                                            acl.handle()
+                                        );
+                                        self.connections.request_handle_disconnect(
+                                            acl.handle(),
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        );
+                                    }
+                                    Error::Disconnected => {
+                                        // Already disconnected, request a disconnect to ensure we don't have
+                                        // any lingering connections, should be a noop
+                                        warn!(
+                                            "[host] already disconnected when processing ACL data for {:?}",
+                                            acl.handle()
+                                        );
+                                    }
+                                    Error::NotSupported => {
+                                        // Attempt to use a feature not supported
+                                        warn!(
+                                            "[host] attempted to use unsupported feature on handle {:?}",
+                                            acl.handle()
+                                        );
+                                        self.connections.request_handle_disconnect(
+                                            acl.handle(),
+                                            DisconnectReason::UnsupportedRemoteFeature,
+                                        );
+                                    }
+                                    e => {
+                                        // Otherwise blame the user.
+                                        warn!(
+                                            "[host] encountered error processing ACL data for {:?}: {:?}",
+                                            acl.handle(),
+                                            e
+                                        );
+                                    }
+                                };
                             }
-                            // We disconnect on errors to ensure we don't leave the other end thinking
-                            // everything is ok.
-                            let reason = match e {
-                                Error::OutOfMemory => {
-                                    // Disconnect link due to low resources.
-                                    warn!("[host] out of memory error when processing ACL packet");
-                                    DisconnectReason::RemoteDeviceTerminatedConnLowResources
-                                }
-                                Error::Disconnected => {
-                                    // Already disconnected, request a disconnect to ensure we don't have
-                                    // any lingering connections, should be a noop
-                                    warn!("[host] already disconnected when processing ACL packet");
-                                    DisconnectReason::RemoteUserTerminatedConn
-                                }
-                                Error::NotSupported => {
-                                    // Attempt to use a feature not supported
-                                    warn!("[host] attempted to use unsupported feature when processing ACL packet");
-                                    DisconnectReason::UnsupportedRemoteFeature
-                                }
-                                e => {
-                                    // Otherwise blame the user.
-                                    warn!("[host] encountered error processing ACL packet: {:?}", e);
-                                    DisconnectReason::RemoteUserTerminatedConn
-                                }
-                            };
-                            warn!("[host] disconnecting handle {:?} after error", acl.handle());
-                            self.connections.request_handle_disconnect(acl.handle(), reason);
+
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);
                         }
@@ -1178,7 +1201,11 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             let handle = e.handle;
-                            info!("Disconnection event on handle {}", handle.raw());
+                            if let Err(e) = e.reason.to_result() {
+                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                            } else {
+                                info!("[host] disconnection event on handle {}", handle.raw(),);
+                            }
                             let _ = self.connections.disconnected(handle);
                             let _ = self.channels.disconnected(handle);
                             self.reassembly.disconnected(handle);
@@ -1211,9 +1238,18 @@ where
 
         // info!("Entering select loop");
         match select3(&mut control_fut, &mut rx_fut, &mut tx_fut).await {
-            Either3::First(result) => result,
-            Either3::Second(result) => result,
-            Either3::Third(result) => result,
+            Either3::First(result) => {
+                trace!("[host] control_fut exit");
+                result
+            }
+            Either3::Second(result) => {
+                trace!("[host] rx_fut exit");
+                result
+            }
+            Either3::Third(result) => {
+                trace!("[host] tx_fut exit");
+                result
+            }
         }
     }
 
