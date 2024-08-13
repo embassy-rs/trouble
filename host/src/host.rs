@@ -1117,16 +1117,11 @@ where
                                     return Err(e.into());
                                 }
                             }
-                            match e {
-                                e => {
-                                    // Otherwise blame the user.
-                                    warn!(
-                                        "[host] encountered error processing ACL data for {:?}: {:?}",
-                                        acl.handle(),
-                                        e
-                                    );
-                                }
-                            };
+                            warn!(
+                                "[host] encountered error processing ACL data for {:?}: {:?}",
+                                acl.handle(),
+                                e
+                            );
 
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);
