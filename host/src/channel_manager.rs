@@ -2,7 +2,6 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::controller::{blocking, Controller};
 use bt_hci::param::{ConnHandle, Duration};
 use bt_hci::FromHciBytes;
@@ -317,7 +316,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
     }
 
     /// Handle incoming L2CAP signal
-    pub(crate) fn signal(&self, conn: ConnHandle, data: &[u8]) -> Result<Option<(u8, LeConnUpdate)>, Error> {
+    pub(crate) fn signal(&self, conn: ConnHandle, data: &[u8]) -> Result<(), Error> {
         let (header, data) = L2capSignalHeader::from_hci_bytes(data)?;
         //trace!(
         //    "[l2cap][conn = {:?}] received signal (req {}) code {:?}",
@@ -329,56 +328,36 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
             L2capSignalCode::LeCreditConnReq => {
                 let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
                 self.handle_connect_request(conn, header.identifier, &req)?;
-                Ok(None)
             }
             L2capSignalCode::LeCreditConnRes => {
                 let res = LeCreditConnRes::from_hci_bytes_complete(data)?;
                 self.handle_connect_response(conn, header.identifier, &res)?;
-                Ok(None)
             }
             L2capSignalCode::LeCreditFlowInd => {
                 let req = LeCreditFlowInd::from_hci_bytes_complete(data)?;
                 //trace!("[l2cap] credit flow: {:?}", req);
                 self.handle_credit_flow(conn, &req)?;
-                Ok(None)
             }
             L2capSignalCode::CommandRejectRes => {
                 let (reject, _) = CommandRejectRes::from_hci_bytes(data)?;
-                Ok(None)
             }
             L2capSignalCode::DisconnectionReq => {
                 let req = DisconnectionReq::from_hci_bytes_complete(data)?;
                 trace!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
                 self.handle_disconnect_request(req.dcid)?;
-                Ok(None)
             }
             L2capSignalCode::DisconnectionRes => {
                 let res = DisconnectionRes::from_hci_bytes_complete(data)?;
                 trace!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
                 self.handle_disconnect_response(res.scid)?;
-                Ok(None)
             }
             L2capSignalCode::ConnParamUpdateReq => {
                 let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
-                trace!("[l2cap][conn = {:?}] connection param update request: {:?}", conn, req,);
-                let conn_interval_min = Duration::from_u16(req.interval_min);
-                let conn_interval_max = Duration::from_u16(req.interval_max);
-                let max_latency = req.latency;
-                let supervision_timeout = Duration::from_u16(req.timeout);
-                let min_ce_length = Duration::from_u16(0);
-                let max_ce_length = Duration::from_u16(0);
-                Ok(Some((
-                    header.identifier,
-                    LeConnUpdate::new(
-                        conn,
-                        conn_interval_min,
-                        conn_interval_max,
-                        max_latency,
-                        supervision_timeout,
-                        min_ce_length,
-                        max_ce_length,
-                    ),
-                )))
+                trace!(
+                    "[l2cap][conn = {:?}] connection param update request: {:?}, ignored",
+                    conn,
+                    req
+                );
             }
             L2capSignalCode::ConnParamUpdateRes => {
                 let res = ConnParamUpdateRes::from_hci_bytes_complete(data)?;
@@ -387,13 +366,13 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                     conn,
                     res.result,
                 );
-                Ok(None)
             }
             r => {
                 warn!("[l2cap][conn = {:?}] unsupported signal: {:?}", conn, r);
-                Err(Error::NotSupported)
+                return Err(Error::NotSupported);
             }
         }
+        Ok(())
     }
 
     fn handle_connect_request(&self, conn: ConnHandle, identifier: u8, req: &LeCreditConnReq) -> Result<(), Error> {

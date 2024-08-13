@@ -109,6 +109,7 @@ pub struct BleHost<'d, T> {
     pub(crate) rx_pool: &'static dyn GlobalPacketPool,
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 4>,
 
+    #[cfg(feature = "scan")]
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
     advertise_state: AdvState<'d>,
     advertise_command_state: CommandState<bool>,
@@ -241,6 +242,7 @@ where
             ),
             rx_pool: &host_resources.rx_pool,
             att_inbound: Channel::new(),
+            #[cfg(feature = "scan")]
             scanner: Channel::new(),
             advertise_state: AdvState::new(&mut host_resources.advertise_handles[..]),
             advertise_command_state: CommandState::new(),
@@ -505,6 +507,7 @@ where
     /// Performs an extended BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
+    #[cfg(feature = "scan")]
     pub async fn scan_ext(&self, config: &ScanConfig<'_>) -> Result<ScanReport, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>
@@ -523,6 +526,7 @@ where
     /// Performs a BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
+    #[cfg(feature = "scan")]
     pub async fn scan(&self, config: &ScanConfig<'_>) -> Result<ScanReport, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanParams>
@@ -805,7 +809,7 @@ where
         true
     }
 
-    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<Option<(u8, LeConnUpdate)>, Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         if !self.connections.is_handle_connected(acl.handle()) {
             return Err(Error::Disconnected);
         }
@@ -824,7 +828,8 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    return self.channels.signal(acl.handle(), data);
+                    self.channels.signal(acl.handle(), data)?;
+                    return Ok(());
                 }
 
                 let Some(mut p) = self.rx_pool.alloc(AllocId::from_channel(header.channel)) else {
@@ -835,7 +840,7 @@ where
 
                 if header.length as usize != data.len() {
                     self.reassembly.init(acl.handle(), header, p, data.len())?;
-                    return Ok(None);
+                    return Ok(());
                 }
                 (header, p)
             }
@@ -846,7 +851,7 @@ where
                     (header, p)
                 } else {
                     // Do not process yet
-                    return Ok(None);
+                    return Ok(());
                 }
             }
             other => {
@@ -914,7 +919,7 @@ where
                 return Err(Error::NotSupported.into());
             }
         }
-        Ok(None)
+        Ok(())
     }
 
     pub async fn run(&self) -> Result<(), BleHostError<T::Error>>
@@ -1152,17 +1157,20 @@ where
                                 }
                             }
                             LeEvent::LeScanTimeout(_) => {
+                                #[cfg(feature = "scan")]
                                 let _ = self.scanner.try_send(None);
                             }
                             LeEvent::LeAdvertisingSetTerminated(set) => {
                                 self.advertise_state.terminate(set.adv_handle);
                             }
                             LeEvent::LeExtendedAdvertisingReport(data) => {
+                                #[cfg(feature = "scan")]
                                 let _ = self
                                     .scanner
                                     .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
                             }
                             LeEvent::LeAdvertisingReport(data) => {
+                                #[cfg(feature = "scan")]
                                 let _ = self
                                     .scanner
                                     .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
