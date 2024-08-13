@@ -3,7 +3,7 @@ use core::future::poll_fn;
 use core::task::{Context, Poll};
 
 use bt_hci::controller::{blocking, Controller};
-use bt_hci::param::{ConnHandle, Duration};
+use bt_hci::param::ConnHandle;
 use bt_hci::FromHciBytes;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;

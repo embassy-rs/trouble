@@ -1000,22 +1000,23 @@ where
             self.connections
                 .set_link_credits(ret.total_num_le_acl_data_packets as usize);
 
+            info!(
+                "[host] configuring host buffers ({} packets of size {})",
+                config::L2CAP_RX_PACKET_POOL_SIZE,
+                self.rx_pool.mtu()
+            );
+            HostBufferSize::new(
+                self.rx_pool.mtu() as u16,
+                0,
+                config::L2CAP_RX_PACKET_POOL_SIZE as u16,
+                0,
+            )
+            .exec(&self.controller)
+            .await?;
+
             #[cfg(feature = "controller-host-flow-control")]
             {
-                info!(
-                    "[host] enabling flow control ({} packets of size {})",
-                    config::L2CAP_RX_PACKET_POOL_SIZE,
-                    self.rx_pool.mtu()
-                );
-                HostBufferSize::new(
-                    self.rx_pool.mtu() as u16,
-                    0,
-                    config::L2CAP_RX_PACKET_POOL_SIZE as u16,
-                    0,
-                )
-                .exec(&self.controller)
-                .await?;
-
+                info!("[host] enabling flow control");
                 SetControllerToHostFlowControl::new(ControllerToHostFlowControl::AclOnSyncOff)
                     .exec(&self.controller)
                     .await?;
