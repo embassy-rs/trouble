@@ -446,9 +446,11 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
 
     fn handle_disconnect_request(&self, cid: u16) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
-        for storage in state.channels.iter_mut() {
+        for (idx, storage) in state.channels.iter_mut().enumerate() {
             if cid == storage.cid {
                 storage.state = ChannelState::PeerDisconnecting;
+                let _ = self.inbound[idx as usize].close();
+                state.disconnect_waker.wake();
                 break;
             }
         }
