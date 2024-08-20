@@ -611,6 +611,7 @@ where
             max_ext_adv_events: 0,
         }];
 
+        trace!("[host] enabling advertising");
         self.advertise_state.start(&advset[..]);
         self.command(LeSetAdvEnable::new(true)).await?;
         drop.defuse();
@@ -720,7 +721,7 @@ where
             handles[i].max_ext_adv_events = set.params.max_events.unwrap_or(0);
         }
 
-        trace!("[host] enabling advertising");
+        trace!("[host] enabling extended advertising");
         self.advertise_state.start(handles);
         self.command(LeSetExtAdvEnable::new(true, handles)).await?;
         drop.defuse();

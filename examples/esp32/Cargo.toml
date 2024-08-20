@@ -1,0 +1,61 @@
+[package]
+name = "trouble-esp32-examples"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+embassy-executor    = { version = "0.6.0" }
+esp-backtrace = { version = "0.13.0", features = [
+    "esp32c3",
+    "exception-handler",
+    "panic-handler",
+    "println",
+] }
+esp-hal = { version = "0.19.0" }
+esp-hal-embassy = { version = "0.2.0" }
+esp-println = { version = "0.10.0", features = ["log"] }
+log = { version = "0.4.21" }
+embedded-io = "0.6.1"
+esp-wifi = { version = "0.7.1", features = [
+    "ble",
+    "async",
+] }
+heapless = { version = "0.8.0", default-features = false }
+trouble-host = { version = "0.1.0", path = "../../host", features = ["gatt", "log"] }
+bt-hci = { version = "0.1.0" }
+embassy-futures = "0.1.1"
+embassy-time = { version = "0.3", features = ["generic-queue-8"] }
+static_cell = "2"
+embassy-sync = "0.6"
+
+[features]
+default = ["esp32c3"]
+esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-wifi/esp32c2"]
+esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-wifi/esp32c3"]
+esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6", "esp-println/esp32c6", "esp-wifi/esp32c6"]
+esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-wifi/esp32h2"]
+esp32s2 = ["esp-hal/esp32s2", "esp-backtrace/esp32s2", "esp-hal-embassy/esp32s2", "esp-println/esp32s2", "esp-wifi/esp32s2"]
+esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3", "esp-println/esp32s3", "esp-wifi/esp32s3"]
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1 # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
+
+[patch.crates-io]
+esp-hal = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
+esp-hal-embassy = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
+esp-wifi = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
+esp-println = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
+esp-backtrace = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
+bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
