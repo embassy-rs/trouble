@@ -59,3 +59,10 @@ esp-wifi = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthc
 esp-println = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
 esp-backtrace = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
 bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
