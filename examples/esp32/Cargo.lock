@@ -1621,13 +1621,3 @@ dependencies = [
  "quote",
  "syn 2.0.75",
 ]
-
-[[patch.unused]]
-name = "embassy-embedded-hal"
-version = "0.2.0"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
-
-[[patch.unused]]
-name = "embassy-nrf"
-version = "0.2.0"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
