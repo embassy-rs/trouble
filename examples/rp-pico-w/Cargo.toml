@@ -1,0 +1,53 @@
+[package]
+name = "trouble-rp-examples"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+embassy-executor = { version = "0.6", default-features = false, features = ["nightly", "arch-cortex-m", "executor-thread", "defmt", "integrated-timers", "executor-interrupt"] }
+embassy-time = { version = "0.3.0", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-rp = { version = "0.2.0", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp2040"] }
+embassy-futures = "0.1.1"
+embassy-sync = { version = "0.6", features = ["defmt"] }
+
+futures = { version = "0.3", default-features = false, features = ["async-await"]}
+bt-hci = { version = "0.1.0", default-features = false, features = ["defmt"] }
+trouble-host = { version = "0.1.0", path = "../../host", features = ["defmt", "gatt"] }
+cyw43 = { version = "0.2.0", features = ["defmt", "firmware-logs", "bluetooth"] }
+cyw43-pio = { version = "0.2.0", features = ["defmt"] }
+
+defmt = "0.3"
+defmt-rtt = "0.4.0"
+
+cortex-m = { version = "0.7.6" }
+cortex-m-rt = "0.7.0"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+static_cell = "2"
+portable-atomic = { version = "1.5", features = ["critical-section"] }
+
+[profile.release]
+debug = 2
+
+[patch.crates-io]
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+cyw43 = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+
+#embassy-executor = {path = "../../../embassy/embassy-executor"}
+#embassy-nrf = {path = "../../../embassy/embassy-nrf"}
+#embassy-sync = {path = "../../../embassy/embassy-sync"}
+#embassy-futures = {path = "../../../embassy/embassy-futures"}
+#embassy-time = {path = "../../../embassy/embassy-time"}
+#embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
+#embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
+#embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
+#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
+#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
+#bt-hci = { path = "../../../bt-hci" }
