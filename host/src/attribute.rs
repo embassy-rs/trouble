@@ -477,7 +477,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Characteristic {
     pub(crate) cccd_handle: Option<u16>,
     pub(crate) handle: u16,
