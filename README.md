@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml/badge.svg)](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml)
 
-TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification. The initial implementation was based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with types and traits from [`bt-hci`](https://github.com/alexmoon/bt-hci).
+TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification. The initial implementation was based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with types and traits from [`bt-hci`](https://github.com/alexmoon/bt-hci) and adding support for more of the BLE specification such as L2CAP connection oriented channels.
 
 ### What is a Host?
 
@@ -16,9 +16,9 @@ The advantage of this split is that the Host can generally be reused for differe
 
 TrouBLE can use any controller that implements the traits from `bt-hci`. At present, that includes:
 
-* [nRF Softdevice Controller](https://github.com/alexmoon/nrf-sdc). Use [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) for the time being if you want a production ready BLE Rust stack for nRF.
+* [nRF Softdevice Controller](https://github.com/alexmoon/nrf-sdc). 
 * [UART HCI](https://docs.zephyrproject.org/latest/samples/bluetooth/hci_uart/README.html).
-* [Raspberry Pi Pico W](https://github.com/embassy-rs/embassy/pull/2865) - This is still WIP and largely untested.
+* [Raspberry Pi Pico W](https://github.com/embassy-rs/embassy/tree/main/cyw43).
 * [Apache NimBLE Controller](https://github.com/benbrittain/apache-nimble-sys).
 * [ESP32](https://github.com/esp-rs/esp-hal).
 
@@ -42,6 +42,8 @@ See `examples` for example applications. Currently there are three examples:
 * `nrf-sdc` for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
 * `serial-hci` which runs on std using a controller attached via a serial port (Such as [this Zephyr sample](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/samples/bluetooth/hci_uart/README.html)).
 * `apache-nimble` which uses the controller from the [NimBLE stack](https://github.com/apache/mynewt-nimble) through high-level bindings from the [`apache-nimble`](https://github.com/benbrittain/apache-nimble-sys) crate.
+* `esp32` which uses the BLE controller in the [esp-hal](https://github.com/esp-rs/esp-hal).
+* `rp-pico-w` which uses the BLE controller in the [Raspberry Pi Pico W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-w).
 
 ## License
 
