@@ -38,7 +38,6 @@ embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branc
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", branch = "main" }
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", branch = "main" }
-bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
 
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
 #embassy-nrf = {path = "../../../embassy/embassy-nrf"}

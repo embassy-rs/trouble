@@ -20,7 +20,6 @@ static_cell = "1.0.0"
 
 [patch.crates-io]
 apache-nimble = { git = "https://github.com/benbrittain/apache-nimble-sys.git", branch = "master" }
-bt-hci = { git = "https://github.com/alexmoon/bt-hci.git", branch = "main" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
 embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
 embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
