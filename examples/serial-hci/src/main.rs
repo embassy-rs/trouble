@@ -66,25 +66,23 @@ async fn main() {
     let id = b"Trouble HCI";
     let appearance = [0x80, 0x07];
     let mut bat_level = [0; 1];
-    let handle = {
-        let mut svc = table.add_service(Service::new(0x1800));
-        let _ = svc.add_characteristic_ro(0x2a00, id);
-        let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
-        svc.build();
+    let mut svc = table.add_service(Service::new(0x1800));
+    let _ = svc.add_characteristic_ro(0x2a00, id);
+    let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
+    svc.build();
 
-        // Generic attribute service (mandatory)
-        table.add_service(Service::new(0x1801));
+    // Generic attribute service (mandatory)
+    table.add_service(Service::new(0x1801));
 
-        // Battery service
-        let mut svc = table.add_service(Service::new(0x180f));
-
-        svc.add_characteristic(
+    // Battery service
+    let handle = table
+        .add_service(Service::new(0x180f))
+        .add_characteristic(
             0x2a19,
             &[CharacteristicProp::Read, CharacteristicProp::Notify],
             &mut bat_level,
         )
-        .build()
-    };
+        .build();
 
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(

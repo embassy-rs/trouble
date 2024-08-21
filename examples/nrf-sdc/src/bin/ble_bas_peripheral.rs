@@ -108,25 +108,23 @@ async fn main(spawner: Spawner) {
     let id = b"Trouble";
     let appearance = [0x80, 0x07];
     let mut bat_level = [23; 1];
-    let handle = {
-        let mut svc = table.add_service(Service::new(0x1800));
-        let _ = svc.add_characteristic_ro(0x2a00, id);
-        let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
-        svc.build();
+    let mut svc = table.add_service(Service::new(0x1800));
+    let _ = svc.add_characteristic_ro(0x2a00, id);
+    let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
+    svc.build();
 
-        // Generic attribute service (mandatory)
-        table.add_service(Service::new(0x1801));
+    // Generic attribute service (mandatory)
+    table.add_service(Service::new(0x1801));
 
-        // Battery service
-        let mut svc = table.add_service(Service::new(0x180f));
-
-        svc.add_characteristic(
+    // Battery service
+    let level_handle = table
+        .add_service(Service::new(0x180f))
+        .add_characteristic(
             0x2a19,
             &[CharacteristicProp::Read, CharacteristicProp::Notify],
             &mut bat_level,
         )
-        .build()
-    };
+        .build();
 
     let server = ble.gatt_server(&table);
     let mut adv_data = [0; 31];
@@ -150,8 +148,10 @@ async fn main(spawner: Spawner) {
                             info!("Write event. Value written: {:?}", value);
                         });
                     }
-                    Ok(GattEvent::Read { .. }) => {
-                        info!("Read event");
+                    Ok(GattEvent::Read { handle, connection: _ }) => {
+                        if handle == level_handle {
+                            info!("Battery level read");
+                        }
                     }
                     Err(e) => {
                         error!("Error processing GATT events: {:?}", e);
@@ -176,7 +176,7 @@ async fn main(spawner: Spawner) {
             loop {
                 Timer::after(Duration::from_secs(10)).await;
                 tick += 1;
-                unwrap!(server.notify(handle, &conn, &[tick]).await);
+                unwrap!(server.notify(level_handle, &conn, &[tick]).await);
             }
         },
     )
