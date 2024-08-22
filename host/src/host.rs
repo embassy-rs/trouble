@@ -1137,6 +1137,7 @@ where
                                         DisconnectReason::RemoteUserTerminatedConn,
                                     ))
                                     .await;
+                                self.connections.log_status(true);
                             }
 
                             let mut m = self.metrics.borrow_mut();
