@@ -173,9 +173,12 @@ async fn gatt_client_server() {
                 client.read_characteristic(&c, &mut data[..]).await.unwrap();
                 println!("[central] read value: {}", data[0]);
                 data[0] = data[0].wrapping_add(1);
+                println!("[central] write value: {}", data[0]);
                 client.write_characteristic(&c, &data[..]).await.unwrap();
                 data[0] = data[0].wrapping_add(1);
+                println!("[central] write value: {}", data[0]);
                 client.write_characteristic(&c, &data[..]).await.unwrap();
+                println!("[central] write done");
                 Ok(())
             } => {
                 r
