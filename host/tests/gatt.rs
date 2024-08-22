@@ -57,7 +57,7 @@ async fn gatt_client_server() {
         table.add_service(Service::new(0x1801));
 
         // Custom service
-        table.add_service(Service::new(SERVICE_UUID.clone()))
+        let value_handle = table.add_service(Service::new(SERVICE_UUID.clone()))
         .add_characteristic(
             VALUE_UUID.clone(),
             &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
@@ -79,6 +79,7 @@ async fn gatt_client_server() {
                             connection: _,
                             handle,
                         }) => {
+                            assert_eq!(handle, value_handle);
                             let _ = table.get(handle, |value| {
                                 assert_eq!(expected, value[0]);
                                 expected += 1;
