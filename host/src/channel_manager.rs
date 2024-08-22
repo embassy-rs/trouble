@@ -477,9 +477,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         buf: &mut [u8],
         ble: &BleHost<'d, T>,
     ) -> Result<usize, BleHostError<T::Error>> {
-        let mut n_received = 1;
-        let packet = self.receive_pdu(chan, ble).await?;
-        let len = packet.len;
+        let packet = self.receive_pdu(chan).await?;
 
         let (first, data) = packet.as_ref().split_at(2);
         let remaining: u16 = u16::from_le_bytes([first[0], first[1]]);
@@ -494,8 +492,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
 
         // We have some k-frames to reassemble
         while remaining > 0 {
-            let packet = self.receive_pdu(chan, ble).await?;
-            n_received += 1;
+            let packet = self.receive_pdu(chan).await?;
             let to_copy = packet.len.min(buf.len() - pos);
             if to_copy > 0 {
                 buf[pos..pos + to_copy].copy_from_slice(&packet.as_ref()[..to_copy]);
@@ -508,14 +505,10 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         Ok(pos)
     }
 
-    async fn receive_pdu<T: Controller>(
-        &self,
-        chan: ChannelIndex,
-        ble: &BleHost<'_, T>,
-    ) -> Result<Pdu, BleHostError<T::Error>> {
+    async fn receive_pdu(&self, chan: ChannelIndex) -> Result<Pdu, Error> {
         match self.inbound[chan.0 as usize].receive().await {
             Some(pdu) => Ok(pdu),
-            None => Err(Error::ChannelClosed.into()),
+            None => Err(Error::ChannelClosed),
         }
     }
 
@@ -546,9 +539,8 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
-        let num_chunks = chunks.len();
 
-        for (i, chunk) in chunks.enumerate() {
+        for chunk in chunks {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
             hci.send(&p_buf[..len]).await?;
             grant.confirm(1);

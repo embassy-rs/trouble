@@ -105,7 +105,8 @@ pub struct BleHost<'d, T> {
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
     pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
-    pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
+    #[cfg(feature = "gatt")]
+    pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) rx_pool: &'static dyn GlobalPacketPool,
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 4>,
 
@@ -190,7 +191,7 @@ impl<'d> AdvState<'d> {
             let mut terminated = 0;
             for entry in state.handles.iter() {
                 match entry {
-                    AdvHandleState::Terminated(handle) => {
+                    AdvHandleState::Terminated(_) => {
                         terminated += 1;
                     }
                     AdvHandleState::None => {
@@ -241,6 +242,7 @@ where
                 &mut host_resources.channels_rx[..],
             ),
             rx_pool: &host_resources.rx_pool,
+            #[cfg(feature = "gatt")]
             att_inbound: Channel::new(),
             #[cfg(feature = "scan")]
             scanner: Channel::new(),
@@ -482,7 +484,7 @@ where
         Ok(())
     }
 
-    async fn stop_scan(&self, config: &ScanConfig<'_>) -> Result<(), BleHostError<T::Error>>
+    async fn stop_scan(&self) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetScanEnable>,
     {
@@ -490,7 +492,7 @@ where
         Ok(())
     }
 
-    async fn stop_scan_ext(&self, config: &ScanConfig<'_>) -> Result<(), BleHostError<T::Error>>
+    async fn stop_scan_ext(&self) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeSetExtScanEnable>,
     {
@@ -519,7 +521,7 @@ where
         let Some(report) = self.scanner.receive().await else {
             return Err(Error::Timeout.into());
         };
-        self.stop_scan_ext(config).await?;
+        self.stop_scan_ext().await?;
         Ok(report)
     }
 
@@ -538,7 +540,7 @@ where
         let Some(report) = self.scanner.receive().await else {
             return Err(Error::Timeout.into());
         };
-        self.stop_scan(config).await?;
+        self.stop_scan().await?;
         Ok(report)
     }
 
@@ -1047,7 +1049,7 @@ where
                     }
                     Either4::Third(_) => {
                         // trace!("[host] cancelling create connection");
-                        if let Err(e) = self.command(LeCreateConnCancel::new()).await {
+                        if let Err(_) = self.command(LeCreateConnCancel::new()).await {
                             // Signal to ensure no one is stuck
                             self.connect_command_state.canceled();
                         }
