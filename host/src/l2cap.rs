@@ -128,7 +128,6 @@ impl<'d> L2capChannel<'d> {
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>>
 where {
-        let handle = connection.handle();
         ble.channels
             .create(
                 connection.handle(),

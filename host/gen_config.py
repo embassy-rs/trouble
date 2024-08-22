@@ -35,8 +35,8 @@ def feature(name, default, min=None, max=None, pow2=None, vals=None, factors=[])
     )
 
 
-feature("l2cap_rx_queue_size", default=1, min=1, max=64, pow2=True)
-feature("l2cap_rx_packet_pool_size", default=2, min=1, max=512, pow2=True)
+feature("l2cap_rx_queue_size", default=8, min=1, max=64, pow2=True)
+feature("l2cap_rx_packet_pool_size", default=8, min=1, max=512, pow2=True)
 
 # ========= Update Cargo.toml
 
