@@ -915,12 +915,12 @@ where
                 }
             },
             chan => {
-                warn!(
-                    "[host] conn {:?} attempted to use unsupported l2cap channel {}",
+                debug!(
+                    "[host] conn {:?} attempted to use unsupported l2cap channel {}, ignoring",
                     acl.handle(),
                     chan
                 );
-                return Err(Error::NotSupported.into());
+                return Ok(());
             }
         }
         Ok(())
