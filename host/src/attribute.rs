@@ -364,6 +364,34 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             Err(Error::NotFound)
         })
     }
+
+    pub(crate) fn find_characteristic_by_value_handle(&self, handle: u16) -> Result<Characteristic, Error> {
+        self.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                if att.handle == handle {
+                    // If next is CCCD
+                    if let Some(next) = it.next() {
+                        if let AttributeData::Cccd {
+                            notifications: _,
+                            indications: _,
+                        } = &next.data
+                        {
+                            return Ok(Characteristic {
+                                handle,
+                                cccd_handle: Some(next.handle),
+                            });
+                        }
+                    } else {
+                        return Ok(Characteristic {
+                            handle,
+                            cccd_handle: None,
+                        });
+                    }
+                }
+            }
+            Err(Error::NotFound)
+        })
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

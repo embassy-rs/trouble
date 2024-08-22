@@ -58,26 +58,17 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const MTU: usize>
                                 let event = match att {
                                     AttReq::Write { handle, data } => Some(GattEvent::Write {
                                         connection,
-                                        handle: Characteristic {
-                                            handle,
-                                            cccd_handle: None,
-                                        },
+                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
                                     }),
 
                                     AttReq::Read { handle } => Some(GattEvent::Read {
                                         connection,
-                                        handle: Characteristic {
-                                            handle,
-                                            cccd_handle: None,
-                                        },
+                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
                                     }),
 
                                     AttReq::ReadBlob { handle, offset } => Some(GattEvent::Read {
                                         connection,
-                                        handle: Characteristic {
-                                            handle,
-                                            cccd_handle: None,
-                                        },
+                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
                                     }),
                                     _ => None,
                                 };
