@@ -108,7 +108,7 @@ pub struct BleHost<'d, T> {
     #[cfg(feature = "gatt")]
     pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) rx_pool: &'static dyn GlobalPacketPool,
-    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 4>,
+    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
 
     #[cfg(feature = "scan")]
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
@@ -740,12 +740,13 @@ where
     pub fn gatt_server<'reference, 'values, M: embassy_sync::blocking_mutex::raw::RawMutex, const MAX: usize>(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
-    ) -> GattServer<'reference, 'values, 'd, M, T, MAX> {
+    ) -> GattServer<'reference, 'values, M, MAX> {
         use crate::attribute_server::AttributeServer;
         GattServer {
             server: AttributeServer::new(table),
             rx: self.att_inbound.receiver().into(),
-            ble: self,
+            tx: self.outbound.sender().into(),
+            connections: &self.connections,
         }
     }
 

@@ -56,6 +56,14 @@ l2cap-rx-queue-size-16 = []
 l2cap-rx-queue-size-32 = []
 l2cap-rx-queue-size-64 = []
 
+l2cap-tx-queue-size-1 = []
+l2cap-tx-queue-size-2 = []
+l2cap-tx-queue-size-4 = []
+l2cap-tx-queue-size-8 = [] # Default
+l2cap-tx-queue-size-16 = []
+l2cap-tx-queue-size-32 = []
+l2cap-tx-queue-size-64 = []
+
 l2cap-rx-packet-pool-size-1 = []
 l2cap-rx-packet-pool-size-2 = []
 l2cap-rx-packet-pool-size-4 = []

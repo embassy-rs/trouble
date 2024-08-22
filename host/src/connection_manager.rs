@@ -340,6 +340,7 @@ pub(crate) trait DynamicConnectionManager {
     fn disconnect(&self, index: u8, reason: DisconnectReason);
     fn get_att_mtu(&self, conn: ConnHandle) -> u16;
     fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16;
+    fn get_connected_handle(&self, h: ConnHandle) -> Option<Connection<'_>>;
 }
 
 impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
@@ -391,6 +392,10 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
             }
         }
         mtu
+    }
+
+    fn get_connected_handle(&self, h: ConnHandle) -> Option<Connection<'_>> {
+        ConnectionManager::get_connected_handle(self, h)
     }
 }
 

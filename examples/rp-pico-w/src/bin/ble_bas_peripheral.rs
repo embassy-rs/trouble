@@ -137,7 +137,7 @@ async fn main(spawner: Spawner) {
             loop {
                 Timer::after(Duration::from_secs(10)).await;
                 tick += 1;
-                server.notify(handle, &conn, &[tick]).await.unwrap();
+                server.notify(&ble, handle, &conn, &[tick]).await.unwrap();
             }
         },
     )

@@ -115,7 +115,7 @@ async fn main(spawner: embassy_executor::Spawner) {
                 Timer::after(Duration::from_secs(10)).await;
                 test += 1;
                 info!("updating value: {}", test);
-                server.notify(handle, &conn, &[test]).await.unwrap();
+                server.notify(&adapter, handle, &conn, &[test]).await.unwrap();
             }
         },
     )

@@ -1,7 +1,7 @@
 use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::DynamicReceiver;
+use embassy_sync::channel::{DynamicReceiver, DynamicSender};
 use heapless::Vec;
 
 use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
@@ -18,29 +18,28 @@ use crate::{BleHostError, Error};
 pub struct GattServer<
     'reference,
     'values,
-    'resources,
     M: RawMutex,
-    T: Controller,
     const MAX: usize,
     // Including l2cap header
     const MTU: usize = 27,
 > {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
+    pub(crate) tx: DynamicSender<'reference, (ConnHandle, Pdu)>,
     pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
-    pub(crate) ble: &'reference BleHost<'resources, T>,
+    pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 
-impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usize, const MTU: usize>
-    GattServer<'reference, 'values, 'resources, M, T, MAX, MTU>
+impl<'reference, 'values, M: RawMutex, const MAX: usize, const MTU: usize>
+    GattServer<'reference, 'values, M, MAX, MTU>
 {
     /// Process GATT requests and update the attribute table accordingly.
     ///
     /// If attributes are written or read, an event will be returned describing the handle
     /// and the connection causing the event.
-    pub async fn next(&self) -> Result<GattEvent<'reference>, BleHostError<T::Error>> {
+    pub async fn next(&self) -> Result<GattEvent<'reference>, Error> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
-            if let Some(connection) = self.ble.connections.get_connected_handle(handle) {
+            if let Some(connection) = self.connections.get_connected_handle(handle) {
                 match AttReq::decode(pdu.as_ref()) {
                     Ok(att) => {
                         let mut tx = [0; MTU];
@@ -49,45 +48,45 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
 
                         match self.server.process(handle, &att, data.write_buf()) {
                             Ok(Some(written)) => {
-                                let mtu = self.ble.connections.get_att_mtu(handle);
+                                let mtu = self.connections.get_att_mtu(handle);
                                 data.commit(written)?;
                                 data.truncate(mtu as usize);
                                 header.write(written as u16)?;
                                 header.write(4_u16)?;
                                 let len = header.len() + data.len();
-                                self.ble.acl(handle, 1).await?.send(&tx[..len]).await?;
 
-                                match att {
-                                    AttReq::Write { handle, data } => {
-                                        return Ok(GattEvent::Write {
-                                            connection,
-                                            handle: Characteristic {
-                                                handle,
-                                                cccd_handle: None,
-                                            },
-                                        })
-                                    }
+                                let event = match att {
+                                    AttReq::Write { handle, data } => Some(GattEvent::Write {
+                                        connection,
+                                        handle: Characteristic {
+                                            handle,
+                                            cccd_handle: None,
+                                        },
+                                    }),
 
-                                    AttReq::Read { handle } => {
-                                        return Ok(GattEvent::Read {
-                                            connection,
-                                            handle: Characteristic {
-                                                handle,
-                                                cccd_handle: None,
-                                            },
-                                        })
-                                    }
+                                    AttReq::Read { handle } => Some(GattEvent::Read {
+                                        connection,
+                                        handle: Characteristic {
+                                            handle,
+                                            cccd_handle: None,
+                                        },
+                                    }),
 
-                                    AttReq::ReadBlob { handle, offset } => {
-                                        return Ok(GattEvent::Read {
-                                            connection,
-                                            handle: Characteristic {
-                                                handle,
-                                                cccd_handle: None,
-                                            },
-                                        })
-                                    }
-                                    _ => {}
+                                    AttReq::ReadBlob { handle, offset } => Some(GattEvent::Read {
+                                        connection,
+                                        handle: Characteristic {
+                                            handle,
+                                            cccd_handle: None,
+                                        },
+                                    }),
+                                    _ => None,
+                                };
+
+                                let mut packet = pdu.packet;
+                                packet.as_mut()[..len].copy_from_slice(&tx[..len]);
+                                self.tx.send((handle, Pdu::new(packet, len))).await;
+                                if let Some(event) = event {
+                                    return Ok(event);
                                 }
                             }
                             Ok(None) => {
@@ -111,8 +110,9 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub async fn notify(
+    pub async fn notify<T: Controller>(
         &self,
+        ble: &BleHost<'_, T>,
         handle: Characteristic,
         connection: &Connection<'_>,
         value: &[u8],
@@ -137,7 +137,7 @@ impl<'reference, 'values, 'resources, M: RawMutex, T: Controller, const MAX: usi
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let total = header.len() + data.len();
-        self.ble.acl(conn, 1).await?.send(&tx[..total]).await?;
+        ble.acl(conn, 1).await?.send(&tx[..total]).await?;
         Ok(())
     }
 }

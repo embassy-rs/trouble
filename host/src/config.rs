@@ -29,6 +29,16 @@ mod raw {
 }
 
 // ======== L2CAP parameters
+//
+/// L2CAP TX queue size
+///
+/// This is the tx queue size for l2cap packets not sent directly in HCI (i.e. attributes).
+///
+/// If the controller does not support tx buffering, increasing this value will allow
+/// a higher throughput between the controller and host.
+///
+/// Default: 1.
+pub const L2CAP_TX_QUEUE_SIZE: usize = raw::L2CAP_TX_QUEUE_SIZE;
 
 /// L2CAP RX queue size
 ///
