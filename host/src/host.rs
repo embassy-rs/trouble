@@ -813,7 +813,7 @@ where
     }
 
     fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
-        if !self.connections.is_handle_connected(acl.handle()) {
+        if self.connections.is_handle_disconnected(acl.handle()) {
             return Err(Error::Disconnected);
         }
         let (header, mut packet) = match acl.boundary_flag() {
@@ -1121,11 +1121,22 @@ where
                                     return Err(e.into());
                                 }
                             }
+
                             warn!(
                                 "[host] encountered error processing ACL data for {:?}: {:?}",
                                 acl.handle(),
                                 e
                             );
+
+                            if let Error::Disconnected = e {
+                                warn!("[host] requesting {:?} to be disconnected", acl.handle());
+                                let _ = self
+                                    .command(Disconnect::new(
+                                        acl.handle(),
+                                        DisconnectReason::RemoteUserTerminatedConn,
+                                    ))
+                                    .await;
+                            }
 
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);
@@ -1180,10 +1191,14 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             let handle = e.handle;
-                            if let Err(e) = e.reason.to_result() {
-                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                            if let Err(e) = e.status.to_result() {
+                                info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
                             } else {
-                                info!("[host] disconnection event on handle {}", handle.raw(),);
+                                if let Err(e) = e.reason.to_result() {
+                                    info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                                } else {
+                                    info!("[host] disconnection event on handle {}", handle.raw());
+                                }
                             }
                             let _ = self.connections.disconnected(handle);
                             let _ = self.channels.disconnected(handle);
