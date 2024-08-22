@@ -86,6 +86,8 @@ async fn gatt_client_server() {
                             });
                             if writes == 2 {
                                 println!("expected value written twice, test pass");
+                                // NOTE: Ensure that adapter gets polled again
+                                tokio::time::sleep(Duration::from_secs(2)).await;
                                 break;
                             }
                         }
