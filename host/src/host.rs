@@ -108,7 +108,7 @@ pub struct BleHost<'d, T> {
     #[cfg(feature = "gatt")]
     pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) rx_pool: &'static dyn GlobalPacketPool,
-    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), 4>,
+    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
 
     #[cfg(feature = "scan")]
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
@@ -740,12 +740,13 @@ where
     pub fn gatt_server<'reference, 'values, M: embassy_sync::blocking_mutex::raw::RawMutex, const MAX: usize>(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
-    ) -> GattServer<'reference, 'values, 'd, M, T, MAX> {
+    ) -> GattServer<'reference, 'values, M, MAX> {
         use crate::attribute_server::AttributeServer;
         GattServer {
             server: AttributeServer::new(table),
             rx: self.att_inbound.receiver().into(),
-            ble: self,
+            tx: self.outbound.sender().into(),
+            connections: &self.connections,
         }
     }
 
@@ -813,7 +814,7 @@ where
     }
 
     fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
-        if !self.connections.is_handle_connected(acl.handle()) {
+        if self.connections.is_handle_disconnected(acl.handle()) {
             return Err(Error::Disconnected);
         }
         let (header, mut packet) = match acl.boundary_flag() {
@@ -1121,11 +1122,22 @@ where
                                     return Err(e.into());
                                 }
                             }
+
                             warn!(
                                 "[host] encountered error processing ACL data for {:?}: {:?}",
                                 acl.handle(),
                                 e
                             );
+
+                            if let Error::Disconnected = e {
+                                warn!("[host] requesting {:?} to be disconnected", acl.handle());
+                                let _ = self
+                                    .command(Disconnect::new(
+                                        acl.handle(),
+                                        DisconnectReason::RemoteUserTerminatedConn,
+                                    ))
+                                    .await;
+                            }
 
                             let mut m = self.metrics.borrow_mut();
                             m.rx_errors = m.rx_errors.wrapping_add(1);
@@ -1180,10 +1192,14 @@ where
                         },
                         Event::DisconnectionComplete(e) => {
                             let handle = e.handle;
-                            if let Err(e) = e.reason.to_result() {
-                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                            if let Err(e) = e.status.to_result() {
+                                info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
                             } else {
-                                info!("[host] disconnection event on handle {}", handle.raw(),);
+                                if let Err(e) = e.reason.to_result() {
+                                    info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                                } else {
+                                    info!("[host] disconnection event on handle {}", handle.raw());
+                                }
                             }
                             let _ = self.connections.disconnected(handle);
                             let _ = self.channels.disconnected(handle);

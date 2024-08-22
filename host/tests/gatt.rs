@@ -86,6 +86,8 @@ async fn gatt_client_server() {
                             });
                             if writes == 2 {
                                 println!("expected value written twice, test pass");
+                                // NOTE: Ensure that adapter gets polled again
+                                tokio::time::sleep(Duration::from_secs(2)).await;
                                 break;
                             }
                         }
@@ -173,9 +175,12 @@ async fn gatt_client_server() {
                 client.read_characteristic(&c, &mut data[..]).await.unwrap();
                 println!("[central] read value: {}", data[0]);
                 data[0] = data[0].wrapping_add(1);
+                println!("[central] write value: {}", data[0]);
                 client.write_characteristic(&c, &data[..]).await.unwrap();
                 data[0] = data[0].wrapping_add(1);
+                println!("[central] write value: {}", data[0]);
                 client.write_characteristic(&c, &data[..]).await.unwrap();
+                println!("[central] write done");
                 Ok(())
             } => {
                 r

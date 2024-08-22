@@ -137,11 +137,11 @@ impl<'d> ConnectionManager<'d> {
         None
     }
 
-    pub(crate) fn is_handle_connected(&self, h: ConnHandle) -> bool {
+    pub(crate) fn is_handle_disconnected(&self, h: ConnHandle) -> bool {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match (storage.handle, &storage.state) {
-                (Some(handle), ConnectionState::Connected) if handle == h => {
+                (Some(handle), ConnectionState::Disconnected) if handle == h => {
                     return true;
                 }
                 _ => {}
@@ -340,6 +340,7 @@ pub(crate) trait DynamicConnectionManager {
     fn disconnect(&self, index: u8, reason: DisconnectReason);
     fn get_att_mtu(&self, conn: ConnHandle) -> u16;
     fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16;
+    fn get_connected_handle(&self, h: ConnHandle) -> Option<Connection<'_>>;
 }
 
 impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
@@ -391,6 +392,10 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
             }
         }
         mtu
+    }
+
+    fn get_connected_handle(&self, h: ConnHandle) -> Option<Connection<'_>> {
+        ConnectionManager::get_connected_handle(self, h)
     }
 }
 
