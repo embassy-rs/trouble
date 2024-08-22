@@ -141,6 +141,12 @@ impl<'d> ConnectionManager<'d> {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match (storage.handle, &storage.state) {
+                (Some(handle), ConnectionState::DisconnectRequest(_)) if handle == h => {
+                    return true;
+                }
+                (Some(handle), ConnectionState::Disconnecting(_)) if handle == h => {
+                    return true;
+                }
                 (Some(handle), ConnectionState::Disconnected) if handle == h => {
                     return true;
                 }

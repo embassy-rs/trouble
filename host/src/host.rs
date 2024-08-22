@@ -915,12 +915,12 @@ where
                 }
             },
             chan => {
-                warn!(
-                    "[host] conn {:?} attempted to use unsupported l2cap channel {}",
+                debug!(
+                    "[host] conn {:?} attempted to use unsupported l2cap channel {}, ignoring",
                     acl.handle(),
                     chan
                 );
-                return Err(Error::NotSupported.into());
+                return Ok(());
             }
         }
         Ok(())
@@ -1137,6 +1137,7 @@ where
                                         DisconnectReason::RemoteUserTerminatedConn,
                                     ))
                                     .await;
+                                self.connections.log_status(true);
                             }
 
                             let mut m = self.metrics.borrow_mut();
