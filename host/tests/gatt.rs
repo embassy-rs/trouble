@@ -65,7 +65,7 @@ async fn gatt_client_server() {
         )
         .build();
 
-        let server = adapter.gatt_server(&table);
+        let server = adapter.gatt_server::<NoopRawMutex, 10, 27>(&table);
 
         select! {
             r = adapter.run() => {
