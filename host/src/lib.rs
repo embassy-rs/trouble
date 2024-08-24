@@ -144,3 +144,59 @@ impl<E> From<codec::Error> for BleHostError<E> {
         }
     }
 }
+
+use bt_hci::cmd::controller_baseband::*;
+use bt_hci::cmd::le::*;
+use bt_hci::cmd::link_control::*;
+use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
+
+pub trait Controller:
+    bt_hci::controller::Controller
+    + embedded_io::ErrorType
+    + ControllerCmdSync<LeReadBufferSize>
+    + ControllerCmdSync<Disconnect>
+    + ControllerCmdSync<SetEventMask>
+    + ControllerCmdSync<LeSetEventMask>
+    + ControllerCmdSync<LeSetRandomAddr>
+    + ControllerCmdSync<HostBufferSize>
+    + ControllerCmdAsync<LeConnUpdate>
+    + ControllerCmdSync<LeReadFilterAcceptListSize>
+    + ControllerCmdSync<SetControllerToHostFlowControl>
+    + ControllerCmdSync<Reset>
+    + ControllerCmdSync<LeCreateConnCancel>
+    + for<'t> ControllerCmdSync<LeSetAdvEnable>
+    + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+    + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+    + ControllerCmdSync<LeReadBufferSize>
+    + for<'t> ControllerCmdSync<LeSetAdvData>
+    + ControllerCmdSync<LeSetAdvParams>
+    + for<'t> ControllerCmdSync<LeSetAdvEnable>
+    + for<'t> ControllerCmdSync<LeSetScanResponseData>
+{
+}
+
+impl<
+        C: bt_hci::controller::Controller
+            + embedded_io::ErrorType
+            + ControllerCmdSync<LeReadBufferSize>
+            + ControllerCmdSync<Disconnect>
+            + ControllerCmdSync<SetEventMask>
+            + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<LeSetRandomAddr>
+            + ControllerCmdSync<HostBufferSize>
+            + ControllerCmdAsync<LeConnUpdate>
+            + ControllerCmdSync<LeReadFilterAcceptListSize>
+            + ControllerCmdSync<SetControllerToHostFlowControl>
+            + ControllerCmdSync<Reset>
+            + ControllerCmdSync<LeCreateConnCancel>
+            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+            + ControllerCmdSync<LeReadBufferSize>
+            + for<'t> ControllerCmdSync<LeSetAdvData>
+            + ControllerCmdSync<LeSetAdvParams>
+            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+    > Controller for C
+{
+}

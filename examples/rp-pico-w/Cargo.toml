@@ -13,7 +13,7 @@ embassy-sync = { version = "0.6", features = ["defmt"] }
 
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
 bt-hci = { version = "0.1.0", default-features = false, features = ["defmt"] }
-trouble-host = { version = "0.1.0", path = "../../host", features = ["defmt", "gatt"] }
+trouble-example-apps= { version = "0.1.0", path = "../apps", features = ["defmt"] }
 cyw43 = { version = "0.2.0", features = ["defmt", "firmware-logs", "bluetooth"] }
 cyw43-pio = { version = "0.2.0", features = ["defmt"] }
 

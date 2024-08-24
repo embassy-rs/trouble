@@ -126,6 +126,7 @@ dependencies = [
  "embedded-io-async",
  "futures-intrusive",
  "heapless",
+ "log",
 ]
 
 [[package]]
@@ -1411,6 +1412,20 @@ dependencies = [
  "heapless",
  "log",
  "static_cell",
+ "trouble-example-apps",
+]
+
+[[package]]
+name = "trouble-example-apps"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.6.0",
+ "embedded-io",
+ "log",
+ "static_cell",
  "trouble-host",
 ]
 
@@ -1422,6 +1437,7 @@ dependencies = [
  "embassy-futures",
  "embassy-sync 0.6.0",
  "embassy-time",
+ "embedded-io",
  "embedded-io-async",
  "futures",
  "heapless",

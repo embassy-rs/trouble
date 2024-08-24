@@ -1321,6 +1321,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "trouble-example-apps"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "defmt",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync",
+ "embedded-io",
+ "static_cell",
+ "trouble-host",
+]
+
+[[package]]
 name = "trouble-host"
 version = "0.1.0"
 dependencies = [
@@ -1329,6 +1343,7 @@ dependencies = [
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
+ "embedded-io",
  "embedded-io-async",
  "futures",
  "heapless",
@@ -1354,7 +1369,7 @@ dependencies = [
  "panic-probe",
  "portable-atomic",
  "static_cell",
- "trouble-host",
+ "trouble-example-apps",
 ]
 
 [[package]]

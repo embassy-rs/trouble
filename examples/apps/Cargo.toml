@@ -1,0 +1,30 @@
+[package]
+name = "trouble-example-apps"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+trouble-host = { version = "0.1.0", path = "../../host", features = ["gatt"] }
+bt-hci = { version = "0.1.0" }
+embassy-executor    = { version = "0.6.0" }
+embassy-futures = "0.1.1"
+embassy-sync = { version = "0.6" }
+static_cell = "2"
+embedded-io = "0.6"
+
+defmt = { version = "0.3", optional = true }
+log = { version = "0.4", optional = true }
+
+
+[features]
+defmt = [
+    "dep:defmt",
+    "trouble-host/defmt",
+    "bt-hci/defmt"
+]
+log = [
+    "dep:log",
+    "trouble-host/log",
+    "bt-hci/log"
+]
