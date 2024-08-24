@@ -98,7 +98,7 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
 
-    let server = ble.gatt_server(&table);
+    let server = ble.gatt_server::<NoopRawMutex, 10, 27>(&table);
 
     info!("Starting advertising and GATT service");
     let _ = join3(

@@ -61,7 +61,7 @@ async fn main(spawner: embassy_executor::Spawner) {
         .build()
     };
 
-    let server = adapter.gatt_server(&table);
+    let server = adapter.gatt_server::<NoopRawMutex, 10, 27>(&table);
 
     // Just to check that other tasks are still running
     spawner.spawn(other_task()).unwrap();

@@ -13,6 +13,7 @@ struct State<'d> {
     accept_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
     default_link_credits: usize,
+    default_att_mtu: u16,
 }
 
 impl<'d> State<'d> {
@@ -45,6 +46,7 @@ impl<'d> ConnectionManager<'d> {
                 accept_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
                 default_link_credits: 0,
+                default_att_mtu: 23,
             }),
         }
     }
@@ -179,11 +181,12 @@ impl<'d> ConnectionManager<'d> {
     ) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         let default_credits = state.default_link_credits;
+        let default_att_mtu = state.default_att_mtu;
         for storage in state.connections.iter_mut() {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 {
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
-                storage.att_mtu = 23;
+                storage.att_mtu = default_att_mtu;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
                 storage.peer_addr.replace(peer_addr);
@@ -285,6 +288,11 @@ impl<'d> ConnectionManager<'d> {
         }
     }
 
+    pub(crate) fn set_default_att_mtu(&self, att_mtu: u16) {
+        let mut state = self.state.borrow_mut();
+        state.default_att_mtu = att_mtu;
+    }
+
     pub(crate) fn confirm_sent(&self, handle: ConnHandle, packets: usize) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
@@ -374,6 +382,7 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
     fn disconnect(&self, index: u8, reason: DisconnectReason) {
         ConnectionManager::request_disconnect(self, index, reason)
     }
+
     fn get_att_mtu(&self, conn: ConnHandle) -> u16 {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
@@ -384,7 +393,7 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
                 _ => {}
             }
         }
-        23 // Minimum value
+        state.default_att_mtu
     }
     fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16 {
         let mut state = self.state.borrow_mut();

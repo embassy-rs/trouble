@@ -15,22 +15,15 @@ use crate::pdu::Pdu;
 use crate::types::l2cap::L2capHeader;
 use crate::{BleHostError, Error};
 
-pub struct GattServer<
-    'reference,
-    'values,
-    M: RawMutex,
-    const MAX: usize,
-    // Including l2cap header
-    const MTU: usize = 27,
-> {
+pub struct GattServer<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
     pub(crate) tx: DynamicSender<'reference, (ConnHandle, Pdu)>,
     pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
     pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 
-impl<'reference, 'values, M: RawMutex, const MAX: usize, const MTU: usize>
-    GattServer<'reference, 'values, M, MAX, MTU>
+impl<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
+    GattServer<'reference, 'values, M, MAX, L2CAP_MTU>
 {
     /// Process GATT requests and update the attribute table accordingly.
     ///
@@ -42,7 +35,7 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const MTU: usize>
             if let Some(connection) = self.connections.get_connected_handle(handle) {
                 match AttReq::decode(pdu.as_ref()) {
                     Ok(att) => {
-                        let mut tx = [0; MTU];
+                        let mut tx = [0; L2CAP_MTU];
                         let mut w = WriteCursor::new(&mut tx);
                         let (mut header, mut data) = w.split(4)?;
 
@@ -118,7 +111,7 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const MTU: usize>
             return Ok(());
         }
 
-        let mut tx = [0; MTU];
+        let mut tx = [0; L2CAP_MTU];
         let mut w = WriteCursor::new(&mut tx[..]);
         let (mut header, mut data) = w.split(4)?;
         data.write(ATT_HANDLE_VALUE_NTF)?;
@@ -145,7 +138,7 @@ pub enum GattEvent<'reference> {
     },
 }
 
-pub struct GattClient<'reference, 'resources, T: Controller, const MAX: usize, const ATT_MTU: usize = 27> {
+pub struct GattClient<'reference, 'resources, T: Controller, const MAX: usize, const L2CAP_MTU: usize = 27> {
     pub(crate) services: Vec<ServiceHandle, MAX>,
     pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
     pub(crate) ble: &'reference BleHost<'resources, T>,
@@ -160,8 +153,8 @@ pub struct ServiceHandle {
     uuid: Uuid,
 }
 
-impl<'reference, 'resources, T: Controller, const MAX: usize, const ATT_MTU: usize>
-    GattClient<'reference, 'resources, T, MAX, ATT_MTU>
+impl<'reference, 'resources, T: Controller, const MAX: usize, const L2CAP_MTU: usize>
+    GattClient<'reference, 'resources, T, MAX, L2CAP_MTU>
 {
     async fn request(&mut self, req: AttReq<'_>) -> Result<Pdu, BleHostError<T::Error>> {
         let header = L2capHeader {
@@ -169,7 +162,7 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const ATT_MTU: usi
             length: req.size() as u16,
         };
 
-        let mut buf = [0; ATT_MTU];
+        let mut buf = [0; L2CAP_MTU];
         let mut w = WriteCursor::new(&mut buf);
         w.write_hci(&header)?;
         w.write(req)?;

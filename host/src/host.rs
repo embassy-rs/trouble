@@ -737,10 +737,17 @@ where
 
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
     #[cfg(feature = "gatt")]
-    pub fn gatt_server<'reference, 'values, M: embassy_sync::blocking_mutex::raw::RawMutex, const MAX: usize>(
+    pub fn gatt_server<
+        'reference,
+        'values,
+        M: embassy_sync::blocking_mutex::raw::RawMutex,
+        const MAX: usize,
+        const L2CAP_MTU: usize,
+    >(
         &'reference self,
         table: &'reference AttributeTable<'values, M, MAX>,
-    ) -> GattServer<'reference, 'values, M, MAX> {
+    ) -> GattServer<'reference, 'values, M, MAX, L2CAP_MTU> {
+        self.connections.set_default_att_mtu(L2CAP_MTU as u16 - 4);
         use crate::attribute_server::AttributeServer;
         GattServer {
             server: AttributeServer::new(table),
@@ -752,15 +759,17 @@ where
 
     /// Creates a GATT client capable of processing the GATT protocol using the provided table of attributes.
     #[cfg(feature = "gatt")]
-    pub async fn gatt_client<'reference, const MAX: usize, const ATT_MTU: usize>(
+    pub async fn gatt_client<'reference, const MAX: usize, const L2CAP_MTU: usize>(
         &'reference self,
         connection: &Connection<'reference>,
-    ) -> Result<GattClient<'reference, 'd, T, MAX, ATT_MTU>, BleHostError<T::Error>> {
+    ) -> Result<GattClient<'reference, 'd, T, MAX, L2CAP_MTU>, BleHostError<T::Error>> {
         let l2cap = L2capHeader { channel: 4, length: 3 };
         let mut buf = [0; 7];
         let mut w = WriteCursor::new(&mut buf);
         w.write_hci(&l2cap)?;
-        w.write(att::AttReq::ExchangeMtu { mtu: ATT_MTU as u16 })?;
+        w.write(att::AttReq::ExchangeMtu {
+            mtu: L2CAP_MTU as u16 - 4,
+        })?;
 
         let mut grant = self.acl(connection.handle(), 1).await?;
 
@@ -883,6 +892,7 @@ where
                     w.write_hci(&l2cap)?;
                     w.write(rsp)?;
 
+                    trace!("[host] agreed att MTU of {}", mtu);
                     let len = w.len();
                     if let Err(e) = self.outbound.try_send((acl.handle(), Pdu::new(packet, len))) {
                         return Err(Error::OutOfMemory);
@@ -890,6 +900,7 @@ where
                 } else if let Ok(att::AttRsp::ExchangeMtu { mtu }) =
                     att::AttRsp::decode(&packet.as_ref()[..header.length as usize])
                 {
+                    trace!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
                 } else {
                     #[cfg(feature = "gatt")]

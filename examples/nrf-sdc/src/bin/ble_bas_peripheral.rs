@@ -33,7 +33,7 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
 }
 
 /// Size of L2CAP packets (ATT MTU is this - 4)
-const L2CAP_MTU: usize = 27;
+const L2CAP_MTU: usize = 128;
 
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
@@ -126,7 +126,7 @@ async fn main(spawner: Spawner) {
         )
         .build();
 
-    let server = ble.gatt_server(&table);
+    let server = ble.gatt_server::<NoopRawMutex, 10, L2CAP_MTU>(&table);
     let mut adv_data = [0; 31];
     unwrap!(AdStructure::encode_slice(
         &[
