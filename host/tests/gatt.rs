@@ -58,12 +58,10 @@ async fn gatt_client_server() {
 
         // Custom service
         let value_handle = table.add_service(Service::new(SERVICE_UUID.clone()))
-        .add_characteristic(
-            VALUE_UUID.clone(),
-            &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
-            &mut value,
-        )
-        .build();
+            .add_characteristic(
+                VALUE_UUID.clone(),
+                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                &mut value);
 
         let server = adapter.gatt_server::<NoopRawMutex, 10, 27>(&table);
 
