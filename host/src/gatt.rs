@@ -246,7 +246,7 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const L2CAP_MTU: u
                         let mut r = ReadCursor::new(item);
                         let _props: u8 = r.read()?;
                         let value_handle: u16 = r.read()?;
-                        let value_uuid: Uuid = r.read()?;
+                        let value_uuid: Uuid = Uuid::from_slice(r.remaining());
 
                         if uuid == &value_uuid {
                             return Ok(Characteristic {
