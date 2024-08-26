@@ -15,7 +15,7 @@ embassy-sync = "0.6.0"
 embassy-futures = "0.1.0"
 embassy-executor = { version = "0.5.0", features = ["defmt", "integrated-timers", "executor-thread", "arch-cortex-m"] }
 embassy-nrf = { version = "0.1.0", features = ["defmt", "nfc-pins-as-gpio", "time-driver-rtc1", "nrf52840"] }
-trouble-host = { version = "0.1.0", path = "../../host", features = ["gatt"] }
+trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 static_cell = "1.0.0"
 
 [patch.crates-io]

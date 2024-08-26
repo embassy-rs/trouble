@@ -296,15 +296,38 @@ dependencies = [
  "critical-section",
  "defmt",
  "document-features",
- "embassy-executor-macros",
+ "embassy-executor-macros 0.4.1",
  "embassy-time-driver",
  "embassy-time-queue-driver",
+]
+
+[[package]]
+name = "embassy-executor"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ed0e24bdd4a5f4ff1b72ee4f264b1d23e179ea71a77d984b5fd24877a2bbe1"
+dependencies = [
+ "critical-section",
+ "document-features",
+ "embassy-executor-macros 0.5.0",
 ]
 
 [[package]]
 name = "embassy-executor-macros"
 version = "0.4.1"
 source = "git+https://github.com/embassy-rs/embassy.git?branch=main#50210e8cdc95c3c8bea150541cd8f15482450b1e"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.66",
+]
+
+[[package]]
+name = "embassy-executor-macros"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4d4c0c34b32c2c653c9eecce1cefaf8539dd9a54e61deb5499254f01e2fcac2"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -1232,6 +1255,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "trouble-example-apps"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "defmt",
+ "embassy-executor 0.6.0",
+ "embassy-futures",
+ "embassy-sync 0.6.0",
+ "embedded-io",
+ "static_cell",
+ "trouble-host",
+]
+
+[[package]]
 name = "trouble-host"
 version = "0.1.0"
 dependencies = [
@@ -1240,6 +1277,7 @@ dependencies = [
  "embassy-futures",
  "embassy-sync 0.6.0",
  "embassy-time",
+ "embedded-io",
  "embedded-io-async",
  "futures",
  "heapless",
@@ -1254,7 +1292,7 @@ dependencies = [
  "cortex-m-rt",
  "defmt",
  "defmt-rtt",
- "embassy-executor",
+ "embassy-executor 0.5.0",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.6.0",
@@ -1264,6 +1302,7 @@ dependencies = [
  "nrf-sdc",
  "panic-probe",
  "static_cell",
+ "trouble-example-apps",
  "trouble-host",
 ]
 
