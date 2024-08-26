@@ -139,17 +139,14 @@ impl<'d> ConnectionManager<'d> {
         None
     }
 
-    pub(crate) fn is_handle_disconnected(&self, h: ConnHandle) -> bool {
+    pub(crate) fn is_handle_connected(&self, h: ConnHandle) -> bool {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match (storage.handle, &storage.state) {
-                (Some(handle), ConnectionState::DisconnectRequest(_)) if handle == h => {
+                (Some(handle), ConnectionState::Connected) if handle == h => {
                     return true;
                 }
-                (Some(handle), ConnectionState::Disconnecting(_)) if handle == h => {
-                    return true;
-                }
-                (Some(handle), ConnectionState::Disconnected) if handle == h => {
+                (Some(handle), ConnectionState::Connecting) if handle == h => {
                     return true;
                 }
                 _ => {}
@@ -789,5 +786,32 @@ mod tests {
         req.confirm();
 
         assert!(mgr.poll_disconnecting(None).is_pending());
+    }
+
+    #[test]
+    fn nonexisting_handle_is_disconnected() {
+        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
+        let mgr = ConnectionManager::new(&mut storage[..]);
+
+        assert!(!mgr.is_handle_connected(ConnHandle::new(5)));
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(3),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Peripheral
+        ));
+
+        assert!(mgr.is_handle_connected(ConnHandle::new(3)));
+
+        let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        assert!(mgr.is_handle_connected(ConnHandle::new(3)));
+
+        handle.disconnect();
+
+        assert!(!mgr.is_handle_connected(ConnHandle::new(3)));
     }
 }
