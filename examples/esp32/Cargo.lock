@@ -475,7 +475,7 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 [[package]]
 name = "esp-backtrace"
 version = "0.13.0"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "esp-build",
  "esp-println",
@@ -485,7 +485,7 @@ dependencies = [
 [[package]]
 name = "esp-build"
 version = "0.1.0"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "quote",
  "syn 2.0.76",
@@ -495,7 +495,7 @@ dependencies = [
 [[package]]
 name = "esp-hal"
 version = "0.19.0"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "basic-toml",
  "bitfield",
@@ -545,7 +545,7 @@ dependencies = [
 [[package]]
 name = "esp-hal-embassy"
 version = "0.2.0"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -563,7 +563,7 @@ dependencies = [
 [[package]]
 name = "esp-hal-procmacros"
 version = "0.12.0"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "darling",
  "document-features",
@@ -579,7 +579,7 @@ dependencies = [
 [[package]]
 name = "esp-metadata"
 version = "0.2.0"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "anyhow",
  "basic-toml",
@@ -592,7 +592,7 @@ dependencies = [
 [[package]]
 name = "esp-println"
 version = "0.10.0"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "critical-section",
  "esp-build",
@@ -603,7 +603,7 @@ dependencies = [
 [[package]]
 name = "esp-riscv-rt"
 version = "0.9.0"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "document-features",
  "riscv",
@@ -626,7 +626,7 @@ dependencies = [
 [[package]]
 name = "esp-wifi"
 version = "0.7.1"
-source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
+source = "git+https://github.com/lulf/esp-hal.git?rev=6f385f71d9f431b0233bb501a19f47290f74b12a#6f385f71d9f431b0233bb501a19f47290f74b12a"
 dependencies = [
  "atomic-waker",
  "bt-hci",
