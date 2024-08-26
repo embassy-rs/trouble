@@ -8,7 +8,7 @@ use trouble_host::gatt::{GattEvent, GattServer};
 use trouble_host::{Address, BleHost, BleHostError, BleHostResources, Controller, PacketQos};
 
 /// Size of L2CAP packets (ATT MTU is this - 4)
-const L2CAP_MTU: usize = 128;
+const L2CAP_MTU: usize = 251;
 
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
