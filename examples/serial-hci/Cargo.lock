@@ -238,6 +238,7 @@ dependencies = [
  "embedded-hal-async",
  "futures-util",
  "heapless",
+ "log",
 ]
 
 [[package]]
@@ -785,6 +786,7 @@ dependencies = [
  "crossterm",
  "embassy-futures",
  "embassy-sync",
+ "embassy-time",
  "embedded-io-adapters",
  "embedded-io-async",
  "env_logger",
@@ -984,6 +986,9 @@ dependencies = [
  "embassy-executor",
  "embassy-futures",
  "embassy-sync",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-io",
  "log",
  "static_cell",

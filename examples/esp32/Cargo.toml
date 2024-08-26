@@ -53,13 +53,14 @@ opt-level = 's'
 overflow-checks = false
 
 [patch.crates-io]
-esp-hal = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
-esp-hal-embassy = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
-esp-wifi = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
-esp-println = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
-esp-backtrace = { git = "https://github.com/lulf/esp-hal.git", branch = "esp-hal-bthci-proto" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", branch = "main" }
+esp-hal = { git = "https://github.com/lulf/esp-hal.git", rev = "4375d5aa1543fd7a9dbc4035ec5718277b17405c" }
+esp-hal-embassy = { git = "https://github.com/lulf/esp-hal.git", rev = "4375d5aa1543fd7a9dbc4035ec5718277b17405c" }
+esp-wifi = { git = "https://github.com/lulf/esp-hal.git", rev = "4375d5aa1543fd7a9dbc4035ec5718277b17405c" }
+esp-println = { git = "https://github.com/lulf/esp-hal.git", rev = "4375d5aa1543fd7a9dbc4035ec5718277b17405c" }
+esp-backtrace = { git = "https://github.com/lulf/esp-hal.git", rev = "4375d5aa1543fd7a9dbc4035ec5718277b17405c" }
+
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
