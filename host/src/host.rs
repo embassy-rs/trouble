@@ -823,7 +823,7 @@ where
     }
 
     fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
-        if self.connections.is_handle_disconnected(acl.handle()) {
+        if !self.connections.is_handle_connected(acl.handle()) {
             return Err(Error::Disconnected);
         }
         let (header, mut packet) = match acl.boundary_flag() {
