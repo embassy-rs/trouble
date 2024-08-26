@@ -178,7 +178,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -217,9 +217,9 @@ dependencies = [
 
 [[package]]
 name = "critical-section"
-version = "1.1.2"
+version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7059fff8937831a9ae6f0fe4d658ffabf58f2ca96aa9dec1c889f936f705f216"
+checksum = "f64009896348fc5af4222e9cf7d7d82a95a256c634ebcf61c53e4ea461422242"
 
 [[package]]
 name = "darling"
@@ -242,7 +242,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -253,7 +253,7 @@ checksum = "d336a2a514f6ccccaa3e09b02d41d35330c07ddf03a62165fcec10bb561c7806"
 dependencies = [
  "darling_core",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -264,7 +264,7 @@ checksum = "4e018fccbeeb50ff26562ece792ed06659b9c2dae79ece77c4456bb10d9bf79b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -279,7 +279,7 @@ dependencies = [
 [[package]]
 name = "embassy-executor"
 version = "0.6.0"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1cfd5370ac012814b7b386ba9ad8499529bdde4e#1cfd5370ac012814b7b386ba9ad8499529bdde4e"
 dependencies = [
  "critical-section",
  "document-features",
@@ -289,18 +289,18 @@ dependencies = [
 [[package]]
 name = "embassy-executor-macros"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1cfd5370ac012814b7b386ba9ad8499529bdde4e#1cfd5370ac012814b7b386ba9ad8499529bdde4e"
 dependencies = [
  "darling",
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
 name = "embassy-futures"
 version = "0.1.1"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1cfd5370ac012814b7b386ba9ad8499529bdde4e#1cfd5370ac012814b7b386ba9ad8499529bdde4e"
 
 [[package]]
 name = "embassy-sync"
@@ -318,7 +318,7 @@ dependencies = [
 [[package]]
 name = "embassy-sync"
 version = "0.6.0"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1cfd5370ac012814b7b386ba9ad8499529bdde4e#1cfd5370ac012814b7b386ba9ad8499529bdde4e"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -330,7 +330,7 @@ dependencies = [
 [[package]]
 name = "embassy-time"
 version = "0.3.2"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1cfd5370ac012814b7b386ba9ad8499529bdde4e#1cfd5370ac012814b7b386ba9ad8499529bdde4e"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -347,7 +347,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-driver"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1cfd5370ac012814b7b386ba9ad8499529bdde4e#1cfd5370ac012814b7b386ba9ad8499529bdde4e"
 dependencies = [
  "document-features",
 ]
@@ -355,7 +355,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-queue-driver"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/embassy.git?branch=main#1c466b81e6af6b34b1f706318cc0870a459550b7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1cfd5370ac012814b7b386ba9ad8499529bdde4e#1cfd5370ac012814b7b386ba9ad8499529bdde4e"
 
 [[package]]
 name = "embassy-usb-driver"
@@ -463,7 +463,7 @@ dependencies = [
  "darling",
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -475,7 +475,7 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 [[package]]
 name = "esp-backtrace"
 version = "0.13.0"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "esp-build",
  "esp-println",
@@ -485,17 +485,17 @@ dependencies = [
 [[package]]
 name = "esp-build"
 version = "0.1.0"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
  "termcolor",
 ]
 
 [[package]]
 name = "esp-hal"
 version = "0.19.0"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "basic-toml",
  "bitfield",
@@ -545,7 +545,7 @@ dependencies = [
 [[package]]
 name = "esp-hal-embassy"
 version = "0.2.0"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -563,7 +563,7 @@ dependencies = [
 [[package]]
 name = "esp-hal-procmacros"
 version = "0.12.0"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "darling",
  "document-features",
@@ -573,13 +573,13 @@ dependencies = [
  "proc-macro-error",
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
 name = "esp-metadata"
 version = "0.2.0"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "anyhow",
  "basic-toml",
@@ -592,7 +592,7 @@ dependencies = [
 [[package]]
 name = "esp-println"
 version = "0.10.0"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "critical-section",
  "esp-build",
@@ -603,7 +603,7 @@ dependencies = [
 [[package]]
 name = "esp-riscv-rt"
 version = "0.9.0"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "document-features",
  "riscv",
@@ -626,7 +626,7 @@ dependencies = [
 [[package]]
 name = "esp-wifi"
 version = "0.7.1"
-source = "git+https://github.com/lulf/esp-hal.git?branch=esp-hal-bthci-proto#91e1f0f0af53e284cb6a9a9bce937687b3979c5e"
+source = "git+https://github.com/lulf/esp-hal.git?rev=4375d5aa1543fd7a9dbc4035ec5718277b17405c#4375d5aa1543fd7a9dbc4035ec5718277b17405c"
 dependencies = [
  "atomic-waker",
  "bt-hci",
@@ -721,9 +721,9 @@ dependencies = [
 
 [[package]]
 name = "flate2"
-version = "1.0.32"
+version = "1.0.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c0596c1eac1f9e04ed902702e9878208b336edc9d6fddc8a48387349bab3666"
+checksum = "324a1be68054ef05ad64b861cc9eaf1d623d2d8cb25b4bf2cb9cdd902b4bf253"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -980,7 +980,7 @@ checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -1048,7 +1048,7 @@ checksum = "a33fa6ec7f2047f572d49317cca19c87195de99c6e5b6ee492da701cfe02b053"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -1095,9 +1095,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.36"
+version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fa76aaf39101c457836aec0ce2316dbdc3ab723cdda1c6bd4e6ad4208acaca7"
+checksum = "b5b9d34b8991d19d98081b46eacdd8eb58c6f2b201139f7c5f643cc155a633af"
 dependencies = [
  "proc-macro2",
 ]
@@ -1178,9 +1178,9 @@ checksum = "955d28af4278de8121b7ebeb796b6a45735dc01436d898801014aced2773a3d6"
 
 [[package]]
 name = "ruzstd"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5022b253619b1ba797f243056276bed8ed1a73b0f5a7ce7225d524067644bf8f"
+checksum = "1c8b8f3d26bd9f945e5cbae77f7cdfbf37af9a66956f1115eb4516e45df519f4"
 dependencies = [
  "byteorder",
  "twox-hash",
@@ -1194,28 +1194,28 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "semihosting"
-version = "0.1.13"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79d1bfe77da77f48286b7af6b1d718cde31d6f59a3ccae5b7d8bcf0d02b3c2e1"
+checksum = "e11f0f8bcc4088e72905fcd826b820e72de6113218c22f1734cd94a3a5cf9172"
 
 [[package]]
 name = "serde"
-version = "1.0.208"
+version = "1.0.209"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cff085d2cb684faa248efb494c39b68e522822ac0de72ccf08109abde717cfb2"
+checksum = "99fce0ffe7310761ca6bf9faf5115afbc19688edd00171d81b1bb1b116c63e09"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.208"
+version = "1.0.209"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24008e81ff7613ed8e5ba0cfaf24e2c2f1e5b8a0495711e44fcd4882fca62bcf"
+checksum = "a5831b979fd7b5439637af1752d535ff49f4860c0f341d1baeb6faf0f4242170"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -1301,7 +1301,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]
 
 [[package]]
@@ -1317,9 +1317,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.75"
+version = "2.0.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6af063034fc1935ede7be0122941bafa9bacb949334d090b77ca98b5817c7d9"
+checksum = "578e081a14e0cefc3279b0472138c513f37b41a08d5a3cca9b6e4e8ceb6cd525"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1357,7 +1357,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde",
- "syn 2.0.75",
+ "syn 2.0.76",
  "toml",
 ]
 
@@ -1423,6 +1423,9 @@ dependencies = [
  "embassy-executor",
  "embassy-futures",
  "embassy-sync 0.6.0",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-io",
  "log",
  "static_cell",
@@ -1636,5 +1639,5 @@ dependencies = [
  "darling",
  "proc-macro2",
  "quote",
- "syn 2.0.75",
+ "syn 2.0.76",
 ]

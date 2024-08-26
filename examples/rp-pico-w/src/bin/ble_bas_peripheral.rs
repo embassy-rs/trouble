@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(impl_trait_in_assoc_type)]
 
 use bt_hci::controller::ExternalController;
 use cyw43_pio::PioSpi;
@@ -26,18 +25,19 @@ async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'stat
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
-    // Download these files from https://github.com/embassy-rs/embassy/tree/main/cyw43-firmware into the
-    // rust project for the rp-pico-w example
+
+    //
+    // IMPORTANT
+    //
+    // Download and make sure these files from https://github.com/embassy-rs/embassy/tree/main/cyw43-firmware
+    // are available in the below path.
+    //
+    // IMPORTANT
+    //
+
     let fw = include_bytes!("../../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../../cyw43-firmware/43439A0_clm.bin");
     let btfw = include_bytes!("../../cyw43-firmware/43439A0_btfw.bin");
-
-    // To make flashing faster for development, you may want to flash the firmwares independently
-    // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
-    //     probe-rs download 43439A0.bin --format bin --chip RP2040 --base-address 0x10100000
-    //     probe-rs download 43439A0_clm.bin --format bin --chip RP2040 --base-address 0x10140000
-    //let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 224190) };
-    //let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
 
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);

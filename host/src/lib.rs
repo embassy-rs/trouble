@@ -5,7 +5,6 @@
 //! Trouble can run on embedded devices (`no_std`) and be configured to consume
 //! as little resources are needed depending on your required configuration.
 #![no_std]
-#![allow(async_fn_in_trait)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
@@ -164,6 +163,9 @@ pub trait Controller:
     + ControllerCmdSync<SetControllerToHostFlowControl>
     + ControllerCmdSync<Reset>
     + ControllerCmdSync<LeCreateConnCancel>
+    + ControllerCmdAsync<LeCreateConn>
+    + ControllerCmdSync<LeClearFilterAcceptList>
+    + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
     + for<'t> ControllerCmdSync<LeSetAdvEnable>
     + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
     + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
@@ -186,9 +188,12 @@ impl<
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdAsync<LeConnUpdate>
             + ControllerCmdSync<LeReadFilterAcceptListSize>
+            + ControllerCmdSync<LeClearFilterAcceptList>
+            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
+            + ControllerCmdAsync<LeCreateConn>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>

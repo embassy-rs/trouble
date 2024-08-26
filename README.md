@@ -35,15 +35,22 @@ The implementation has the following functionality working:
 
 See the [issues](https://github.com/embassy-rs/trouble/issues) for a list of TODOs.
 
+## Minimum supported Rust version (MSRV)
+
+Trouble is guaranteed to compile on stable Rust 1.80 and up. It *might*
+compile with older versions but that may change in any new patch release.
+
 ## Examples
 
-See `examples` for example applications. Currently there are three examples:
+See `examples` for example applications for different BLE controllers. 
 
 * `nrf-sdc` for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
 * `serial-hci` which runs on std using a controller attached via a serial port (Such as [this Zephyr sample](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/samples/bluetooth/hci_uart/README.html)).
 * `apache-nimble` which uses the controller from the [NimBLE stack](https://github.com/apache/mynewt-nimble) through high-level bindings from the [`apache-nimble`](https://github.com/benbrittain/apache-nimble-sys) crate.
 * `esp32` which uses the BLE controller in the [esp-hal](https://github.com/esp-rs/esp-hal).
 * `rp-pico-w` which uses the BLE controller in the [Raspberry Pi Pico W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-w).
+
+Since a lot of the examples demo the same BLE functionality, they only contain basic wiring specific to the BLE controller, and share the 'business logic' within the `examples/apps` folder.
 
 ## License
 

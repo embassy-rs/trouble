@@ -1,6 +1,5 @@
 #![no_main]
 #![no_std]
-#![feature(type_alias_impl_trait)]
 
 use embassy_time::{Duration, Ticker, Timer};
 use trouble_example_apps::ble_bas_peripheral;
