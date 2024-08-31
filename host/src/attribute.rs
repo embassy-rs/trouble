@@ -24,45 +24,85 @@ pub const GENERIC_ATTRIBUTE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes())
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
+/// An enum of possible characteristic properties
+/// 
+/// Ref: BLUETOOTH CORE SPECIFICATION Version 6.0, Vol 3, Part G, Section 3.3.1.1 Characteristic Properties
 pub enum CharacteristicProp {
+    /// Permit broadcast of the Characteristic Value
+    ///
+    /// If set, permits broadcasts of the Characteristic Value using Server Characteristic
+    /// Configuration Descriptor.
     Broadcast = 0x01,
+    /// Permit read of the Characteristic Value
     Read = 0x02,
+    /// Permit writes to the Characteristic Value without response
     WriteWithoutResponse = 0x04,
+    /// Permit writes to the Characteristic Value
     Write = 0x08,
+    /// Permit notification of a Characteristic Value without acknowledgment
     Notify = 0x10,
+    /// Permit indication of a Characteristic Value with acknowledgment
     Indicate = 0x20,
+    /// Permit signed writes to the Characteristic Value
     AuthenticatedWrite = 0x40,
+    /// Permit writes to the Characteristic Value without response
     Extended = 0x80,
 }
 
 pub struct Attribute<'a> {
+    /// Attribute type UUID
+    /// 
+    /// Do not mistake it with Characteristic UUID
     pub uuid: Uuid,
+    /// Handle for the Attribute
+    ///
+    /// In case of a push, this value is ignored and set to the
+    /// next available handle value in the attribute table. 
     pub handle: u16,
-    pub last_handle_in_group: u16,
-    pub data: AttributeData<'a>,
+    /// Last handle value in the group
+    /// 
+    /// When a [`ServiceBuilder`] finishes building, it returns the handle for the service, but also
+    pub(crate) last_handle_in_group: u16,
+    pub data: AttributeData<'d>,
 }
 
-impl<'a> Attribute<'a> {
-    const EMPTY: Option<Attribute<'a>> = None;
+impl<'d> Attribute<'d> {
+    const EMPTY: Option<Attribute<'d>> = None;
 }
 
+/// The underlying data behind an attribute.
 pub enum AttributeData<'d> {
+    /// Service UUID Data
+    /// 
+    /// Serializes to raw bytes of UUID. 
     Service {
         uuid: Uuid,
     },
+    /// Read only Data
+    /// 
+    /// Implemented by storing a borrow of a slice.
+    /// The slice has to live at least as much as the device.
     ReadOnlyData {
         props: CharacteristicProps,
         value: &'d [u8],
     },
+    /// Read and write data
+    /// 
+    /// Implemented by storing a mutable borrow of a slice.
+    /// The slice has to live at least as much as the device.
     Data {
         props: CharacteristicProps,
         value: &'d mut [u8],
     },
+    /// Characteristic declaration
     Declaration {
         props: CharacteristicProps,
         handle: u16,
         uuid: Uuid,
     },
+    /// Client Characteristic Configuration Descriptor
+    /// 
+    /// Ref: BLUETOOTH CORE SPECIFICATION Version 6.0, Vol 3, Part G, Section 3.3.3.3 Client Characteristic Configuration
     Cccd {
         notifications: bool,
         indications: bool,
@@ -94,6 +134,14 @@ impl<'d> AttributeData<'d> {
         }
     }
 
+    /// Read the attribute value from some kind of a readable attribute data source
+    /// 
+    /// Seek to to the `offset`-nth byte in the source data, fill the response data slice `data` up to the end or lower.
+    /// 
+    /// The data buffer is always sized L2CAP_MTU, minus the 4 bytes for the L2CAP header)
+    /// The max stated value of an attribute in the GATT specification is 512 bytes. 
+    /// 
+    /// Returns the amount of bytes that have been written into `data`.
     pub fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         if !self.readable() {
             return Err(AttErrorCode::ReadNotPermitted);
@@ -176,6 +224,9 @@ impl<'d> AttributeData<'d> {
         }
     }
 
+    /// Write into the attribute value at 'offset' data from `data` buffer
+    /// 
+    /// Expect the writes to be fragmented, like with [`AttributeData::read`]
     pub fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         let writable = self.writable();
 
@@ -204,8 +255,8 @@ impl<'d> AttributeData<'d> {
                     return Err(AttErrorCode::UnlikelyError);
                 }
 
-                *notifications = data[0] & 0x01 != 0;
-                *indications = data[0] & 0x02 != 0;
+                *notifications = data[0] & 0x00000001 != 0;
+                *indications = data[0] & 0x00000010 != 0;
                 Ok(())
             }
             _ => Err(AttErrorCode::WriteNotPermitted),
@@ -238,18 +289,27 @@ impl<'a> Attribute<'a> {
             uuid,
             handle: 0,
             data,
-            last_handle_in_group: 0xffff,
+            last_handle_in_group: u16::MAX,
         }
     }
 }
 
+/// Table of Attributes available to the [`crate::gatt::GattServer`].
 pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
     inner: Mutex<M, RefCell<InnerTable<'d, MAX>>>,
-    handle: u16,
+
+    /// Next available attribute handle value known by this table
+    next_handle: u16,
 }
 
+/// Inner representation of [`AttributeTable`]
+/// 
+/// Represented by a stack allocated list of attributes with a len field to keep track of how many are actually present. 
+// TODO: Switch to heapless Vec
 pub struct InnerTable<'d, const MAX: usize> {
     attributes: [Option<Attribute<'d>>; MAX],
+
+    /// Amount of attributes in the list.
     len: usize,
 }
 
@@ -270,15 +330,17 @@ impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
 }
 
 impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
+    /// Create an empty table
     pub fn new() -> Self {
         Self {
-            handle: 1,
+            next_handle: 1,
             inner: Mutex::new(RefCell::new(InnerTable {
                 len: 0,
                 attributes: [Attribute::EMPTY; MAX],
             })),
         }
     }
+    
 
     pub fn with_inner<F: Fn(&mut InnerTable<'d, MAX>)>(&self, f: F) {
         self.inner.lock(|inner| {
@@ -300,20 +362,26 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
+    /// Push into the table a given attribute.
+    /// 
+    /// Returns the attribute handle.
     fn push(&mut self, mut attribute: Attribute<'d>) -> u16 {
-        let handle = self.handle;
+        let handle = self.next_handle;
         attribute.handle = handle;
         self.inner.lock(|inner| {
             let mut inner = inner.borrow_mut();
             inner.push(attribute);
         });
-        self.handle += 1;
+        self.next_handle += 1;
         handle
     }
 
+    /// Create a service with a given UUID and return the [`ServiceBuilder`].
+    /// 
+    /// Note: The service builder is tied to the AttributeTable.
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
-        let handle = self.handle;
+        let handle = self.next_handle;
         self.push(Attribute {
             uuid: PRIMARY_SERVICE_UUID16,
             handle: 0,
@@ -348,7 +416,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
-    /// Read the value of the characteristic and pass the value to the provided closure.
+    /// Read the value of the characteristic and pass the value to the provided closure
     ///
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
@@ -408,6 +476,7 @@ impl From<u16> for AttributeHandle {
     }
 }
 
+/// Builder type for creating a Service inside a given AttributeTable
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
     handle: AttributeHandle,
     start: usize,
@@ -422,8 +491,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         data: AttributeData<'d>,
     ) -> Characteristic {
         // First the characteristic declaration
-        let next = self.table.handle + 1;
-        let cccd = self.table.handle + 2;
+        let next = self.table.next_handle + 1;
+        let cccd = self.table.next_handle + 2;
         self.table.push(Attribute {
             uuid: CHARACTERISTIC_UUID16,
             handle: 0,
@@ -487,7 +556,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
 
 impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, MAX> {
     fn drop(&mut self) {
-        let last_handle = self.table.handle + 1;
+        let last_handle = self.table.next_handle + 1;
         self.table.with_inner(|inner| {
             for item in inner.attributes[self.start..inner.len].iter_mut() {
                 item.as_mut().unwrap().last_handle_in_group = last_handle;
@@ -495,7 +564,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
         });
 
         // Jump to next 16-aligned
-        self.table.handle = self.table.handle + (0x10 - (self.table.handle % 0x10));
+        self.table.next_handle = self.table.next_handle + (0x10 - (self.table.next_handle % 0x10));
     }
 }
 
@@ -530,6 +599,9 @@ impl<'a, 'd> AttributeIterator<'a, 'd> {
     }
 }
 
+/// Service information.
+/// 
+/// Currently only has UUID.
 pub struct Service {
     pub uuid: Uuid,
 }
@@ -540,6 +612,9 @@ impl Service {
     }
 }
 
+/// A bitfield of [`CharacteristicProp`].
+/// 
+/// See the [`From`] implementation for this struct. Props are applied in order they are given.
 #[derive(Clone, Copy)]
 pub struct CharacteristicProps(u8);
 
