@@ -22,7 +22,7 @@ pub const CHARACTERISTIC_UUID16: Uuid = Uuid::Uuid16(0x2803u16.to_le_bytes());
 pub const CHARACTERISTIC_CCCD_UUID16: Uuid = Uuid::Uuid16(0x2902u16.to_le_bytes());
 pub const GENERIC_ATTRIBUTE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// An enum of possible characteristic properties
 /// 
@@ -49,7 +49,8 @@ pub enum CharacteristicProp {
     Extended = 0x80,
 }
 
-pub struct Attribute<'a> {
+#[derive(PartialEq, Eq)]
+pub struct Attribute<'d> {
     /// Attribute type UUID
     /// 
     /// Do not mistake it with Characteristic UUID
@@ -71,6 +72,8 @@ impl<'d> Attribute<'d> {
 }
 
 /// The underlying data behind an attribute.
+#[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AttributeData<'d> {
     /// Service UUID Data
     /// 
@@ -78,7 +81,7 @@ pub enum AttributeData<'d> {
     Service {
         uuid: Uuid,
     },
-    /// Read only Data
+    /// Read only data
     /// 
     /// Implemented by storing a borrow of a slice.
     /// The slice has to live at least as much as the device.
@@ -306,6 +309,7 @@ pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
 /// 
 /// Represented by a stack allocated list of attributes with a len field to keep track of how many are actually present. 
 // TODO: Switch to heapless Vec
+#[derive(Debug, PartialEq, Eq)]
 pub struct InnerTable<'d, const MAX: usize> {
     attributes: [Option<Attribute<'d>>; MAX],
 
@@ -465,7 +469,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttributeHandle {
     pub(crate) handle: u16,
 }
@@ -602,6 +606,7 @@ impl<'a, 'd> AttributeIterator<'a, 'd> {
 /// Service information.
 /// 
 /// Currently only has UUID.
+#[derive(Clone, Debug)]
 pub struct Service {
     pub uuid: Uuid,
 }
@@ -615,7 +620,8 @@ impl Service {
 /// A bitfield of [`CharacteristicProp`].
 /// 
 /// See the [`From`] implementation for this struct. Props are applied in order they are given.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
 pub struct CharacteristicProps(u8);
 
 impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
