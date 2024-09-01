@@ -748,7 +748,7 @@ where
         table: &'reference AttributeTable<'values, M, MAX>,
     ) -> GattServer<'reference, 'values, M, MAX, L2CAP_MTU> {
         self.connections.set_default_att_mtu(L2CAP_MTU as u16 - 4);
-        use crate::attribute_server::AttributeServer;
+        use crate::attribute::server::AttributeServer;
         GattServer {
             server: AttributeServer::new(table),
             rx: self.att_inbound.receiver().into(),
