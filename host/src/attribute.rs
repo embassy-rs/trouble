@@ -258,8 +258,8 @@ impl<'d> AttributeData<'d> {
                     return Err(AttErrorCode::UnlikelyError);
                 }
 
-                *notifications = data[0] & 0x00000001 != 0;
-                *indications = data[0] & 0x00000010 != 0;
+                *notifications = data[0] & 0b00000001 != 0;
+                *indications = data[0] & 0b00000010 != 0;
                 Ok(())
             }
             _ => Err(AttErrorCode::WriteNotPermitted),
