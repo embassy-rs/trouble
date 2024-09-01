@@ -204,7 +204,7 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const L2CAP_MTU: u
                             .push(ServiceHandle {
                                 start: handle,
                                 end,
-                                uuid: uuid.clone(),
+                                uuid: *uuid,
                             })
                             .unwrap();
                     }
@@ -306,7 +306,7 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const L2CAP_MTU: u
         let data = att::AttReq::ReadByType {
             start: service.start,
             end: service.end,
-            attribute_type: uuid.clone(),
+            attribute_type: *uuid,
         };
 
         let pdu = self.request(data).await?;

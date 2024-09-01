@@ -3,13 +3,16 @@ mod data;
 pub mod server;
 pub use consts::*;
 pub use data::*;
+use heapless::Vec;
 
 use core::cell::RefCell;
 use core::fmt;
+use core::ops::ControlFlow;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
+use crate::att::AttErrorCode;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
 
@@ -94,32 +97,10 @@ impl<'a> Attribute<'a> {
 
 /// Table of Attributes available to the [`crate::gatt::GattServer`].
 pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
-    inner: Mutex<M, RefCell<InnerTable<'d, MAX>>>,
+    inner: Mutex<M, RefCell<Vec<Attribute<'d>, MAX>>>,
 
     /// Next available attribute handle value known by this table
     next_handle: u16,
-}
-
-/// Inner representation of [`AttributeTable`]
-///
-/// Represented by a stack allocated list of attributes with a len field to keep track of how many are actually present.
-// TODO: Switch to heapless Vec
-#[derive(Debug, PartialEq, Eq)]
-pub struct InnerTable<'d, const MAX: usize> {
-    attributes: [Option<Attribute<'d>>; MAX],
-
-    /// Amount of attributes in the list.
-    len: usize,
-}
-
-impl<'d, const MAX: usize> InnerTable<'d, MAX> {
-    fn push(&mut self, attribute: Attribute<'d>) {
-        if self.len == MAX {
-            panic!("no space for more attributes")
-        }
-        self.attributes[self.len].replace(attribute);
-        self.len += 1;
-    }
 }
 
 impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
@@ -133,30 +114,120 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     pub fn new() -> Self {
         Self {
             next_handle: 1,
-            inner: Mutex::new(RefCell::new(InnerTable {
-                len: 0,
-                attributes: [Attribute::EMPTY; MAX],
-            })),
+            inner: Mutex::new(RefCell::new(Vec::new())),
         }
     }
 
-    pub fn with_inner<F: Fn(&mut InnerTable<'d, MAX>)>(&self, f: F) {
+    pub fn with_inner<F: FnMut(&mut [Attribute<'d>])>(&self, mut f: F) {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
             f(&mut table);
         })
     }
 
-    pub fn iterate<F: FnMut(AttributeIterator<'_, 'd>) -> R, R>(&self, mut f: F) -> R {
+    /// Take a closure and call it with a mutable iterator over attributes.
+    ///
+    /// Returns whatever the given function returned.
+    pub fn iterate<F: FnOnce(core::slice::IterMut<'_, Attribute<'d>>) -> R, R>(&self, f: F) -> R {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
-            let len = table.len;
-            let it = AttributeIterator {
-                attributes: &mut table.attributes[..],
-                pos: 0,
-                len,
-            };
-            f(it)
+            f(table.iter_mut())
+        })
+    }
+
+    /// Call a function **once** if an attribute with a given handle has been found, returning its output.
+    ///
+    /// Returns `R` if the handle was found, [`AttErrorCode::AttributeNotFound`] otherwise.
+    ///
+    /// `condition` function takes a borrow of a [`Attribute`]. If it returns `Some(...)`,
+    /// a mutable reference to the same [`Attribute`] value gets passed to the main function `f`.
+    ///
+    /// Returns a [`Result`] with whatever the main function chooses to return
+    /// as it's [`Ok`] output, or [`AttErrorCode::AttributeNotFound`] as the [`Err`] output
+    /// (as the attribute with the same handle was not found).
+    pub fn on_handle<F: FnOnce(&mut Attribute<'d>) -> Result<R, AttErrorCode>, R>(
+        &self,
+        handle: u16,
+        f: F,
+    ) -> Result<R, AttErrorCode> {
+        self.iterate(|it| {
+            for att in it {
+                if att.handle == handle {
+                    return f(att);
+                }
+            }
+            Err(AttErrorCode::AttributeNotFound)
+        })
+    }
+
+    /// Call a function **once** if a condition function chooses an attribute to process.
+    ///
+    /// `condition` function takes a borrow of a [`Attribute`]. If it returns `Some(...)`,
+    /// a mutable reference to the same [`Attribute`] value gets passed to the main function `f`.
+    ///
+    /// Returns a [`Result`] with whatever the main function chooses to return
+    /// as it's [`Ok`] output, or [`AttErrorCode`] as the [`Err`] output.
+    pub fn on_attribute<
+        FCondition: FnMut(&Attribute<'d>) -> Option<RCondition>,
+        F: FnOnce(&mut Attribute<'d>, RCondition) -> Result<R, AttErrorCode>,
+        R,
+        RCondition,
+    >(
+        &self,
+        mut condition: FCondition,
+        f: F,
+    ) -> Result<R, AttErrorCode> {
+        self.iterate(|it| {
+            for att in it {
+                let res = condition(att);
+                if let Some(r_cond_output) = res {
+                    return f(att, r_cond_output);
+                }
+            }
+            Err(AttErrorCode::AttributeNotFound)
+        })
+    }
+
+    /// Call a function every time a condition function chooses to process an attribute, or break.
+    ///
+    /// `condition` function takes a borrow of a [`Attribute`].
+    ///
+    /// ## Map of behaviour depending on what `condition` returns:
+    ///  
+    ///   - `ControlFlow::Continue(Some(RCondition))` - the main function
+    ///     gets called with a mutable borrow of an attribute and `RCondition`.
+    ///     Execution continues for other attributes.
+    ///   - `ControlFlow::Continue(None)` - the main function is not called.
+    ///     Execution continues for other attributes.
+    ///   - `ControlFlow::Break` - the main function is not called.
+    ///     Execution stops.
+    ///
+    /// Returns a [`Result`] with it's [`Ok`] output being `()` (if you need to keep
+    /// some kind of state between `f` runs, just modify stuff outside the closure),
+    /// or `E` as the [`Err`] output.
+    pub fn for_each_attribute<
+        FCondition: FnMut(&Attribute<'d>) -> ControlFlow<(), Option<RCondition>>,
+        F: FnMut(&mut Attribute<'d>, RCondition) -> Result<(), E>,
+        RCondition,
+        E,
+    >(
+        &self,
+        mut condition: FCondition,
+        mut f: F,
+    ) -> Result<(), E> {
+        self.iterate(|it| {
+            for att in it {
+                let res = condition(att);
+                match res {
+                    ControlFlow::Continue(r_cond_output) => {
+                        if let Some(r_cond_output) = r_cond_output {
+                            f(att, r_cond_output)?;
+                        }
+                    }
+                    ControlFlow::Break(_) => break,
+                }
+            }
+            Ok(())
         })
     }
 
@@ -168,7 +239,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         attribute.handle = handle;
         self.inner.lock(|inner| {
             let mut inner = inner.borrow_mut();
-            inner.push(attribute);
+            inner.push(attribute).expect("no more space for attributes");
         });
         self.next_handle += 1;
         handle
@@ -178,7 +249,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// Note: The service builder is tied to the AttributeTable.
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
-        let len = self.inner.lock(|i| i.borrow().len);
+        let len = self.inner.lock(|i| i.borrow().len());
         let handle = self.next_handle;
         self.push(Attribute {
             uuid: PRIMARY_SERVICE_UUID16,
@@ -200,8 +271,8 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
     pub fn set(&self, handle: Characteristic, input: &[u8]) -> Result<(), Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
+        self.iterate(|it| {
+            for att in it {
                 if att.handle == handle.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
                         assert_eq!(value.len(), input.len());
@@ -219,11 +290,11 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, mut f: F) -> Result<T, Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
+    pub fn get<F: Fn(&[u8]) -> T, T>(&self, handle: Characteristic, f: F) -> Result<T, Error> {
+        self.iterate(|it| {
+            for att in it {
                 if att.handle == handle.handle {
-                    if let AttributeData::Data { props, value } = &mut att.data {
+                    if let AttributeData::Data { props, value } = &att.data {
                         let v = f(value);
                         return Ok(v);
                     }
@@ -298,7 +369,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             data: AttributeData::Declaration {
                 props,
                 handle: next,
-                uuid: uuid.clone(),
+                uuid,
             },
         });
 
@@ -356,8 +427,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
     fn drop(&mut self) {
         let last_handle = self.table.next_handle + 1;
         self.table.with_inner(|inner| {
-            for item in inner.attributes[self.start..inner.len].iter_mut() {
-                item.as_mut().unwrap().last_handle_in_group = last_handle;
+            for item in inner[self.start..].iter_mut() {
+                item.last_handle_in_group = last_handle;
             }
         });
 
@@ -377,24 +448,6 @@ pub struct Characteristic {
 #[derive(Clone, Copy, Debug)]
 pub struct DescriptorHandle {
     pub(crate) handle: u16,
-}
-
-pub struct AttributeIterator<'a, 'd> {
-    attributes: &'a mut [Option<Attribute<'d>>],
-    pos: usize,
-    len: usize,
-}
-
-impl<'a, 'd> AttributeIterator<'a, 'd> {
-    pub fn next<'m>(&'m mut self) -> Option<&'m mut Attribute<'d>> {
-        if self.pos < self.len {
-            let i = self.attributes[self.pos].as_mut();
-            self.pos += 1;
-            i
-        } else {
-            None
-        }
-    }
 }
 
 /// Service information.
