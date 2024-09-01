@@ -25,7 +25,7 @@ pub const GENERIC_ATTRIBUTE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes())
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// An enum of possible characteristic properties
-/// 
+///
 /// Ref: BLUETOOTH CORE SPECIFICATION Version 6.0, Vol 3, Part G, Section 3.3.1.1 Characteristic Properties
 pub enum CharacteristicProp {
     /// Permit broadcast of the Characteristic Value
@@ -52,16 +52,16 @@ pub enum CharacteristicProp {
 #[derive(PartialEq, Eq)]
 pub struct Attribute<'d> {
     /// Attribute type UUID
-    /// 
+    ///
     /// Do not mistake it with Characteristic UUID
     pub uuid: Uuid,
     /// Handle for the Attribute
     ///
     /// In case of a push, this value is ignored and set to the
-    /// next available handle value in the attribute table. 
+    /// next available handle value in the attribute table.
     pub handle: u16,
     /// Last handle value in the group
-    /// 
+    ///
     /// When a [`ServiceBuilder`] finishes building, it returns the handle for the service, but also
     pub(crate) last_handle_in_group: u16,
     pub data: AttributeData<'d>,
@@ -76,13 +76,11 @@ impl<'d> Attribute<'d> {
 #[non_exhaustive]
 pub enum AttributeData<'d> {
     /// Service UUID Data
-    /// 
-    /// Serializes to raw bytes of UUID. 
-    Service {
-        uuid: Uuid,
-    },
+    ///
+    /// Serializes to raw bytes of UUID.
+    Service { uuid: Uuid },
     /// Read only data
-    /// 
+    ///
     /// Implemented by storing a borrow of a slice.
     /// The slice has to live at least as much as the device.
     ReadOnlyData {
@@ -90,7 +88,7 @@ pub enum AttributeData<'d> {
         value: &'d [u8],
     },
     /// Read and write data
-    /// 
+    ///
     /// Implemented by storing a mutable borrow of a slice.
     /// The slice has to live at least as much as the device.
     Data {
@@ -104,12 +102,9 @@ pub enum AttributeData<'d> {
         uuid: Uuid,
     },
     /// Client Characteristic Configuration Descriptor
-    /// 
+    ///
     /// Ref: BLUETOOTH CORE SPECIFICATION Version 6.0, Vol 3, Part G, Section 3.3.3.3 Client Characteristic Configuration
-    Cccd {
-        notifications: bool,
-        indications: bool,
-    },
+    Cccd { notifications: bool, indications: bool },
 }
 
 impl<'d> AttributeData<'d> {
@@ -138,12 +133,12 @@ impl<'d> AttributeData<'d> {
     }
 
     /// Read the attribute value from some kind of a readable attribute data source
-    /// 
+    ///
     /// Seek to to the `offset`-nth byte in the source data, fill the response data slice `data` up to the end or lower.
-    /// 
+    ///
     /// The data buffer is always sized L2CAP_MTU, minus the 4 bytes for the L2CAP header)
-    /// The max stated value of an attribute in the GATT specification is 512 bytes. 
-    /// 
+    /// The max stated value of an attribute in the GATT specification is 512 bytes.
+    ///
     /// Returns the amount of bytes that have been written into `data`.
     pub fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         if !self.readable() {
@@ -228,7 +223,7 @@ impl<'d> AttributeData<'d> {
     }
 
     /// Write into the attribute value at 'offset' data from `data` buffer
-    /// 
+    ///
     /// Expect the writes to be fragmented, like with [`AttributeData::read`]
     pub fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         let writable = self.writable();
@@ -306,8 +301,8 @@ pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
 }
 
 /// Inner representation of [`AttributeTable`]
-/// 
-/// Represented by a stack allocated list of attributes with a len field to keep track of how many are actually present. 
+///
+/// Represented by a stack allocated list of attributes with a len field to keep track of how many are actually present.
 // TODO: Switch to heapless Vec
 #[derive(Debug, PartialEq, Eq)]
 pub struct InnerTable<'d, const MAX: usize> {
@@ -344,7 +339,6 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             })),
         }
     }
-    
 
     pub fn with_inner<F: Fn(&mut InnerTable<'d, MAX>)>(&self, f: F) {
         self.inner.lock(|inner| {
@@ -367,7 +361,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     /// Push into the table a given attribute.
-    /// 
+    ///
     /// Returns the attribute handle.
     fn push(&mut self, mut attribute: Attribute<'d>) -> u16 {
         let handle = self.next_handle;
@@ -381,7 +375,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     /// Create a service with a given UUID and return the [`ServiceBuilder`].
-    /// 
+    ///
     /// Note: The service builder is tied to the AttributeTable.
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
@@ -604,7 +598,7 @@ impl<'a, 'd> AttributeIterator<'a, 'd> {
 }
 
 /// Service information.
-/// 
+///
 /// Currently only has UUID.
 #[derive(Clone, Debug)]
 pub struct Service {
@@ -618,7 +612,7 @@ impl Service {
 }
 
 /// A bitfield of [`CharacteristicProp`].
-/// 
+///
 /// See the [`From`] implementation for this struct. Props are applied in order they are given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
