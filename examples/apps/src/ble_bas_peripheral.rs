@@ -48,11 +48,14 @@ where
     table.add_service(Service::new(0x1801));
 
     // Battery service
-    let level_handle = table.add_service(Service::new(0x180f)).add_characteristic(
-        0x2a19,
-        &[CharacteristicProp::Read, CharacteristicProp::Notify],
-        &mut bat_level,
-    );
+    let level_handle = table
+        .add_service(Service::new(0x180f))
+        .add_characteristic(
+            0x2a19,
+            &[CharacteristicProp::Read, CharacteristicProp::Notify],
+            &mut bat_level,
+        )
+        .build();
 
     let server = ble.gatt_server::<NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>(&table);
 
