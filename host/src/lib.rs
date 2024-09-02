@@ -40,8 +40,6 @@ pub use host::*;
 #[cfg(feature = "gatt")]
 pub mod attribute;
 #[cfg(feature = "gatt")]
-mod attribute_server;
-#[cfg(feature = "gatt")]
 pub mod gatt;
 
 /// A BLE address.

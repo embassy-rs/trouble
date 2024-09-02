@@ -5,8 +5,8 @@ use embassy_sync::channel::{DynamicReceiver, DynamicSender};
 use heapless::Vec;
 
 use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
+use crate::attribute::server::AttributeServer;
 use crate::attribute::{Characteristic, Uuid, CHARACTERISTIC_UUID16, PRIMARY_SERVICE_UUID16};
-use crate::attribute_server::AttributeServer;
 use crate::connection::Connection;
 use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
@@ -204,7 +204,7 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const L2CAP_MTU: u
                             .push(ServiceHandle {
                                 start: handle,
                                 end,
-                                uuid: uuid.clone(),
+                                uuid: *uuid,
                             })
                             .unwrap();
                     }
@@ -306,7 +306,7 @@ impl<'reference, 'resources, T: Controller, const MAX: usize, const L2CAP_MTU: u
         let data = att::AttReq::ReadByType {
             start: service.start,
             end: service.end,
-            attribute_type: uuid.clone(),
+            attribute_type: *uuid,
         };
 
         let pdu = self.request(data).await?;

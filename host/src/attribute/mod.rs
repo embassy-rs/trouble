@@ -1,216 +1,68 @@
+mod consts;
+mod data;
+pub mod server;
+pub use consts::*;
+pub use data::*;
+use heapless::Vec;
+
 use core::cell::RefCell;
 use core::fmt;
+use core::ops::ControlFlow;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
 use crate::att::AttErrorCode;
-use crate::cursor::WriteCursor;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
 
-pub const GENERIC_ACCESS_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1800u16.to_le_bytes());
-pub const CHARACTERISTIC_DEVICE_NAME_UUID16: Uuid = Uuid::Uuid16(0x2A00u16.to_le_bytes());
-pub const CHARACTERISTIC_APPEARANCE_UUID16: Uuid = Uuid::Uuid16(0x2A03u16.to_le_bytes());
-
-pub const GENERIC_ATTRIBUTE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
-
-pub const PRIMARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2800u16.to_le_bytes());
-pub const SECONDARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2801u16.to_le_bytes());
-pub const INCLUDE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2802u16.to_le_bytes());
-pub const CHARACTERISTIC_UUID16: Uuid = Uuid::Uuid16(0x2803u16.to_le_bytes());
-pub const CHARACTERISTIC_CCCD_UUID16: Uuid = Uuid::Uuid16(0x2902u16.to_le_bytes());
-pub const GENERIC_ATTRIBUTE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// An enum of possible characteristic properties
+///
+/// Ref: BLUETOOTH CORE SPECIFICATION Version 6.0, Vol 3, Part G, Section 3.3.1.1 Characteristic Properties
 pub enum CharacteristicProp {
+    /// Permit broadcast of the Characteristic Value
+    ///
+    /// If set, permits broadcasts of the Characteristic Value using Server Characteristic
+    /// Configuration Descriptor.
     Broadcast = 0x01,
+    /// Permit read of the Characteristic Value
     Read = 0x02,
+    /// Permit writes to the Characteristic Value without response
     WriteWithoutResponse = 0x04,
+    /// Permit writes to the Characteristic Value
     Write = 0x08,
+    /// Permit notification of a Characteristic Value without acknowledgment
     Notify = 0x10,
+    /// Permit indication of a Characteristic Value with acknowledgment
     Indicate = 0x20,
+    /// Permit signed writes to the Characteristic Value
     AuthenticatedWrite = 0x40,
+    /// Permit writes to the Characteristic Value without response
     Extended = 0x80,
 }
 
-pub struct Attribute<'a> {
+#[derive(PartialEq, Eq)]
+pub struct Attribute<'d> {
+    /// Attribute type UUID
+    ///
+    /// Do not mistake it with Characteristic UUID
     pub uuid: Uuid,
+    /// Handle for the Attribute
+    ///
+    /// In case of a push, this value is ignored and set to the
+    /// next available handle value in the attribute table.
     pub handle: u16,
-    pub last_handle_in_group: u16,
-    pub data: AttributeData<'a>,
+    /// Last handle value in the group
+    ///
+    /// When a [`ServiceBuilder`] finishes building, it returns the handle for the service, but also
+    pub(crate) last_handle_in_group: u16,
+    pub data: AttributeData<'d>,
 }
 
-impl<'a> Attribute<'a> {
-    const EMPTY: Option<Attribute<'a>> = None;
-}
-
-pub enum AttributeData<'d> {
-    Service {
-        uuid: Uuid,
-    },
-    ReadOnlyData {
-        props: CharacteristicProps,
-        value: &'d [u8],
-    },
-    Data {
-        props: CharacteristicProps,
-        value: &'d mut [u8],
-    },
-    Declaration {
-        props: CharacteristicProps,
-        handle: u16,
-        uuid: Uuid,
-    },
-    Cccd {
-        notifications: bool,
-        indications: bool,
-    },
-}
-
-impl<'d> AttributeData<'d> {
-    pub fn readable(&self) -> bool {
-        match self {
-            Self::Data { props, value } => props.0 & (CharacteristicProp::Read as u8) != 0,
-            _ => true,
-        }
-    }
-
-    pub fn writable(&self) -> bool {
-        match self {
-            Self::Data { props, value } => {
-                props.0
-                    & (CharacteristicProp::Write as u8
-                        | CharacteristicProp::WriteWithoutResponse as u8
-                        | CharacteristicProp::AuthenticatedWrite as u8)
-                    != 0
-            }
-            Self::Cccd {
-                notifications,
-                indications,
-            } => true,
-            _ => false,
-        }
-    }
-
-    pub fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if !self.readable() {
-            return Err(AttErrorCode::ReadNotPermitted);
-        }
-        match self {
-            Self::ReadOnlyData { props, value } => {
-                if offset > value.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(value.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
-            }
-            Self::Data { props, value } => {
-                if offset > value.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(value.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
-            }
-            Self::Service { uuid } => {
-                let val = uuid.as_raw();
-                if offset > val.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(val.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&val[offset..offset + len]);
-                }
-                Ok(len)
-            }
-            Self::Cccd {
-                notifications,
-                indications,
-            } => {
-                if offset > 0 {
-                    return Err(AttErrorCode::InvalidOffset);
-                }
-                if data.len() < 2 {
-                    return Err(AttErrorCode::UnlikelyError);
-                }
-                let mut v = 0;
-                if *notifications {
-                    v |= 0x01;
-                }
-
-                if *indications {
-                    v |= 0x02;
-                }
-                data[0] = v;
-                Ok(2)
-            }
-            Self::Declaration { props, handle, uuid } => {
-                let val = uuid.as_raw();
-                if offset > val.len() + 3 {
-                    return Ok(0);
-                }
-                let mut w = WriteCursor::new(data);
-                if offset == 0 {
-                    w.write(props.0)?;
-                    w.write(*handle)?;
-                } else if offset == 1 {
-                    w.write(*handle)?;
-                } else if offset == 2 {
-                    w.write(handle.to_le_bytes()[1])?;
-                }
-
-                let to_write = w.available().min(val.len());
-
-                if to_write > 0 {
-                    w.append(&val[..to_write])?;
-                }
-                Ok(w.len())
-            }
-        }
-    }
-
-    pub fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        let writable = self.writable();
-
-        match self {
-            Self::Data { value, props } => {
-                if !writable {
-                    return Err(AttErrorCode::WriteNotPermitted);
-                }
-
-                if offset + data.len() <= value.len() {
-                    value[offset..offset + data.len()].copy_from_slice(data);
-                    Ok(())
-                } else {
-                    Err(AttErrorCode::InvalidOffset)
-                }
-            }
-            Self::Cccd {
-                notifications,
-                indications,
-            } => {
-                if offset > 0 {
-                    return Err(AttErrorCode::InvalidOffset);
-                }
-
-                if data.is_empty() {
-                    return Err(AttErrorCode::UnlikelyError);
-                }
-
-                *notifications = data[0] & 0x01 != 0;
-                *indications = data[0] & 0x02 != 0;
-                Ok(())
-            }
-            _ => Err(AttErrorCode::WriteNotPermitted),
-        }
-    }
+impl<'d> Attribute<'d> {
+    const EMPTY: Option<Attribute<'d>> = None;
 }
 
 impl<'a> fmt::Debug for Attribute<'a> {
@@ -238,29 +90,17 @@ impl<'a> Attribute<'a> {
             uuid,
             handle: 0,
             data,
-            last_handle_in_group: 0xffff,
+            last_handle_in_group: u16::MAX,
         }
     }
 }
 
+/// Table of Attributes available to the [`crate::gatt::GattServer`].
 pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
-    inner: Mutex<M, RefCell<InnerTable<'d, MAX>>>,
-    handle: u16,
-}
+    inner: Mutex<M, RefCell<Vec<Attribute<'d>, MAX>>>,
 
-pub struct InnerTable<'d, const MAX: usize> {
-    attributes: [Option<Attribute<'d>>; MAX],
-    len: usize,
-}
-
-impl<'d, const MAX: usize> InnerTable<'d, MAX> {
-    fn push(&mut self, attribute: Attribute<'d>) {
-        if self.len == MAX {
-            panic!("no space for more attributes")
-        }
-        self.attributes[self.len].replace(attribute);
-        self.len += 1;
-    }
+    /// Next available attribute handle value known by this table
+    next_handle: u16,
 }
 
 impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
@@ -270,50 +110,147 @@ impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
 }
 
 impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
+    /// Create an empty table
     pub fn new() -> Self {
         Self {
-            handle: 1,
-            inner: Mutex::new(RefCell::new(InnerTable {
-                len: 0,
-                attributes: [Attribute::EMPTY; MAX],
-            })),
+            next_handle: 1,
+            inner: Mutex::new(RefCell::new(Vec::new())),
         }
     }
 
-    pub fn with_inner<F: Fn(&mut InnerTable<'d, MAX>)>(&self, f: F) {
+    pub fn with_inner<F: FnMut(&mut [Attribute<'d>])>(&self, mut f: F) {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
             f(&mut table);
         })
     }
 
-    pub fn iterate<F: FnMut(AttributeIterator<'_, 'd>) -> R, R>(&self, mut f: F) -> R {
+    /// Take a closure and call it with a mutable iterator over attributes.
+    ///
+    /// Returns whatever the given function returned.
+    pub fn iterate<F: FnOnce(core::slice::IterMut<'_, Attribute<'d>>) -> R, R>(&self, f: F) -> R {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
-            let len = table.len;
-            let it = AttributeIterator {
-                attributes: &mut table.attributes[..],
-                pos: 0,
-                len,
-            };
-            f(it)
+            f(table.iter_mut())
         })
     }
 
+    /// Call a function **once** if an attribute with a given handle has been found, returning its output.
+    ///
+    /// Returns `R` if the handle was found, [`AttErrorCode::AttributeNotFound`] otherwise.
+    ///
+    /// `condition` function takes a borrow of a [`Attribute`]. If it returns `Some(...)`,
+    /// a mutable reference to the same [`Attribute`] value gets passed to the main function `f`.
+    ///
+    /// Returns a [`Result`] with whatever the main function chooses to return
+    /// as it's [`Ok`] output, or [`AttErrorCode::AttributeNotFound`] as the [`Err`] output
+    /// (as the attribute with the same handle was not found).
+    pub fn on_handle<F: FnOnce(&mut Attribute<'d>) -> Result<R, AttErrorCode>, R>(
+        &self,
+        handle: u16,
+        f: F,
+    ) -> Result<R, AttErrorCode> {
+        self.iterate(|it| {
+            for att in it {
+                if att.handle == handle {
+                    return f(att);
+                }
+            }
+            Err(AttErrorCode::AttributeNotFound)
+        })
+    }
+
+    /// Call a function **once** if a condition function chooses an attribute to process.
+    ///
+    /// `condition` function takes a borrow of a [`Attribute`]. If it returns `Some(...)`,
+    /// a mutable reference to the same [`Attribute`] value gets passed to the main function `f`.
+    ///
+    /// Returns a [`Result`] with whatever the main function chooses to return
+    /// as it's [`Ok`] output, or [`AttErrorCode`] as the [`Err`] output.
+    pub fn on_attribute<
+        FCondition: FnMut(&Attribute<'d>) -> Option<RCondition>,
+        F: FnOnce(&mut Attribute<'d>, RCondition) -> Result<R, AttErrorCode>,
+        R,
+        RCondition,
+    >(
+        &self,
+        mut condition: FCondition,
+        f: F,
+    ) -> Result<R, AttErrorCode> {
+        self.iterate(|it| {
+            for att in it {
+                let res = condition(att);
+                if let Some(r_cond_output) = res {
+                    return f(att, r_cond_output);
+                }
+            }
+            Err(AttErrorCode::AttributeNotFound)
+        })
+    }
+
+    /// Call a function every time a condition function chooses to process an attribute, or break.
+    ///
+    /// `condition` function takes a borrow of a [`Attribute`].
+    ///
+    /// ## Map of behaviour depending on what `condition` returns:
+    ///  
+    ///   - `ControlFlow::Continue(Some(RCondition))` - the main function
+    ///     gets called with a mutable borrow of an attribute and `RCondition`.
+    ///     Execution continues for other attributes.
+    ///   - `ControlFlow::Continue(None)` - the main function is not called.
+    ///     Execution continues for other attributes.
+    ///   - `ControlFlow::Break` - the main function is not called.
+    ///     Execution stops.
+    ///
+    /// Returns a [`Result`] with it's [`Ok`] output being `()` (if you need to keep
+    /// some kind of state between `f` runs, just modify stuff outside the closure),
+    /// or `E` as the [`Err`] output.
+    pub fn for_each_attribute<
+        FCondition: FnMut(&Attribute<'d>) -> ControlFlow<(), Option<RCondition>>,
+        F: FnMut(&mut Attribute<'d>, RCondition) -> Result<(), E>,
+        RCondition,
+        E,
+    >(
+        &self,
+        mut condition: FCondition,
+        mut f: F,
+    ) -> Result<(), E> {
+        self.iterate(|it| {
+            for att in it {
+                let res = condition(att);
+                match res {
+                    ControlFlow::Continue(r_cond_output) => {
+                        if let Some(r_cond_output) = r_cond_output {
+                            f(att, r_cond_output)?;
+                        }
+                    }
+                    ControlFlow::Break(_) => break,
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Push into the table a given attribute.
+    ///
+    /// Returns the attribute handle.
     fn push(&mut self, mut attribute: Attribute<'d>) -> u16 {
-        let handle = self.handle;
+        let handle = self.next_handle;
         attribute.handle = handle;
         self.inner.lock(|inner| {
             let mut inner = inner.borrow_mut();
-            inner.push(attribute);
+            inner.push(attribute).expect("no more space for attributes");
         });
-        self.handle += 1;
+        self.next_handle += 1;
         handle
     }
 
+    /// Create a service with a given UUID and return the [`ServiceBuilder`].
+    ///
+    /// Note: The service builder is tied to the AttributeTable.
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
-        let len = self.inner.lock(|i| i.borrow().len);
-        let handle = self.handle;
+        let len = self.inner.lock(|i| i.borrow().len());
+        let handle = self.next_handle;
         self.push(Attribute {
             uuid: PRIMARY_SERVICE_UUID16,
             handle: 0,
@@ -334,8 +271,8 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
     pub fn set(&self, handle: Characteristic, input: &[u8]) -> Result<(), Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
+        self.iterate(|it| {
+            for att in it {
                 if att.handle == handle.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
                         assert_eq!(value.len(), input.len());
@@ -348,16 +285,16 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
-    /// Read the value of the characteristic and pass the value to the provided closure.
+    /// Read the value of the characteristic and pass the value to the provided closure
     ///
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, mut f: F) -> Result<T, Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
+    pub fn get<F: Fn(&[u8]) -> T, T>(&self, handle: Characteristic, f: F) -> Result<T, Error> {
+        self.iterate(|it| {
+            for att in it {
                 if att.handle == handle.handle {
-                    if let AttributeData::Data { props, value } = &mut att.data {
+                    if let AttributeData::Data { props, value } = &att.data {
                         let v = f(value);
                         return Ok(v);
                     }
@@ -397,7 +334,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttributeHandle {
     pub(crate) handle: u16,
 }
@@ -408,6 +345,7 @@ impl From<u16> for AttributeHandle {
     }
 }
 
+/// Builder type for creating a Service inside a given AttributeTable
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
     handle: AttributeHandle,
     start: usize,
@@ -422,8 +360,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         data: AttributeData<'d>,
     ) -> Characteristic {
         // First the characteristic declaration
-        let next = self.table.handle + 1;
-        let cccd = self.table.handle + 2;
+        let next = self.table.next_handle + 1;
+        let cccd = self.table.next_handle + 2;
         self.table.push(Attribute {
             uuid: CHARACTERISTIC_UUID16,
             handle: 0,
@@ -431,7 +369,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             data: AttributeData::Declaration {
                 props,
                 handle: next,
-                uuid: uuid.clone(),
+                uuid,
             },
         });
 
@@ -487,15 +425,15 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
 
 impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, MAX> {
     fn drop(&mut self) {
-        let last_handle = self.table.handle + 1;
+        let last_handle = self.table.next_handle + 1;
         self.table.with_inner(|inner| {
-            for item in inner.attributes[self.start..inner.len].iter_mut() {
-                item.as_mut().unwrap().last_handle_in_group = last_handle;
+            for item in inner[self.start..].iter_mut() {
+                item.last_handle_in_group = last_handle;
             }
         });
 
         // Jump to next 16-aligned
-        self.table.handle = self.table.handle + (0x10 - (self.table.handle % 0x10));
+        self.table.next_handle = self.table.next_handle + (0x10 - (self.table.next_handle % 0x10));
     }
 }
 
@@ -512,24 +450,10 @@ pub struct DescriptorHandle {
     pub(crate) handle: u16,
 }
 
-pub struct AttributeIterator<'a, 'd> {
-    attributes: &'a mut [Option<Attribute<'d>>],
-    pos: usize,
-    len: usize,
-}
-
-impl<'a, 'd> AttributeIterator<'a, 'd> {
-    pub fn next<'m>(&'m mut self) -> Option<&'m mut Attribute<'d>> {
-        if self.pos < self.len {
-            let i = self.attributes[self.pos].as_mut();
-            self.pos += 1;
-            i
-        } else {
-            None
-        }
-    }
-}
-
+/// Service information.
+///
+/// Currently only has UUID.
+#[derive(Clone, Debug)]
 pub struct Service {
     pub uuid: Uuid,
 }
@@ -540,7 +464,11 @@ impl Service {
     }
 }
 
-#[derive(Clone, Copy)]
+/// A bitfield of [`CharacteristicProp`].
+///
+/// See the [`From`] implementation for this struct. Props are applied in order they are given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
 pub struct CharacteristicProps(u8);
 
 impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
