@@ -61,7 +61,8 @@ async fn gatt_client_server() {
             .add_characteristic(
                 VALUE_UUID.clone(),
                 &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
-                &mut value);
+                &mut value)
+            .build();
 
         let server = adapter.gatt_server::<NoopRawMutex, 10, 27>(&table);
 

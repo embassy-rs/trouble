@@ -420,7 +420,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
-    ) -> Characteristic {
+    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
         // First the characteristic declaration
         let next = self.table.handle + 1;
         let cccd = self.table.handle + 2;
@@ -459,9 +459,12 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             None
         };
 
-        Characteristic {
-            handle: next,
-            cccd_handle,
+        CharacteristicBuilder {
+            handle: Characteristic {
+                handle: next,
+                cccd_handle,
+            },
+            table: self.table,
         }
     }
 
@@ -470,12 +473,16 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: U,
         props: &[CharacteristicProp],
         storage: &'d mut [u8],
-    ) -> Characteristic {
+    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
         let props = props.into();
         self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
     }
 
-    pub fn add_characteristic_ro<U: Into<Uuid>>(&mut self, uuid: U, value: &'d [u8]) -> Characteristic {
+    pub fn add_characteristic_ro<U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        value: &'d [u8],
+    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
         let props = [CharacteristicProp::Read].into();
         self.add_characteristic_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value })
     }
@@ -504,6 +511,49 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
 pub struct Characteristic {
     pub(crate) cccd_handle: Option<u16>,
     pub(crate) handle: u16,
+}
+
+pub struct CharacteristicBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
+    handle: Characteristic,
+    table: &'r mut AttributeTable<'d, M, MAX>,
+}
+
+impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX> {
+    fn add_descriptor_internal(
+        &mut self,
+        uuid: Uuid,
+        props: CharacteristicProps,
+        data: AttributeData<'d>,
+    ) -> DescriptorHandle {
+        let handle = self.table.handle;
+        self.table.push(Attribute {
+            uuid,
+            handle: 0,
+            last_handle_in_group: 0,
+            data,
+        });
+
+        DescriptorHandle { handle }
+    }
+
+    pub fn add_descriptor<U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        props: &[CharacteristicProp],
+        data: &'d mut [u8],
+    ) -> DescriptorHandle {
+        let props = props.into();
+        self.add_descriptor_internal(uuid.into(), props, AttributeData::Data { props, value: data })
+    }
+
+    pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> DescriptorHandle {
+        let props = [CharacteristicProp::Read].into();
+        self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
+    }
+
+    pub fn build(self) -> Characteristic {
+        self.handle
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
