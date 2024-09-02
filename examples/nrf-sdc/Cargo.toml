@@ -14,7 +14,7 @@ embassy-sync = { version = "0.6", features = ["defmt"] }
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
 nrf-sdc = { version = "0.1.0", default-features = false, features = ["defmt", "nrf52840", "peripheral", "central"] }
 nrf-mpsl = { version = "0.1.0", default-features = false, features = ["defmt", "critical-section-impl"] }
-bt-hci = { version = "0.1.0", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.1.1", default-features = false, features = ["defmt"] }
 trouble-host = { version = "0.1.0", path = "../../host", features = ["defmt", "gatt"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 
