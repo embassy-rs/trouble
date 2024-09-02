@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 trouble-host = { version = "0.1.0", path = "../../host", features = ["gatt"] }
-bt-hci = { version = "0.1.0" }
+bt-hci = { version = "0.1.1" }
 embassy-executor    = { version = "0.6.0" }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.6" }

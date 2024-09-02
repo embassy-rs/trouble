@@ -91,9 +91,9 @@ checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
 
 [[package]]
 name = "bt-hci"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "499d74e90e6b1e61660adc8fb5f17aeac9487bced16f57c1f91a8783736ada53"
+checksum = "57a6508c63d7d137e8188833d9ed3ca97e40d676cf5217874c8c1c24851b012d"
 dependencies = [
  "defmt",
  "embassy-sync",
