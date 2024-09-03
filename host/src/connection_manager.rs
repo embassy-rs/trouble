@@ -10,7 +10,8 @@ use crate::Error;
 
 struct State<'d> {
     connections: &'d mut [ConnectionStorage],
-    accept_waker: WakerRegistration,
+    central_waker: WakerRegistration,
+    peripheral_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
     default_link_credits: usize,
     default_att_mtu: u16,
@@ -43,7 +44,8 @@ impl<'d> ConnectionManager<'d> {
         Self {
             state: RefCell::new(State {
                 connections,
-                accept_waker: WakerRegistration::new(),
+                central_waker: WakerRegistration::new(),
+                peripheral_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
                 default_link_credits: 0,
                 default_att_mtu: 23,
@@ -188,7 +190,14 @@ impl<'d> ConnectionManager<'d> {
                 storage.peer_addr_kind.replace(peer_addr_kind);
                 storage.peer_addr.replace(peer_addr);
                 storage.role.replace(role);
-                state.accept_waker.wake();
+                match role {
+                    LeConnRole::Central => {
+                        state.central_waker.wake();
+                    }
+                    LeConnRole::Peripheral => {
+                        state.peripheral_waker.wake();
+                    }
+                }
                 return Ok(());
             }
         }
@@ -204,7 +213,14 @@ impl<'d> ConnectionManager<'d> {
     ) -> Poll<Connection<'_>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
-            state.accept_waker.register(cx.waker());
+            match role {
+                LeConnRole::Central => {
+                    state.central_waker.register(cx.waker());
+                }
+                LeConnRole::Peripheral => {
+                    state.peripheral_waker.register(cx.waker());
+                }
+            }
         }
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if let ConnectionState::Connecting = storage.state {
@@ -274,7 +290,7 @@ impl<'d> ConnectionManager<'d> {
     }
 
     pub(crate) async fn accept(&self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> Connection<'_> {
-        poll_fn(move |cx| self.poll_accept(role, peers, Some(cx))).await
+        poll_fn(|cx| self.poll_accept(role, peers, Some(cx))).await
     }
 
     pub(crate) fn set_link_credits(&self, credits: usize) {
