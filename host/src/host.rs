@@ -100,7 +100,7 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
 pub struct BleHost<'d, T> {
     address: Option<Address>,
     initialized: OnceLock<()>,
-    metrics: RefCell<Metrics>,
+    metrics: RefCell<HostMetrics>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
@@ -210,11 +210,12 @@ impl<'d> AdvState<'d> {
     }
 }
 
-#[derive(Default)]
-struct Metrics {
-    connect_events: u32,
-    disconnect_events: u32,
-    rx_errors: u32,
+/// Host metrics
+#[derive(Default, Clone)]
+pub struct HostMetrics {
+    pub connect_events: u32,
+    pub disconnect_events: u32,
+    pub rx_errors: u32,
 }
 
 impl<'d, T> BleHost<'d, T>
@@ -232,7 +233,7 @@ where
         Self {
             address: None,
             initialized: OnceLock::new(),
-            metrics: RefCell::new(Metrics::default()),
+            metrics: RefCell::new(HostMetrics::default()),
             controller,
             connections: ConnectionManager::new(&mut host_resources.connections[..]),
             reassembly: PacketReassembly::new(&mut host_resources.sar[..]),
@@ -1283,6 +1284,12 @@ where
             handle,
             grant,
         })
+    }
+
+    /// Read current host metrics
+    pub fn metrics(&self) -> HostMetrics {
+        let m = self.metrics.borrow_mut().clone();
+        m
     }
 
     /// Log status information of the host
