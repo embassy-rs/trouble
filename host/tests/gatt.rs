@@ -7,6 +7,7 @@ use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, 
 use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
 use trouble_host::connection::ConnectConfig;
 use trouble_host::gatt::GattEvent;
+use trouble_host::packet_pool::PacketPool;
 use trouble_host::scan::ScanConfig;
 use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
 
@@ -138,6 +139,8 @@ async fn gatt_client_server() {
         let controller_central = common::create_controller(&central).await;
         static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27>> = StaticCell::new();
         let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::None));
+        static PACKET_POOL: StaticCell<PacketPool<NoopRawMutex, 24, 64, 1>> = StaticCell::new();
+        let packet_pool = PACKET_POOL.init(PacketPool::new(PacketQos::None));
 
         let adapter: BleHost<'_, _> = BleHost::new(controller_central, host_resources);
 
@@ -161,7 +164,7 @@ async fn gatt_client_server() {
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
                 println!("[central] creating gatt client");
-                let mut client = adapter.gatt_client::<10, 128>(&conn).await.unwrap();
+                let mut client = adapter.gatt_client::<10, 128, 10, 24>(&conn, packet_pool).await.unwrap();
 
                 println!("[central] discovering services");
                 let services = client.services_by_uuid(&SERVICE_UUID).await.unwrap();

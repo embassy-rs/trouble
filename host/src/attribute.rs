@@ -5,7 +5,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
 use crate::att::AttErrorCode;
-use crate::cursor::WriteCursor;
+use crate::cursor::{ReadCursor, WriteCursor};
 pub use crate::types::uuid::Uuid;
 use crate::Error;
 
@@ -210,6 +210,15 @@ impl<'d> AttributeData<'d> {
             }
             _ => Err(AttErrorCode::WriteNotPermitted),
         }
+    }
+
+    pub fn decode_declaration(data: &[u8]) -> Result<Self, Error> {
+        let mut r = ReadCursor::new(data);
+        Ok(Self::Declaration {
+            props: CharacteristicProps(r.read()?),
+            handle: r.read()?,
+            uuid: Uuid::from_slice(r.remaining()),
+        })
     }
 }
 
@@ -614,7 +623,7 @@ impl<const T: usize> From<[CharacteristicProp; T]> for CharacteristicProps {
 }
 
 impl CharacteristicProps {
-    fn any(&self, props: &[CharacteristicProp]) -> bool {
+    pub fn any(&self, props: &[CharacteristicProp]) -> bool {
         for p in props {
             if (*p as u8) & self.0 != 0 {
                 return true;
@@ -629,3 +638,32 @@ pub struct AttributeValue<'d, M: RawMutex> {
 }
 
 impl<'d, M: RawMutex> AttributeValue<'d, M> {}
+
+#[derive(Clone, Copy)]
+pub enum CCCDFlag {
+    Notify = 0x1,
+    Indicate = 0x2,
+}
+
+pub struct CCCD(pub(crate) u16);
+
+impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
+    fn from(props: [CCCDFlag; T]) -> Self {
+        let mut val: u16 = 0;
+        for prop in props {
+            val |= prop as u16;
+        }
+        CCCD(val)
+    }
+}
+
+impl CCCD {
+    pub fn any(&self, props: &[CCCDFlag]) -> bool {
+        for p in props {
+            if (*p as u16) & self.0 != 0 {
+                return true;
+            }
+        }
+        false
+    }
+}

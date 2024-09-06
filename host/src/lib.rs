@@ -23,7 +23,7 @@ mod command;
 pub mod config;
 mod connection_manager;
 mod cursor;
-mod packet_pool;
+pub mod packet_pool;
 mod pdu;
 pub mod types;
 
