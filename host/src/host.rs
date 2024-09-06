@@ -937,7 +937,7 @@ where
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
-                    return Err(e.into());
+                    return Err(e);
                 }
             },
             chan => {
@@ -1076,7 +1076,7 @@ where
                     }
                     Either4::Third(_) => {
                         // trace!("[host] cancelling create connection");
-                        if let Err(_) = self.command(LeCreateConnCancel::new()).await {
+                        if self.command(LeCreateConnCancel::new()).await.is_err() {
                             // Signal to ensure no one is stuck
                             self.connect_command_state.canceled();
                         }
@@ -1221,12 +1221,10 @@ where
                             let handle = e.handle;
                             if let Err(e) = e.status.to_result() {
                                 info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
+                            } else if let Err(e) = e.reason.to_result() {
+                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
                             } else {
-                                if let Err(e) = e.reason.to_result() {
-                                    info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
-                                } else {
-                                    info!("[host] disconnection event on handle {}", handle.raw());
-                                }
+                                info!("[host] disconnection event on handle {}", handle.raw());
                             }
                             let _ = self.connections.disconnected(handle);
                             let _ = self.channels.disconnected(handle);
