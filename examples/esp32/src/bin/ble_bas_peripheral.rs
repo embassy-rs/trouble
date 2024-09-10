@@ -5,9 +5,9 @@ use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
 use esp_backtrace as _;
 use esp_hal::prelude::*;
+use esp_hal::timer::timg::TimerGroup;
 use esp_wifi::ble::controller::asynch::BleConnector;
 use trouble_example_apps::ble_bas_peripheral;
-use esp_hal::timer::timg::TimerGroup;
 
 #[esp_hal_embassy::main]
 async fn main(_s: Spawner) {
@@ -27,8 +27,8 @@ async fn main(_s: Spawner) {
     )
     .unwrap();
 
-    let systimer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER)
-        .split::<esp_hal::timer::systimer::Target>();
+    let systimer =
+        esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).split::<esp_hal::timer::systimer::Target>();
     esp_hal_embassy::init(systimer.alarm0);
 
     let mut bluetooth = peripherals.BT;
