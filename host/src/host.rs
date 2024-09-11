@@ -760,10 +760,18 @@ where
 
     /// Creates a GATT client capable of processing the GATT protocol using the provided table of attributes.
     #[cfg(feature = "gatt")]
-    pub async fn gatt_client<'reference, const MAX: usize, const L2CAP_MTU: usize>(
+    pub async fn gatt_client<
+        'reference,
+        const MAX_SERVICES: usize,
+        const MAX_NOTIF: usize,
+        const NOTIF_QSIZE: usize,
+        const L2CAP_MTU: usize,
+    >(
         &'reference self,
         connection: &Connection<'reference>,
-    ) -> Result<GattClient<'reference, 'd, T, MAX, L2CAP_MTU>, BleHostError<T::Error>> {
+        notification_pool: &'static dyn GlobalPacketPool,
+    ) -> Result<GattClient<'reference, 'd, T, MAX_SERVICES, MAX_NOTIF, NOTIF_QSIZE, L2CAP_MTU>, BleHostError<T::Error>>
+    {
         let l2cap = L2capHeader { channel: 4, length: 3 };
         let mut buf = [0; 7];
         let mut w = WriteCursor::new(&mut buf);
@@ -777,10 +785,16 @@ where
         grant.send(w.finish()).await?;
 
         Ok(GattClient {
-            services: heapless::Vec::new(),
+            known_services: RefCell::new(heapless::Vec::new()),
             rx: self.att_inbound.receiver().into(),
             ble: self,
             connection: connection.clone(),
+
+            request_channel: Channel::new(),
+
+            notification_pool,
+            notification_map: RefCell::new([const { None }; MAX_NOTIF]),
+            notification_channels: [const { Channel::new() }; MAX_NOTIF],
         })
     }
 
@@ -923,7 +937,7 @@ where
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
-                    return Err(e.into());
+                    return Err(e);
                 }
             },
             chan => {
@@ -1062,7 +1076,7 @@ where
                     }
                     Either4::Third(_) => {
                         // trace!("[host] cancelling create connection");
-                        if let Err(_) = self.command(LeCreateConnCancel::new()).await {
+                        if self.command(LeCreateConnCancel::new()).await.is_err() {
                             // Signal to ensure no one is stuck
                             self.connect_command_state.canceled();
                         }
@@ -1207,12 +1221,10 @@ where
                             let handle = e.handle;
                             if let Err(e) = e.status.to_result() {
                                 info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
+                            } else if let Err(e) = e.reason.to_result() {
+                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
                             } else {
-                                if let Err(e) = e.reason.to_result() {
-                                    info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
-                                } else {
-                                    info!("[host] disconnection event on handle {}", handle.raw());
-                                }
+                                info!("[host] disconnection event on handle {}", handle.raw());
                             }
                             let _ = self.connections.disconnected(handle);
                             let _ = self.channels.disconnected(handle);
