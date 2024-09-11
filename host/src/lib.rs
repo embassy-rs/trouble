@@ -30,6 +30,7 @@ pub mod types;
 pub use packet_pool::Qos as PacketQos;
 
 pub mod advertise;
+pub mod attribute;
 pub mod connection;
 pub mod l2cap;
 pub mod scan;
