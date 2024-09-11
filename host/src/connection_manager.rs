@@ -160,11 +160,9 @@ impl<'d> ConnectionManager<'d> {
     pub(crate) fn disconnected(&self, h: ConnHandle) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         for (idx, storage) in state.connections.iter_mut().enumerate() {
-            if let Some(handle) = storage.handle {
-                if handle == h && storage.state != ConnectionState::Disconnected {
-                    storage.state = ConnectionState::Disconnected;
-                    return Ok(());
-                }
+            if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
+                storage.state = ConnectionState::Disconnected;
+                return Ok(());
             }
         }
         trace!("[link][disconnect] connection handle {:?} not found", h);
