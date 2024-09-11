@@ -408,7 +408,7 @@ impl<
     ///
     /// The number of bytes copied into the provided buffer is returned.
     pub async fn read_characteristic_by_uuid(
-        &mut self,
+        &self,
         service: &ServiceHandle,
         uuid: &Uuid,
         dest: &mut [u8],
@@ -438,7 +438,7 @@ impl<
 
     /// Write to a characteristic described by a handle.
     pub async fn write_characteristic(
-        &mut self,
+        &self,
         handle: &Characteristic,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
