@@ -41,7 +41,7 @@ rand = "0.8.5"
 
 
 [features]
-defmt = [ "dep:defmt" ]
+defmt = [ "dep:defmt", "embassy-time/defmt", "bt-hci/defmt" ]
 log = [ "dep:log" ]
 gatt = []
 scan = []
