@@ -34,6 +34,9 @@ pub mod connection;
 pub mod l2cap;
 pub mod scan;
 
+#[cfg(test)]
+pub(crate) mod mock_controller;
+
 pub(crate) mod host;
 pub use host::*;
 

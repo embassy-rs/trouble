@@ -984,3 +984,32 @@ impl<'reference, 'state> Drop for CreditGrant<'reference, 'state> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use std::boxed::Box;
+
+    use super::*;
+    use crate::mock_controller::MockController;
+    use crate::packet_pool::{PacketPool, Qos};
+
+    #[test]
+    fn channel_refcount() {
+        let mut channels = [ChannelStorage::DISCONNECTED; 3];
+        let mut inbound = [PacketChannel::<1>::NEW; 3];
+        let pool: Box<PacketPool<NoopRawMutex, 27, 8, 8>> = Box::new(PacketPool::new(Qos::None));
+        let pool = Box::leak(pool);
+
+        let ble = MockController::new();
+        let mgr = ChannelManager::new(pool, &mut channels[..], &mut inbound[..]);
+
+        let conn = ConnHandle::new(0);
+        let psm = 0x1234;
+        let mtu = 64;
+        let credit_flow = 33;
+        let initial_credits = Some(1);
+        let create_fut = mgr.create(conn, psm, mtu, credit_flow, initial_credits, ble);
+    }
+}
