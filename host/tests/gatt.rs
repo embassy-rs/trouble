@@ -164,7 +164,7 @@ async fn gatt_client_server() {
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
                 println!("[central] creating gatt client");
-                let mut client = adapter.gatt_client::<10, 128, 10, 24>(&conn, packet_pool).await.unwrap();
+                let mut client = adapter.gatt_client::<20, 128, 10, 27>(&conn, packet_pool).await.unwrap();
 
                 println!("[central] discovering services");
                 let services = client.services_by_uuid(&SERVICE_UUID).await.unwrap();
