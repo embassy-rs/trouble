@@ -164,27 +164,38 @@ async fn gatt_client_server() {
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
                 println!("[central] creating gatt client");
-                let mut client = adapter.gatt_client::<10, 128, 10, 24>(&conn, packet_pool).await.unwrap();
+                let client = adapter.gatt_client::<10, 128, 10, 27>(&conn, packet_pool).await.unwrap();
 
-                println!("[central] discovering services");
-                let services = client.services_by_uuid(&SERVICE_UUID).await.unwrap();
+                select! {
+                    r = async {
+                        client.task().await
+                    } => {
+                        r
+                    }
+                    r = async {
+                        println!("[central] discovering services");
+                        let services = client.services_by_uuid(&SERVICE_UUID).await.unwrap();
 
-                let service = services.first().unwrap().clone();
+                        let service = services.first().unwrap().clone();
 
-                println!("[central] service discovered successfully");
-                let c = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
+                        println!("[central] service discovered successfully");
+                        let c = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
 
-                let mut data = [0; 1];
-                client.read_characteristic(&c, &mut data[..]).await.unwrap();
-                println!("[central] read value: {}", data[0]);
-                data[0] = data[0].wrapping_add(1);
-                println!("[central] write value: {}", data[0]);
-                client.write_characteristic(&c, &data[..]).await.unwrap();
-                data[0] = data[0].wrapping_add(1);
-                println!("[central] write value: {}", data[0]);
-                client.write_characteristic(&c, &data[..]).await.unwrap();
-                println!("[central] write done");
-                Ok(())
+                        let mut data = [0; 1];
+                        client.read_characteristic(&c, &mut data[..]).await.unwrap();
+                        println!("[central] read value: {}", data[0]);
+                        data[0] = data[0].wrapping_add(1);
+                        println!("[central] write value: {}", data[0]);
+                        client.write_characteristic(&c, &data[..]).await.unwrap();
+                        data[0] = data[0].wrapping_add(1);
+                        println!("[central] write value: {}", data[0]);
+                        client.write_characteristic(&c, &data[..]).await.unwrap();
+                        println!("[central] write done");
+                        Ok(())
+                    } => {
+                        r
+                    }
+                }
             } => {
                 r
             }
