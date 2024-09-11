@@ -169,6 +169,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         // Wait until we find a channel for our connection in the connecting state matching our PSM.
         let (channel, req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
+            state.accept_waker.register(cx.waker());
             for (idx, chan) in state.channels.iter_mut().enumerate() {
                 match chan.state {
                     ChannelState::PeerConnecting(req_id) if chan.conn == Some(conn) && psm.contains(&chan.psm) => {
@@ -197,7 +198,6 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                     _ => {}
                 }
             }
-            state.accept_waker.register(cx.waker());
             Poll::Pending
         })
         .await;
@@ -258,28 +258,45 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         hci.signal(req_id, &command, &mut tx[..]).await?;
 
         // Wait until a response is accepted.
-        poll_fn(|cx| {
-            let mut state = self.state.borrow_mut();
+        poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))).await
+    }
+
+    fn poll_created<T: Controller>(
+        &self,
+        conn: ConnHandle,
+        idx: ChannelIndex,
+        ble: &BleHost<'_, T>,
+        cx: Option<&mut Context<'_>>,
+    ) -> Poll<Result<L2capChannel<'_>, BleHostError<T::Error>>> {
+        let mut state = self.state.borrow_mut();
+        if let Some(cx) = cx {
             state.create_waker.register(cx.waker());
-            let storage = &mut state.channels[idx.0 as usize];
-            match storage.state {
-                ChannelState::Disconnecting | ChannelState::PeerDisconnecting => {
-                    return Poll::Ready(Err(Error::Disconnected.into()));
-                }
-                ChannelState::Connected => {
-                    if storage.refcount != 0 {
-                        state.print(true);
-                        panic!("unexpected refcount");
-                    }
-                    assert_eq!(storage.refcount, 0);
-                    state.inc_ref(idx);
-                    return Poll::Ready(Ok(L2capChannel::new(idx, self)));
-                }
-                _ => {}
+        }
+        let storage = &mut state.channels[idx.0 as usize];
+        // Check if we've been disconnected while waiting
+        if !ble.connections.is_handle_connected(conn) {
+            return Poll::Ready(Err(Error::Disconnected.into()));
+        }
+
+        //// Make sure something hasn't gone wrong
+        assert_eq!(Some(conn), storage.conn);
+
+        match storage.state {
+            ChannelState::Disconnecting | ChannelState::PeerDisconnecting => {
+                return Poll::Ready(Err(Error::Disconnected.into()));
             }
-            Poll::Pending
-        })
-        .await
+            ChannelState::Connected => {
+                if storage.refcount != 0 {
+                    state.print(true);
+                    panic!("unexpected refcount");
+                }
+                assert_eq!(storage.refcount, 0);
+                state.inc_ref(idx);
+                return Poll::Ready(Ok(L2capChannel::new(idx, self)));
+            }
+            _ => {}
+        }
+        Poll::Pending
     }
 
     /// Dispatch an incoming L2CAP packet to the appropriate channel.
@@ -982,5 +999,51 @@ impl<'reference, 'state> Drop for CreditGrant<'reference, 'state> {
             // make it an assert?
             //        warn!("[l2cap][credit grant drop] channel {} not found", self.index);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use std::boxed::Box;
+
+    use bt_hci::param::{AddrKind, BdAddr, LeConnRole};
+
+    use super::*;
+    use crate::mock_controller::MockController;
+    use crate::packet_pool::Qos;
+    use crate::BleHostResources;
+
+    #[test]
+    fn channel_refcount() {
+        let resources: Box<BleHostResources<2, 2, 27>> = Box::new(BleHostResources::new(Qos::None));
+        let resources = Box::leak(resources);
+
+        let ble = MockController::new();
+        let ble = BleHost::new(ble, resources);
+
+        let conn = ConnHandle::new(33);
+        ble.connections
+            .connect(conn, AddrKind::PUBLIC, BdAddr::new([0; 6]), LeConnRole::Central)
+            .unwrap();
+        let idx = ble
+            .channels
+            .alloc(conn, |storage| {
+                storage.state = ChannelState::Connecting(42);
+            })
+            .unwrap();
+
+        let chan = ble.channels.poll_created(conn, idx, &ble, None);
+        assert!(matches!(chan, Poll::Pending));
+
+        ble.connections.disconnected(conn).unwrap();
+        ble.channels.disconnected(conn).unwrap();
+
+        let chan = ble.channels.poll_created(conn, idx, &ble, None);
+        assert!(matches!(
+            chan,
+            Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
+        ));
     }
 }
