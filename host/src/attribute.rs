@@ -391,6 +391,11 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                                 handle,
                                 cccd_handle: Some(next.handle),
                             });
+                        } else {
+                            return Ok(Characteristic {
+                                handle,
+                                cccd_handle: None,
+                            });
                         }
                     } else {
                         return Ok(Characteristic {
