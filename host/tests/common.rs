@@ -6,6 +6,11 @@ use tokio::io::{ReadHalf, WriteHalf};
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 
+pub type Controller = ExternalController<
+    SerialTransport<NoopRawMutex, FromTokio<ReadHalf<SerialStream>>, FromTokio<WriteHalf<SerialStream>>>,
+    10,
+>;
+
 #[allow(unused)]
 pub(crate) async fn create_controller(
     port: &str,

@@ -1,15 +1,8 @@
 use std::time::Duration;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use static_cell::StaticCell;
 use tokio::select;
-use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
-use trouble_host::attribute::{AttributeTable, CharacteristicProp, Service, Uuid};
-use trouble_host::connection::ConnectConfig;
-use trouble_host::gatt::GattEvent;
-use trouble_host::packet_pool::PacketPool;
-use trouble_host::scan::ScanConfig;
-use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
+use trouble_host::prelude::*;
 
 mod common;
 
@@ -37,11 +30,10 @@ async fn gatt_client_server() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
-        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27>> = StaticCell::new();
-        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::None));
-        let mut adapter: BleHost<'_, _> = BleHost::new(controller_peripheral, host_resources);
-
-        adapter.set_random_address(peripheral_address);
+        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new(PacketQos::None);
+        let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
+            .set_random_address(peripheral_address)
+            .build();
         let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
         let id = b"Trouble";
@@ -65,10 +57,9 @@ async fn gatt_client_server() {
                 &mut value)
             .build();
 
-        let server = adapter.gatt_server::<NoopRawMutex, 10, 27>(&table);
-
+        let server = GattServer::<NoopRawMutex, 10, 27>::new(stack, &table);
         select! {
-            r = adapter.run() => {
+            r = runner.run() => {
                 r
             }
             r = async {
@@ -117,7 +108,7 @@ async fn gatt_client_server() {
 
                 loop {
                     println!("[peripheral] advertising");
-                    let mut acceptor = adapter.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                    let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
@@ -137,15 +128,14 @@ async fn gatt_client_server() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = common::create_controller(&central).await;
-        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27>> = StaticCell::new();
-        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::None));
-        static PACKET_POOL: StaticCell<PacketPool<NoopRawMutex, 24, 64, 1>> = StaticCell::new();
-        let packet_pool = PACKET_POOL.init(PacketPool::new(PacketQos::None));
+        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
+            HostResources::new(PacketQos::None);
+        let (stack, _peripheral, mut central, mut runner) = trouble_host::new(controller_central, &mut resources).build();
 
-        let adapter: BleHost<'_, _> = BleHost::new(controller_central, host_resources);
+        let packet_pool: PacketPool<NoopRawMutex, 24, 64, 1> = PacketPool::new(PacketQos::None);
 
         select! {
-            r = adapter.run() => {
+            r = runner.run() => {
                 r
             }
             r = async {
@@ -159,12 +149,12 @@ async fn gatt_client_server() {
                 };
 
                 println!("[central] connecting");
-                let conn = adapter.connect(&config).await.unwrap();
+                let conn = central.connect(&config).await.unwrap();
                 println!("[central] connected");
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
                 println!("[central] creating gatt client");
-                let client = adapter.gatt_client::<10, 128, 10, 27>(&conn, packet_pool).await.unwrap();
+                let client = GattClient::<common::Controller, 10, 128, 10, 27>::new(stack, &conn, &packet_pool).await.unwrap();
 
                 select! {
                     r = async {

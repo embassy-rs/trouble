@@ -56,6 +56,12 @@ pub enum Qos {
     None,
 }
 
+impl Default for Qos {
+    fn default() -> Self {
+        Qos::None
+    }
+}
+
 struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
     packets: UnsafeCell<[PacketBuf<MTU>; N]>,
     usage: RefCell<[usize; CLIENTS]>,
@@ -156,7 +162,7 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
         }
     }
 
-    fn alloc(&'static self, id: AllocId) -> Option<Packet> {
+    fn alloc(&self, id: AllocId) -> Option<Packet> {
         self.state.lock(|state| {
             let available = state.available(self.qos, id);
             if available == 0 {
@@ -186,18 +192,18 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
     }
 }
 
-pub trait GlobalPacketPool {
-    fn alloc(&'static self, id: AllocId) -> Option<Packet>;
+pub trait GlobalPacketPool<'d> {
+    fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>>;
     fn free(&self, id: AllocId, r: PacketRef);
     fn available(&self, id: AllocId) -> usize;
     fn min_available(&self, id: AllocId) -> usize;
     fn mtu(&self) -> usize;
 }
 
-impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> GlobalPacketPool
+impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> GlobalPacketPool<'d>
     for PacketPool<M, MTU, N, CLIENTS>
 {
-    fn alloc(&'static self, id: AllocId) -> Option<Packet> {
+    fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>> {
         PacketPool::alloc(self, id)
     }
 
@@ -223,13 +229,13 @@ pub struct PacketRef {
     buf: *mut [u8],
 }
 
-pub struct Packet {
+pub struct Packet<'d> {
     client: AllocId,
     p_ref: Option<PacketRef>,
-    pool: &'static dyn GlobalPacketPool,
+    pool: &'d dyn GlobalPacketPool<'d>,
 }
 
-impl Packet {
+impl Packet<'_> {
     pub fn len(&self) -> usize {
         self.as_ref().len()
     }
@@ -239,7 +245,7 @@ impl Packet {
     }
 }
 
-impl Drop for Packet {
+impl Drop for Packet<'_> {
     fn drop(&mut self) {
         if let Some(r) = self.p_ref.take() {
             self.pool.free(self.client, r);
@@ -247,14 +253,14 @@ impl Drop for Packet {
     }
 }
 
-impl AsRef<[u8]> for Packet {
+impl AsRef<[u8]> for Packet<'_> {
     fn as_ref(&self) -> &[u8] {
         let p = self.p_ref.as_ref().unwrap();
         unsafe { &(*p.buf)[..] }
     }
 }
 
-impl AsMut<[u8]> for Packet {
+impl AsMut<[u8]> for Packet<'_> {
     fn as_mut(&mut self) -> &mut [u8] {
         let p = self.p_ref.as_mut().unwrap();
         unsafe { &mut (*p.buf)[..] }

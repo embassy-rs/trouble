@@ -1,11 +1,7 @@
 use embassy_futures::join::join3;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
-use static_cell::StaticCell;
-use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
-use trouble_host::attribute::{AttributeTable, Characteristic, CharacteristicProp, Service, Uuid};
-use trouble_host::gatt::{GattEvent, GattServer};
-use trouble_host::{Address, BleHost, BleHostError, BleHostResources, Controller, PacketQos};
+use trouble_host::prelude::*;
 
 /// Size of L2CAP packets (ATT MTU is this - 4)
 const L2CAP_MTU: usize = 251;
@@ -18,20 +14,19 @@ const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
 const MAX_ATTRIBUTES: usize = 10;
 
+type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
+
 pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
-    static HOST_RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>> =
-        StaticCell::new();
-    let resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
-
-    let mut ble: BleHost<'_, _> = BleHost::new(controller, resources);
-
-    //let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     let address = Address::random([0x41, 0x5A, 0xE3, 0x1E, 0x83, 0xE7]);
     info!("Our address = {:?}", address);
-    ble.set_random_address(address);
+
+    let mut resources = Resources::new(PacketQos::None);
+    let (stack, peripheral, _, runner) = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .build();
 
     let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
 
@@ -57,19 +52,19 @@ where
         )
         .build();
 
-    let server = ble.gatt_server::<NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>(&table);
+    let server = GattServer::<NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>::new(stack, &table);
 
     info!("Starting advertising and GATT service");
     let _ = join3(
-        ble_task(&ble),
+        ble_task(runner),
         gatt_task(&server, &table),
-        advertise_task(&ble, &server, level_handle),
+        advertise_task(stack, peripheral, &server, level_handle),
     )
     .await;
 }
 
-async fn ble_task<C: Controller>(ble: &BleHost<'_, C>) -> Result<(), BleHostError<C::Error>> {
-    ble.run().await
+async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHostError<C::Error>> {
+    runner.run().await
 }
 
 async fn gatt_task(
@@ -94,7 +89,8 @@ async fn gatt_task(
 }
 
 async fn advertise_task<C: Controller>(
-    ble: &BleHost<'_, C>,
+    stack: Stack<'_, C>,
+    mut peripheral: Peripheral<'_, C>,
     server: &GattServer<'_, '_, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
     handle: Characteristic,
 ) -> Result<(), BleHostError<C::Error>> {
@@ -109,7 +105,7 @@ async fn advertise_task<C: Controller>(
     )?;
     loop {
         info!("[adv] advertising");
-        let mut advertiser = ble
+        let mut advertiser = peripheral
             .advertise(
                 &Default::default(),
                 Advertisement::ConnectableScannableUndirected {
@@ -126,7 +122,7 @@ async fn advertise_task<C: Controller>(
             Timer::after(Duration::from_secs(2)).await;
             tick = tick.wrapping_add(1);
             info!("[adv] notifying connection of tick {}", tick);
-            let _ = server.notify(ble, handle, &conn, &[tick]).await;
+            let _ = server.notify(stack, handle, &conn, &[tick]).await;
         }
     }
 }

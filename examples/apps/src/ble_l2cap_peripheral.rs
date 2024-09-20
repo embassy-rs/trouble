@@ -1,9 +1,6 @@
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
-use static_cell::StaticCell;
-use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
-use trouble_host::l2cap::L2capChannel;
-use trouble_host::{Address, BleHost, BleHostResources, Controller, PacketQos};
+use trouble_host::prelude::*;
 
 /// How many outgoing L2CAP buffers per link
 const L2CAP_TXQ: u8 = 20;
@@ -20,19 +17,21 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
+type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
+
 pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
-    static HOST_RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>> =
-        StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
+    let mut resources = Resources::new(PacketQos::None);
 
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut ble: BleHost<'_, _> = BleHost::new(controller, host_resources);
-    ble.set_random_address(address);
+    let (stack, mut peripheral, _, mut runner) = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .build();
+
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
@@ -43,10 +42,10 @@ where
     let mut scan_data = [0; 31];
     AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
 
-    let _ = join(ble.run(), async {
+    let _ = join(runner.run(), async {
         loop {
             info!("Advertising, waiting for connection...");
-            let mut advertiser = ble
+            let mut advertiser = peripheral
                 .advertise(
                     &Default::default(),
                     Advertisement::ConnectableScannableUndirected {
@@ -60,7 +59,7 @@ where
 
             info!("Connection established");
 
-            let mut ch1 = L2capChannel::accept(&ble, &conn, &[0x2349], &Default::default())
+            let mut ch1 = L2capChannel::accept(stack, &conn, &[0x2349], &Default::default())
                 .await
                 .unwrap();
 
@@ -70,7 +69,7 @@ where
             const PAYLOAD_LEN: usize = 27;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
-                let len = ch1.receive(&ble, &mut rx).await.unwrap();
+                let len = ch1.receive(stack, &mut rx).await.unwrap();
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }
@@ -79,7 +78,7 @@ where
             Timer::after(Duration::from_secs(1)).await;
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, PAYLOAD_LEN>(&ble, &tx).await.unwrap();
+                ch1.send::<_, PAYLOAD_LEN>(stack, &tx).await.unwrap();
             }
             info!("L2CAP data echoed");
 

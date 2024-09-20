@@ -1,6 +1,9 @@
 use core::convert::Infallible;
 use core::future::Future;
 
+use bt_hci::cmd::{self, AsyncCmd, SyncCmd};
+use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
+
 pub struct MockController {}
 
 impl MockController {
@@ -76,6 +79,18 @@ impl bt_hci::controller::Controller for MockController {
         &self,
         buf: &'a mut [u8],
     ) -> impl Future<Output = Result<bt_hci::ControllerToHostPacket<'a>, Self::Error>> {
+        async { todo!() }
+    }
+}
+
+impl<C: SyncCmd> ControllerCmdSync<C> for MockController {
+    fn exec(&self, cmd: &C) -> impl Future<Output = Result<C::Return, cmd::Error<Self::Error>>> {
+        async { todo!() }
+    }
+}
+
+impl<C: AsyncCmd> ControllerCmdAsync<C> for MockController {
+    fn exec(&self, cmd: &C) -> impl Future<Output = Result<(), cmd::Error<Self::Error>>> {
         async { todo!() }
     }
 }
