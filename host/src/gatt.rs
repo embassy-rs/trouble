@@ -24,22 +24,24 @@ use crate::types::l2cap::L2capHeader;
 use crate::Stack;
 use crate::{BleHostError, Error};
 
-pub struct GattServer<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
-    pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
-    pub(crate) tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
-    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
-    pub(crate) connections: &'reference dyn DynamicConnectionManager,
+pub struct GattServer<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
+    stack: Stack<'reference, C>,
+    server: AttributeServer<'reference, 'values, M, MAX>,
+    tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
+    rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
+    connections: &'reference dyn DynamicConnectionManager,
 }
 
-impl<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
-    GattServer<'reference, 'values, M, MAX, L2CAP_MTU>
+impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
+    GattServer<'reference, 'values, C, M, MAX, L2CAP_MTU>
 {
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
-    pub fn new<C: Controller>(stack: Stack<'reference, C>, table: &'reference AttributeTable<'values, M, MAX>) -> Self {
+    pub fn new(stack: Stack<'reference, C>, table: &'reference AttributeTable<'values, M, MAX>) -> Self {
         stack.host.connections.set_default_att_mtu(L2CAP_MTU as u16 - 4);
         use crate::attribute_server::AttributeServer;
 
         Self {
+            stack,
             server: AttributeServer::new(table),
             rx: stack.host.att_inbound.receiver().into(),
             tx: stack.host.outbound.sender().into(),
@@ -116,13 +118,12 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub async fn notify<T: Controller>(
+    pub async fn notify(
         &self,
-        stack: Stack<'_, T>,
         handle: Characteristic,
         connection: &Connection<'_>,
         value: &[u8],
-    ) -> Result<(), BleHostError<T::Error>> {
+    ) -> Result<(), BleHostError<C::Error>> {
         let conn = connection.handle();
         self.server.table.set(handle, value)?;
 
@@ -143,7 +144,7 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let total = header.len() + data.len();
-        stack.host.acl(conn, 1).await?.send(&tx[..total]).await?;
+        self.stack.host.acl(conn, 1).await?.send(&tx[..total]).await?;
         Ok(())
     }
 }
