@@ -52,13 +52,13 @@ where
         )
         .build();
 
-    let server = GattServer::<NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>::new(stack, &table);
+    let server = GattServer::<C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>::new(stack, &table);
 
     info!("Starting advertising and GATT service");
     let _ = join3(
         ble_task(runner),
         gatt_task(&server, &table),
-        advertise_task(stack, peripheral, &server, level_handle),
+        advertise_task(peripheral, &server, level_handle),
     )
     .await;
 }
@@ -67,8 +67,8 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task(
-    server: &GattServer<'_, '_, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
+async fn gatt_task<C: Controller>(
+    server: &GattServer<'_, '_, C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
     table: &AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES>,
 ) {
     loop {
@@ -89,9 +89,8 @@ async fn gatt_task(
 }
 
 async fn advertise_task<C: Controller>(
-    stack: Stack<'_, C>,
     mut peripheral: Peripheral<'_, C>,
-    server: &GattServer<'_, '_, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
+    server: &GattServer<'_, '_, C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
     handle: Characteristic,
 ) -> Result<(), BleHostError<C::Error>> {
     let mut adv_data = [0; 31];
@@ -122,7 +121,7 @@ async fn advertise_task<C: Controller>(
             Timer::after(Duration::from_secs(2)).await;
             tick = tick.wrapping_add(1);
             info!("[adv] notifying connection of tick {}", tick);
-            let _ = server.notify(stack, handle, &conn, &[tick]).await;
+            let _ = server.notify(handle, &conn, &[tick]).await;
         }
     }
 }
