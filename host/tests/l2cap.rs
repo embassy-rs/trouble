@@ -1,11 +1,6 @@
-use static_cell::StaticCell;
 use tokio::select;
 use tokio::time::Duration;
-use trouble_host::advertise::{AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
-use trouble_host::connection::ConnectConfig;
-use trouble_host::l2cap::L2capChannel;
-use trouble_host::scan::ScanConfig;
-use trouble_host::{Address, BleHost, BleHostResources, PacketQos};
+use trouble_host::prelude::*;
 
 mod common;
 
@@ -30,14 +25,13 @@ async fn l2cap_connection_oriented_channels() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
-        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27>> = StaticCell::new();
-        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::None));
-        let mut adapter: BleHost<'_, _> = BleHost::new(controller_peripheral, host_resources);
-
-        adapter.set_random_address(peripheral_address);
+        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new(PacketQos::None);
+        let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
+            .set_random_address(peripheral_address)
+            .build();
 
         select! {
-            r = adapter.run() => {
+            r = runner.run() => {
                 r
             }
             r = async {
@@ -55,21 +49,21 @@ async fn l2cap_connection_oriented_channels() {
 
                 loop {
                     println!("[peripheral] advertising");
-                    let mut acceptor = adapter.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                    let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
                     let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::accept(&adapter, &conn, &[0x2349], &Default::default()).await?;
+                    let mut ch1 = L2capChannel::accept(stack, &conn, &[0x2349], &Default::default()).await?;
 
                     println!("[peripheral] channel created");
 
                     // Size of payload we're expecting
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(&adapter, &mut rx).await?;
+                        let len = ch1.receive(stack, &mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }
@@ -77,7 +71,7 @@ async fn l2cap_connection_oriented_channels() {
 
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, MTU>(&adapter, &tx).await?;
+                        ch1.send::<_, MTU>(stack, &tx).await?;
                     }
                     println!("[peripheral] data sent");
                     break;
@@ -92,13 +86,13 @@ async fn l2cap_connection_oriented_channels() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = common::create_controller(&central).await;
-        static RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27>> = StaticCell::new();
-        let host_resources = RESOURCES.init(BleHostResources::new(PacketQos::None));
-
-        let adapter: BleHost<'_, _> = BleHost::new(controller_central, host_resources);
+        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
+            HostResources::new(PacketQos::None);
+        let (stack, _peripheral, mut central, mut runner) =
+            trouble_host::new(controller_central, &mut resources).build();
 
         select! {
-            r = adapter.run() => {
+            r = runner.run() => {
                 r
             }
             r = async {
@@ -113,18 +107,18 @@ async fn l2cap_connection_oriented_channels() {
 
                 println!("[central] connecting");
                 loop {
-                    let conn = adapter.connect(&config).await.unwrap();
+                    let conn = central.connect(&config).await.unwrap();
                     println!("[central] connected");
-                    let mut ch1 = L2capChannel::create(&adapter, &conn, 0x2349, &Default::default()).await?;
+                    let mut ch1 = L2capChannel::create(stack, &conn, 0x2349, &Default::default()).await?;
                     println!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, MTU>(&adapter, &tx).await?;
+                        ch1.send::<_, MTU>(stack, &tx).await?;
                     }
                     println!("[central] data sent");
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(&adapter, &mut rx).await?;
+                        let len = ch1.receive(stack, &mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }

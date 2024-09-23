@@ -2,12 +2,7 @@ use bt_hci::cmd::le::*;
 use bt_hci::controller::ControllerCmdSync;
 use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
-use static_cell::StaticCell;
-use trouble_host::advertise::{
-    AdStructure, AdvFilterPolicy, Advertisement, AdvertisementParameters, AdvertisementSet, PhyKind, TxPower,
-    BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE,
-};
-use trouble_host::{Address, BleHost, BleHostResources, Controller, PacketQos};
+use trouble_host::prelude::*;
 
 /// Size of L2CAP packets (ATT MTU is this - 4)
 const L2CAP_MTU: usize = 27;
@@ -17,6 +12,8 @@ const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
+
+type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
 pub async fn run<C>(controller: C)
 where
@@ -29,15 +26,13 @@ where
         + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
         + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
 {
-    static HOST_RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>> =
-        StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
-
-    let mut ble: BleHost<'_, _> = BleHost::new(controller, host_resources);
-
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
-    ble.set_random_address(address);
+
+    let mut resources = Resources::new(PacketQos::None);
+    let (_, mut peripheral, _, mut runner) = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .build();
 
     let mut adv_data = [0; 31];
     let len = AdStructure::encode_slice(
@@ -88,10 +83,10 @@ where
     let mut handles = AdvertisementSet::handles(&sets);
 
     info!("Starting advertising");
-    let _ = join(ble.run(), async {
+    let _ = join(runner.run(), async {
         loop {
             let start = Instant::now();
-            let mut advertiser = ble.advertise_ext(&sets, &mut handles).await.unwrap();
+            let mut advertiser = peripheral.advertise_ext(&sets, &mut handles).await.unwrap();
             match advertiser.accept().await {
                 Ok(_) => {}
                 Err(trouble_host::Error::Timeout) => {

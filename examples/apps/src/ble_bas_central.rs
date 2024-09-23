@@ -2,11 +2,7 @@ use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use static_cell::StaticCell;
-use trouble_host::attribute::Uuid;
-use trouble_host::connection::ConnectConfig;
-use trouble_host::packet_pool::PacketPool;
-use trouble_host::scan::ScanConfig;
-use trouble_host::{Address, BleHost, BleHostResources, Controller, PacketQos};
+use trouble_host::prelude::*;
 
 /// Size of L2CAP packets
 const L2CAP_MTU: usize = 128;
@@ -17,15 +13,14 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
+type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
+
 pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
-    static HOST_RESOURCES: StaticCell<BleHostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>> =
-        StaticCell::new();
-    let host_resources = HOST_RESOURCES.init(BleHostResources::new(PacketQos::None));
-
-    let ble: BleHost<'_, _> = BleHost::new(controller, host_resources);
+    let mut resources = Resources::new(PacketQos::None);
+    let (stack, _, mut central, mut runner) = trouble_host::new(controller, &mut resources).build();
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
     // Currently it matches the address used by the peripheral examples
@@ -40,16 +35,18 @@ where
     };
 
     info!("Scanning for peripheral...");
-    let _ = join(ble.run(), async {
+    let _ = join(runner.run(), async {
         static PACKET_POOL: StaticCell<PacketPool<NoopRawMutex, 24, 64, 1>> = StaticCell::new();
         let packet_pool = PACKET_POOL.init(PacketPool::new(PacketQos::None));
 
         info!("Connecting");
 
-        let conn = ble.connect(&config).await.unwrap();
+        let conn = central.connect(&config).await.unwrap();
         info!("Connected, creating gatt client");
 
-        let client = ble.gatt_client::<10, 64, 16, 24>(&conn, packet_pool).await.unwrap();
+        let client = GattClient::<C, 10, 64, 16, 24>::new(stack, &conn, packet_pool)
+            .await
+            .unwrap();
 
         let _ = join(client.task(), async {
             info!("Looking for battery service");

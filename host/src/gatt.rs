@@ -9,6 +9,7 @@ use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
 use heapless::Vec;
 
 use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
+use crate::attribute::AttributeTable;
 use crate::attribute::{
     AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD, CHARACTERISTIC_CCCD_UUID16, CHARACTERISTIC_UUID16,
     PRIMARY_SERVICE_UUID16,
@@ -17,22 +18,35 @@ use crate::attribute_server::AttributeServer;
 use crate::connection::Connection;
 use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::host::BleHost;
 use crate::packet_pool::{GlobalPacketPool, Packet, ATT_ID};
 use crate::pdu::Pdu;
 use crate::types::l2cap::L2capHeader;
+use crate::Stack;
 use crate::{BleHostError, Error};
 
 pub struct GattServer<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
     pub(crate) server: AttributeServer<'reference, 'values, M, MAX>,
-    pub(crate) tx: DynamicSender<'reference, (ConnHandle, Pdu)>,
-    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
+    pub(crate) tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
+    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
     pub(crate) connections: &'reference dyn DynamicConnectionManager,
 }
 
 impl<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
     GattServer<'reference, 'values, M, MAX, L2CAP_MTU>
 {
+    /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
+    pub fn new<C: Controller>(stack: Stack<'reference, C>, table: &'reference AttributeTable<'values, M, MAX>) -> Self {
+        stack.host.connections.set_default_att_mtu(L2CAP_MTU as u16 - 4);
+        use crate::attribute_server::AttributeServer;
+
+        Self {
+            server: AttributeServer::new(table),
+            rx: stack.host.att_inbound.receiver().into(),
+            tx: stack.host.outbound.sender().into(),
+            connections: &stack.host.connections,
+        }
+    }
+
     /// Process GATT requests and update the attribute table accordingly.
     ///
     /// If attributes are written or read, an event will be returned describing the handle
@@ -104,7 +118,7 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
     /// If the characteristic for the handle cannot be found, an error is returned.
     pub async fn notify<T: Controller>(
         &self,
-        ble: &BleHost<'_, T>,
+        stack: Stack<'_, T>,
         handle: Characteristic,
         connection: &Connection<'_>,
         value: &[u8],
@@ -129,7 +143,7 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let total = header.len() + data.len();
-        ble.acl(conn, 1).await?.send(&tx[..total]).await?;
+        stack.host.acl(conn, 1).await?.send(&tx[..total]).await?;
         Ok(())
     }
 }
@@ -146,14 +160,14 @@ pub enum GattEvent<'reference> {
     },
 }
 
-pub struct NotificationListener<'lst> {
-    pub(crate) listener: DynamicReceiver<'lst, (u16, Packet)>,
+pub struct NotificationListener<'lst, 'data> {
+    pub(crate) listener: DynamicReceiver<'lst, (u16, Packet<'data>)>,
 }
 
-impl<'lst> NotificationListener<'lst> {
+impl<'lst, 'data> NotificationListener<'lst, 'data> {
     #[allow(clippy::should_implement_trait)]
     /// Get the next (len: u16, Packet) tuple from the rx queue
-    pub fn next(&mut self) -> impl Future<Output = (u16, Packet)> + '_ {
+    pub fn next(&mut self) -> impl Future<Output = (u16, Packet<'data>)> + '_ {
         self.listener.receive()
     }
 }
@@ -161,19 +175,18 @@ impl<'lst> NotificationListener<'lst> {
 pub struct NotificationManager<
     'mgr,
     E,
-    C: Client<E>,
+    C: Client<'mgr, E>,
     const MAX_NOTIF: usize,
     const NOTIF_QSIZE: usize,
     const ATT_MTU: usize,
 > {
     pub(crate) client: &'mgr C,
-    pub(crate) rx: DynamicReceiver<'mgr, (ConnHandle, Pdu)>,
+    pub(crate) rx: DynamicReceiver<'mgr, (ConnHandle, Pdu<'mgr>)>,
     _e: PhantomData<E>,
 }
 
 pub struct GattClient<
     'reference,
-    'resources,
     T: Controller,
     const MAX_SERVICES: usize,
     const MAX_NOTIF: usize,
@@ -181,14 +194,14 @@ pub struct GattClient<
     const L2CAP_MTU: usize = 27,
 > {
     pub(crate) known_services: RefCell<Vec<ServiceHandle, MAX_SERVICES>>,
-    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
-    pub(crate) ble: &'reference BleHost<'resources, T>,
+    pub(crate) rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
+    pub(crate) stack: Stack<'reference, T>,
     pub(crate) connection: Connection<'reference>,
-    pub(crate) request_channel: Channel<NoopRawMutex, (ConnHandle, Pdu), NOTIF_QSIZE>,
+    pub(crate) request_channel: Channel<NoopRawMutex, (ConnHandle, Pdu<'reference>), NOTIF_QSIZE>,
 
-    pub(crate) notification_pool: &'static dyn GlobalPacketPool,
+    pub(crate) notification_pool: &'reference dyn GlobalPacketPool<'reference>,
     pub(crate) notification_map: RefCell<[Option<u16>; MAX_NOTIF]>,
-    pub(crate) notification_channels: [Channel<NoopRawMutex, (u16, Packet), NOTIF_QSIZE>; MAX_NOTIF],
+    pub(crate) notification_channels: [Channel<NoopRawMutex, (u16, Packet<'reference>), NOTIF_QSIZE>; MAX_NOTIF],
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -199,21 +212,20 @@ pub struct ServiceHandle {
     uuid: Uuid,
 }
 
-pub trait Client<E> {
-    fn request(&self, req: AttReq<'_>) -> impl Future<Output = Result<Pdu, BleHostError<E>>>;
+pub trait Client<'d, E> {
+    fn request(&self, req: AttReq<'_>) -> impl Future<Output = Result<Pdu<'d>, BleHostError<E>>>;
 }
 
 impl<
         'reference,
-        'resources,
         T: Controller,
         const MAX_SERVICES: usize,
         const MAX_NOTIF: usize,
         const NOTIF_QSIZE: usize,
         const L2CAP_MTU: usize,
-    > Client<T::Error> for GattClient<'reference, 'resources, T, MAX_SERVICES, MAX_NOTIF, NOTIF_QSIZE, L2CAP_MTU>
+    > Client<'reference, T::Error> for GattClient<'reference, T, MAX_SERVICES, MAX_NOTIF, NOTIF_QSIZE, L2CAP_MTU>
 {
-    async fn request(&self, req: AttReq<'_>) -> Result<Pdu, BleHostError<T::Error>> {
+    async fn request(&self, req: AttReq<'_>) -> Result<Pdu<'reference>, BleHostError<T::Error>> {
         let header = L2capHeader {
             channel: crate::types::l2cap::L2CAP_CID_ATT,
             length: req.size() as u16,
@@ -224,7 +236,7 @@ impl<
         w.write_hci(&header)?;
         w.write(req)?;
 
-        let mut grant = self.ble.acl(self.connection.handle(), 1).await?;
+        let mut grant = self.stack.host.acl(self.connection.handle(), 1).await?;
         grant.send(w.finish()).await?;
 
         let (h, pdu) = self.request_channel.receive().await;
@@ -236,14 +248,46 @@ impl<
 
 impl<
         'reference,
-        'resources,
         T: Controller,
         const MAX_SERVICES: usize,
         const MAX_NOTIF: usize,
         const NOTIF_QSIZE: usize,
         const L2CAP_MTU: usize,
-    > GattClient<'reference, 'resources, T, MAX_SERVICES, MAX_NOTIF, NOTIF_QSIZE, L2CAP_MTU>
+    > GattClient<'reference, T, MAX_SERVICES, MAX_NOTIF, NOTIF_QSIZE, L2CAP_MTU>
 {
+    /// Creates a GATT client capable of processing the GATT protocol using the provided table of attributes.
+    pub async fn new(
+        stack: Stack<'reference, T>,
+        connection: &Connection<'reference>,
+        notification_pool: &'reference dyn GlobalPacketPool<'reference>,
+    ) -> Result<GattClient<'reference, T, MAX_SERVICES, MAX_NOTIF, NOTIF_QSIZE, L2CAP_MTU>, BleHostError<T::Error>>
+    {
+        let l2cap = L2capHeader { channel: 4, length: 3 };
+        let mut buf = [0; 7];
+        let mut w = WriteCursor::new(&mut buf);
+        w.write_hci(&l2cap)?;
+        w.write(att::AttReq::ExchangeMtu {
+            mtu: L2CAP_MTU as u16 - 4,
+        })?;
+
+        let mut grant = stack.host.acl(connection.handle(), 1).await?;
+
+        grant.send(w.finish()).await?;
+
+        Ok(Self {
+            known_services: RefCell::new(heapless::Vec::new()),
+            rx: stack.host.att_inbound.receiver().into(),
+            stack,
+            connection: connection.clone(),
+
+            request_channel: Channel::new(),
+
+            notification_pool,
+            notification_map: RefCell::new([const { None }; MAX_NOTIF]),
+            notification_channels: [const { Channel::new() }; MAX_NOTIF],
+        })
+    }
+
     /// Discover primary services associated with a UUID.
     pub async fn services_by_uuid(
         &self,
@@ -462,7 +506,7 @@ impl<
         &self,
         characteristic: &Characteristic,
         indication: bool,
-    ) -> Result<NotificationListener, BleHostError<T::Error>> {
+    ) -> Result<NotificationListener<'_, 'reference>, BleHostError<T::Error>> {
         let properties = u16::to_le_bytes(if indication { 0x02 } else { 0x01 });
 
         let data = att::AttReq::Write {
@@ -518,7 +562,7 @@ impl<
         Ok(())
     }
 
-    pub async fn handle_notification_packet(&'reference self, data: &[u8]) -> Result<(), BleHostError<T::Error>> {
+    pub async fn handle_notification_packet(&self, data: &[u8]) -> Result<(), BleHostError<T::Error>> {
         let mut r = ReadCursor::new(data);
         let value_handle: u16 = r.read()?;
         let value_attr = r.remaining();

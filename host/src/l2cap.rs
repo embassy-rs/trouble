@@ -4,8 +4,8 @@ use bt_hci::controller::{blocking, Controller};
 pub use crate::channel_manager::CreditFlowPolicy;
 use crate::channel_manager::{ChannelIndex, DynamicChannelManager};
 use crate::connection::Connection;
-use crate::host::BleHost;
 use crate::BleHostError;
+use crate::Stack;
 
 pub(crate) mod sar;
 
@@ -74,11 +74,15 @@ impl<'d> L2capChannel<'d> {
     /// If there are no available credits to send, waits until more credits are available.
     pub async fn send<T: Controller, const TX_MTU: usize>(
         &mut self,
-        ble: &BleHost<'_, T>,
+        stack: Stack<'_, T>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = [0u8; TX_MTU];
-        ble.channels.send(self.index, buf, &mut p_buf[..], ble).await
+        stack
+            .host
+            .channels
+            .send(self.index, buf, &mut p_buf[..], stack.host)
+            .await
     }
 
     /// Send the provided buffer over this l2cap channel.
@@ -89,11 +93,14 @@ impl<'d> L2capChannel<'d> {
     /// If there are no available credits to send, returns Error::Busy.
     pub fn try_send<T: Controller + blocking::Controller, const TX_MTU: usize>(
         &mut self,
-        ble: &BleHost<'_, T>,
+        stack: Stack<'_, T>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = [0u8; TX_MTU];
-        ble.channels.try_send(self.index, buf, &mut p_buf[..], ble)
+        stack
+            .host
+            .channels
+            .try_send(self.index, buf, &mut p_buf[..], stack.host)
     }
 
     /// Receive data on this channel and copy it into the buffer.
@@ -101,41 +108,52 @@ impl<'d> L2capChannel<'d> {
     /// The length provided buffer slice must be equal or greater to the agreed MTU.
     pub async fn receive<T: Controller>(
         &mut self,
-        ble: &BleHost<'_, T>,
+        stack: Stack<'_, T>,
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
-        ble.channels.receive(self.index, buf, ble).await
+        stack.host.channels.receive(self.index, buf, stack.host).await
     }
 
     /// Await an incoming connection request matching the list of PSM.
     pub async fn accept<T: Controller>(
-        ble: &'d BleHost<'_, T>,
+        stack: Stack<'d, T>,
         connection: &Connection<'_>,
         psm: &[u16],
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>> {
         let handle = connection.handle();
-        ble.channels
-            .accept(handle, psm, config.mtu, config.flow_policy, config.initial_credits, ble)
+        stack
+            .host
+            .channels
+            .accept(
+                handle,
+                psm,
+                config.mtu,
+                config.flow_policy,
+                config.initial_credits,
+                stack.host,
+            )
             .await
     }
 
     /// Create a new connection request with the provided PSM.
     pub async fn create<T: Controller>(
-        ble: &'d BleHost<'_, T>,
+        stack: Stack<'d, T>,
         connection: &Connection<'_>,
         psm: u16,
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>>
 where {
-        ble.channels
+        stack
+            .host
+            .channels
             .create(
                 connection.handle(),
                 psm,
                 config.mtu,
                 config.flow_policy,
                 config.initial_credits,
-                ble,
+                stack.host,
             )
             .await
     }
