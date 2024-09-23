@@ -1,21 +1,28 @@
+//! UUID types.
 use crate::codec::{Decode, Encode, Error, Type};
 
+/// A 16-bit or 128-bit UUID.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Uuid {
+    /// 16-bit UUID
     Uuid16([u8; 2]),
+    /// 128-bit UUID
     Uuid128([u8; 16]),
 }
 
 impl Uuid {
+    /// Create a new 16-bit UUID.
     pub const fn new_short(val: u16) -> Self {
         Self::Uuid16(val.to_le_bytes())
     }
 
+    /// Create a new 128-bit UUID.
     pub const fn new_long(val: [u8; 16]) -> Self {
         Self::Uuid128(val)
     }
 
+    /// Create a UUID from a slice, either 2 or 16 bytes long.
     pub fn from_slice(val: &[u8]) -> Self {
         if val.len() == 2 {
             Self::Uuid16([val[0], val[1]])
@@ -29,6 +36,7 @@ impl Uuid {
         }
     }
 
+    /// Copy the UUID bytes into a slice.
     pub fn bytes(&self, data: &mut [u8]) {
         match self {
             Uuid::Uuid16(uuid) => data.copy_from_slice(uuid),
@@ -36,6 +44,7 @@ impl Uuid {
         }
     }
 
+    /// Get the UUID type.
     pub fn get_type(&self) -> u8 {
         match self {
             Uuid::Uuid16(_) => 0x01,
@@ -43,13 +52,14 @@ impl Uuid {
         }
     }
 
-    pub fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         match self {
             Uuid::Uuid16(_) => 6,
             Uuid::Uuid128(_) => 20,
         }
     }
 
+    /// Get the 16-bit UUID value.
     pub fn as_short(&self) -> u16 {
         match self {
             Uuid::Uuid16(data) => u16::from_le_bytes([data[0], data[1]]),
@@ -57,6 +67,7 @@ impl Uuid {
         }
     }
 
+    /// Get the 128-bit UUID value.
     pub fn as_raw(&self) -> &[u8] {
         match self {
             Uuid::Uuid16(uuid) => uuid,

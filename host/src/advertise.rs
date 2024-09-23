@@ -7,9 +7,11 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::types::uuid::Uuid;
 use crate::{codec, Address};
 
+/// Transmit power levels.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 #[repr(i8)]
+#[allow(missing_docs)]
 pub enum TxPower {
     Minus40dBm = -40,
     Minus20dBm = -20,
@@ -33,14 +35,18 @@ pub enum TxPower {
     Plus20dBm = 20,
 }
 
+/// Configuriation for a single advertisement set.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdvertisementSet<'d> {
+    /// Parameters for the advertisement.
     pub params: AdvertisementParameters,
+    /// Advertisement data.
     pub data: Advertisement<'d>,
 }
 
 impl<'d> AdvertisementSet<'d> {
+    /// Create a new advertisement set that can be passed to advertisement functions.
     pub fn handles<const N: usize>(sets: &[AdvertisementSet<'d>; N]) -> [AdvSet; N] {
         const NEW_SET: AdvSet = AdvSet {
             adv_handle: AdvHandle::new(0),
@@ -62,11 +68,14 @@ impl<'d> AdvertisementSet<'d> {
     }
 }
 
+/// Parameters for an advertisement.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Copy, Clone, Debug)]
 pub struct AdvertisementParameters {
     /// Phy selection
     pub primary_phy: PhyKind,
+
+    /// Secondary phy selection
     pub secondary_phy: PhyKind,
 
     /// Transmission power
@@ -74,10 +83,14 @@ pub struct AdvertisementParameters {
 
     /// Timeout duration
     pub timeout: Option<Duration>,
+
+    /// Max advertising events
     pub max_events: Option<u8>,
 
-    /// Advertising interval
+    /// Minimum advertising interval
     pub interval_min: Duration,
+
+    /// Maximum advertising interval
     pub interval_max: Duration,
 
     /// Which advertising channels to use
@@ -109,7 +122,7 @@ impl Default for AdvertisementParameters {
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct RawAdvertisement<'d> {
+pub(crate) struct RawAdvertisement<'d> {
     pub(crate) props: AdvEventProps,
     pub(crate) adv_data: &'d [u8],
     pub(crate) scan_data: &'d [u8],
@@ -134,44 +147,73 @@ impl<'d> Default for RawAdvertisement<'d> {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Advertisement<'d> {
+    /// Connectable and scannable undirected advertisement.
     ConnectableScannableUndirected {
+        /// Advertisement data.
         adv_data: &'d [u8],
+        /// Scan data.
         scan_data: &'d [u8],
     },
+    /// Connectable and non-scannable directed advertisement.
     ConnectableNonscannableDirected {
+        /// Address of the peer to direct the advertisement to.
         peer: Address,
     },
+    /// Connectable and non-scannable directed advertisement with high duty cycle.
     ConnectableNonscannableDirectedHighDuty {
+        /// Address of the peer to direct the advertisement to.
         peer: Address,
     },
+    /// Nonconnectable and scannable undirected advertisement.
     NonconnectableScannableUndirected {
+        /// Advertisement data.
         adv_data: &'d [u8],
+        /// Scan data.
         scan_data: &'d [u8],
     },
+    /// Nonconnectable and nonscannable undirected advertisement.
     NonconnectableNonscannableUndirected {
+        /// Advertisement data.
         adv_data: &'d [u8],
     },
+    /// Extended connectable and non-scannable undirected advertisement.
     ExtConnectableNonscannableUndirected {
+        /// Advertisement data.
         adv_data: &'d [u8],
     },
+    /// Extended connectable and non-scannable directed advertisement.
     ExtConnectableNonscannableDirected {
+        /// Address of the peer to direct the advertisement to.
         peer: Address,
+        /// Advertisement data.
         adv_data: &'d [u8],
     },
+    /// Extended nonconnectable and scannable undirected advertisement.
     ExtNonconnectableScannableUndirected {
+        /// Scan data.
         scan_data: &'d [u8],
     },
+    /// Extended nonconnectable and scannable directed advertisement.
     ExtNonconnectableScannableDirected {
+        /// Address of the peer to direct the advertisement to.
         peer: Address,
+        /// Scan data.
         scan_data: &'d [u8],
     },
+    /// Extended nonconnectable and nonscannable undirected advertisement.
     ExtNonconnectableNonscannableUndirected {
+        /// Whether the advertisement is anonymous.
         anonymous: bool,
+        /// Advertisement data.
         adv_data: &'d [u8],
     },
+    /// Extended nonconnectable and nonscannable directed advertisement.
     ExtNonconnectableNonscannableDirected {
+        /// Whether the advertisement is anonymous.
         anonymous: bool,
+        /// Address of the peer to direct the advertisement to.
         peer: Address,
+        /// Advertisement data.
         adv_data: &'d [u8],
     },
 }
@@ -287,18 +329,30 @@ impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
     }
 }
 
+/// Le advertisement.
 pub const AD_FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0b00000001;
+
+/// Discoverable flag.
 pub const LE_GENERAL_DISCOVERABLE: u8 = 0b00000010;
+
+/// BR/EDR not supported.
 pub const BR_EDR_NOT_SUPPORTED: u8 = 0b00000100;
+
+/// Simultaneous LE and BR/EDR to same device capable (controller).
 pub const SIMUL_LE_BR_CONTROLLER: u8 = 0b00001000;
+
+/// Simultaneous LE and BR/EDR to same device capable (Host).
 pub const SIMUL_LE_BR_HOST: u8 = 0b00010000;
 
+/// Error encoding advertisement data.
 #[derive(Debug, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdvertisementDataError {
+    /// Advertisement data too long for buffer.
     TooLong,
 }
 
+/// Advertisement data structure.
 #[derive(Debug, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdStructure<'a> {
@@ -310,7 +364,10 @@ pub enum AdStructure<'a> {
     /// Must not be used in scan response data.
     Flags(u8),
 
+    /// List of 16-bit service UUIDs.
     ServiceUuids16(&'a [Uuid]),
+
+    /// List of 128-bit service UUIDs.
     ServiceUuids128(&'a [Uuid]),
 
     /// Service data with 16-bit service UUID.
@@ -331,7 +388,9 @@ pub enum AdStructure<'a> {
 
     /// Set manufacturer specific data
     ManufacturerSpecificData {
+        /// Company identifier.
         company_identifier: u16,
+        /// Payload data.
         payload: &'a [u8],
     },
 
@@ -345,6 +404,7 @@ pub enum AdStructure<'a> {
 }
 
 impl<'d> AdStructure<'d> {
+    /// Encode a slice of advertisement structures into a buffer.
     pub fn encode_slice(data: &[AdStructure<'_>], dest: &mut [u8]) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(dest);
         for item in data.iter() {
@@ -353,7 +413,7 @@ impl<'d> AdStructure<'d> {
         Ok(w.len())
     }
 
-    pub fn encode(&self, w: &mut WriteCursor<'_>) -> Result<(), codec::Error> {
+    pub(crate) fn encode(&self, w: &mut WriteCursor<'_>) -> Result<(), codec::Error> {
         match self {
             AdStructure::Flags(flags) => {
                 w.append(&[0x02, 0x01, *flags])?;
@@ -399,6 +459,7 @@ impl<'d> AdStructure<'d> {
         Ok(())
     }
 
+    /// Decode a slice of advertisement structures from a buffer.
     pub fn decode(data: &[u8]) -> impl Iterator<Item = Result<AdStructure<'_>, codec::Error>> {
         AdStructureIter {
             cursor: ReadCursor::new(data),
@@ -406,6 +467,7 @@ impl<'d> AdStructure<'d> {
     }
 }
 
+/// Iterator over advertisement structures.
 pub struct AdStructureIter<'d> {
     cursor: ReadCursor<'d>,
 }

@@ -1,3 +1,4 @@
+//! Functionality for the BLE peripheral role.
 use bt_hci::cmd::le::{
     LeClearAdvSets, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
     LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanResponseData,
@@ -16,6 +17,7 @@ use crate::connection_manager::ConnectionManager;
 use crate::host::{AdvState, BleHost};
 use crate::{Address, BleHostError, Error};
 
+/// Type which implements the BLE peripheral role.
 pub struct Peripheral<'d, C: Controller> {
     host: &'d BleHost<'d, C>,
 }
@@ -25,6 +27,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         Self { host }
     }
 
+    /// Start advertising with the provided parameters and return a handle to accept connections.
     pub async fn advertise<'k>(
         &mut self,
         params: &AdvertisementParameters,
@@ -115,6 +118,8 @@ impl<'d, C: Controller> Peripheral<'d, C> {
     ///
     /// Advertisements are stopped when a connection is made against this host,
     /// in which case a handle for the connection is returned.
+    ///
+    /// Returns a handle to accept connections.
     pub async fn advertise_ext<'k>(
         &mut self,
         sets: &[AdvertisementSet<'k>],

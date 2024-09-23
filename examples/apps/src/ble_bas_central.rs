@@ -1,7 +1,5 @@
 use embassy_futures::join::join;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
-use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
 /// Size of L2CAP packets
@@ -36,17 +34,12 @@ where
 
     info!("Scanning for peripheral...");
     let _ = join(runner.run(), async {
-        static PACKET_POOL: StaticCell<PacketPool<NoopRawMutex, 24, 64, 1>> = StaticCell::new();
-        let packet_pool = PACKET_POOL.init(PacketPool::new(PacketQos::None));
-
         info!("Connecting");
 
         let conn = central.connect(&config).await.unwrap();
         info!("Connected, creating gatt client");
 
-        let client = GattClient::<C, 10, 64, 16, 24>::new(stack, &conn, packet_pool)
-            .await
-            .unwrap();
+        let client = GattClient::<C, 10, 24>::new(stack, &conn).await.unwrap();
 
         let _ = join(client.task(), async {
             info!("Looking for battery service");
@@ -73,12 +66,8 @@ where
                 },
                 async {
                     loop {
-                        let (len, data) = listener.next().await;
-                        info!(
-                            "Got notification: {:?} (val: {})",
-                            &data.as_ref()[..len as usize],
-                            data.as_ref()[0]
-                        );
+                        let data = listener.next().await;
+                        info!("Got notification: {:?} (val: {})", &data.as_ref()[..], data.as_ref()[0]);
                     }
                 },
             )

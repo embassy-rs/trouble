@@ -51,7 +51,7 @@ use crate::{att, config, Address, BleHostError, Error};
 ///
 /// The host performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
-pub struct BleHost<'d, T> {
+pub(crate) struct BleHost<'d, T> {
     initialized: OnceLock<()>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
@@ -728,6 +728,7 @@ where
     }
 }
 
+/// Runs the host with the given controller.
 pub struct Runner<'d, C: Controller> {
     host: &'d BleHost<'d, C>,
 }
@@ -737,6 +738,7 @@ impl<'d, C: Controller> Runner<'d, C> {
         Self { host }
     }
 
+    /// Run the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
@@ -757,6 +759,7 @@ impl<'d, C: Controller> Runner<'d, C> {
         self.host.run_with_handler(|_| {}).await
     }
 
+    /// Run the host with a vendor event handler for custom events.
     pub async fn run_with_handler<F: Fn(&Vendor)>(&mut self, vendor_handler: F) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
