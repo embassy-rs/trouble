@@ -6,12 +6,19 @@ use bt_hci::{FromHciBytes, FromHciBytesError};
 use embassy_time::Duration;
 use heapless::Vec;
 
+/// Scanner configuration.
 pub struct ScanConfig<'d> {
+    /// Active scanning.
     pub active: bool,
+    /// List of addresses to accept.
     pub filter_accept_list: &'d [(AddrKind, &'d BdAddr)],
+    /// PHYs to scan on.
     pub phys: PhySet,
+    /// Scan interval.
     pub interval: Duration,
+    /// Scan window.
     pub window: Duration,
+    /// Scan timeout.
     pub timeout: Duration,
 }
 
@@ -28,11 +35,13 @@ impl<'d> Default for ScanConfig<'d> {
     }
 }
 
+/// Scan reports.
 pub struct ScanReport {
     num_reports: u8,
     reports: Vec<u8, 255>,
 }
 
+/// PHYs to scan on.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Eq, PartialEq, Copy, Clone)]
 #[repr(u8)]
@@ -61,6 +70,7 @@ impl ScanReport {
         }
     }
 
+    /// Iterate over the scan reports.
     pub fn iter(&self) -> ScanReportIter<'_> {
         ScanReportIter {
             len: self.num_reports as usize,
@@ -68,6 +78,7 @@ impl ScanReport {
         }
     }
 
+    /// Iterate over the extended scan reports.
     pub fn iter_ext(&self) -> ExtScanReportIter<'_> {
         ExtScanReportIter {
             len: self.num_reports as usize,
@@ -76,6 +87,7 @@ impl ScanReport {
     }
 }
 
+/// Iterator over scan reports.
 pub struct ScanReportIter<'a> {
     len: usize,
     bytes: &'a [u8],
@@ -115,6 +127,7 @@ impl<'a> ExactSizeIterator for ScanReportIter<'a> {
 
 impl<'a> FusedIterator for ScanReportIter<'a> {}
 
+/// Iterator over extended scan reports.
 pub struct ExtScanReportIter<'a> {
     len: usize,
     bytes: &'a [u8],

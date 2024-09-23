@@ -1,3 +1,4 @@
+//! A packet pool for allocating and freeing packet buffers with quality of service policy.
 use core::cell::{RefCell, UnsafeCell};
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -10,15 +11,15 @@ pub(crate) const ATT_ID: AllocId = AllocId(0);
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AllocId(usize);
+pub(crate) struct AllocId(usize);
 
 impl AllocId {
-    pub fn dynamic(idx: usize) -> AllocId {
+    pub(crate) fn dynamic(idx: usize) -> AllocId {
         // Dynamic range starts at 2
         AllocId(1 + idx)
     }
 
-    pub fn from_channel(cid: u16) -> AllocId {
+    pub(crate) fn from_channel(cid: u16) -> AllocId {
         match cid {
             L2CAP_CID_ATT => ATT_ID,
             cid if cid >= L2CAP_CID_DYN_START => Self::dynamic((cid - L2CAP_CID_DYN_START) as usize),
@@ -37,7 +38,7 @@ struct PacketBuf<const MTU: usize> {
 impl<const MTU: usize> PacketBuf<MTU> {
     const NEW: PacketBuf<MTU> = PacketBuf::new();
 
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             buf: [0; MTU],
             free: true,
@@ -68,7 +69,7 @@ struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
 }
 
 impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIENTS> {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             packets: UnsafeCell::new([PacketBuf::NEW; N]),
             usage: RefCell::new([0; CLIENTS]),
@@ -137,13 +138,14 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
 /// A packet pool holds a pool of packet buffers that can be dynamically allocated
 /// and free'd.
 ///
-/// The pool has a concept QoS where it
+/// The pool has a concept QoS to control quota for multiple clients.
 pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> {
     state: Mutex<M, State<MTU, N, CLIENTS>>,
     qos: Qos,
 }
 
 impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> PacketPool<M, MTU, N, CLIENTS> {
+    /// Create a new packet pool with the given QoS policy
     pub fn new(qos: Qos) -> Self {
         // Need at least 1 for gatt
         assert!(CLIENTS >= 1);
@@ -192,7 +194,7 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
     }
 }
 
-pub trait GlobalPacketPool<'d> {
+pub(crate) trait GlobalPacketPool<'d> {
     fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>>;
     fn free(&self, id: AllocId, r: PacketRef);
     fn available(&self, id: AllocId) -> usize;
@@ -224,23 +226,23 @@ impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Gl
     }
 }
 
-pub struct PacketRef {
+pub(crate) struct PacketRef {
     idx: usize,
     buf: *mut [u8],
 }
 
-pub struct Packet<'d> {
+pub(crate) struct Packet<'d> {
     client: AllocId,
     p_ref: Option<PacketRef>,
     pool: &'d dyn GlobalPacketPool<'d>,
 }
 
 impl Packet<'_> {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.as_ref().len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }

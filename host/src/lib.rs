@@ -7,6 +7,7 @@
 #![no_std]
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![warn(missing_docs)]
 
 use core::mem::MaybeUninit;
 
@@ -23,6 +24,9 @@ use crate::packet_pool::{PacketPool, Qos};
 use crate::att::AttErrorCode;
 
 mod fmt;
+
+#[cfg(not(any(feature = "central", feature = "peripheral")))]
+compile_error!("Must enable at least one of the `central` or `peripheral` features");
 
 mod att;
 pub mod central;
@@ -52,6 +56,7 @@ pub use central::*;
 use host::{AdvHandleState, BleHost, Runner};
 pub use peripheral::*;
 
+#[allow(missing_docs)]
 pub mod prelude {
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
@@ -94,11 +99,14 @@ pub mod gatt;
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Address {
+    /// Address type.
     pub kind: AddrKind,
+    /// Address value.
     pub addr: BdAddr,
 }
 
 impl Address {
+    /// Create a new random address.
     pub fn random(val: [u8; 6]) -> Self {
         Self {
             kind: AddrKind::RANDOM,
@@ -111,7 +119,9 @@ impl Address {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BleHostError<E> {
+    /// Error from the controller.
     Controller(E),
+    /// Error from the host.
     BleHost(Error),
 }
 
@@ -119,23 +129,41 @@ pub enum BleHostError<E> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
+    /// Error encoding parameters for HCI commands.
     Hci(bt_hci::param::Error),
+    /// Error decoding responses from HCI commands.
     HciDecode(FromHciBytesError),
+    /// Error from the Attribute Protocol.
     Att(AttErrorCode),
+    /// Insufficient space in the buffer.
     InsufficientSpace,
+    /// Invalid value.
     InvalidValue,
+    /// Error decoding advertisement data.
     Advertisement(AdvertisementDataError),
+    /// Invalid l2cap channel id provided.
     InvalidChannelId,
+    /// No l2cap channel available.
     NoChannelAvailable,
+    /// Resource not found.
     NotFound,
+    /// Invalid state.
     InvalidState,
+    /// Out of memory.
     OutOfMemory,
+    /// Unsupported operation.
     NotSupported,
+    /// L2cap channel closed.
     ChannelClosed,
+    /// Operation timed out.
     Timeout,
+    /// Controller is busy.
     Busy,
+    /// No send permits available.
     NoPermits,
+    /// Connection is disconnected.
     Disconnected,
+    /// Other error.
     Other,
 }
 
@@ -347,6 +375,7 @@ pub fn new<
     Builder { host }
 }
 
+/// Type for configuring the BLE host.
 pub struct Builder<'d, C: Controller> {
     host: &'d mut BleHost<'d, C>,
 }
@@ -358,6 +387,7 @@ impl<'d, C: Controller> Builder<'d, C> {
         self
     }
 
+    /// Build the stack.
     #[cfg(all(feature = "central", feature = "peripheral"))]
     pub fn build(self) -> (Stack<'d, C>, Peripheral<'d, C>, Central<'d, C>, Runner<'d, C>) {
         (
@@ -368,17 +398,24 @@ impl<'d, C: Controller> Builder<'d, C> {
         )
     }
 
+    /// Build the stack.
     #[cfg(all(not(feature = "central"), feature = "peripheral"))]
     pub fn build(self) -> (Stack<'d, C>, Peripheral<'d, C>, Runner<'d, C>) {
-        (Peripheral::new(self.host), Runner::new(self.host))
+        (
+            Stack::new(self.host),
+            Peripheral::new(self.host),
+            Runner::new(self.host),
+        )
     }
 
+    /// Build the stack.
     #[cfg(all(feature = "central", not(feature = "peripheral")))]
     pub fn build(self) -> (Stack<'d, C>, Central<'d, C>, Runner<'d, C>) {
-        (Central::new(self.host), Runner::new(self.host))
+        (Stack::new(self.host), Central::new(self.host), Runner::new(self.host))
     }
 }
 
+/// Handle to the BLE stack.
 pub struct Stack<'d, C> {
     host: &'d BleHost<'d, C>,
 }

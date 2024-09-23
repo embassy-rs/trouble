@@ -65,3 +65,13 @@ pub const L2CAP_RX_QUEUE_SIZE: usize = raw::L2CAP_RX_QUEUE_SIZE;
 ///
 /// Default: 1.
 pub const L2CAP_RX_PACKET_POOL_SIZE: usize = raw::L2CAP_RX_PACKET_POOL_SIZE;
+
+/// GATT notification max subscribers
+///
+/// Default: 1.
+pub const GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS: usize = raw::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
+
+/// GATT notification queue size.
+///
+/// Default: 1.
+pub const GATT_CLIENT_NOTIFICATION_QUEUE_SIZE: usize = raw::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;

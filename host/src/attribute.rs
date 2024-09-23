@@ -1,3 +1,4 @@
+//! Attribute protocol implementation.
 use core::cell::RefCell;
 use core::fmt;
 
@@ -9,44 +10,71 @@ use crate::cursor::{ReadCursor, WriteCursor};
 pub use crate::types::uuid::Uuid;
 use crate::Error;
 
+/// UUID for generic access service
 pub const GENERIC_ACCESS_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1800u16.to_le_bytes());
+
+/// UUID for device name characteristic
 pub const CHARACTERISTIC_DEVICE_NAME_UUID16: Uuid = Uuid::Uuid16(0x2A00u16.to_le_bytes());
+
+/// UUID for appearance characteristic
 pub const CHARACTERISTIC_APPEARANCE_UUID16: Uuid = Uuid::Uuid16(0x2A03u16.to_le_bytes());
 
+/// UUID for generic attribute service
 pub const GENERIC_ATTRIBUTE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
 
+/// UUID for primary service
 pub const PRIMARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2800u16.to_le_bytes());
+
+/// UUID for secondary service
 pub const SECONDARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2801u16.to_le_bytes());
+
+/// UUID for include service
 pub const INCLUDE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2802u16.to_le_bytes());
+
+/// UUID for characteristic declaration
 pub const CHARACTERISTIC_UUID16: Uuid = Uuid::Uuid16(0x2803u16.to_le_bytes());
+
+/// UUID for characteristic notification/indication
 pub const CHARACTERISTIC_CCCD_UUID16: Uuid = Uuid::Uuid16(0x2902u16.to_le_bytes());
+
+/// UUID for generic attribute.
 pub const GENERIC_ATTRIBUTE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
 
+/// Characteristic properties
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum CharacteristicProp {
+    /// Broadcast
     Broadcast = 0x01,
+    /// Read
     Read = 0x02,
+    /// Write without response
     WriteWithoutResponse = 0x04,
+    /// Write
     Write = 0x08,
+    /// Notify
     Notify = 0x10,
+    /// Indicate
     Indicate = 0x20,
+    /// Authenticated writes
     AuthenticatedWrite = 0x40,
+    /// Extended properties
     Extended = 0x80,
 }
 
+/// Attribute metadata.
 pub struct Attribute<'a> {
-    pub uuid: Uuid,
-    pub handle: u16,
-    pub last_handle_in_group: u16,
-    pub data: AttributeData<'a>,
+    pub(crate) uuid: Uuid,
+    pub(crate) handle: u16,
+    pub(crate) last_handle_in_group: u16,
+    pub(crate) data: AttributeData<'a>,
 }
 
 impl<'a> Attribute<'a> {
     const EMPTY: Option<Attribute<'a>> = None;
 }
 
-pub enum AttributeData<'d> {
+pub(crate) enum AttributeData<'d> {
     Service {
         uuid: Uuid,
     },
@@ -70,14 +98,14 @@ pub enum AttributeData<'d> {
 }
 
 impl<'d> AttributeData<'d> {
-    pub fn readable(&self) -> bool {
+    pub(crate) fn readable(&self) -> bool {
         match self {
             Self::Data { props, value } => props.0 & (CharacteristicProp::Read as u8) != 0,
             _ => true,
         }
     }
 
-    pub fn writable(&self) -> bool {
+    pub(crate) fn writable(&self) -> bool {
         match self {
             Self::Data { props, value } => {
                 props.0
@@ -94,7 +122,7 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+    pub(crate) fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         if !self.readable() {
             return Err(AttErrorCode::ReadNotPermitted);
         }
@@ -176,7 +204,7 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+    pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         let writable = self.writable();
 
         match self {
@@ -212,7 +240,7 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub fn decode_declaration(data: &[u8]) -> Result<Self, Error> {
+    pub(crate) fn decode_declaration(data: &[u8]) -> Result<Self, Error> {
         let mut r = ReadCursor::new(data);
         Ok(Self::Declaration {
             props: CharacteristicProps(r.read()?),
@@ -242,7 +270,7 @@ impl<'a> defmt::Format for Attribute<'a> {
 }
 
 impl<'a> Attribute<'a> {
-    pub fn new(uuid: Uuid, data: AttributeData<'a>) -> Attribute<'a> {
+    pub(crate) fn new(uuid: Uuid, data: AttributeData<'a>) -> Attribute<'a> {
         Attribute {
             uuid,
             handle: 0,
@@ -252,12 +280,13 @@ impl<'a> Attribute<'a> {
     }
 }
 
+/// A table of attributes.
 pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
     inner: Mutex<M, RefCell<InnerTable<'d, MAX>>>,
     handle: u16,
 }
 
-pub struct InnerTable<'d, const MAX: usize> {
+pub(crate) struct InnerTable<'d, const MAX: usize> {
     attributes: [Option<Attribute<'d>>; MAX],
     len: usize,
 }
@@ -279,6 +308,7 @@ impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
 }
 
 impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
+    /// Create a new GATT table.
     pub fn new() -> Self {
         Self {
             handle: 1,
@@ -289,14 +319,14 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         }
     }
 
-    pub fn with_inner<F: Fn(&mut InnerTable<'d, MAX>)>(&self, f: F) {
+    pub(crate) fn with_inner<F: Fn(&mut InnerTable<'d, MAX>)>(&self, f: F) {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
             f(&mut table);
         })
     }
 
-    pub fn iterate<F: FnMut(AttributeIterator<'_, 'd>) -> R, R>(&self, mut f: F) -> R {
+    pub(crate) fn iterate<F: FnMut(AttributeIterator<'_, 'd>) -> R, R>(&self, mut f: F) -> R {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
             let len = table.len;
@@ -320,6 +350,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         handle
     }
 
+    /// Add a service to the attribute table (group of characteristics)
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
         let handle = self.handle;
@@ -410,6 +441,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 }
 
+/// Handle to an attribute in the attribute table.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AttributeHandle {
@@ -422,6 +454,7 @@ impl From<u16> for AttributeHandle {
     }
 }
 
+/// Builder for constructing GATT service definitions.
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
     handle: AttributeHandle,
     start: usize,
@@ -482,6 +515,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         }
     }
 
+    /// Add a characteristic to this service with a refererence to a mutable storage buffer.
     pub fn add_characteristic<U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -492,6 +526,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
     }
 
+    /// Add a characteristic to this service with a refererence to an immutable storage buffer.
     pub fn add_characteristic_ro<U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -501,6 +536,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         self.add_characteristic_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value })
     }
 
+    /// Finish construction of the service and return a handle.
     pub fn build(self) -> AttributeHandle {
         self.handle
     }
@@ -520,6 +556,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
     }
 }
 
+/// A characteristic in the attribute table.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Characteristic {
@@ -527,6 +564,7 @@ pub struct Characteristic {
     pub(crate) handle: u16,
 }
 
+/// Builder for characteristics.
 pub struct CharacteristicBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
     handle: Characteristic,
     table: &'r mut AttributeTable<'d, M, MAX>,
@@ -550,6 +588,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX
         DescriptorHandle { handle }
     }
 
+    /// Add a characteristic descriptor for this characteristic.
     pub fn add_descriptor<U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -560,22 +599,26 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX
         self.add_descriptor_internal(uuid.into(), props, AttributeData::Data { props, value: data })
     }
 
+    /// Add a read only characteristic descriptor for this characteristic.
     pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> DescriptorHandle {
         let props = [CharacteristicProp::Read].into();
         self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
     }
 
+    /// Return the built characteristic.
     pub fn build(self) -> Characteristic {
         self.handle
     }
 }
 
+/// Characteristic descriptor handle.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
 pub struct DescriptorHandle {
     pub(crate) handle: u16,
 }
 
+/// Iterator over attributes.
 pub struct AttributeIterator<'a, 'd> {
     attributes: &'a mut [Option<Attribute<'d>>],
     pos: usize,
@@ -583,6 +626,7 @@ pub struct AttributeIterator<'a, 'd> {
 }
 
 impl<'a, 'd> AttributeIterator<'a, 'd> {
+    /// Return next attribute in iterator.
     pub fn next<'m>(&'m mut self) -> Option<&'m mut Attribute<'d>> {
         if self.pos < self.len {
             let i = self.attributes[self.pos].as_mut();
@@ -594,16 +638,20 @@ impl<'a, 'd> AttributeIterator<'a, 'd> {
     }
 }
 
+/// A GATT service.
 pub struct Service {
+    /// UUID of the service.
     pub uuid: Uuid,
 }
 
 impl Service {
+    /// Create a new service with a uuid.
     pub fn new<U: Into<Uuid>>(uuid: U) -> Self {
         Self { uuid: uuid.into() }
     }
 }
 
+/// Properties of a characteristic.
 #[derive(Clone, Copy)]
 pub struct CharacteristicProps(u8);
 
@@ -628,6 +676,7 @@ impl<const T: usize> From<[CharacteristicProp; T]> for CharacteristicProps {
 }
 
 impl CharacteristicProps {
+    /// Check if any of the properties are set.
     pub fn any(&self, props: &[CharacteristicProp]) -> bool {
         for p in props {
             if (*p as u8) & self.0 != 0 {
@@ -638,18 +687,23 @@ impl CharacteristicProps {
     }
 }
 
+/// A value of an attribute.
 pub struct AttributeValue<'d, M: RawMutex> {
     value: Mutex<M, &'d mut [u8]>,
 }
 
 impl<'d, M: RawMutex> AttributeValue<'d, M> {}
 
+/// CCCD flag values.
 #[derive(Clone, Copy)]
 pub enum CCCDFlag {
+    /// Notifications enabled.
     Notify = 0x1,
+    /// Indications enabled.
     Indicate = 0x2,
 }
 
+/// CCCD flag.
 pub struct CCCD(pub(crate) u16);
 
 impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
@@ -663,6 +717,7 @@ impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
 }
 
 impl CCCD {
+    /// Check if any of the properties are set.
     pub fn any(&self, props: &[CCCDFlag]) -> bool {
         for p in props {
             if (*p as u16) & self.0 != 0 {

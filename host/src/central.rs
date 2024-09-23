@@ -1,3 +1,4 @@
+//! Functionality for the BLE central role.
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn, LeSetExtScanEnable,
     LeSetExtScanParams, LeSetScanEnable,
@@ -12,6 +13,8 @@ use crate::connection::{ConnectConfig, Connection};
 use crate::host::BleHost;
 use crate::scan::{PhySet, ScanConfig};
 use crate::{BleHostError, Error};
+
+/// A type implementing the BLE central role.
 pub struct Central<'d, C: Controller> {
     host: &'d BleHost<'d, C>,
 }

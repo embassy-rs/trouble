@@ -130,9 +130,8 @@ async fn gatt_client_server() {
         let controller_central = common::create_controller(&central).await;
         let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
             HostResources::new(PacketQos::None);
-        let (stack, _peripheral, mut central, mut runner) = trouble_host::new(controller_central, &mut resources).build();
-
-        let packet_pool: PacketPool<NoopRawMutex, 24, 64, 1> = PacketPool::new(PacketQos::None);
+        let (stack, _peripheral, mut central, mut runner) =
+            trouble_host::new(controller_central, &mut resources).build();
 
         select! {
             r = runner.run() => {
@@ -154,7 +153,7 @@ async fn gatt_client_server() {
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
                 println!("[central] creating gatt client");
-                let client = GattClient::<common::Controller, 10, 128, 10, 27>::new(stack, &conn, &packet_pool).await.unwrap();
+                let client = GattClient::<common::Controller, 10, 27>::new(stack, &conn).await.unwrap();
 
                 select! {
                     r = async {
