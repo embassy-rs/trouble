@@ -5,14 +5,14 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
-embassy-executor = { version = "0.6", default-features = false, features = ["task-arena-size-65536", "arch-cortex-m", "executor-thread", "defmt", "integrated-timers", "executor-interrupt"] }
+embassy-executor = { version = "0.6", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "integrated-timers", "executor-interrupt"] }
 embassy-time = { version = "0.3", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-nrf = { version = "0.2", default-features = false, features = ["defmt", "nrf52840", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
+embassy-nrf = { version = "0.2", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.6", features = ["defmt"] }
 
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
-nrf-sdc = { version = "0.1.0", default-features = false, features = ["defmt", "nrf52840", "peripheral", "central"] }
+nrf-sdc = { version = "0.1.0", default-features = false, features = ["defmt", "peripheral", "central"] }
 nrf-mpsl = { version = "0.1.0", default-features = false, features = ["defmt", "critical-section-impl"] }
 bt-hci = { version = "0.1.1", default-features = false, features = ["defmt"] }
 trouble-host = { version = "0.1.0", path = "../../host", features = ["defmt"] }
@@ -51,3 +51,15 @@ nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "3702af909d3
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 #bt-hci = { path = "../../../bt-hci" }
+
+[features]
+nrf52832 = [
+    "embassy-executor/task-arena-size-32768",
+    "embassy-nrf/nrf52832",
+    "nrf-sdc/nrf52832",
+]
+nrf52840 = [
+    "embassy-executor/task-arena-size-65536",
+    "embassy-nrf/nrf52840",
+    "nrf-sdc/nrf52840",
+]

@@ -759,6 +759,7 @@ dependencies = [
  "embedded-storage",
  "embedded-storage-async",
  "nrf-mpsl-sys",
+ "nrf52832-pac",
  "nrf52840-pac",
 ]
 
