@@ -3,6 +3,7 @@
 
 use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
+use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::prelude::*;
 use esp_hal::timer::timg::TimerGroup;
@@ -17,6 +18,7 @@ async fn main(_s: Spawner) {
         config.cpu_clock = CpuClock::max();
         config
     });
+    esp_alloc::heap_allocator!(72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
 
     let init = esp_wifi::initialize(
