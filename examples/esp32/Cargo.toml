@@ -14,6 +14,7 @@ esp-backtrace = { version = "0.14.0", features = [
 ] }
 esp-hal = { version = "0.20.1" }
 esp-hal-embassy = { version = "0.3.0" }
+esp-alloc = { version = "0.4.0" }
 esp-println = { version = "0.11.0", features = ["log"] }
 log = { version = "0.4.21" }
 embedded-io = "0.6.1"
@@ -58,6 +59,7 @@ esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal.git", rev = "208339
 esp-wifi = { git = "https://github.com/esp-rs/esp-hal.git", rev = "208339ddeb5b0747d1403d611d9c8718f5bf4f08" }
 esp-println = { git = "https://github.com/esp-rs/esp-hal.git", rev = "208339ddeb5b0747d1403d611d9c8718f5bf4f08" }
 esp-backtrace = { git = "https://github.com/esp-rs/esp-hal.git", rev = "208339ddeb5b0747d1403d611d9c8718f5bf4f08" }
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal.git", rev = "208339ddeb5b0747d1403d611d9c8718f5bf4f08" }
 
 embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
