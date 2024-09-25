@@ -16,8 +16,6 @@ jobs:
       - name: Add dependencies
         run: |
           sudo apt-get install --no-install-recommends libudev-dev
-          wget -O ~/.cargo/bin/cargo-batch https://github.com/embassy-rs/cargo-batch/releases/download/batch-0.4.0/cargo-batch
-          chmod +x ~/.cargo/bin/cargo-batch
       - name: Set up cargo cache
         uses: actions/cache@v3
         continue-on-error: true
