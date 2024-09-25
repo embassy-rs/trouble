@@ -31,12 +31,13 @@ jobs:
     needs: build
     strategy:
       matrix:
-        example: [nrf-sdc, serial-hci, esp32] #, apache-nimble]
+        # nrf-sdc examples are handled within nrf-sdc job matrix
+        example: [serial-hci, esp32] #, apache-nimble]
     steps:
       - uses: actions/checkout@v4
       - name: Add dependencies
         run: |
-          sudo apt-get install libudev-dev
+          sudo apt-get install --no-install-recommends libudev-dev
 
       - name: Build example ${{ matrix.example }}
         working-directory: examples/${{ matrix.example }}
@@ -46,3 +47,23 @@ jobs:
           cargo fmt --check
           cargo clippy --locked
           cargo build --release --locked
+  nrf-sdc:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        target: ["nrf52832", "nrf52840"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add dependencies
+        run: |
+          sudo apt-get install --no-install-recommends libudev-dev
+
+      - name: Build nrf-sdc example for ${{ matrix.target}}
+        working-directory: examples/nrf-sdc
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --features ${{ matrix.target }}
+          cargo build --release --locked --features ${{ matrix.target }}
