@@ -20,7 +20,7 @@ jobs:
           chmod +x ~/.cargo/bin/cargo-batch
       - name: Set up cargo cache
         uses: actions/cache@v3
-        continue-on-error: false
+        continue-on-error: true
         with:
           path: |
             ~/.cargo/bin/
