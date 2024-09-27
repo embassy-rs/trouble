@@ -67,7 +67,7 @@ where
                 async {
                     loop {
                         let data = listener.next().await;
-                        info!("Got notification: {:?} (val: {})", &data.as_ref()[..], data.as_ref()[0]);
+                        info!("Got notification: {:?} (val: {})", data.as_ref(), data.as_ref()[0]);
                     }
                 },
             )
