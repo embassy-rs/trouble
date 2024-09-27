@@ -1199,6 +1199,7 @@ dependencies = [
  "log",
  "static_cell",
  "trouble-example-apps",
+ "trouble-host",
 ]
 
 [[package]]

@@ -78,7 +78,10 @@ pub mod prelude {
     #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
 
+    pub use crate::host::ControlRunner;
     pub use crate::host::Runner;
+    pub use crate::host::RxRunner;
+    pub use crate::host::TxRunner;
 
     pub use super::BleHostError;
     pub use super::Error;
