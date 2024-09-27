@@ -7,8 +7,7 @@ use embassy_time::Duration;
 
 use crate::connection_manager::DynamicConnectionManager;
 use crate::scan::ScanConfig;
-use crate::BleHostError;
-use crate::Stack;
+use crate::{BleHostError, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {

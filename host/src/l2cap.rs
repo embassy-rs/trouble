@@ -4,8 +4,7 @@ use bt_hci::controller::{blocking, Controller};
 pub use crate::channel_manager::CreditFlowPolicy;
 use crate::channel_manager::{ChannelIndex, DynamicChannelManager};
 use crate::connection::Connection;
-use crate::BleHostError;
-use crate::Stack;
+use crate::{BleHostError, Stack};
 
 pub(crate) mod sar;
 

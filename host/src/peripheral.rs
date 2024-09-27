@@ -6,25 +6,20 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, LeConnRole, Operation};
-#[cfg(feature = "controller-host-flow-control")]
-use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use embassy_futures::select::{select, Either};
 
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
-use crate::command::CommandState;
 use crate::connection::Connection;
-use crate::connection_manager::ConnectionManager;
-use crate::host::{AdvState, BleHost};
-use crate::{Address, BleHostError, Error};
+use crate::{Address, BleHostError, Error, Stack};
 
 /// Type which implements the BLE peripheral role.
 pub struct Peripheral<'d, C: Controller> {
-    host: &'d BleHost<'d, C>,
+    stack: Stack<'d, C>,
 }
 
 impl<'d, C: Controller> Peripheral<'d, C> {
-    pub(crate) fn new(host: &'d BleHost<'d, C>) -> Self {
-        Self { host }
+    pub(crate) fn new(stack: Stack<'d, C>) -> Self {
+        Self { stack }
     }
 
     /// Start advertising with the provided parameters and return a handle to accept connections.
@@ -32,21 +27,23 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         &mut self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
-    ) -> Result<Advertiser<'_, 'd>, BleHostError<C::Error>>
+    ) -> Result<Advertiser<'d, C>, BleHostError<C::Error>>
     where
         C: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
+        let host = self.stack.host;
+
         // Ensure no other advertise ongoing.
         let drop = crate::host::OnDrop::new(|| {
-            self.host.advertise_command_state.cancel(false);
+            host.advertise_command_state.cancel(false);
         });
-        self.host.advertise_command_state.request().await;
+        host.advertise_command_state.request().await;
 
         // Clear current advertising terminations
-        self.host.advertise_state.reset();
+        host.advertise_state.reset();
 
         let data: RawAdvertisement = data.into();
         if !data.props.legacy_adv() {
@@ -64,33 +61,30 @@ impl<'d, C: Controller> Peripheral<'d, C> {
             addr: BdAddr::default(),
         });
 
-        self.host
-            .command(LeSetAdvParams::new(
-                params.interval_min.into(),
-                params.interval_max.into(),
-                kind,
-                self.host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
-                peer.kind,
-                peer.addr,
-                params.channel_map.unwrap_or(AdvChannelMap::ALL),
-                params.filter_policy,
-            ))
-            .await?;
+        host.command(LeSetAdvParams::new(
+            params.interval_min.into(),
+            params.interval_max.into(),
+            kind,
+            host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            peer.kind,
+            peer.addr,
+            params.channel_map.unwrap_or(AdvChannelMap::ALL),
+            params.filter_policy,
+        ))
+        .await?;
 
         if !data.adv_data.is_empty() {
             let mut buf = [0; 31];
             let to_copy = data.adv_data.len().min(buf.len());
             buf[..to_copy].copy_from_slice(&data.adv_data[..to_copy]);
-            self.host.command(LeSetAdvData::new(to_copy as u8, buf)).await?;
+            host.command(LeSetAdvData::new(to_copy as u8, buf)).await?;
         }
 
         if !data.scan_data.is_empty() {
             let mut buf = [0; 31];
             let to_copy = data.scan_data.len().min(buf.len());
             buf[..to_copy].copy_from_slice(&data.scan_data[..to_copy]);
-            self.host
-                .command(LeSetScanResponseData::new(to_copy as u8, buf))
-                .await?;
+            host.command(LeSetScanResponseData::new(to_copy as u8, buf)).await?;
         }
 
         let advset: [AdvSet; 1] = [AdvSet {
@@ -100,13 +94,11 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         }];
 
         trace!("[host] enabling advertising");
-        self.host.advertise_state.start(&advset[..]);
-        self.host.command(LeSetAdvEnable::new(true)).await?;
+        host.advertise_state.start(&advset[..]);
+        host.command(LeSetAdvEnable::new(true)).await?;
         drop.defuse();
         Ok(Advertiser {
-            advertise_state: &self.host.advertise_state,
-            advertise_command_state: &self.host.advertise_command_state,
-            connections: &self.host.connections,
+            stack: self.stack,
             extended: false,
         })
     }
@@ -124,7 +116,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         &mut self,
         sets: &[AdvertisementSet<'k>],
         handles: &mut [AdvSet],
-    ) -> Result<Advertiser<'_, 'd>, BleHostError<C::Error>>
+    ) -> Result<Advertiser<'d, C>, BleHostError<C::Error>>
     where
         C: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
@@ -135,22 +127,23 @@ impl<'d, C: Controller> Peripheral<'d, C> {
             + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
         assert_eq!(sets.len(), handles.len());
+        let host = self.stack.host;
         // Check host supports the required advertisement sets
         {
-            let result = self.host.command(LeReadNumberOfSupportedAdvSets::new()).await?;
-            if result < sets.len() as u8 || self.host.advertise_state.len() < sets.len() {
+            let result = host.command(LeReadNumberOfSupportedAdvSets::new()).await?;
+            if result < sets.len() as u8 || host.advertise_state.len() < sets.len() {
                 return Err(Error::InsufficientSpace.into());
             }
         }
 
         // Ensure no other advertise ongoing.
         let drop = crate::host::OnDrop::new(|| {
-            self.host.advertise_command_state.cancel(true);
+            host.advertise_command_state.cancel(true);
         });
-        self.host.advertise_command_state.request().await;
+        host.advertise_command_state.request().await;
 
         // Clear current advertising terminations
-        self.host.advertise_state.reset();
+        host.advertise_state.reset();
 
         for (i, set) in sets.iter().enumerate() {
             let handle = AdvHandle::new(i as u8);
@@ -160,52 +153,47 @@ impl<'d, C: Controller> Peripheral<'d, C> {
                 kind: AddrKind::PUBLIC,
                 addr: BdAddr::default(),
             });
-            self.host
-                .command(LeSetExtAdvParams::new(
-                    handle,
-                    data.props,
-                    params.interval_min.into(),
-                    params.interval_max.into(),
-                    params.channel_map.unwrap_or(AdvChannelMap::ALL),
-                    self.host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
-                    peer.kind,
-                    peer.addr,
-                    params.filter_policy,
-                    params.tx_power as i8,
-                    params.primary_phy,
-                    0,
-                    params.secondary_phy,
-                    0,
-                    false,
-                ))
-                .await?;
+            host.command(LeSetExtAdvParams::new(
+                handle,
+                data.props,
+                params.interval_min.into(),
+                params.interval_max.into(),
+                params.channel_map.unwrap_or(AdvChannelMap::ALL),
+                host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+                peer.kind,
+                peer.addr,
+                params.filter_policy,
+                params.tx_power as i8,
+                params.primary_phy,
+                0,
+                params.secondary_phy,
+                0,
+                false,
+            ))
+            .await?;
 
-            if let Some(address) = self.host.address.as_ref() {
-                self.host
-                    .command(LeSetAdvSetRandomAddr::new(handle, address.addr))
-                    .await?;
+            if let Some(address) = host.address.as_ref() {
+                host.command(LeSetAdvSetRandomAddr::new(handle, address.addr)).await?;
             }
 
             if !data.adv_data.is_empty() {
-                self.host
-                    .command(LeSetExtAdvData::new(
-                        handle,
-                        Operation::Complete,
-                        params.fragment,
-                        data.adv_data,
-                    ))
-                    .await?;
+                host.command(LeSetExtAdvData::new(
+                    handle,
+                    Operation::Complete,
+                    params.fragment,
+                    data.adv_data,
+                ))
+                .await?;
             }
 
             if !data.scan_data.is_empty() {
-                self.host
-                    .command(LeSetExtScanResponseData::new(
-                        handle,
-                        Operation::Complete,
-                        params.fragment,
-                        data.scan_data,
-                    ))
-                    .await?;
+                host.command(LeSetExtScanResponseData::new(
+                    handle,
+                    Operation::Complete,
+                    params.fragment,
+                    data.scan_data,
+                ))
+                .await?;
             }
             handles[i].adv_handle = handle;
             handles[i].duration = set
@@ -217,34 +205,30 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         }
 
         trace!("[host] enabling extended advertising");
-        self.host.advertise_state.start(handles);
-        self.host.command(LeSetExtAdvEnable::new(true, handles)).await?;
+        host.advertise_state.start(handles);
+        host.command(LeSetExtAdvEnable::new(true, handles)).await?;
         drop.defuse();
         Ok(Advertiser {
-            advertise_state: &self.host.advertise_state,
-            advertise_command_state: &self.host.advertise_command_state,
-            connections: &self.host.connections,
+            stack: self.stack,
             extended: true,
         })
     }
 }
 
 /// Handle to an active advertiser which can accept connections.
-pub struct Advertiser<'a, 'd> {
-    advertise_state: &'a AdvState<'d>,
-    advertise_command_state: &'a CommandState<bool>,
-    connections: &'a ConnectionManager<'d>,
+pub struct Advertiser<'d, C: Controller> {
+    stack: Stack<'d, C>,
     extended: bool,
 }
 
-impl<'a, 'd> Advertiser<'a, 'd> {
+impl<'d, C: Controller> Advertiser<'d, C> {
     /// Accept the next peripheral connection for this advertiser.
     ///
     /// Returns Error::Timeout if advertiser stopped.
-    pub async fn accept(&mut self) -> Result<Connection<'a>, Error> {
+    pub async fn accept(&mut self) -> Result<Connection<'d>, Error> {
         match select(
-            self.connections.accept(LeConnRole::Peripheral, &[]),
-            self.advertise_state.wait(),
+            self.stack.host.connections.accept(LeConnRole::Peripheral, &[]),
+            self.stack.host.advertise_state.wait(),
         )
         .await
         {
@@ -254,8 +238,8 @@ impl<'a, 'd> Advertiser<'a, 'd> {
     }
 }
 
-impl<'a, 'd> Drop for Advertiser<'a, 'd> {
+impl<'d, C: Controller> Drop for Advertiser<'d, C> {
     fn drop(&mut self) {
-        self.advertise_command_state.cancel(self.extended);
+        self.stack.host.advertise_command_state.cancel(self.extended);
     }
 }

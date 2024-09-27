@@ -10,10 +10,9 @@ use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
 
 use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
-use crate::attribute::AttributeTable;
 use crate::attribute::{
-    AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD, CHARACTERISTIC_CCCD_UUID16, CHARACTERISTIC_UUID16,
-    PRIMARY_SERVICE_UUID16,
+    AttributeData, AttributeTable, Characteristic, CharacteristicProp, Uuid, CCCD, CHARACTERISTIC_CCCD_UUID16,
+    CHARACTERISTIC_UUID16, PRIMARY_SERVICE_UUID16,
 };
 use crate::attribute_server::AttributeServer;
 use crate::connection::Connection;
@@ -21,8 +20,7 @@ use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::types::l2cap::L2capHeader;
-use crate::{config, Stack};
-use crate::{BleHostError, Error};
+use crate::{config, BleHostError, Error, Stack};
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
 pub struct GattServer<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {

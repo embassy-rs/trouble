@@ -16,12 +16,11 @@ pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
 use bt_hci::FromHciBytesError;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use crate::att::AttErrorCode;
 use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::ConnectionStorage;
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::{PacketPool, Qos};
-
-use crate::att::AttErrorCode;
 
 mod fmt;
 
@@ -58,34 +57,24 @@ pub use peripheral::*;
 
 #[allow(missing_docs)]
 pub mod prelude {
+    pub use super::{BleHostError, Controller, Error, HostResources, Stack};
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
-    #[cfg(feature = "central")]
-    pub use crate::central::*;
-    #[cfg(feature = "peripheral")]
-    pub use crate::peripheral::*;
-
-    pub use super::Controller;
-    pub use crate::connection::*;
-    pub use crate::l2cap::*;
-    pub use crate::Address;
-
     #[cfg(feature = "gatt")]
     pub use crate::attribute::*;
+    #[cfg(feature = "central")]
+    pub use crate::central::*;
+    pub use crate::connection::*;
     #[cfg(feature = "gatt")]
     pub use crate::gatt::*;
-
+    pub use crate::host::{ControlRunner, Runner, RxRunner, TxRunner};
+    pub use crate::l2cap::*;
+    pub use crate::packet_pool::{PacketPool, Qos as PacketQos};
+    #[cfg(feature = "peripheral")]
+    pub use crate::peripheral::*;
     #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
-
-    pub use crate::host::Runner;
-
-    pub use super::BleHostError;
-    pub use super::Error;
-    pub use super::HostResources;
-    pub use super::Stack;
-    pub use crate::packet_pool::PacketPool;
-    pub use crate::packet_pool::Qos as PacketQos;
+    pub use crate::Address;
 }
 
 #[cfg(feature = "gatt")]
@@ -390,28 +379,22 @@ impl<'d, C: Controller> Builder<'d, C> {
     /// Build the stack.
     #[cfg(all(feature = "central", feature = "peripheral"))]
     pub fn build(self) -> (Stack<'d, C>, Peripheral<'d, C>, Central<'d, C>, Runner<'d, C>) {
-        (
-            Stack::new(self.host),
-            Peripheral::new(self.host),
-            Central::new(self.host),
-            Runner::new(self.host),
-        )
+        let stack = Stack::new(self.host);
+        (stack, Peripheral::new(stack), Central::new(stack), Runner::new(stack))
     }
 
     /// Build the stack.
     #[cfg(all(not(feature = "central"), feature = "peripheral"))]
     pub fn build(self) -> (Stack<'d, C>, Peripheral<'d, C>, Runner<'d, C>) {
-        (
-            Stack::new(self.host),
-            Peripheral::new(self.host),
-            Runner::new(self.host),
-        )
+        let stack = Stack::new(self.host);
+        (stack, Peripheral::new(stack), Runner::new(stack))
     }
 
     /// Build the stack.
     #[cfg(all(feature = "central", not(feature = "peripheral")))]
     pub fn build(self) -> (Stack<'d, C>, Central<'d, C>, Runner<'d, C>) {
-        (Stack::new(self.host), Central::new(self.host), Runner::new(self.host))
+        let stack = Stack::new(self.host);
+        (stack, Central::new(stack), Runner::new(stack))
     }
 }
 
