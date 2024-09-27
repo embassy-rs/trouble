@@ -35,8 +35,16 @@ async fn main(spawner: Spawner) {
     // IMPORTANT
     //
 
+    #[cfg(feature = "skip-cyw43-firmware")]
+    let fw = &[];
+    let clm = &[];
+    let btfw = &[];
+
+    #[cfg(not(feature = "skip-cyw43-firmware"))]
     let fw = include_bytes!("../../cyw43-firmware/43439A0.bin");
+    #[cfg(not(feature = "skip-cyw43-firmware"))]
     let clm = include_bytes!("../../cyw43-firmware/43439A0_clm.bin");
+    #[cfg(not(feature = "skip-cyw43-firmware"))]
     let btfw = include_bytes!("../../cyw43-firmware/43439A0_btfw.bin");
 
     let pwr = Output::new(p.PIN_23, Level::Low);
