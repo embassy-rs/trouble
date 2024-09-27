@@ -251,6 +251,13 @@ where
                         handle,
                         peer_addr
                     );
+
+                    #[cfg(feature = "log")]
+                    trace!(
+                        "[host] connection with handle {:?} established to {:02x?}",
+                        handle,
+                        peer_addr
+                    );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
                 }
