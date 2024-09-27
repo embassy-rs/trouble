@@ -26,6 +26,9 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
 
+[features]
+skip-cyw43-firmware = []
+
 [profile.release]
 debug = 2
 

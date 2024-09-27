@@ -428,7 +428,7 @@ impl<'d, C> Stack<'d, C> {
 
 impl<'d, C> Clone for Stack<'d, C> {
     fn clone(&self) -> Self {
-        Self { host: self.host }
+        *self
     }
 }
 

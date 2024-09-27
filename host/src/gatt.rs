@@ -524,10 +524,10 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
                     .notifications
                     .dyn_subscriber()
                     .map_err(|_| Error::InsufficientSpace)?;
-                return Ok(NotificationListener {
+                Ok(NotificationListener {
                     listener,
                     handle: characteristic.handle,
-                });
+                })
             }
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
             _ => Err(Error::InvalidValue.into()),

@@ -47,20 +47,15 @@ impl<const MTU: usize> PacketBuf<MTU> {
 }
 
 /// Quality of service policy for packet allocation
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum Qos {
     /// Distribute evenly among client
     Fair,
     /// Reserve at least N packets for each client
     Guaranteed(usize),
     /// No guarantees
+    #[default]
     None,
-}
-
-impl Default for Qos {
-    fn default() -> Self {
-        Qos::None
-    }
 }
 
 struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
