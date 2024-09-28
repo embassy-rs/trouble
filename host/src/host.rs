@@ -441,14 +441,17 @@ pub struct Runner<'d, C: Controller> {
     tx: TxRunner<'d, C>,
 }
 
+/// The receiver part of the host runner.
 pub struct RxRunner<'d, C: Controller> {
     host: &'d BleHost<'d, C>,
 }
 
+/// The control part of the host runner.
 pub struct ControlRunner<'d, C: Controller> {
     host: &'d BleHost<'d, C>,
 }
 
+/// The transmit part of the host runner.
 pub struct TxRunner<'d, C: Controller> {
     host: &'d BleHost<'d, C>,
 }
@@ -462,6 +465,7 @@ impl<'d, C: Controller> Runner<'d, C> {
         }
     }
 
+    /// Split the runner into separate independent async tasks
     pub fn split(self) -> (RxRunner<'d, C>, ControlRunner<'d, C>, TxRunner<'d, C>) {
         (self.rx, self.control, self.tx)
     }
@@ -527,42 +531,19 @@ impl<'d, C: Controller> Runner<'d, C> {
 }
 
 impl<'d, C: Controller> RxRunner<'d, C> {
+    /// Run the receive loop that polls the controller for events.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
-        C: ControllerCmdSync<Disconnect>
-            + ControllerCmdSync<SetEventMask>
-            + ControllerCmdSync<LeSetEventMask>
-            + ControllerCmdSync<LeSetRandomAddr>
-            + ControllerCmdSync<HostBufferSize>
-            + ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<LeReadFilterAcceptListSize>
-            + ControllerCmdSync<SetControllerToHostFlowControl>
-            + ControllerCmdSync<Reset>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
-            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<LeReadBufferSize>,
+        C: ControllerCmdSync<Disconnect> + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>,
     {
         self.run_with_handler(|_| {}).await
     }
 
+    /// Runs the receive loop that pools the controller for events, dispatching
+    /// vendor events to the provided closure.
     pub async fn run_with_handler<F: Fn(&Vendor)>(&mut self, vendor_handler: F) -> Result<(), BleHostError<C::Error>>
     where
-        C: ControllerCmdSync<Disconnect>
-            + ControllerCmdSync<SetEventMask>
-            + ControllerCmdSync<LeSetEventMask>
-            + ControllerCmdSync<LeSetRandomAddr>
-            + ControllerCmdSync<LeReadFilterAcceptListSize>
-            + ControllerCmdSync<HostBufferSize>
-            + ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<SetControllerToHostFlowControl>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
-            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<Reset>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + ControllerCmdSync<LeReadBufferSize>,
+        C: ControllerCmdSync<Disconnect> + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
         loop {
@@ -718,6 +699,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
 }
 
 impl<'d, C: Controller> ControlRunner<'d, C> {
+    /// Run the control loop for the host
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
@@ -840,23 +822,8 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
 }
 
 impl<'d, C: Controller> TxRunner<'d, C> {
-    pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
-    where
-        C: ControllerCmdSync<Disconnect>
-            + ControllerCmdSync<SetEventMask>
-            + ControllerCmdSync<LeSetEventMask>
-            + ControllerCmdSync<LeSetRandomAddr>
-            + ControllerCmdSync<HostBufferSize>
-            + ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<LeReadFilterAcceptListSize>
-            + ControllerCmdSync<SetControllerToHostFlowControl>
-            + ControllerCmdSync<Reset>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
-            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<LeReadBufferSize>,
-    {
+    /// Run the transmit loop for the host.
+    pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
         loop {
             let (conn, pdu) = self.host.outbound.receive().await;
             match self.host.acl(conn, 1).await {

@@ -53,7 +53,7 @@ async fn main(s: Spawner) {
         esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).split::<esp_hal::timer::systimer::Target>();
     esp_hal_embassy::init(systimer.alarm0);
 
-    let mut bluetooth = peripherals.BT;
+    let bluetooth = peripherals.BT;
     static INIT: StaticCell<EspWifiInitialization> = StaticCell::new();
     static BLE: StaticCell<esp_hal::peripherals::BT> = StaticCell::new();
     let init = INIT.init(init);
@@ -74,12 +74,7 @@ async fn main(s: Spawner) {
 
     // Generic Access Service (mandatory)
     let id = b"Trouble";
-    let appearance = [0x80, 0x07];
-    static APPEARANCE: StaticCell<[u8; 2]> = StaticCell::new();
-    let appearance = APPEARANCE.init(appearance);
-    static BAT: StaticCell<[u8; 1]> = StaticCell::new();
-    let mut bat_level = [23; 1];
-    let bat_level = BAT.init(bat_level);
+    let appearance = &[0x80, 0x07];
     let mut svc = table.add_service(Service::new(0x1800));
     let _ = svc.add_characteristic_ro(0x2a00, id);
     let _ = svc.add_characteristic_ro(0x2a01, appearance);
@@ -89,6 +84,9 @@ async fn main(s: Spawner) {
     table.add_service(Service::new(0x1801));
 
     // Battery service
+    static BAT: StaticCell<[u8; 1]> = StaticCell::new();
+    let bat_level = [23; 1];
+    let bat_level = BAT.init(bat_level);
     let level_handle = table
         .add_service(Service::new(0x180f))
         .add_characteristic(
