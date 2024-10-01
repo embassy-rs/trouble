@@ -7,8 +7,7 @@ use embassy_time::Duration;
 
 use crate::connection_manager::DynamicConnectionManager;
 use crate::scan::ScanConfig;
-use crate::BleHostError;
-use crate::Stack;
+use crate::{BleHostError, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -101,7 +100,7 @@ impl<'d> Connection<'d> {
     }
 
     /// The RSSI value for this connection.
-    pub async fn rssi<T>(&self, stack: &Stack<'_, T>) -> Result<i8, BleHostError<T::Error>>
+    pub async fn rssi<T>(&self, stack: Stack<'_, T>) -> Result<i8, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
     {
@@ -113,7 +112,7 @@ impl<'d> Connection<'d> {
     /// Update connection parameters for this connection.
     pub async fn update_connection_params<T>(
         &self,
-        stack: &Stack<'_, T>,
+        stack: Stack<'_, T>,
         params: ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where

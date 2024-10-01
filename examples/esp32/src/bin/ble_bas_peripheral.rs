@@ -33,8 +33,8 @@ async fn main(_s: Spawner) {
         esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).split::<esp_hal::timer::systimer::Target>();
     esp_hal_embassy::init(systimer.alarm0);
 
-    let mut bluetooth = peripherals.BT;
-    let connector = BleConnector::new(&init, &mut bluetooth);
+    let bluetooth = peripherals.BT;
+    let connector = BleConnector::new(&init, bluetooth);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
     ble_bas_peripheral::run(controller).await;

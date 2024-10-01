@@ -1,4 +1,6 @@
 //! Functionality for the BLE central role.
+#[cfg(feature = "scan")]
+use bt_hci::cmd::le::LeSetScanParams;
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn, LeSetExtScanEnable,
     LeSetExtScanParams, LeSetScanEnable,
@@ -10,18 +12,19 @@ use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use embassy_futures::select::{select, Either};
 
 use crate::connection::{ConnectConfig, Connection};
-use crate::host::BleHost;
+#[cfg(feature = "scan")]
+use crate::scan::ScanReport;
 use crate::scan::{PhySet, ScanConfig};
-use crate::{BleHostError, Error};
+use crate::{BleHostError, Error, Stack};
 
 /// A type implementing the BLE central role.
 pub struct Central<'d, C: Controller> {
-    host: &'d BleHost<'d, C>,
+    stack: Stack<'d, C>,
 }
 
 impl<'d, C: Controller> Central<'d, C> {
-    pub(crate) fn new(host: &'d BleHost<'d, C>) -> Self {
-        Self { host }
+    pub(crate) fn new(stack: Stack<'d, C>) -> Self {
+        Self { stack }
     }
 
     /// Attempt to create a connection with the provided config.
@@ -35,40 +38,39 @@ impl<'d, C: Controller> Central<'d, C> {
             return Err(Error::InvalidValue.into());
         }
 
+        let host = self.stack.host;
         let _drop = crate::host::OnDrop::new(|| {
-            self.host.connect_command_state.cancel(true);
+            host.connect_command_state.cancel(true);
         });
-        self.host.connect_command_state.request().await;
+        host.connect_command_state.request().await;
 
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
-        self.host
-            .async_command(LeCreateConn::new(
-                config.scan_config.interval.into(),
-                config.scan_config.window.into(),
-                true,
-                AddrKind::PUBLIC,
-                BdAddr::default(),
-                self.host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
-                config.connect_params.min_connection_interval.into(),
-                config.connect_params.max_connection_interval.into(),
-                config.connect_params.max_latency,
-                config.connect_params.supervision_timeout.into(),
-                config.connect_params.event_length.into(),
-                config.connect_params.event_length.into(),
-            ))
-            .await?;
+        host.async_command(LeCreateConn::new(
+            config.scan_config.interval.into(),
+            config.scan_config.window.into(),
+            true,
+            AddrKind::PUBLIC,
+            BdAddr::default(),
+            host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            config.connect_params.min_connection_interval.into(),
+            config.connect_params.max_connection_interval.into(),
+            config.connect_params.max_latency,
+            config.connect_params.supervision_timeout.into(),
+            config.connect_params.event_length.into(),
+            config.connect_params.event_length.into(),
+        ))
+        .await?;
         match select(
-            self.host
-                .connections
+            host.connections
                 .accept(LeConnRole::Central, config.scan_config.filter_accept_list),
-            self.host.connect_command_state.wait_idle(),
+            host.connect_command_state.wait_idle(),
         )
         .await
         {
             Either::First(conn) => {
                 _drop.defuse();
-                self.host.connect_command_state.done();
+                host.connect_command_state.done();
                 Ok(conn)
             }
             Either::Second(_) => Err(Error::Timeout.into()),
@@ -76,7 +78,7 @@ impl<'d, C: Controller> Central<'d, C> {
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect_ext(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, BleHostError<C::Error>>
+    pub async fn connect_ext(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'d>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -88,11 +90,12 @@ impl<'d, C: Controller> Central<'d, C> {
             return Err(Error::InvalidValue.into());
         }
 
+        let host = self.stack.host;
         // Ensure no other connect ongoing.
         let _drop = crate::host::OnDrop::new(|| {
-            self.host.connect_command_state.cancel(true);
+            host.connect_command_state.cancel(true);
         });
-        self.host.connect_command_state.request().await;
+        host.connect_command_state.request().await;
 
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
@@ -108,27 +111,25 @@ impl<'d, C: Controller> Central<'d, C> {
         };
         let phy_params = Self::create_phy_params(initiating, config.scan_config.phys);
 
-        self.host
-            .async_command(LeExtCreateConn::new(
-                true,
-                self.host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
-                AddrKind::PUBLIC,
-                BdAddr::default(),
-                phy_params,
-            ))
-            .await?;
+        host.async_command(LeExtCreateConn::new(
+            true,
+            host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            AddrKind::PUBLIC,
+            BdAddr::default(),
+            phy_params,
+        ))
+        .await?;
 
         match select(
-            self.host
-                .connections
+            host.connections
                 .accept(LeConnRole::Central, config.scan_config.filter_accept_list),
-            self.host.connect_command_state.wait_idle(),
+            host.connect_command_state.wait_idle(),
         )
         .await
         {
             Either::First(conn) => {
                 _drop.defuse();
-                self.host.connect_command_state.done();
+                host.connect_command_state.done();
                 Ok(conn)
             }
             Either::Second(_) => Err(Error::Timeout.into()),
@@ -160,10 +161,10 @@ impl<'d, C: Controller> Central<'d, C> {
     where
         C: ControllerCmdSync<LeClearFilterAcceptList> + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        self.host.command(LeClearFilterAcceptList::new()).await?;
+        let host = self.stack.host;
+        host.command(LeClearFilterAcceptList::new()).await?;
         for entry in filter_accept_list {
-            self.host
-                .command(LeAddDeviceToFilterAcceptList::new(entry.0, *entry.1))
+            host.command(LeAddDeviceToFilterAcceptList::new(entry.0, *entry.1))
                 .await?;
         }
         Ok(())
@@ -177,6 +178,7 @@ impl<'d, C: Controller> Central<'d, C> {
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
+        let host = self.stack.host;
         self.set_accept_filter(config.filter_accept_list).await?;
 
         let params = LeSetScanParams::new(
@@ -194,8 +196,8 @@ impl<'d, C: Controller> Central<'d, C> {
                 bt_hci::param::ScanningFilterPolicy::BasicFiltered
             },
         );
-        self.host.command(params).await?;
-        self.host.command(LeSetScanEnable::new(true, true)).await?;
+        host.command(params).await?;
+        host.command(LeSetScanEnable::new(true, true)).await?;
         Ok(())
     }
 
@@ -214,25 +216,24 @@ impl<'d, C: Controller> Central<'d, C> {
             scan_window: config.window.into(),
         };
         let phy_params = Self::create_phy_params(scanning, config.phys);
-        self.host
-            .command(LeSetExtScanParams::new(
-                self.host.address.map(|s| s.kind).unwrap_or(AddrKind::PUBLIC),
-                if config.filter_accept_list.is_empty() {
-                    bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
-                } else {
-                    bt_hci::param::ScanningFilterPolicy::BasicFiltered
-                },
-                phy_params,
-            ))
-            .await?;
-        self.host
-            .command(LeSetExtScanEnable::new(
-                true,
-                FilterDuplicates::Disabled,
-                config.timeout.into(),
-                bt_hci::param::Duration::from_secs(0),
-            ))
-            .await?;
+        let host = self.stack.host;
+        host.command(LeSetExtScanParams::new(
+            host.address.map(|s| s.kind).unwrap_or(AddrKind::PUBLIC),
+            if config.filter_accept_list.is_empty() {
+                bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
+            } else {
+                bt_hci::param::ScanningFilterPolicy::BasicFiltered
+            },
+            phy_params,
+        ))
+        .await?;
+        host.command(LeSetExtScanEnable::new(
+            true,
+            FilterDuplicates::Disabled,
+            config.timeout.into(),
+            bt_hci::param::Duration::from_secs(0),
+        ))
+        .await?;
         Ok(())
     }
 
@@ -240,7 +241,8 @@ impl<'d, C: Controller> Central<'d, C> {
     where
         C: ControllerCmdSync<LeSetScanEnable>,
     {
-        self.host.command(LeSetScanEnable::new(false, false)).await?;
+        let host = self.stack.host;
+        host.command(LeSetScanEnable::new(false, false)).await?;
         Ok(())
     }
 
@@ -248,14 +250,14 @@ impl<'d, C: Controller> Central<'d, C> {
     where
         C: ControllerCmdSync<LeSetExtScanEnable>,
     {
-        self.host
-            .command(LeSetExtScanEnable::new(
-                false,
-                FilterDuplicates::Disabled,
-                bt_hci::param::Duration::from_secs(0),
-                bt_hci::param::Duration::from_secs(0),
-            ))
-            .await?;
+        let host = self.stack.host;
+        host.command(LeSetExtScanEnable::new(
+            false,
+            FilterDuplicates::Disabled,
+            bt_hci::param::Duration::from_secs(0),
+            bt_hci::param::Duration::from_secs(0),
+        ))
+        .await?;
         Ok(())
     }
 
@@ -270,8 +272,9 @@ impl<'d, C: Controller> Central<'d, C> {
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
+        let host = self.stack.host;
         self.start_scan_ext(config).await?;
-        let Some(report) = self.scanner.receive().await else {
+        let Some(report) = host.scanner.receive().await else {
             return Err(Error::Timeout.into());
         };
         self.stop_scan_ext().await?;
@@ -289,8 +292,9 @@ impl<'d, C: Controller> Central<'d, C> {
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
+        let host = self.stack.host;
         self.start_scan(config).await?;
-        let Some(report) = self.scanner.receive().await else {
+        let Some(report) = host.scanner.receive().await else {
             return Err(Error::Timeout.into());
         };
         self.stop_scan().await?;
