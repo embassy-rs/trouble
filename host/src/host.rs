@@ -169,8 +169,11 @@ impl<'d> AdvState<'d> {
 /// Host metrics
 #[derive(Default, Clone)]
 pub struct HostMetrics {
+    /// How many connect events have been received.
     pub connect_events: u32,
+    /// How many disconnect events have been received.
     pub disconnect_events: u32,
+    /// How many errors processing received data.
     pub rx_errors: u32,
 }
 
