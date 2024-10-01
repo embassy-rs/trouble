@@ -12,6 +12,7 @@
 use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
+use bt_hci::cmd::{AsyncCmd, SyncCmd};
 pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
 use bt_hci::FromHciBytesError;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -52,7 +53,7 @@ pub(crate) mod mock_controller;
 
 pub(crate) mod host;
 pub use central::*;
-use host::{AdvHandleState, BleHost, Runner};
+use host::{AdvHandleState, BleHost, HostMetrics, Runner};
 pub use peripheral::*;
 
 #[allow(missing_docs)]
@@ -67,7 +68,7 @@ pub mod prelude {
     pub use crate::connection::*;
     #[cfg(feature = "gatt")]
     pub use crate::gatt::*;
-    pub use crate::host::{ControlRunner, Runner, RxRunner, TxRunner};
+    pub use crate::host::{ControlRunner, HostMetrics, Runner, RxRunner, TxRunner};
     pub use crate::l2cap::*;
     pub use crate::packet_pool::{PacketPool, Qos as PacketQos};
     #[cfg(feature = "peripheral")]
@@ -403,9 +404,37 @@ pub struct Stack<'d, C> {
     host: &'d BleHost<'d, C>,
 }
 
-impl<'d, C> Stack<'d, C> {
+impl<'d, C: Controller> Stack<'d, C> {
     pub(crate) fn new(host: &'d BleHost<'d, C>) -> Self {
         Self { host }
+    }
+
+    /// Run a HCI command and return the response.
+    pub async fn command<T>(&self, cmd: T) -> Result<T::Return, BleHostError<C::Error>>
+    where
+        T: SyncCmd,
+        C: ControllerCmdSync<T>,
+    {
+        self.host.command(cmd).await
+    }
+
+    /// Run an async HCI command where the response will generate an event later.
+    pub async fn async_command<T>(&self, cmd: T) -> Result<(), BleHostError<C::Error>>
+    where
+        T: AsyncCmd,
+        C: ControllerCmdAsync<T>,
+    {
+        self.host.async_command(cmd).await
+    }
+
+    /// Read current host metrics
+    pub fn metrics(&self) -> HostMetrics {
+        self.host.metrics()
+    }
+
+    /// Log status information of the host
+    pub fn log_status(&self, verbose: bool) {
+        self.host.log_status(verbose);
     }
 }
 

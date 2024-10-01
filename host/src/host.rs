@@ -420,13 +420,13 @@ where
     }
 
     /// Read current host metrics
-    pub fn metrics(&self) -> HostMetrics {
+    pub(crate) fn metrics(&self) -> HostMetrics {
         let m = self.metrics.borrow_mut().clone();
         m
     }
 
     /// Log status information of the host
-    pub fn log_status(&self, verbose: bool) {
+    pub(crate) fn log_status(&self, verbose: bool) {
         let m = self.metrics.borrow();
         debug!("[host] connect events: {}", m.connect_events);
         debug!("[host] disconnect events: {}", m.disconnect_events);

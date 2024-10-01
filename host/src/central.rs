@@ -78,7 +78,7 @@ impl<'d, C: Controller> Central<'d, C> {
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect_ext(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'_>, BleHostError<C::Error>>
+    pub async fn connect_ext(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'d>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
