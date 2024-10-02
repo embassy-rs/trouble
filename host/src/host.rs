@@ -518,9 +518,9 @@ impl<'d, C: Controller> Runner<'d, C> {
         let rx_fut = self.rx.run_with_handler(vendor_handler);
         let tx_fut = self.tx.run();
         pin_mut!(control_fut, rx_fut, tx_fut);
-        match select3(&mut control_fut, &mut rx_fut, &mut tx_fut).await {
+        match select3(&mut tx_fut, &mut control_fut, &mut rx_fut).await {
             Either3::First(result) => {
-                trace!("[host] control_fut exit");
+                trace!("[host] tx_fut exit");
                 result
             }
             Either3::Second(result) => {
@@ -528,7 +528,7 @@ impl<'d, C: Controller> Runner<'d, C> {
                 result
             }
             Either3::Third(result) => {
-                trace!("[host] tx_fut exit");
+                trace!("[host] control_fut exit");
                 result
             }
         }
