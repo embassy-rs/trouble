@@ -3,10 +3,10 @@ members = [
     "host",
     "host-macro", 
     "examples/apps", 
-    "examples/esp32", 
-    "examples/nrf-sdc",
-    "examples/rp-pico-w",
-    "examples/serial-hci",
-    "examples/apache-nimble",
+    # "examples/esp32", 
+    # "examples/nrf-sdc",
+    # "examples/rp-pico-w",
+    # "examples/serial-hci",
+    # "examples/apache-nimble",
 ]
 resolver = '2'
