@@ -9,11 +9,11 @@ use syn::LitStr;
 
 #[derive(Debug)]
 pub(crate) struct Characteristic {
-    name: String,
-    ty: syn::Type,
-    args: CharacteristicArgs,
-    span: Span,
-    vis: syn::Visibility,
+    pub name: String,
+    pub ty: syn::Type,
+    pub args: CharacteristicArgs,
+    pub span: Span,
+    pub vis: syn::Visibility,
 }
 
 impl Characteristic {
@@ -44,30 +44,30 @@ pub(crate) struct DescriptorArgs {
 #[derive(Debug, FromMeta, Default)]
 pub(crate) struct CharacteristicArgs {
     /// The UUID of the characteristic.
-    uuid: String,
+    pub uuid: String,
     /// If true, the characteristic can be read.
     #[darling(default)]
-    read: bool,
+    pub read: bool,
     /// If true, the characteristic can be written.
     #[darling(default)]
-    write: bool,
+    pub write: bool,
     /// If true, the characteristic can be written without a response.
     #[darling(default)]
-    write_without_response: bool,
+    pub write_without_response: bool,
     /// If true, the characteristic can send notifications.
     #[darling(default)]
-    notify: bool,
+    pub notify: bool,
     /// If true, the characteristic can send indications.
     #[darling(default)]
-    indicate: bool,
+    pub indicate: bool,
     /// The initial value of the characteristic.
     /// This is optional and can be used to set the initial value of the characteristic.
     #[darling(default)]
-    value: Option<syn::Expr>,
+    pub value: Option<syn::Expr>,
     // /// Descriptors for the characteristic.
     // /// Descriptors are optional and can be used to add additional metadata to the characteristic.
     #[darling(default, multiple)]
-    descriptor: Vec<DescriptorArgs>,
+    pub descriptor: Vec<DescriptorArgs>,
 }
 
 impl CharacteristicArgs {
