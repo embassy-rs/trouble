@@ -1,8 +1,9 @@
 //! nifty utility borrowed from serde :)
-//! 
+//!
 //! https://github.com/serde-rs/serde/blob/master/serde_derive/src/internals/ctxt.rs
 
-use quote::ToTokens;
+use proc_macro2::TokenStream;
+use quote::{quote, ToTokens};
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::thread;
@@ -48,19 +49,12 @@ impl Ctxt {
     }
 
     /// Consume this object, producing a formatted error string if there are errors.
-    pub fn check(self) -> syn::Result<()> {
-        let mut errors = self.errors.borrow_mut().take().unwrap().into_iter();
-
-        let mut combined = match errors.next() {
-            Some(first) => first,
-            None => return Ok(()),
-        };
-
-        for rest in errors {
-            combined.combine(rest);
+    pub fn check(self) -> Result<(), TokenStream> {
+        let errors = self.errors.borrow_mut().take().unwrap();
+        match errors.len() {
+            0 => Ok(()),
+            _ => Err(to_compile_errors(errors)),
         }
-
-        Err(combined)
     }
 }
 

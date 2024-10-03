@@ -1,17 +1,11 @@
 [package]
-name = "host-macro"
+name = "trouble-host-macro"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0 or MIT"
 description = "An async Rust BLE host - Derive macros crate"
-keywords = [
-    "no-std",
-]
-categories = [
-    "embedded",
-    "hardware-support",
-    "no-std",
-]
+keywords = [ "no-std" ]
+categories = [ "embedded", "hardware-support", "no-std"]
 
 [dependencies]
 syn = { version = "2.0.79", features = ["full", "extra-traits"] }
