@@ -43,6 +43,8 @@ impl ServiceArgs {
 /// # Example
 ///
 /// ```rust
+/// use trouble_host_macro::gatt_service;
+///
 /// #[gatt_service(uuid = "7e701cf1-b1df-42a1-bb5f-6a1028c793b0")]
 /// struct HeartRateService {
 ///    #[characteristic(uuid = "0x2A37", read, notify)]
@@ -59,12 +61,15 @@ impl ServiceArgs {
 pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
     let ctxt = Ctxt::new(); // error handling context
 
-    // Get arguments from the gatt_service macro attribute (i.e. uuid)
-    let service_attributes: ServiceArgs = {
-        let mut attributes = ServiceArgs::default();
-        let arg_parser = syn::meta::parser(|meta| attributes.parse(meta));
-        parse_macro_input!(args with arg_parser);
-        attributes
+    let service_uuid = {
+        // Get arguments from the gatt_service macro attribute (i.e. uuid)
+        let service_attributes: ServiceArgs = {
+            let mut attributes = ServiceArgs::default();
+            let arg_parser = syn::meta::parser(|meta| attributes.parse(meta));
+            parse_macro_input!(args with arg_parser);
+            attributes
+        };
+        service_attributes.uuid
     };
 
     // Parse the contents of the struct
@@ -85,24 +90,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
     // Parse fields tagged as characteristics, remove them from the fields vec and store them in a separate vec.
     let mut characteristics: Vec<Characteristic> = Vec::new();
     let mut err: Option<syn::Error> = None;
-    fields.retain(|field| {
-        const RETAIN: bool = true;
-        const REMOVE: bool = false;
-        let Some(attr) = field.attrs.iter().find(|attr| {
-            attr.path().segments.len() == 1 && attr.path().segments.first().unwrap().ident == "characteristic"
-        }) else {
-            return RETAIN; // If the field does not have a characteristic attribute, retain it.
-        };
-        let args = match CharacteristicArgs::parse(attr) {
-            Ok(args) => args,
-            Err(e) => {
-                err = Some(e);
-                return REMOVE; // If there was an error parsing the characteristic, remove the field.
-            }
-        };
-        characteristics.push(Characteristic::new(field, args));
-        REMOVE // Successfully parsed, remove the field from the fields vec.
-    });
+    fields.retain(|field| check_for_characteristic(field, &mut err, &mut characteristics));
 
     // If there was an error parsing the characteristics, return the error
     if let Some(err) = err {
@@ -113,21 +101,42 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
         );
         return ctxt.check().unwrap_err().into();
     }
-    let mut builder = ServiceBuilder::new(service_props);
-    // Add fields for each characteristic value handle
-    builder.re_add_fields(&mut fields, &characteristics);
 
-    // let uuid = service_attributes.uuid;
-    // struct_fields.named = syn::punctuated::Punctuated::from_iter(fields);
-    // let struc_vis = struc.vis.clone();
+    // Build the service struct
+    let result = {
+        let mut builder = ServiceBuilder::new(service_props);
+        builder.re_add_fields(&mut fields, &characteristics);
+        builder.build()
+    };
 
-    let result = builder.build();
-
-    // panic!("chars {:#?}", characteristics);
     match ctxt.check() {
         Ok(()) => result.into(),
         Err(e) => e.into(),
     }
+}
+
+/// Check if a field has a characteristic attribute and parse it.
+fn check_for_characteristic(
+    field: &syn::Field,
+    err: &mut Option<syn::Error>,
+    characteristics: &mut Vec<Characteristic>,
+) -> bool {
+    const RETAIN: bool = true;
+    const REMOVE: bool = false;
+    let Some(attr) = field.attrs.iter().find(|attr| {
+        attr.path().segments.len() == 1 && attr.path().segments.first().unwrap().ident == "characteristic"
+    }) else {
+        return RETAIN; // If the field does not have a characteristic attribute, retain it.
+    };
+    let args = match CharacteristicArgs::parse(attr) {
+        Ok(args) => args,
+        Err(e) => {
+            *err = Some(e);
+            return REMOVE; // If there was an error parsing the characteristic, remove the field.
+        }
+    };
+    characteristics.push(Characteristic::new(field, args));
+    REMOVE // Successfully parsed, remove the field from the fields vec.
 }
 
 struct ServiceBuilder {
