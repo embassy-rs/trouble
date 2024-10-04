@@ -8,7 +8,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::meta::ParseNestedMeta;
-use syn::parse::{Parse, ParseBuffer, Parser, Result};
+use syn::parse::{self, Parse, ParseBuffer, Parser, Result};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{parse_macro_input, Ident, Lit, LitStr, Path, Token, Type};
@@ -66,6 +66,8 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
         let service_attributes: ServiceArgs = {
             let mut attributes = ServiceArgs::default();
             let arg_parser = syn::meta::parser(|meta| attributes.parse(meta));
+
+            // TODO this currently gives a bad error message if the user passes in an invalid attribute
             parse_macro_input!(args with arg_parser);
             attributes
         };
@@ -103,11 +105,9 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // Build the service struct
-    let result = {
-        let mut builder = ServiceBuilder::new(service_props);
-        builder.re_add_fields(&mut fields, &characteristics);
-        builder.build()
-    };
+    let result = ServiceBuilder::new(service_props)
+        .re_add_fields(fields, &characteristics)
+        .build();
 
     match ctxt.check() {
         Ok(()) => result.into(),
@@ -148,6 +148,7 @@ struct ServiceBuilder {
     code_struct_init: TokenStream2,
     code_on_write: TokenStream2,
     code_event_enum: TokenStream2,
+    code_fields: TokenStream2,
     trouble: TokenStream2,
 }
 
@@ -163,6 +164,7 @@ impl ServiceBuilder {
             code_struct_init: TokenStream2::new(),
             code_on_write: TokenStream2::new(),
             code_event_enum: TokenStream2::new(),
+            code_fields: TokenStream2::new(),
             trouble: quote!(::trouble_host::prelude::*),
         }
     }
@@ -177,12 +179,15 @@ impl ServiceBuilder {
         let event_enum_name = self.event_enum_name;
         let code_event_enum = self.code_event_enum;
         let code_build_chars = self.code_build_chars;
+        let fields = self.code_fields;
         let result = quote! {
-            #service_props
+            #visibility struct #struct_name {
+            #fields
+            }
 
             #[allow(unused)]
             impl #struct_name {
-                #visibility fn new() -> Result<Self, #trouble::BleHostError>
+                #visibility fn new() -> Result<Self, Error>
                 {
                     #code_build_chars
 
@@ -200,7 +205,7 @@ impl ServiceBuilder {
         result
     }
 
-    fn re_add_fields(&mut self, fields: &mut Vec<syn::Field>, characteristics: &Vec<Characteristic>) {
+    fn re_add_fields(mut self, mut fields: Vec<syn::Field>, characteristics: &Vec<Characteristic>) -> Self {
         let trouble = self.trouble.clone();
         let event_enum_name = self.event_enum_name.clone();
         for ch in characteristics {
@@ -264,9 +269,9 @@ impl ServiceBuilder {
                 self.code_impl.extend(quote_spanned!(ch.span=>
                     #fn_vis fn #notify_fn(
                         &self,
-                        conn: &#trouble::Connection,
+                        conn: &Connection,
                         val: &#ty,
-                    ) -> Result<(), #trouble::BleHostError> {
+                    ) -> Result<(), Error> {
                         // let buf = #ty_as_val::to_gatt(val);
                         // #ble::gatt_server::notify_value(conn, self.#value_handle, buf)
                         unimplemented!("notify {val:?}")
@@ -295,9 +300,9 @@ impl ServiceBuilder {
                 self.code_impl.extend(quote_spanned!(ch.span=>
                     #fn_vis fn #indicate_fn(
                         &self,
-                        conn: &#trouble::Connection,
+                        conn: &Connection,
                         val: &#ty,
-                    ) -> Result<(), #trouble::BleHostError> {
+                    ) -> Result<(), Error> {
                         // let buf = #ty_as_val::to_gatt(val);
                         // #ble::gatt_server::indicate_value(conn, self.#value_handle, buf)
                         unimplemented!("indicate {val:?}")
@@ -341,5 +346,13 @@ impl ServiceBuilder {
             ));
             }
         }
+        for field in fields {
+            let ident = field.ident.clone();
+            let ty = field.ty.clone();
+            self.code_fields.extend(quote_spanned! {field.span()=>
+                #ident: #ty,
+            })
+        }
+        self
     }
 }
