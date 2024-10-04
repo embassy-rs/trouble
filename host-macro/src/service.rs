@@ -1,3 +1,5 @@
+use crate::characteristic::Characteristic;
+use crate::uuid::Uuid;
 use darling::FromMeta;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
@@ -5,8 +7,6 @@ use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
 use syn::{Ident, LitStr};
-use crate::uuid::Uuid;
-use crate::characteristic::Characteristic;
 
 #[derive(Debug, Default)]
 pub(crate) struct ServiceArgs {
@@ -69,7 +69,7 @@ impl ServiceBuilder {
         let result = quote! {
             #visibility struct #struct_name {
                 handle: AttributeHandle,
-            #fields
+                #fields
             }
 
             #[allow(unused)]
@@ -112,7 +112,7 @@ impl ServiceBuilder {
             let indicate_fn = format_ident!("{}_indicate", ch.name);
             let fn_vis = ch.vis.clone();
 
-            let uuid = ch.args.uuid.clone();
+            let uuid = ch.args.uuid;
             let read = ch.args.read;
             let write = ch.args.write;
             let write_without_response = ch.args.write_without_response;
@@ -127,7 +127,7 @@ impl ServiceBuilder {
                 quote! {CharacteristicProp::WriteWithoutResponse},
                 &mut properties,
             );
-            parse_property_into_list(notify, quote! {CharacteristicProp:: Notify}, &mut properties);
+            parse_property_into_list(notify, quote! {CharacteristicProp::Notify}, &mut properties);
             parse_property_into_list(indicate, quote! {CharacteristicProp::Indicate}, &mut properties);
             // let ty = match &ch.ty {
             //     Type::Path(path) => &path.path,

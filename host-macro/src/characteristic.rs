@@ -79,7 +79,7 @@ impl CharacteristicArgs {
                 "uuid" => {
                     let value = meta
                     .value()
-                    .map_err(|_| Error::custom(format!("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'")))?;
+                    .map_err(|_| Error::custom("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'".to_string()))?;
                     let uuid_string: LitStr = value.parse()?;
                     args.uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
                 },
@@ -91,7 +91,7 @@ impl CharacteristicArgs {
                 "value" => {
                     let value = meta
                     .value()
-                    .map_err(|_| Error::custom(format!("value must be followed by '= [data]'.  i.e. value = 'hello'")))?;
+                    .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
                     args.value = Some(value.parse()?);
                 },
                 other => return Err(

@@ -1,15 +1,15 @@
 extern crate proc_macro;
 
+use crate::ctxt::Ctxt;
+use crate::service::{ServiceArgs, ServiceBuilder};
 use characteristic::{Characteristic, CharacteristicArgs};
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
-use crate::ctxt::Ctxt;
-use crate::service::{ServiceArgs, ServiceBuilder};
 
 mod characteristic;
 mod ctxt;
-mod uuid;
 mod service;
+mod uuid;
 
 /// Gatt Service attribute macro.
 ///
@@ -45,7 +45,8 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
             attributes
         };
         service_attributes.uuid
-    }.expect("uuid is required for gatt_service");
+    }
+    .expect("uuid is required for gatt_service");
 
     // Parse the contents of the struct
     let mut service_props = syn::parse_macro_input!(item as syn::ItemStruct);
@@ -111,4 +112,3 @@ fn check_for_characteristic(
     characteristics.push(Characteristic::new(field, args));
     REMOVE // Successfully parsed, remove the field from the fields vec.
 }
-
