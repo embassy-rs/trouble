@@ -44,7 +44,7 @@ pub(crate) struct DescriptorArgs {
 #[derive(Debug, FromMeta, Default)]
 pub(crate) struct CharacteristicArgs {
     /// The UUID of the characteristic.
-    pub uuid: String,
+    pub uuid: Option<Uuid>,
     /// If true, the characteristic can be read.
     #[darling(default)]
     pub read: bool,
@@ -80,7 +80,8 @@ impl CharacteristicArgs {
                     let value = meta
                     .value()
                     .map_err(|_| Error::custom(format!("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'")))?;
-                    args.uuid = value.parse::<LitStr>()?.value();
+                    let uuid_string: LitStr = value.parse()?;
+                    args.uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
                 },
                 "read" => args.read = true,
                 "write" => args.write = true,
@@ -101,6 +102,9 @@ impl CharacteristicArgs {
             };
             Ok(())
         })?;
+        if args.uuid.is_none() {
+            return Err(Error::custom("Characteristic must have a UUID").into());
+        }
         Ok(args)
     }
 }
