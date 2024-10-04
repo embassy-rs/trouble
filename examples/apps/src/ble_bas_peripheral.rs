@@ -16,6 +16,13 @@ const MAX_ATTRIBUTES: usize = 10;
 
 type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
+// Battery service
+#[gatt_service(uuid = "180f")]
+struct BatteryService {
+    #[characteristic(uuid = "2a19", read, notify)]
+    level: u8,
+}
+
 pub async fn run<C>(controller: C)
 where
     C: Controller,
@@ -33,7 +40,6 @@ where
     // Generic Access Service (mandatory)
     let id = b"Trouble";
     let appearance = [0x80, 0x07];
-    let mut bat_level = [23; 1];
     let mut svc = table.add_service(Service::new(0x1800));
     let _ = svc.add_characteristic_ro(0x2a00, id);
     let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
@@ -42,15 +48,7 @@ where
     // Generic attribute service (mandatory)
     table.add_service(Service::new(0x1801));
 
-    // Battery service
-    let level_handle = table
-        .add_service(Service::new(0x180f))
-        .add_characteristic(
-            0x2a19,
-            &[CharacteristicProp::Read, CharacteristicProp::Notify],
-            &mut bat_level,
-        )
-        .build();
+    let battery_service = BatteryService::new(&mut table).unwrap();
 
     let server = GattServer::<C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>::new(stack, &table);
 
@@ -58,7 +56,7 @@ where
     let _ = join3(
         ble_task(runner),
         gatt_task(&server, &table),
-        advertise_task(peripheral, &server, level_handle),
+        advertise_task(peripheral, &server, battery_service.level),
     )
     .await;
 }
