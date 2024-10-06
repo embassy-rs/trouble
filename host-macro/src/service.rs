@@ -1,7 +1,7 @@
-use crate::characteristic::Characteristic;
+use crate::characteristic::{Characteristic, CharacteristicArgs};
 use crate::uuid::Uuid;
 use darling::FromMeta;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{TokenStream as TokenStream2, Span};
 use quote::{format_ident, quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
@@ -96,14 +96,34 @@ impl ServiceBuilder {
         result
     }
 
+    /// Construct instructions for adding a characteristic to the service, with static storage.
+    fn construct_characteristic_static(&mut self, name: &str, span: Span, ty: &syn::Type, properties: &Vec<TokenStream2>, uuid: Option<Uuid>) {
+        let name_screaming = format_ident!(
+            "{}",
+            inflector::cases::screamingsnakecase::to_screaming_snake_case(name)
+        );
+        let char_name = format_ident!("{}", name);
+        self.code_build_chars.extend(quote_spanned! {span=>
+            let #char_name = {
+                static #name_screaming: static_cell::StaticCell<[u8; size_of::<#ty>()]> = static_cell::StaticCell::new();
+                let store = #name_screaming.init([0; size_of::<#ty>()]);
+                let builder = service.add_characteristic(#uuid, &[#(#properties),*], store);
+
+                // TODO: Descriptors
+
+                builder.build()
+            };
+        });
+
+        self.code_struct_init.extend(quote_spanned!(span=>
+            #char_name,
+        ));
+    }
+
     pub fn re_add_fields(mut self, mut fields: Vec<syn::Field>, characteristics: &Vec<Characteristic>) -> Self {
         let event_enum_name = self.event_enum_name.clone();
         for ch in characteristics {
             let name_pascal = inflector::cases::pascalcase::to_pascal_case(&ch.name);
-            let name_screaming = format_ident!(
-                "{}",
-                inflector::cases::screamingsnakecase::to_screaming_snake_case(&ch.name)
-            );
             let char_name = format_ident!("{}", ch.name);
             let cccd_handle = format_ident!("{}_cccd_handle", ch.name);
             let get_fn = format_ident!("{}_get", ch.name);
@@ -113,22 +133,10 @@ impl ServiceBuilder {
             let fn_vis = ch.vis.clone();
 
             let uuid = ch.args.uuid;
-            let read = ch.args.read;
-            let write = ch.args.write;
-            let write_without_response = ch.args.write_without_response;
             let notify = ch.args.notify;
             let indicate = ch.args.indicate;
+
             let ty = &ch.ty;
-            let mut properties = Vec::new();
-            parse_property_into_list(read, quote! {CharacteristicProp::Read}, &mut properties);
-            parse_property_into_list(write, quote! {CharacteristicProp::Write}, &mut properties);
-            parse_property_into_list(
-                write_without_response,
-                quote! {CharacteristicProp::WriteWithoutResponse},
-                &mut properties,
-            );
-            parse_property_into_list(notify, quote! {CharacteristicProp::Notify}, &mut properties);
-            parse_property_into_list(indicate, quote! {CharacteristicProp::Indicate}, &mut properties);
             // let ty = match &ch.ty {
             //     Type::Path(path) => &path.path,
             //     _ => panic!("unexpected type {:#?}", ch.ty),
@@ -140,6 +148,8 @@ impl ServiceBuilder {
             // };
             // panic!("value {:#?}", value);
 
+            let properties = set_access_properties(&ch.args);
+
             // add fields for each characteristic value handle
             fields.push(syn::Field {
                 ident: Some(char_name.clone()),
@@ -150,21 +160,7 @@ impl ServiceBuilder {
                 mutability: syn::FieldMutability::None,
             });
 
-            self.code_build_chars.extend(quote_spanned! {ch.span=>
-                let #char_name = {
-                    static #name_screaming: static_cell::StaticCell<[u8; size_of::<#ty>()]> = static_cell::StaticCell::new();
-                    let store = #name_screaming.init([0; size_of::<#ty>()]);
-                    let builder = service.add_characteristic(#uuid, &[#(#properties),*], store);
-
-                    // TODO: Descriptors
-
-                    builder.build()
-                };
-            });
-
-            self.code_struct_init.extend(quote_spanned!(ch.span=>
-                #char_name,
-            ));
+            self.construct_characteristic_static(&ch.name, ch.span, ty, &properties, uuid);
 
             if notify {
                 self.code_impl.extend(quote_spanned!(ch.span=>
@@ -173,6 +169,8 @@ impl ServiceBuilder {
                         conn: &Connection,
                         val: &#ty,
                     ) -> Result<(), Error> {
+                        // requires a conversion from the type to a byte array
+                        // as well as getting a handle to the characteristic
                         // let buf = #ty_as_val::to_gatt(val);
                         // #ble::gatt_server::notify_value(conn, self.#value_handle, buf)
                         unimplemented!("notify {val:?}")
@@ -262,4 +260,19 @@ fn parse_property_into_list(property: bool, variant: TokenStream2, properties: &
     if property {
         properties.push(variant);
     }
+}
+
+/// Parse the properties of a characteristic and return a list of properties
+fn set_access_properties(args: &CharacteristicArgs) -> Vec<TokenStream2>{
+    let mut properties = Vec::new();
+    parse_property_into_list(args.read, quote! {CharacteristicProp::Read}, &mut properties);
+    parse_property_into_list(args.write, quote! {CharacteristicProp::Write}, &mut properties);
+    parse_property_into_list(
+        args.write_without_response,
+        quote! {CharacteristicProp::WriteWithoutResponse},
+        &mut properties,
+    );
+    parse_property_into_list(args.notify, quote! {CharacteristicProp::Notify}, &mut properties);
+    parse_property_into_list(args.indicate, quote! {CharacteristicProp::Indicate}, &mut properties);
+    properties
 }
