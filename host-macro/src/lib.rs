@@ -1,15 +1,16 @@
 extern crate proc_macro;
 
-use crate::ctxt::Ctxt;
-use crate::service::{ServiceArgs, ServiceBuilder};
-use characteristic::{Characteristic, CharacteristicArgs};
-use proc_macro::TokenStream;
-use syn::parse_macro_input;
-
 mod characteristic;
 mod ctxt;
 mod service;
 mod uuid;
+
+use ctxt::Ctxt;
+use service::{ServiceArgs, ServiceBuilder};
+use characteristic::{Characteristic, CharacteristicArgs};
+use proc_macro::TokenStream;
+use syn::parse_macro_input;
+
 
 /// Gatt Service attribute macro.
 ///
@@ -32,14 +33,13 @@ mod uuid;
 /// ```
 #[proc_macro_attribute]
 pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
-    let ctxt = Ctxt::new(); // error handling context
-
+    
     let service_uuid = {
         // Get arguments from the gatt_service macro attribute (i.e. uuid)
         let service_attributes: ServiceArgs = {
             let mut attributes = ServiceArgs::default();
             let arg_parser = syn::meta::parser(|meta| attributes.parse(meta));
-
+            
             // TODO this currently gives a bad error message if the user passes in an invalid attribute
             parse_macro_input!(args with arg_parser);
             attributes
@@ -50,6 +50,8 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
 
     // Parse the contents of the struct
     let mut service_props = syn::parse_macro_input!(item as syn::ItemStruct);
+    
+    let ctxt = Ctxt::new(); // error handling context, must be initialized after parse_macro_input calls.
 
     let mut fields: Vec<syn::Field> = {
         let struct_fields = match &mut service_props.fields {
