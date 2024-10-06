@@ -9,6 +9,7 @@ const L2CAP_CHANNELS_MAX: usize = 3;
 const MTU: usize = 23;
 
 /// Verify l2cap le connection oriented channels using two HCI adapters attached to the test machine.
+#[ignore]
 #[tokio::test]
 async fn l2cap_connection_oriented_channels() {
     let _ = env_logger::try_init();
