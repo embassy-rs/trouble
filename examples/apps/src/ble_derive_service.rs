@@ -15,5 +15,5 @@ struct HeartRateService {
 
 fn main() {
     let mut table: AttributeTable<NoopRawMutex, 10> = AttributeTable::new();
-    let service = HeartRateService::new(&mut table).unwrap();
+    let _service = HeartRateService::new(&mut table).unwrap();
 }
