@@ -12,7 +12,6 @@ categories = [
     "hardware-support",
     "no-std",
 ]
-resolver = "2"
 
 [dependencies]
 bt-hci = { version = "0.1.1", features = ["embassy-time"] }
