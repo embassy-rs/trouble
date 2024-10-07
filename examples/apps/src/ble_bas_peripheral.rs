@@ -48,7 +48,7 @@ where
     // Generic attribute service (mandatory)
     table.add_service(Service::new(0x1801));
 
-    let battery_service = BatteryService::new(&mut table).unwrap();
+    let battery_service = BatteryService::new(&mut table);
 
     let server = GattServer::<C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>::new(stack, &table);
 

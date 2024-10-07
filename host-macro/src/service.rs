@@ -74,17 +74,17 @@ impl ServiceBuilder {
 
             #[allow(unused)]
             impl #struct_name {
-                #visibility fn new<M, const MAX_ATTRIBUTES: usize>(table: &mut AttributeTable<'_, M, MAX_ATTRIBUTES>) -> Result<Self, Error>
+                #visibility fn new<M, const MAX_ATTRIBUTES: usize>(table: &mut AttributeTable<'_, M, MAX_ATTRIBUTES>) -> Self
                 where
                     M: embassy_sync::blocking_mutex::raw::RawMutex,
                 {
                     let mut service = table.add_service(Service::new(#uuid));
                     #code_build_chars
 
-                    Ok(Self {
+                    Self {
                         handle: service.build(),
                         #code_struct_init
-                    })
+                    }
                 }
                 #code_impl
             }
