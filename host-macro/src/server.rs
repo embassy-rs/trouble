@@ -1,12 +1,11 @@
 use crate::uuid::Uuid;
 use darling::FromMeta;
-use proc_macro2::{TokenStream as TokenStream2, Span};
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
 use syn::{Ident, LitStr};
-
 
 pub(crate) struct ServerBuilder {
     server_props: syn::ItemStruct,

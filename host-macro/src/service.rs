@@ -1,7 +1,7 @@
 use crate::characteristic::{Characteristic, CharacteristicArgs};
 use crate::uuid::Uuid;
 use darling::FromMeta;
-use proc_macro2::{TokenStream as TokenStream2, Span};
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
@@ -97,7 +97,14 @@ impl ServiceBuilder {
     }
 
     /// Construct instructions for adding a characteristic to the service, with static storage.
-    fn construct_characteristic_static(&mut self, name: &str, span: Span, ty: &syn::Type, properties: &Vec<TokenStream2>, uuid: Option<Uuid>) {
+    fn construct_characteristic_static(
+        &mut self,
+        name: &str,
+        span: Span,
+        ty: &syn::Type,
+        properties: &Vec<TokenStream2>,
+        uuid: Option<Uuid>,
+    ) {
         let name_screaming = format_ident!(
             "{}",
             inflector::cases::screamingsnakecase::to_screaming_snake_case(name)
@@ -263,7 +270,7 @@ fn parse_property_into_list(property: bool, variant: TokenStream2, properties: &
 }
 
 /// Parse the properties of a characteristic and return a list of properties
-fn set_access_properties(args: &CharacteristicArgs) -> Vec<TokenStream2>{
+fn set_access_properties(args: &CharacteristicArgs) -> Vec<TokenStream2> {
     let mut properties = Vec::new();
     parse_property_into_list(args.read, quote! {CharacteristicProp::Read}, &mut properties);
     parse_property_into_list(args.write, quote! {CharacteristicProp::Write}, &mut properties);
