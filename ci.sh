@@ -14,11 +14,11 @@ if [[ -z "${CARGO_TARGET_DIR}" ]]; then
 fi
 
 cargo batch \
-    --- build --release --manifest-path examples/nrf-sdc/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
-    --- build --release --manifest-path examples/nrf-sdc/Cargo.toml --target thumbv7em-none-eabihf --features nrf52832 \
-    --- build --release --manifest-path examples/esp32/Cargo.toml --target riscv32imc-unknown-none-elf \
-    --- build --release --manifest-path examples/serial-hci/Cargo.toml \
-    --- build --release --manifest-path examples/rp-pico-w//Cargo.toml --target thumbv6m-none-eabi --features skip-cyw43-firmware \
+    --- build --release -p trouble-nrf-sdc-examples --target thumbv7em-none-eabihf --features nrf52840 \
+    --- build --release -p trouble-nrf-sdc-examples --target thumbv7em-none-eabihf --features nrf52832 \
+    --- build --release -p trouble-esp32-examples --target riscv32imc-unknown-none-elf \
+    --- build --release -p serial-hci \
+    --- build --release -p trouble-rp-examples --target thumbv6m-none-eabi --features skip-cyw43-firmware \
     --- build --release -p trouble-host --features peripheral \
     --- build --release -p trouble-host --features central \
     --- build --release -p trouble-host --features gatt,peripheral \

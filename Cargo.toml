@@ -1,3 +1,3 @@
 [workspace]
-members = ["host"]
+members = ["host", "examples/*"]
 resolver = "2"
