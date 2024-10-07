@@ -9,6 +9,8 @@ mod uuid;
 use characteristic::{Characteristic, CharacteristicArgs};
 use ctxt::Ctxt;
 use proc_macro::TokenStream;
+use quote::quote;
+use server::ServerBuilder;
 use service::{ServiceArgs, ServiceBuilder};
 use syn::parse_macro_input;
 
@@ -45,7 +47,7 @@ pub fn gatt_server(_args: TokenStream, item: TokenStream) -> TokenStream {
 
     let server_name = server_props.ident.clone();
 
-    let result: TokenStream = todo!();
+    let result = ServerBuilder::new(server_props).build();
 
     match ctxt.check() {
         Ok(()) => result.into(),
