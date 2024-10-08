@@ -12,7 +12,7 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
-use syn::{Ident, LitStr};
+use syn::LitStr;
 
 #[derive(Debug, Default)]
 pub(crate) struct ServiceArgs {
@@ -32,8 +32,7 @@ impl ServiceArgs {
 }
 
 pub(crate) struct ServiceBuilder {
-    service_props: syn::ItemStruct,
-    name: Ident,
+    properties: syn::ItemStruct,
     uuid: Uuid,
     code_impl: TokenStream2,
     code_build_chars: TokenStream2,
@@ -42,29 +41,28 @@ pub(crate) struct ServiceBuilder {
 }
 
 impl ServiceBuilder {
-    pub fn new(props: syn::ItemStruct, uuid: Uuid) -> Self {
-        let name = props.ident.clone();
+    pub fn new(properties: syn::ItemStruct, uuid: Uuid) -> Self {
         Self {
-            name,
             uuid,
-            service_props: props,
-            code_impl: TokenStream2::new(),
-            code_build_chars: TokenStream2::new(),
+            properties,
             code_struct_init: TokenStream2::new(),
+            code_impl: TokenStream2::new(),
             code_fields: TokenStream2::new(),
+            code_build_chars: TokenStream2::new(),
         }
     }
-
+    /// Construct the macro blueprint for the service struct.
     pub fn build(self) -> TokenStream2 {
-        let service_props = self.service_props;
-        let visibility = service_props.vis.clone();
-        let struct_name = self.name;
+        let properties = self.properties;
+        let visibility = &properties.vis;
+        let struct_name = &properties.ident;
         let code_struct_init = self.code_struct_init;
         let code_impl = self.code_impl;
-        let code_build_chars = self.code_build_chars;
         let fields = self.code_fields;
+        let code_build_chars = self.code_build_chars;
         let uuid = self.uuid;
-        let result = quote! {
+
+        quote! {
             #visibility struct #struct_name {
                 handle: AttributeHandle,
                 #fields
@@ -86,8 +84,7 @@ impl ServiceBuilder {
                 }
                 #code_impl
             }
-        };
-        result
+        }
     }
 
     /// Construct instructions for adding a characteristic to the service, with static storage.
@@ -130,13 +127,15 @@ impl ServiceBuilder {
     ) -> Self {
         for ch in characteristics {
             let char_name = format_ident!("{}", ch.name);
+            let uuid = ch.args.uuid;
+
+            // TODO add methods to characteristic
             let _get_fn = format_ident!("{}_get", ch.name);
             let _set_fn = format_ident!("{}_set", ch.name);
             let _notify_fn = format_ident!("{}_notify", ch.name);
             let _indicate_fn = format_ident!("{}_indicate", ch.name);
-            let _fn_vis = ch.vis.clone();
+            let _fn_vis = &ch.vis;
 
-            let uuid = ch.args.uuid;
             let _notify = ch.args.notify;
             let _indicate = ch.args.indicate;
 
