@@ -1,5 +1,5 @@
 //! Gatt Service Builder
-//! 
+//!
 //! This module contains the ServiceBuilder struct which is used to construct a Gatt Service from a struct definition.
 //! The struct definition is used to define the characteristics of the service, and the ServiceBuilder is used to
 //! generate the code required to create the service.
@@ -155,7 +155,6 @@ impl ServiceBuilder {
             });
 
             self.construct_characteristic_static(&ch.name, ch.span, ty, &properties, uuid);
-
         }
         for field in fields {
             let ident = field.ident.clone();

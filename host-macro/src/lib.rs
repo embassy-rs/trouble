@@ -1,5 +1,5 @@
 //! Procedural Macros for the `trouble_host` crate.
-//! 
+//!
 //! This crate is enabled by the 'derive' feature of the `trouble_host` crate.
 //! It adds helper macros to simplify the creation of GATT services and servers.
 

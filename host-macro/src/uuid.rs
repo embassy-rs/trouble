@@ -1,5 +1,5 @@
 //! UUID parsing and generation. This is used internally by the proc macros for parsing UUIDs from attributes.
-//! 
+//!
 //! The UUIDs will then be converted to trouble-host UUIDs in the generated code.
 
 use core::str::FromStr;

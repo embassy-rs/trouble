@@ -1,5 +1,5 @@
 //! Gatt Server Builder
-//! 
+//!
 //! This module is responsible for generating the Gatt Server struct and its implementation.
 //! It should contain one or more Gatt Services, which are decorated with the `#[gatt_service(uuid = "...")]` attribute.
 

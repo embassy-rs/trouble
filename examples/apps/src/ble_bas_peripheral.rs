@@ -56,7 +56,6 @@ where
 
     let server = Server::new(stack, &mut table);
 
-
     info!("Starting advertising and GATT service");
     let _ = join3(
         ble_task(runner),
