@@ -113,7 +113,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
 
     // Build the service struct
     let result = ServiceBuilder::new(service_props, service_uuid)
-        .re_add_fields(fields, &characteristics)
+        .add_characteristic_fields(fields, characteristics)
         .build();
 
     match ctxt.check() {

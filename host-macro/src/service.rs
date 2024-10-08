@@ -121,7 +121,13 @@ impl ServiceBuilder {
         ));
     }
 
-    pub fn re_add_fields(mut self, mut fields: Vec<syn::Field>, characteristics: &Vec<Characteristic>) -> Self {
+    /// Consume the lists of fields and fields marked as characteristics and prepare the code to add them to the service
+    /// by generating the macro blueprints for any methods, fields, and static storage required.
+    pub fn add_characteristic_fields(
+        mut self,
+        mut fields: Vec<syn::Field>,
+        characteristics: Vec<Characteristic>,
+    ) -> Self {
         for ch in characteristics {
             let char_name = format_ident!("{}", ch.name);
             let _get_fn = format_ident!("{}_get", ch.name);
