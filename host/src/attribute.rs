@@ -1,11 +1,11 @@
 //! Attribute protocol implementation.
-use core::cell::RefCell;
 use core::fmt;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::mutex::{Mutex, MutexGuard};
 
 use crate::att::AttErrorCode;
+use crate::attribute_server::AttrHandler;
 use crate::cursor::{ReadCursor, WriteCursor};
 pub use crate::types::uuid::Uuid;
 use crate::Error;
@@ -63,28 +63,53 @@ pub enum CharacteristicProp {
 }
 
 /// Attribute metadata.
-pub struct Attribute<'a> {
+pub struct Attribute {
     pub(crate) uuid: Uuid,
     pub(crate) handle: u16,
     pub(crate) last_handle_in_group: u16,
-    pub(crate) data: AttributeData<'a>,
+    pub(crate) data: AttributeData,
 }
 
-impl<'a> Attribute<'a> {
-    const EMPTY: Option<Attribute<'a>> = None;
+impl Attribute {
+    const EMPTY: Option<Attribute> = None;
 }
 
-pub(crate) enum AttributeData<'d> {
+pub(crate) struct AttrDataHandler<'a, T> {
+    uuid: &'a Uuid,
+    handle: u16,
+    handler: T,
+}
+
+impl<'a, T> AttrDataHandler<'a, T>
+where
+    T: AttrHandler,
+{
+    pub(crate) const fn new(rw: T, uuid: &'a Uuid, handle: u16) -> Self {
+        AttrDataHandler {
+            uuid,
+            handle,
+            handler: rw,
+        }
+    }
+
+    pub(crate) async fn read(&mut self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        self.handler.read(self.uuid, self.handle, offset, data).await
+    }
+
+    pub(crate) async fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+        self.handler.write(self.uuid, self.handle, offset, data).await
+    }
+}
+
+pub(crate) enum AttributeData {
     Service {
         uuid: Uuid,
     },
     ReadOnlyData {
         props: CharacteristicProps,
-        value: &'d [u8],
     },
     Data {
         props: CharacteristicProps,
-        value: &'d mut [u8],
     },
     Declaration {
         props: CharacteristicProps,
@@ -97,17 +122,17 @@ pub(crate) enum AttributeData<'d> {
     },
 }
 
-impl<'d> AttributeData<'d> {
+impl AttributeData {
     pub(crate) fn readable(&self) -> bool {
         match self {
-            Self::Data { props, value } => props.0 & (CharacteristicProp::Read as u8) != 0,
+            Self::Data { props } => props.0 & (CharacteristicProp::Read as u8) != 0,
             _ => true,
         }
     }
 
     pub(crate) fn writable(&self) -> bool {
         match self {
-            Self::Data { props, value } => {
+            Self::Data { props } => {
                 props.0
                     & (CharacteristicProp::Write as u8
                         | CharacteristicProp::WriteWithoutResponse as u8
@@ -122,31 +147,20 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub(crate) fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+    pub(crate) async fn read<T>(
+        &self,
+        offset: usize,
+        data: &mut [u8],
+        read: &mut AttrDataHandler<'_, T>,
+    ) -> Result<usize, AttErrorCode>
+    where
+        T: AttrHandler,
+    {
         if !self.readable() {
             return Err(AttErrorCode::ReadNotPermitted);
         }
         match self {
-            Self::ReadOnlyData { props, value } => {
-                if offset > value.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(value.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
-            }
-            Self::Data { props, value } => {
-                if offset > value.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(value.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
-            }
+            Self::ReadOnlyData { props } | Self::Data { props } => read.read(offset, data).await,
             Self::Service { uuid } => {
                 let val = uuid.as_raw();
                 if offset > val.len() {
@@ -204,21 +218,24 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+    pub(crate) async fn write<T>(
+        &mut self,
+        offset: usize,
+        data: &[u8],
+        write: &mut AttrDataHandler<'_, T>,
+    ) -> Result<(), AttErrorCode>
+    where
+        T: AttrHandler,
+    {
         let writable = self.writable();
 
         match self {
-            Self::Data { value, props } => {
+            Self::Data { props } => {
                 if !writable {
                     return Err(AttErrorCode::WriteNotPermitted);
                 }
 
-                if offset + data.len() <= value.len() {
-                    value[offset..offset + data.len()].copy_from_slice(data);
-                    Ok(())
-                } else {
-                    Err(AttErrorCode::InvalidOffset)
-                }
+                write.write(offset, data).await
             }
             Self::Cccd {
                 notifications,
@@ -250,7 +267,7 @@ impl<'d> AttributeData<'d> {
     }
 }
 
-impl<'a> fmt::Debug for Attribute<'a> {
+impl fmt::Debug for Attribute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Attribute")
             .field("uuid", &self.uuid)
@@ -263,96 +280,95 @@ impl<'a> fmt::Debug for Attribute<'a> {
 }
 
 #[cfg(feature = "defmt")]
-impl<'a> defmt::Format for Attribute<'a> {
+impl defmt::Format for Attribute {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{}", defmt::Debug2Format(self))
     }
 }
 
-impl<'a> Attribute<'a> {
-    pub(crate) fn new(uuid: Uuid, data: AttributeData<'a>) -> Attribute<'a> {
+impl Attribute {
+    pub(crate) const fn new(uuid: Uuid, data: AttributeData) -> Attribute {
         Attribute {
             uuid,
             handle: 0,
-            data,
             last_handle_in_group: 0xffff,
+            data,
         }
     }
 }
 
 /// A table of attributes.
-pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
-    inner: Mutex<M, RefCell<InnerTable<'d, MAX>>>,
+pub struct AttributeTable<M: RawMutex, const MAX: usize> {
+    inner: Mutex<M, InnerTable<MAX>>,
     handle: u16,
 }
 
-pub(crate) struct InnerTable<'d, const MAX: usize> {
-    attributes: [Option<Attribute<'d>>; MAX],
+pub(crate) struct InnerTable<const MAX: usize> {
+    attributes: [Option<Attribute>; MAX],
     len: usize,
 }
 
-impl<'d, const MAX: usize> InnerTable<'d, MAX> {
-    fn push(&mut self, attribute: Attribute<'d>) {
+impl<const MAX: usize> InnerTable<MAX> {
+    fn push(&mut self, attribute: Attribute) {
         if self.len == MAX {
             panic!("no space for more attributes")
         }
         self.attributes[self.len].replace(attribute);
         self.len += 1;
     }
+
+    pub(crate) fn attr_iter(&mut self) -> AttributeIterator {
+        let len = self.attributes.len();
+
+        AttributeIterator {
+            attributes: &mut self.attributes[..],
+            pos: 0,
+            len,
+        }
+    }
 }
 
-impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
+impl<M: RawMutex, const MAX: usize> Default for AttributeTable<M, MAX> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
+impl<M: RawMutex, const MAX: usize> AttributeTable<M, MAX> {
     /// Create a new GATT table.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             handle: 1,
-            inner: Mutex::new(RefCell::new(InnerTable {
+            inner: Mutex::new(InnerTable {
                 len: 0,
                 attributes: [Attribute::EMPTY; MAX],
-            })),
+            }),
         }
     }
 
-    pub(crate) fn with_inner<F: Fn(&mut InnerTable<'d, MAX>)>(&self, f: F) {
-        self.inner.lock(|inner| {
-            let mut table = inner.borrow_mut();
-            f(&mut table);
-        })
+    pub(crate) fn with_inner<F: Fn(&mut InnerTable<MAX>)>(&mut self, f: F) {
+        // `try_lock` will always succeed since we have a `&mut` ref to ourselves
+        let mut table = self.inner.try_lock().unwrap();
+        f(&mut table);
     }
 
-    pub(crate) fn iterate<F: FnMut(AttributeIterator<'_, 'd>) -> R, R>(&self, mut f: F) -> R {
-        self.inner.lock(|inner| {
-            let mut table = inner.borrow_mut();
-            let len = table.len;
-            let it = AttributeIterator {
-                attributes: &mut table.attributes[..],
-                pos: 0,
-                len,
-            };
-            f(it)
-        })
+    pub(crate) async fn lock(&self) -> MutexGuard<'_, M, InnerTable<MAX>> {
+        self.inner.lock().await
     }
 
-    fn push(&mut self, mut attribute: Attribute<'d>) -> u16 {
+    fn push(&mut self, mut attribute: Attribute) -> u16 {
         let handle = self.handle;
         attribute.handle = handle;
-        self.inner.lock(|inner| {
-            let mut inner = inner.borrow_mut();
-            inner.push(attribute);
-        });
+        // `try_lock` will always succeed since we have a `&mut` ref to ourselves
+        self.inner.try_lock().unwrap().push(attribute);
         self.handle += 1;
         handle
     }
 
     /// Add a service to the attribute table (group of characteristics)
-    pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
-        let len = self.inner.lock(|i| i.borrow().len);
+    pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, M, MAX> {
+        // `try_lock` will always succeed since we have a `&mut` ref to ourselves
+        let len = self.inner.try_lock().unwrap().len;
         let handle = self.handle;
         self.push(Attribute {
             uuid: PRIMARY_SERVICE_UUID16,
@@ -367,77 +383,39 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         }
     }
 
-    /// Set the value of a characteristic
-    ///
-    /// The provided data must exactly match the size of the storage for the characteristic,
-    /// otherwise this function will panic.
-    ///
-    /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn set(&self, handle: Characteristic, input: &[u8]) -> Result<(), Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle == handle.handle {
-                    if let AttributeData::Data { props, value } = &mut att.data {
-                        assert_eq!(value.len(), input.len());
-                        value.copy_from_slice(input);
-                        return Ok(());
-                    }
-                }
-            }
-            Err(Error::NotFound)
-        })
-    }
+    pub(crate) async fn find_characteristic_by_value_handle(&self, handle: u16) -> Result<Characteristic, Error> {
+        let mut table = self.lock().await;
+        let mut it = table.attr_iter();
 
-    /// Read the value of the characteristic and pass the value to the provided closure.
-    ///
-    /// The return value of the closure is returned in this function and is assumed to be infallible.
-    ///
-    /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, mut f: F) -> Result<T, Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle == handle.handle {
-                    if let AttributeData::Data { props, value } = &mut att.data {
-                        let v = f(value);
-                        return Ok(v);
-                    }
-                }
-            }
-            Err(Error::NotFound)
-        })
-    }
-
-    pub(crate) fn find_characteristic_by_value_handle(&self, handle: u16) -> Result<Characteristic, Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle == handle {
-                    // If next is CCCD
-                    if let Some(next) = it.next() {
-                        if let AttributeData::Cccd {
-                            notifications: _,
-                            indications: _,
-                        } = &next.data
-                        {
-                            return Ok(Characteristic {
-                                handle,
-                                cccd_handle: Some(next.handle),
-                            });
-                        } else {
-                            return Ok(Characteristic {
-                                handle,
-                                cccd_handle: None,
-                            });
-                        }
+        while let Some(att) = it.next() {
+            if att.handle == handle {
+                // If next is CCCD
+                if let Some(next) = it.next() {
+                    if let AttributeData::Cccd {
+                        notifications: _,
+                        indications: _,
+                    } = &next.data
+                    {
+                        return Ok(Characteristic {
+                            handle,
+                            cccd_handle: Some(next.handle),
+                        });
                     } else {
                         return Ok(Characteristic {
                             handle,
                             cccd_handle: None,
                         });
                     }
+                } else {
+                    return Ok(Characteristic {
+                        handle,
+                        cccd_handle: None,
+                    });
                 }
             }
-            Err(Error::NotFound)
-        })
+        }
+
+        Err(Error::NotFound)
     }
 }
 
@@ -455,19 +433,19 @@ impl From<u16> for AttributeHandle {
 }
 
 /// Builder for constructing GATT service definitions.
-pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
+pub struct ServiceBuilder<'r, M: RawMutex, const MAX: usize> {
     handle: AttributeHandle,
     start: usize,
-    table: &'r mut AttributeTable<'d, M, MAX>,
+    table: &'r mut AttributeTable<M, MAX>,
 }
 
-impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
+impl<'r, M: RawMutex, const MAX: usize> ServiceBuilder<'r, M, MAX> {
     fn add_characteristic_internal(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
-        data: AttributeData<'d>,
-    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
+        data: AttributeData,
+    ) -> CharacteristicBuilder<'_, M, MAX> {
         // First the characteristic declaration
         let next = self.table.handle + 1;
         let cccd = self.table.handle + 2;
@@ -520,20 +498,15 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         &mut self,
         uuid: U,
         props: &[CharacteristicProp],
-        storage: &'d mut [u8],
-    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
+    ) -> CharacteristicBuilder<'_, M, MAX> {
         let props = props.into();
-        self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
+        self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props })
     }
 
     /// Add a characteristic to this service with a refererence to an immutable storage buffer.
-    pub fn add_characteristic_ro<U: Into<Uuid>>(
-        &mut self,
-        uuid: U,
-        value: &'d [u8],
-    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
+    pub fn add_characteristic_ro<U: Into<Uuid>>(&mut self, uuid: U) -> CharacteristicBuilder<'_, M, MAX> {
         let props = [CharacteristicProp::Read].into();
-        self.add_characteristic_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value })
+        self.add_characteristic_internal(uuid.into(), props, AttributeData::ReadOnlyData { props })
     }
 
     /// Finish construction of the service and return a handle.
@@ -542,7 +515,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
     }
 }
 
-impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, MAX> {
+impl<'r, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, M, MAX> {
     fn drop(&mut self) {
         let last_handle = self.table.handle + 1;
         self.table.with_inner(|inner| {
@@ -565,17 +538,17 @@ pub struct Characteristic {
 }
 
 /// Builder for characteristics.
-pub struct CharacteristicBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
+pub struct CharacteristicBuilder<'r, M: RawMutex, const MAX: usize> {
     handle: Characteristic,
-    table: &'r mut AttributeTable<'d, M, MAX>,
+    table: &'r mut AttributeTable<M, MAX>,
 }
 
-impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX> {
+impl<'r, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, M, MAX> {
     fn add_descriptor_internal(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
-        data: AttributeData<'d>,
+        data: AttributeData,
     ) -> DescriptorHandle {
         let handle = self.table.handle;
         self.table.push(Attribute {
@@ -589,20 +562,15 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX
     }
 
     /// Add a characteristic descriptor for this characteristic.
-    pub fn add_descriptor<U: Into<Uuid>>(
-        &mut self,
-        uuid: U,
-        props: &[CharacteristicProp],
-        data: &'d mut [u8],
-    ) -> DescriptorHandle {
+    pub fn add_descriptor<U: Into<Uuid>>(&mut self, uuid: U, props: &[CharacteristicProp]) -> DescriptorHandle {
         let props = props.into();
-        self.add_descriptor_internal(uuid.into(), props, AttributeData::Data { props, value: data })
+        self.add_descriptor_internal(uuid.into(), props, AttributeData::Data { props })
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> DescriptorHandle {
+    pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U) -> DescriptorHandle {
         let props = [CharacteristicProp::Read].into();
-        self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
+        self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props })
     }
 
     /// Return the built characteristic.
@@ -619,15 +587,16 @@ pub struct DescriptorHandle {
 }
 
 /// Iterator over attributes.
-pub struct AttributeIterator<'a, 'd> {
-    attributes: &'a mut [Option<Attribute<'d>>],
+pub struct AttributeIterator<'a> {
+    attributes: &'a mut [Option<Attribute>],
     pos: usize,
     len: usize,
 }
 
-impl<'a, 'd> AttributeIterator<'a, 'd> {
+impl<'a> AttributeIterator<'a> {
     /// Return next attribute in iterator.
-    pub fn next<'m>(&'m mut self) -> Option<&'m mut Attribute<'d>> {
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<&mut Attribute> {
         if self.pos < self.len {
             let i = self.attributes[self.pos].as_mut();
             self.pos += 1;

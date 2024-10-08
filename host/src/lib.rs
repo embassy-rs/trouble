@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![warn(missing_docs)]
+#![allow(async_fn_in_trait)]
 
 use core::mem::MaybeUninit;
 

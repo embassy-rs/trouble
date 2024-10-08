@@ -34,7 +34,7 @@ async fn gatt_client_server() {
         let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address)
             .build();
-        let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
+        let mut table: AttributeTable<NoopRawMutex, 10> = AttributeTable::new();
 
         let id = b"Trouble";
         let appearance = [0x80, 0x07];
