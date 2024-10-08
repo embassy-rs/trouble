@@ -16,6 +16,7 @@ impl ServerBuilder {
         Self { properties }
     }
 
+    /// Construct the macro blueprint for the server struct.
     pub fn build(self) -> TokenStream2 {
         let name = &self.properties.ident;
         let visibility = &self.properties.vis;

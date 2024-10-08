@@ -25,6 +25,10 @@ use crate::{config, BleHostError, Error, Stack};
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
 pub struct GattServer<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
     stack: Stack<'reference, C>,
+    /// The attribute server which processes incoming requests and exercises the attribute table.
+    ///
+    /// NOTE: This is public to support definition of the GATT server through proc macros -
+    /// this will be made private again once full functionality has been implemented
     pub server: AttributeServer<'reference, 'values, M, MAX>,
     tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
     rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
