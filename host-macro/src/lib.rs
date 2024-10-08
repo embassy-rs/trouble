@@ -1,3 +1,8 @@
+//! Procedural Macros for the `trouble_host` crate.
+//! 
+//! This crate is enabled by the 'derive' feature of the `trouble_host` crate.
+//! It adds helper macros to simplify the creation of GATT services and servers.
+
 extern crate proc_macro;
 
 mod characteristic;
@@ -9,10 +14,8 @@ mod uuid;
 use characteristic::{Characteristic, CharacteristicArgs};
 use ctxt::Ctxt;
 use proc_macro::TokenStream;
-use quote::quote;
 use server::ServerBuilder;
 use service::{ServiceArgs, ServiceBuilder};
-use syn::parse_macro_input;
 
 /// Gatt Service attribute macro.
 ///
@@ -32,22 +35,9 @@ use syn::parse_macro_input;
 #[proc_macro_attribute]
 pub fn gatt_server(_args: TokenStream, item: TokenStream) -> TokenStream {
     let ctxt = Ctxt::new();
-    let mut server_props = syn::parse_macro_input!(item as syn::ItemStruct);
+    let server_properties = syn::parse_macro_input!(item as syn::ItemStruct);
 
-    let visibility: &syn::Visibility = &server_props.vis;
-    let struct_fields = match &mut server_props.fields {
-        syn::Fields::Named(n) => n,
-        _ => {
-            let s = server_props.ident;
-            ctxt.error_spanned_by(s, "gatt_server structs must have named fields, not tuples.");
-            return TokenStream::new();
-        }
-    };
-    let fields = struct_fields.named.iter().cloned().collect::<Vec<syn::Field>>();
-
-    let server_name = server_props.ident.clone();
-
-    let result = ServerBuilder::new(server_props).build();
+    let result = ServerBuilder::new(server_properties).build();
 
     match ctxt.check() {
         Ok(()) => result.into(),
@@ -82,8 +72,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
             let mut attributes = ServiceArgs::default();
             let arg_parser = syn::meta::parser(|meta| attributes.parse(meta));
 
-            // TODO this currently gives a bad error message if the user passes in an invalid attribute
-            parse_macro_input!(args with arg_parser);
+            syn::parse_macro_input!(args with arg_parser);
             attributes
         };
         service_attributes.uuid

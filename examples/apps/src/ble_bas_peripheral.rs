@@ -16,6 +16,12 @@ const MAX_ATTRIBUTES: usize = 10;
 
 type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
+// GATT Server definition
+#[gatt_server]
+struct Server {
+    battery_service: BatteryService,
+}
+
 // Battery service
 #[gatt_service(uuid = "180f")]
 struct BatteryService {
@@ -48,15 +54,14 @@ where
     // Generic attribute service (mandatory)
     table.add_service(Service::new(0x1801));
 
-    let battery_service = BatteryService::new(&mut table);
+    let server = Server::new(stack, &mut table);
 
-    let server = GattServer::<C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>::new(stack, &table);
 
     info!("Starting advertising and GATT service");
     let _ = join3(
         ble_task(runner),
-        gatt_task(&server, &table),
-        advertise_task(peripheral, &server, battery_service.level),
+        gatt_task(&server),
+        advertise_task(peripheral, &server),
     )
     .await;
 }
@@ -65,14 +70,11 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task<C: Controller>(
-    server: &GattServer<'_, '_, C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
-    table: &AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES>,
-) {
+async fn gatt_task<C: Controller>(server: &Server<'_, '_, C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>) {
     loop {
         match server.next().await {
             Ok(GattEvent::Write { handle, connection: _ }) => {
-                let _ = table.get(handle, |value| {
+                let _ = server.get(handle, |value| {
                     info!("[gatt] Write event on {:?}. Value written: {:?}", handle, value);
                 });
             }
@@ -88,8 +90,7 @@ async fn gatt_task<C: Controller>(
 
 async fn advertise_task<C: Controller>(
     mut peripheral: Peripheral<'_, C>,
-    server: &GattServer<'_, '_, C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
-    handle: Characteristic,
+    server: &Server<'_, '_, C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
 ) -> Result<(), BleHostError<C::Error>> {
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(
@@ -119,7 +120,7 @@ async fn advertise_task<C: Controller>(
             Timer::after(Duration::from_secs(2)).await;
             tick = tick.wrapping_add(1);
             info!("[adv] notifying connection of tick {}", tick);
-            let _ = server.notify(handle, &conn, &[tick]).await;
+            let _ = server.notify(server.battery_service.level, &conn, &[tick]).await;
         }
     }
 }

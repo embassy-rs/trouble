@@ -1,21 +1,14 @@
-use crate::uuid::Uuid;
-use darling::FromMeta;
-use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{format_ident, quote, quote_spanned};
-use syn::meta::ParseNestedMeta;
-use syn::parse::Result;
+//! Gatt Server Builder
+//! 
+//! This module is responsible for generating the Gatt Server struct and its implementation.
+//! It should contain one or more Gatt Services, which are decorated with the `#[gatt_service(uuid = "...")]` attribute.
+
+use proc_macro2::TokenStream as TokenStream2;
+use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{Ident, LitStr};
 
 pub(crate) struct ServerBuilder {
     properties: syn::ItemStruct,
-    // event_enum_name: Ident,
-    // code_impl: TokenStream2,
-    // code_build_chars: TokenStream2,
-    // code_struct_init: TokenStream2,
-    // code_on_write: TokenStream2,
-    // code_event_enum: TokenStream2,
-    // code_fields: TokenStream2,
 }
 
 impl ServerBuilder {
@@ -24,11 +17,8 @@ impl ServerBuilder {
     }
 
     pub fn build(self) -> TokenStream2 {
-        let properties = &self.properties;
         let name = &self.properties.ident;
         let visibility = &self.properties.vis;
-        // let visibility = self.properties.vis;
-        // let name = self.properties.ident;
 
         let mut code_service_definition = TokenStream2::new();
         let mut code_service_init = TokenStream2::new();
@@ -43,12 +33,12 @@ impl ServerBuilder {
             });
 
             code_service_init.extend(quote_spanned! {service_span=>
-                let #service_name = #service_type::new(&mut server.server.table);
+                let #service_name = #service_type::new(table);
             });
 
             code_server_populate.extend(quote_spanned! {service_span=>
                 #service_name,
-            })
+            });
         }
 
         quote! {
@@ -66,24 +56,18 @@ impl ServerBuilder {
                 C: Controller,
                 M: embassy_sync::blocking_mutex::raw::RawMutex,
             {
-                 #visibility fn new(stack: Stack<'reference, C>, id: &'reference [u8], appearance: &'reference [u8]) -> Self {
-                     let server = GattServer::new(stack);
+                #visibility fn new(stack: Stack<'reference, C>, table: &'reference mut AttributeTable<'values, M, MAX>) -> Self {
 
-                     // Generic access service (mandatory)
-                     let mut generic_access_service = server.server.table.add_service(Service::new(0x1800));
-                     let _ = generic_access_service.add_characteristic_ro(0x2a00, id);
-                     let _ = generic_access_service.add_characteristic_ro(0x2a01, appearance);
-                     generic_access_service.build();
+                    #code_service_init
 
-                     // Generic attribute service (mandatory)
-                     server.server.table.add_service(Service::new(0x1801));
+                    Self {
+                        server: GattServer::new(stack, table),
+                        #code_server_populate
+                    }
+                }
 
-                     #code_service_init
-
-                     Self {
-                         server: GattServer::new(stack),
-                         #code_server_populate
-                     }
+                #visibility fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, mut f: F) -> Result<T, Error> {
+                    self.server.server.table.get(handle, f)
                 }
             }
 

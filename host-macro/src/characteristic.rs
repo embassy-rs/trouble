@@ -1,3 +1,9 @@
+//! Characteristic attribute parsing and handling.
+//! 
+//! This module contains the parsing and handling of the characteristic attribute.
+//! The characteristic attribute is used to define a characteristic in a service.
+//! A characteristic is a data value that can be read, written, or notified.
+
 use crate::uuid::Uuid;
 use darling::Error;
 use darling::FromMeta;
