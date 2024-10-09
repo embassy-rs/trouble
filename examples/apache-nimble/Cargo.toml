@@ -9,7 +9,8 @@ defmt-rtt = "0.4"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 cortex-m-rt = "0.7.0"
 cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
-apache-nimble = { version = "0.1.0", features = ["port-layer-embassy", "nrf52840", "controller"] }
+# TEMP: until https://github.com/benbrittain/apache-nimble-sys/pull/4 gets merged
+apache-nimble = { git = "https://github.com/gibbz00/apache-nimble-sys", branch = "https_submodules", features = ["port-layer-embassy", "nrf52840", "controller"] }
 embassy-time = { version = "0.3.0", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-sync = "0.6.0"
 embassy-futures = "0.1.0"
@@ -19,7 +20,6 @@ trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt
 static_cell = "1.0.0"
 
 [patch.crates-io]
-apache-nimble = { git = "https://github.com/benbrittain/apache-nimble-sys.git", branch = "master" }
 embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
 embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
 #embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
