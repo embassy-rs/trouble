@@ -8,13 +8,14 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
+use split::{ExchangeArea, GattEvents, GattNotifier, GattRunner};
 
-use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
+use crate::att::{self, AttErrorCode, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
 use crate::attribute::{
     AttributeData, AttributeTable, Characteristic, CharacteristicProp, Uuid, CCCD, CHARACTERISTIC_CCCD_UUID16,
     CHARACTERISTIC_UUID16, PRIMARY_SERVICE_UUID16,
 };
-use crate::attribute_server::AttributeServer;
+use crate::attribute_server::{AttrHandler, AttributeServer};
 use crate::connection::Connection;
 use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
@@ -22,20 +23,114 @@ use crate::pdu::Pdu;
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
+pub mod split;
+
+/// A descriptor for an attribute handling by a `GattHandler`
+pub struct GattAttrDesc<'a> {
+    /// The connection on behalf of which this attribute handling is coming
+    pub connection: &'a Connection<'a>,
+    /// The attribute UUID
+    pub uuid: &'a Uuid,
+    /// The attribute handle
+    /// TODO: Do we even want to expose handles in the user-facing API?
+    /// This is a general problem we have to decide on, i.e. shall we treat the handles as an internal
+    /// detail of the server or not? If not, we need to expose the connection handle as well,
+    /// either in addition to or instead of the `Connection` thing, which is giving us lifetime troubles
+    pub handle: u16,
+}
+
+/// A callback trait invoked by the Gatt server on various operations
+// TODO: As often happens with handlers, the error to be returned from `read`/`write` and potential future
+// methods is a bit unclear. What should it be?
+pub trait GattHandler {
+    /// Read data for an attribute
+    ///
+    /// # Arguments
+    /// - `attr`: The attribute descriptor
+    /// - `offset`: The offset to read from
+    /// - `data`: The buffer to write the data to
+    ///
+    /// Return the number of bytes read
+    async fn read(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode>;
+
+    /// Write data to an attribute
+    ///
+    /// # Arguments
+    /// - `attr`: The attribute descriptor
+    /// - `offset`: The offset to write to
+    /// - `data`: The data to write
+    async fn write(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &[u8]) -> Result<(), AttErrorCode>;
+}
+
+impl<T> GattHandler for &mut T
+where
+    T: GattHandler,
+{
+    async fn read(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        (**self).read(attr, offset, data).await
+    }
+
+    async fn write(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+        (**self).write(attr, offset, data).await
+    }
+}
+
+// A type adapting the `GattHandler` trait to the `AttrHandler` trait
+struct HandlerAdaptor<'a, T> {
+    handler: T,
+    connection: &'a Connection<'a>,
+}
+
+impl<'a, T> AttrHandler for HandlerAdaptor<'a, T>
+where
+    T: GattHandler,
+{
+    async fn read(&mut self, uuid: &Uuid, handle: u16, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        self.handler
+            .read(
+                &GattAttrDesc {
+                    connection: self.connection,
+                    uuid,
+                    handle,
+                },
+                offset,
+                data,
+            )
+            .await
+    }
+
+    async fn write(&mut self, uuid: &Uuid, handle: u16, offset: usize, data: &[u8]) -> Result<(), att::AttErrorCode> {
+        self.handler
+            .write(
+                &GattAttrDesc {
+                    connection: self.connection,
+                    uuid,
+                    handle,
+                },
+                offset,
+                data,
+            )
+            .await
+    }
+}
+
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct GattServer<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
+pub struct GattServer<'reference, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
     stack: Stack<'reference, C>,
-    server: AttributeServer<'reference, 'values, M, MAX>,
+    server: AttributeServer<'reference, M, MAX>,
     tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
     rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
     connections: &'reference dyn DynamicConnectionManager,
+    // TODO: This would be unused if `split()` is not called by the user,
+    // but at least we do not introduce an extra type external to `GattServer` to hold this state.
+    exchange_area: ExchangeArea<M, L2CAP_MTU>,
 }
 
-impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
-    GattServer<'reference, 'values, C, M, MAX, L2CAP_MTU>
+impl<'reference, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
+    GattServer<'reference, C, M, MAX, L2CAP_MTU>
 {
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
-    pub fn new(stack: Stack<'reference, C>, table: &'reference AttributeTable<'values, M, MAX>) -> Self {
+    pub fn new(stack: Stack<'reference, C>, table: &'reference AttributeTable<M, MAX>) -> Self {
         stack.host.connections.set_default_att_mtu(L2CAP_MTU as u16 - 4);
         use crate::attribute_server::AttributeServer;
 
@@ -45,14 +140,33 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
             rx: stack.host.att_inbound.receiver().into(),
             tx: stack.host.outbound.sender().into(),
             connections: &stack.host.connections,
+            exchange_area: ExchangeArea::new(),
         }
     }
 
-    /// Process GATT requests and update the attribute table accordingly.
+    /// Splits the server into its components.
+    pub fn split(
+        &mut self,
+    ) -> (
+        GattEvents<'_, M, L2CAP_MTU>,
+        GattNotifier<'_, 'reference, C, M, MAX, L2CAP_MTU>,
+        GattRunner<'_, 'reference, C, M, MAX, L2CAP_MTU>,
+    ) {
+        (
+            GattEvents::new(&self.exchange_area),
+            GattNotifier::new(self),
+            GattRunner::new(self),
+        )
+    }
+
+    /// Process GATT requests with the attributes defined in the attribute table.
     ///
-    /// If attributes are written or read, an event will be returned describing the handle
-    /// and the connection causing the event.
-    pub async fn next(&self) -> Result<GattEvent<'reference>, Error> {
+    /// If attributes are written or read, the supplied callback will be invoked to
+    /// read or write the actual attribute data.
+    pub async fn process<T>(&self, mut handler: T) -> Result<(), Error>
+    where
+        T: GattHandler,
+    {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             if let Some(connection) = self.connections.get_connected_handle(handle) {
@@ -62,7 +176,12 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
                         let mut w = WriteCursor::new(&mut tx);
                         let (mut header, mut data) = w.split(4)?;
 
-                        match self.server.process(handle, &att, data.write_buf()) {
+                        let adaptor = HandlerAdaptor {
+                            handler: &mut handler,
+                            connection: &connection,
+                        };
+
+                        match self.server.process(handle, &att, data.write_buf(), adaptor).await {
                             Ok(Some(written)) => {
                                 let mtu = self.connections.get_att_mtu(handle);
                                 data.commit(written)?;
@@ -71,30 +190,9 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
                                 header.write(4_u16)?;
                                 let len = header.len() + data.len();
 
-                                let event = match att {
-                                    AttReq::Write { handle, data } => Some(GattEvent::Write {
-                                        connection,
-                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
-                                    }),
-
-                                    AttReq::Read { handle } => Some(GattEvent::Read {
-                                        connection,
-                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
-                                    }),
-
-                                    AttReq::ReadBlob { handle, offset } => Some(GattEvent::Read {
-                                        connection,
-                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
-                                    }),
-                                    _ => None,
-                                };
-
                                 let mut packet = pdu.packet;
                                 packet.as_mut()[..len].copy_from_slice(&tx[..len]);
                                 self.tx.send((handle, Pdu::new(packet, len))).await;
-                                if let Some(event) = event {
-                                    return Ok(event);
-                                }
                             }
                             Ok(None) => {
                                 debug!("No response sent");
@@ -124,7 +222,6 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
         value: &[u8],
     ) -> Result<(), BleHostError<C::Error>> {
         let conn = connection.handle();
-        self.server.table.set(handle, value)?;
 
         let cccd_handle = handle.cccd_handle.ok_or(Error::Other)?;
 
@@ -146,25 +243,6 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
         self.stack.host.acl(conn, 1).await?.send(&tx[..total]).await?;
         Ok(())
     }
-}
-
-/// An event returned while processing GATT requests.
-#[derive(Clone)]
-pub enum GattEvent<'reference> {
-    /// A characteristic was read.
-    Read {
-        /// Connection that read the characteristic.
-        connection: Connection<'reference>,
-        /// Characteristic handle that was read.
-        handle: Characteristic,
-    },
-    /// A characteristic was written.
-    Write {
-        /// Connection that wrote the characteristic.
-        connection: Connection<'reference>,
-        /// Characteristic handle that was written.
-        handle: Characteristic,
-    },
 }
 
 /// Notification listener for GATT client.
