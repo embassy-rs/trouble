@@ -40,10 +40,10 @@ impl Characteristic {
 #[derive(Debug, FromMeta)]
 pub(crate) struct DescriptorArgs {
     /// The UUID of the descriptor.
-    uuid: Uuid,
+    _uuid: Uuid,
     /// The value of the descriptor.
     #[darling(default)]
-    value: Option<syn::Expr>,
+    _value: Option<syn::Expr>,
 }
 
 /// Characteristic attribute arguments
@@ -73,7 +73,7 @@ pub(crate) struct CharacteristicArgs {
     // /// Descriptors for the characteristic.
     // /// Descriptors are optional and can be used to add additional metadata to the characteristic.
     #[darling(default, multiple)]
-    pub descriptor: Vec<DescriptorArgs>,
+    pub _descriptor: Vec<DescriptorArgs>,
 }
 
 impl CharacteristicArgs {
