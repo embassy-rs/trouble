@@ -60,15 +60,6 @@ async fn gatt_client_server() {
         // Generic attribute service (mandatory)
         table.add_service(Service::new(0x1801));
 
-        // // Custom service
-        // let value_handle = table.add_service(Service::new(SERVICE_UUID.clone()))
-        //     .add_characteristic(
-        //         VALUE_UUID.clone(),
-        //         &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
-        //         &mut value)
-        //     .build();
-
-        // let server = GattServer::<common::Controller, NoopRawMutex, 10, 27>::new(stack, &table);
         let server: Server<common::Controller, NoopRawMutex, 10, 27> = Server::new(stack, &mut table);
 
         select! {
