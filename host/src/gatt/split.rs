@@ -7,12 +7,11 @@ use embassy_sync::blocking_mutex::{self, raw::RawMutex};
 use embassy_sync::signal::Signal;
 
 use crate::att::AttErrorCode;
-use crate::attribute::{Characteristic, Uuid};
-use crate::attribute_server::AttrHandler;
+use crate::attribute::Characteristic;
 use crate::connection::Connection;
 use crate::{BleHostError, Error};
 
-use super::GattServer;
+use super::{GattAttrDesc, GattHandler, GattServer};
 
 /// Represents a GATT attribute read request that needs to be replied with the attribute data.
 pub struct GattReadRequest<'a, M: RawMutex, const L2CAP_MTU: usize>(&'a ExchangeArea<M, L2CAP_MTU>);
@@ -184,10 +183,13 @@ impl<M: RawMutex, const L2CAP_MTU: usize> ExchangeArea<M, L2CAP_MTU> {
     }
 }
 
-impl<M: RawMutex, const L2CAP_MTU: usize> AttrHandler for &ExchangeArea<M, L2CAP_MTU> {
-    async fn read(&mut self, _uuid: &Uuid, handle: u16, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+impl<M: RawMutex, const L2CAP_MTU: usize> GattHandler for &ExchangeArea<M, L2CAP_MTU> {
+    async fn read(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         self.request.signal(Request::Read {
-            handle,
+            // NOTE: We are a bit struggling with connections here as they are lifetimed
+            // Perhaps we should use a connection handle instead of a reference to a connection
+            // and then somehow restore the `Connection` ref from the handle when the `GattEvent` is created
+            handle: attr.handle,
             offset: offset as u16,
         });
 
@@ -204,7 +206,7 @@ impl<M: RawMutex, const L2CAP_MTU: usize> AttrHandler for &ExchangeArea<M, L2CAP
         Ok(len)
     }
 
-    async fn write(&mut self, _uuid: &Uuid, handle: u16, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+    async fn write(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         self.buf.lock(|buf| {
             let mut buf = buf.borrow_mut();
 
@@ -213,7 +215,8 @@ impl<M: RawMutex, const L2CAP_MTU: usize> AttrHandler for &ExchangeArea<M, L2CAP
         });
 
         self.request.signal(Request::Write {
-            handle,
+            // NOTE: Ditto for connections here of course
+            handle: attr.handle,
             offset: offset as u16,
         });
 

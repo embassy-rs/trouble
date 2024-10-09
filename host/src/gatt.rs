@@ -10,7 +10,7 @@ use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
 use split::{ExchangeArea, GattEvents, GattNotifier, GattRunner};
 
-use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
+use crate::att::{self, AttErrorCode, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
 use crate::attribute::{
     AttributeData, AttributeTable, Characteristic, CharacteristicProp, Uuid, CCCD, CHARACTERISTIC_CCCD_UUID16,
     CHARACTERISTIC_UUID16, PRIMARY_SERVICE_UUID16,
@@ -24,6 +24,95 @@ use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
 pub mod split;
+
+/// A descriptor for an attribute handling by a `GattHandler`
+pub struct GattAttrDesc<'a> {
+    /// The connection on behalf of which this attribute handling is coming
+    pub connection: &'a Connection<'a>,
+    /// The attribute UUID
+    pub uuid: &'a Uuid,
+    /// The attribute handle
+    /// TODO: Do we even want to expose handles in the user-facing API?
+    /// This is a general problem we have to decide on, i.e. shall we treat the handles as an internal
+    /// detail of the server or not? If not, we need to expose the connection handle as well,
+    /// either in addition to or instead of the `Connection` thing, which is giving us lifetime troubles
+    pub handle: u16,
+}
+
+/// A callback trait invoked by the Gatt server on various operations
+// TODO: As often happens with handlers, the error to be returned from `read`/`write` and potential future
+// methods is a bit unclear. What should it be?
+pub trait GattHandler {
+    /// Read data for an attribute
+    ///
+    /// # Arguments
+    /// - `attr`: The attribute descriptor
+    /// - `offset`: The offset to read from
+    /// - `data`: The buffer to write the data to
+    ///
+    /// Return the number of bytes read
+    async fn read(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode>;
+
+    /// Write data to an attribute
+    ///
+    /// # Arguments
+    /// - `attr`: The attribute descriptor
+    /// - `offset`: The offset to write to
+    /// - `data`: The data to write
+    async fn write(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &[u8]) -> Result<(), AttErrorCode>;
+}
+
+impl<T> GattHandler for &mut T
+where
+    T: GattHandler,
+{
+    async fn read(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        (**self).read(attr, offset, data).await
+    }
+
+    async fn write(&mut self, attr: &GattAttrDesc<'_>, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+        (**self).write(attr, offset, data).await
+    }
+}
+
+// A type adapting the `GattHandler` trait to the `AttrHandler` trait
+struct HandlerAdaptor<'a, T> {
+    handler: T,
+    connection: &'a Connection<'a>,
+}
+
+impl<'a, T> AttrHandler for HandlerAdaptor<'a, T>
+where
+    T: GattHandler,
+{
+    async fn read(&mut self, uuid: &Uuid, handle: u16, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        self.handler
+            .read(
+                &GattAttrDesc {
+                    connection: self.connection,
+                    uuid,
+                    handle,
+                },
+                offset,
+                data,
+            )
+            .await
+    }
+
+    async fn write(&mut self, uuid: &Uuid, handle: u16, offset: usize, data: &[u8]) -> Result<(), att::AttErrorCode> {
+        self.handler
+            .write(
+                &GattAttrDesc {
+                    connection: self.connection,
+                    uuid,
+                    handle,
+                },
+                offset,
+                data,
+            )
+            .await
+    }
+}
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
 pub struct GattServer<'reference, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
@@ -76,7 +165,7 @@ impl<'reference, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: 
     /// read or write the actual attribute data.
     pub async fn process<T>(&self, mut handler: T) -> Result<(), Error>
     where
-        T: AttrHandler,
+        T: GattHandler,
     {
         loop {
             let (handle, pdu) = self.rx.receive().await;
@@ -87,7 +176,12 @@ impl<'reference, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: 
                         let mut w = WriteCursor::new(&mut tx);
                         let (mut header, mut data) = w.split(4)?;
 
-                        match self.server.process(handle, &att, data.write_buf(), &mut handler).await {
+                        let adaptor = HandlerAdaptor {
+                            handler: &mut handler,
+                            connection: &connection,
+                        };
+
+                        match self.server.process(handle, &att, data.write_buf(), adaptor).await {
                             Ok(Some(written)) => {
                                 let mtu = self.connections.get_att_mtu(handle);
                                 data.commit(written)?;
