@@ -120,11 +120,21 @@ impl ServiceBuilder {
 
     /// Consume the lists of fields and fields marked as characteristics and prepare the code to add them to the service
     /// by generating the macro blueprints for any methods, fields, and static storage required.
-    pub fn add_characteristic_fields(
+    pub fn process_characteristics_and_fields(
         mut self,
         mut fields: Vec<syn::Field>,
         characteristics: Vec<Characteristic>,
     ) -> Self {
+        // Processing specific to non-characteristic fields
+        for field in &fields {
+            let ident = field.ident.as_ref().expect("All fields should have names");
+            let ty = &field.ty;
+            self.code_struct_init.extend(quote_spanned! {field.span() =>
+                #ident: #ty::default(),
+            })
+        }
+
+        // Process characteristic fields
         for ch in characteristics {
             let char_name = format_ident!("{}", ch.name);
             let uuid = ch.args.uuid;
@@ -155,6 +165,8 @@ impl ServiceBuilder {
 
             self.construct_characteristic_static(&ch.name, ch.span, ty, &properties, uuid);
         }
+
+        // Processing common to all fields
         for field in fields {
             let ident = field.ident.clone();
             let ty = field.ty.clone();
