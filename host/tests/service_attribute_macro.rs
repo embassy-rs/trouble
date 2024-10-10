@@ -15,7 +15,7 @@ struct CustomService {
 }
 
 #[tokio::test]
-async fn gett_service_derive() {
+async fn gatt_service_derive() {
     let mut table: AttributeTable<NoopRawMutex, 10> = AttributeTable::new();
     let service = CustomService::new(&mut table);
 
