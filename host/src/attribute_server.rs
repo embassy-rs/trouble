@@ -22,7 +22,7 @@ pub struct NotificationTable<const ENTRIES: usize> {
 }
 
 pub struct AttributeServer<'c, 'd, M: RawMutex, const MAX: usize> {
-    pub(crate) table: &'c AttributeTable<'d, M, MAX>,
+    pub table: &'c AttributeTable<'d, M, MAX>,
     pub(crate) notification: Mutex<M, RefCell<NotificationTable<MAX_NOTIFICATIONS>>>,
 }
 

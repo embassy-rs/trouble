@@ -76,6 +76,8 @@ pub mod prelude {
     #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
     pub use crate::Address;
+    #[cfg(feature = "derive")]
+    pub use trouble_host_macro::*;
 }
 
 #[cfg(feature = "gatt")]
