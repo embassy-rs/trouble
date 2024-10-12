@@ -484,7 +484,10 @@ impl<'d> AdStructureIter<'d> {
             0x08 => Ok(AdStructure::ShortenedLocalName(data)),
             0x09 => Ok(AdStructure::CompleteLocalName(data)),
             // 0x16 => unimplemented!(),
-            // 0xff => unimplemented!(),
+            0xff if data.len() >= 2 => Ok(AdStructure::ManufacturerSpecificData {
+                company_identifier: u16::from_le_bytes([data[0], data[1]]),
+                payload: &data[2..],
+            }),
             ty => Ok(AdStructure::Unknown { ty, data }),
         }
     }
