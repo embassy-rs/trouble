@@ -14,7 +14,7 @@ mod uuid;
 use characteristic::{Characteristic, CharacteristicArgs};
 use ctxt::Ctxt;
 use proc_macro::TokenStream;
-use server::ServerBuilder;
+use server::{ServerArgs, ServerBuilder};
 use service::{ServiceArgs, ServiceBuilder};
 
 /// Gatt Service attribute macro.
@@ -33,7 +33,14 @@ use service::{ServiceArgs, ServiceBuilder};
 ///
 /// ```
 #[proc_macro_attribute]
-pub fn gatt_server(_args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn gatt_server(args: TokenStream, item: TokenStream) -> TokenStream {
+    let server_args = {
+        let mut attributes = ServerArgs::default();
+        let arg_parser = syn::meta::parser(|meta| attributes.parse(meta));
+
+        syn::parse_macro_input!(args with arg_parser);
+        attributes
+    };
     let ctxt = Ctxt::new();
     let server_properties = syn::parse_macro_input!(item as syn::ItemStruct);
 

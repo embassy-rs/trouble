@@ -3,9 +3,51 @@
 //! This module is responsible for generating the Gatt Server struct and its implementation.
 //! It should contain one or more Gatt Services, which are decorated with the `#[gatt_service(uuid = "...")]` attribute.
 
+use darling::Error;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::spanned::Spanned;
+use syn::{meta::ParseNestedMeta, spanned::Spanned, LitInt, Result};
+
+/// Default size for the memory block storing attribute data in bytes
+const DEFAULT_ATTRIBUTE_DATA_SIZE: usize = 32;
+/// MTU for a legacy BLE packet
+const LEGACY_BLE_MTU: usize = 27;
+
+#[derive(Default)]
+pub(crate) struct ServerArgs {
+    mutex_type: Option<syn::Type>,
+    attribute_data_size: Option<usize>,
+    mtu: Option<usize>,
+}
+
+impl ServerArgs {
+    pub fn parse(&mut self, meta: ParseNestedMeta) -> Result<()> {
+        match meta
+            .path
+            .get_ident()
+            .ok_or(Error::custom("no ident"))?
+            .to_string()
+            .as_str()
+        {
+            "mutex_type" => {
+                let buffer = meta.value().map_err(|_| Error::custom("mutex_type must be followed by `= [type]`. e.g. mutex_type = NoopRawMutex".to_string()))?;
+                self.mutex_type = Some(buffer.parse()?);
+            }
+            "attribute_data_size" => {
+                let buffer = meta.value().map_err(|_| Error::custom("attribute_data_size msut be followed by `= [size]`. e.g. attribute_data_size = 32".to_string()))?;
+                let value: LitInt = buffer.parse()?;
+                self.attribute_data_size = Some(value.base10_parse()?);
+            }
+            "mtu" => {
+                let buffer = meta.value().map_err(|_| Error::custom("mtu must be followed by `= [size]`. e.g. mtu = 27".to_string()))?;
+                let value: LitInt = buffer.parse()?;
+                self.mtu = Some(value.base10_parse()?);
+            }
+            other => return Err(meta.error(format!("Unsupported server property: '{other}'.\nSupported properties are: mutex_type, attribute_data_size, mtu"))),
+        }
+        Ok(())
+    }
+}
 
 pub(crate) struct ServerBuilder {
     properties: syn::ItemStruct,
