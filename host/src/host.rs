@@ -283,9 +283,7 @@ where
     }
 
     fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
-        if !self.connections.is_handle_connected(acl.handle()) {
-            return Err(Error::Disconnected);
-        }
+        self.connections.received(acl.handle())?;
         let (header, mut packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
                 let (header, data) = L2capHeader::from_hci_bytes(acl.data())?;

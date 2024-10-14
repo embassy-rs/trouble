@@ -4,6 +4,7 @@ use core::task::{Context, Poll};
 
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole};
 use embassy_sync::waitqueue::WakerRegistration;
+use embassy_time::Instant;
 
 use crate::connection::Connection;
 use crate::Error;
@@ -141,20 +142,35 @@ impl<'d> ConnectionManager<'d> {
         None
     }
 
-    pub(crate) fn is_handle_connected(&self, h: ConnHandle) -> bool {
+    pub(crate) fn with_connected_handle<F: FnOnce(&mut ConnectionStorage) -> Result<(), Error>>(
+        &self,
+        h: ConnHandle,
+        f: F,
+    ) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match (storage.handle, &storage.state) {
                 (Some(handle), ConnectionState::Connected) if handle == h => {
-                    return true;
+                    return f(storage);
                 }
                 (Some(handle), ConnectionState::Connecting) if handle == h => {
-                    return true;
+                    return f(storage);
                 }
                 _ => {}
             }
         }
-        false
+        Err(Error::Disconnected)
+    }
+
+    pub(crate) fn received(&self, h: ConnHandle) -> Result<(), Error> {
+        self.with_connected_handle(h, |storage| {
+            storage.metrics.received(1);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn is_handle_connected(&self, h: ConnHandle) -> bool {
+        self.with_connected_handle(h, |_storage| Ok(())).is_ok()
     }
 
     pub(crate) fn disconnected(&self, h: ConnHandle) -> Result<(), Error> {
@@ -162,6 +178,7 @@ impl<'d> ConnectionManager<'d> {
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
+                storage.metrics.reset();
                 return Ok(());
             }
         }
@@ -458,6 +475,53 @@ pub struct ConnectionStorage {
     pub link_credits: usize,
     pub link_credit_waker: WakerRegistration,
     pub refcount: u8,
+    pub metrics: Metrics,
+}
+
+#[derive(Debug)]
+pub struct Metrics {
+    pub num_sent: usize,
+    pub num_received: usize,
+    pub last_sent: Instant,
+    pub last_received: Instant,
+}
+
+impl Metrics {
+    pub const fn new() -> Self {
+        Self {
+            num_sent: 0,
+            num_received: 0,
+            last_sent: Instant::MIN,
+            last_received: Instant::MIN,
+        }
+    }
+    pub fn sent(&mut self, num: usize) {
+        self.num_sent = self.num_sent.wrapping_add(num);
+        self.last_sent = Instant::now();
+    }
+
+    pub fn received(&mut self, num: usize) {
+        self.num_received = self.num_received.wrapping_add(num);
+        self.last_received = Instant::now();
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Metrics {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "sent = {}, since_sent = {} ms, recvd = {}, since_recvd = {} ms",
+            self.num_sent,
+            self.last_sent.elapsed().as_millis(),
+            self.num_received,
+            self.last_received.elapsed().as_millis(),
+        );
+    }
 }
 
 impl ConnectionStorage {
@@ -471,6 +535,7 @@ impl ConnectionStorage {
         link_credits: 0,
         link_credit_waker: WakerRegistration::new(),
         refcount: 0,
+        metrics: Metrics::new(),
     };
 }
 
@@ -479,13 +544,14 @@ impl defmt::Format for ConnectionStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, conn = {}, flow = {}, role = {}, peer = {:02x}, ref = {}",
+            "state = {}, conn = {}, flow = {}, role = {}, peer = {:02x}, ref = {}, metrics = {}",
             self.state,
             self.handle,
             self.link_credits,
             self.role,
             self.peer_addr,
             self.refcount,
+            self.metrics,
         );
     }
 }
@@ -513,6 +579,16 @@ impl<'a, 'd> PacketGrant<'a, 'd> {
 
     pub(crate) fn confirm(&mut self, sent: usize) {
         self.packets = self.packets.saturating_sub(sent);
+        let mut state = self.state.borrow_mut();
+        for storage in state.connections.iter_mut() {
+            match storage.state {
+                ConnectionState::Connected if self.handle == storage.handle.unwrap() => {
+                    storage.metrics.sent(sent);
+                    break;
+                }
+                _ => {}
+            }
+        }
     }
 }
 
