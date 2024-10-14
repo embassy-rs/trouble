@@ -51,17 +51,27 @@ impl ServerArgs {
 
 pub(crate) struct ServerBuilder {
     properties: syn::ItemStruct,
+    arguments: ServerArgs,
 }
 
 impl ServerBuilder {
-    pub fn new(properties: syn::ItemStruct) -> Self {
-        Self { properties }
+    pub fn new(properties: syn::ItemStruct, arguments: ServerArgs) -> Self {
+        Self { properties, arguments }
     }
 
     /// Construct the macro blueprint for the server struct.
     pub fn build(self) -> TokenStream2 {
         let name = &self.properties.ident;
         let visibility = &self.properties.vis;
+
+        let mutex_type = self.arguments.mutex_type.unwrap_or(syn::Type::Verbatim(quote!(
+            embassy_sync::blocking_mutex::raw::NoopRawMutex
+        )));
+        let attribute_data_size = self
+            .arguments
+            .attribute_data_size
+            .unwrap_or(DEFAULT_ATTRIBUTE_DATA_SIZE);
+        let mtu = self.arguments.mtu.unwrap_or(LEGACY_BLE_MTU);
 
         let mut code_service_definition = TokenStream2::new();
         let mut code_service_init = TokenStream2::new();
@@ -85,21 +95,15 @@ impl ServerBuilder {
         }
 
         quote! {
-            #visibility struct #name<'reference, 'values, C, M, const MAX: usize, const L2CAP_MTU: usize>
-            where
-                C: Controller,
-                M: embassy_sync::blocking_mutex::raw::RawMutex,
+            #visibility struct #name<'reference, 'values, C: Controller>
             {
-                server: GattServer<'reference, 'values, C, M, MAX, L2CAP_MTU>,
+                server: GattServer<'reference, 'values, C, #mutex_type, #attribute_data_size, #mtu>,
                 #code_service_definition
             }
 
-            impl<'reference, 'values, C, M, const MAX: usize, const L2CAP_MTU: usize> #name<'reference, 'values, C, M, MAX, L2CAP_MTU>
-            where
-                C: Controller,
-                M: embassy_sync::blocking_mutex::raw::RawMutex,
+            impl<'reference, 'values, C: Controller> #name<'reference, 'values, C>
             {
-                #visibility fn new(stack: Stack<'reference, C>, table: &'reference mut AttributeTable<'values, M, MAX>) -> Self {
+                #visibility fn new(stack: Stack<'reference, C>, table: &'reference mut AttributeTable<'values, #mutex_type, #attribute_data_size>) -> Self {
 
                     #code_service_init
 
@@ -118,12 +122,9 @@ impl ServerBuilder {
                 }
             }
 
-            impl<'reference, 'values, C, M, const MAX: usize, const L2CAP_MTU: usize> core::ops::Deref for #name<'reference, 'values, C, M, MAX, L2CAP_MTU>
-            where
-                C: Controller,
-                M: embassy_sync::blocking_mutex::raw::RawMutex
+            impl<'reference, 'values, C: Controller> core::ops::Deref for #name<'reference, 'values, C>
             {
-                type Target = GattServer<'reference, 'values, C, M, MAX, L2CAP_MTU>;
+                type Target = GattServer<'reference, 'values, C, #mutex_type, #attribute_data_size, #mtu>;
 
                 fn deref(&self) -> &Self::Target {
                     &self.server

@@ -60,7 +60,7 @@ async fn gatt_client_server() {
         // Generic attribute service (mandatory)
         table.add_service(Service::new(0x1801));
 
-        let server: Server<common::Controller, NoopRawMutex, 10, 27> = Server::new(stack, &mut table);
+        let server: Server<common::Controller> = Server::new(stack, &mut table);
 
         select! {
             r = runner.run() => {

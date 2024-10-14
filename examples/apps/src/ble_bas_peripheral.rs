@@ -17,7 +17,7 @@ const MAX_ATTRIBUTES: usize = 10;
 type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
 // GATT Server definition
-#[gatt_server]
+#[gatt_server(attribute_data_size = 10)]
 struct Server {
     battery_service: BatteryService,
 }
@@ -69,7 +69,7 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task<C: Controller>(server: &Server<'_, '_, C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>) {
+async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
     loop {
         match server.next().await {
             Ok(GattEvent::Write { handle, connection: _ }) => {
@@ -89,7 +89,7 @@ async fn gatt_task<C: Controller>(server: &Server<'_, '_, C, NoopRawMutex, MAX_A
 
 async fn advertise_task<C: Controller>(
     mut peripheral: Peripheral<'_, C>,
-    server: &Server<'_, '_, C, NoopRawMutex, MAX_ATTRIBUTES, L2CAP_MTU>,
+    server: &Server<'_, '_, C>,
 ) -> Result<(), BleHostError<C::Error>> {
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(

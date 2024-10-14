@@ -1286,11 +1286,11 @@ dependencies = [
  "futures",
  "heapless",
  "log",
- "trouble-host-macro",
+ "trouble-host-macros",
 ]
 
 [[package]]
-name = "trouble-host-macro"
+name = "trouble-host-macros"
 version = "0.1.0"
 dependencies = [
  "Inflector",
