@@ -22,7 +22,7 @@ pub struct NotificationTable<const ENTRIES: usize> {
 }
 
 pub struct AttributeServer<'c, 'd, M: RawMutex, const MAX: usize> {
-    pub table: &'c AttributeTable<'d, M, MAX>,
+    pub(crate) table: &'c AttributeTable<'d, M, MAX>,
     pub(crate) notification: Mutex<M, RefCell<NotificationTable<MAX_NOTIFICATIONS>>>,
 }
 
@@ -455,5 +455,10 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         } else {
             Ok(None)
         }
+    }
+
+    /// Get a reference to the attribute table
+    pub fn table(&self) -> &AttributeTable<'d, M, MAX> {
+        self.table
     }
 }

@@ -68,7 +68,7 @@ impl ServerBuilder {
                 }
 
                 #visibility fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, mut f: F) -> Result<T, Error> {
-                    self.server.server.table.get(handle, f)
+                    self.server.server().table().get(handle, f)
                 }
             }
 
