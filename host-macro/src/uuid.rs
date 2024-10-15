@@ -16,7 +16,8 @@ pub enum Uuid {
 impl FromMeta for Uuid {
     fn from_string(value: &str) -> darling::Result<Self> {
         if let Ok(u) = uuid::Uuid::from_str(value) {
-            let bytes = u.to_bytes_le(); // Little-endian, as per Bluetooth spec
+            let mut bytes = u.as_bytes().to_owned();
+            bytes.reverse(); // Little-endian, as per Bluetooth spec
             return Ok(Uuid::Uuid128(bytes));
         }
 
