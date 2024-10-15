@@ -3,6 +3,7 @@ on:
     - if:
         - command: "test"
         - user_is: ["MEMBER", "OWNER"]
+        - user_in: ["petekubiak"]
         - is_pr
       steps:
         - run: |
