@@ -680,8 +680,14 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                     Event::NumberOfCompletedPackets(c) => {
                         // Explicitly ignoring for now
                         for entry in c.completed_packets.iter() {
-                            if let (Ok(handle), Ok(completed)) = (entry.handle(), entry.num_completed_packets()) {
-                                let _ = host.connections.confirm_sent(handle, completed as usize);
+                            match ((entry.handle(), entry.num_completed_packets())) {
+                                (Ok(handle), Ok(completed)) => {
+                                    let _ = host.connections.confirm_sent(handle, completed as usize);
+                                }
+                                (Ok(handle), Err(e)) => {
+                                    warn!("[host] error processing completed packets for {:?}: {:?}", handle, e);
+                                }
+                                _ => {}
                             }
                         }
                     }
