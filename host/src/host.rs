@@ -684,7 +684,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                 }
                                 (Ok(handle), Err(e)) => {
                                     warn!("[host] error processing completed packets for {:?}: {:?}", handle, e);
-                                    panic!(e);
+                                    panic!("{}", e);
                                 }
                                 _ => {}
                             }
