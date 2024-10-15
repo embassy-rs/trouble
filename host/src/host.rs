@@ -798,16 +798,19 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             .await
             {
                 Either4::First(request) => {
+                    trace!("[host] poll disconnecting links");
                     host.command(Disconnect::new(request.handle(), request.reason()))
                         .await?;
                     request.confirm();
                 }
                 Either4::Second(request) => {
+                    trace!("[host] poll disconnecting channels");
                     let mut grant = host.acl(request.handle(), 1).await?;
                     request.send(&mut grant).await?;
                     request.confirm();
                 }
                 Either4::Third(_) => {
+                    trace!("[host] cancel connection create");
                     // trace!("[host] cancelling create connection");
                     if host.command(LeCreateConnCancel::new()).await.is_err() {
                         // Signal to ensure no one is stuck
