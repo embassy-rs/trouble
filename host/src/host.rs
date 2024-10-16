@@ -550,16 +550,16 @@ impl<'d, C: Controller> RxRunner<'d, C> {
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
         let host = self.stack.host;
-        //use embassy_time::Instant;
-        //        let mut started = Instant::now();
+        use embassy_time::Instant;
+        let mut started = Instant::now();
         loop {
             // Task handling receiving data from the controller.
             let mut rx = [0u8; MAX_HCI_PACKET_LEN];
-            //          let now = Instant::now();
-            //            trace!("[host] time since last poll: {} ms", (now - started).as_millis());
-            //           started = now;
+            let now = Instant::now();
+            trace!("[host] time since last poll: {} ms", (now - started).as_millis());
+            started = now;
             let result = host.controller.read(&mut rx).await;
-            //         let polled = Instant::now();
+            let polled = Instant::now();
             //        trace!("[host] polling took {} ms", (polled - started).as_millis());
             match result {
                 Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl) {
@@ -684,7 +684,6 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                 }
                                 (Ok(handle), Err(e)) => {
                                     warn!("[host] error processing completed packets for {:?}: {:?}", handle, e);
-                                    panic!("{}", e);
                                 }
                                 _ => {}
                             }
