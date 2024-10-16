@@ -146,6 +146,11 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
         self.stack.host.acl(conn, 1).await?.send(&tx[..total]).await?;
         Ok(())
     }
+
+    /// Get reference to the underlying AttributeServer
+    pub fn server(&self) -> &AttributeServer<'reference, 'values, M, MAX> {
+        &self.server
+    }
 }
 
 /// An event returned while processing GATT requests.

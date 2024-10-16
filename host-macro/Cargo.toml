@@ -1,0 +1,19 @@
+[package]
+name = "trouble-host-macros"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 or MIT"
+description = "An async Rust BLE host - Derive macros crate"
+keywords = ["no-std"]
+categories = ["embedded", "hardware-support", "no-std"]
+
+[dependencies]
+syn = { version = "^2", features = ["full", "extra-traits"] }
+quote = "1.0.7"
+darling = "0.20.10"
+proc-macro2 = "1.0.18"
+Inflector = "0.11.4"
+uuid = "1.10.0"
+
+[lib]
+proc-macro = true

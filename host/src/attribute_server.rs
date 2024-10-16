@@ -456,4 +456,9 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
             Ok(None)
         }
     }
+
+    /// Get a reference to the attribute table
+    pub fn table(&self) -> &AttributeTable<'d, M, MAX> {
+        self.table
+    }
 }
