@@ -77,12 +77,13 @@ impl ServerBuilder {
         let mut code_service_init = TokenStream2::new();
         let mut code_server_populate = TokenStream2::new();
         for service in &self.properties.fields {
+            let vis = &service.vis;
             let service_span = service.span();
             let service_name = service.ident.as_ref().expect("All fields should have names");
             let service_type = &service.ty;
 
             code_service_definition.extend(quote_spanned! {service_span=>
-                #service_name: #service_type,
+                #vis #service_name: #service_type,
             });
 
             code_service_init.extend(quote_spanned! {service_span=>
