@@ -49,9 +49,6 @@ async fn gatt_client_server() {
 
         let id = b"Trouble";
         let appearance = [0x80, 0x07];
-        // Random starting value to 'prove' the incremented value is correct
-        let value: [u8; 1] = [rand::prelude::random(); 1];
-        let mut expected = value[0].wrapping_add(1);
         let mut svc = table.add_service(Service::new(0x1800));
         let _ = svc.add_characteristic_ro(0x2a00, id);
         let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
@@ -61,6 +58,11 @@ async fn gatt_client_server() {
         table.add_service(Service::new(0x1801));
 
         let server: Server<common::Controller> = Server::new(stack, &mut table);
+
+        // Random starting value to 'prove' the incremented value is correct
+        let value: [u8; 1] = [rand::prelude::random(); 1];
+        let mut expected = value[0].wrapping_add(1);
+        server.set(server.service.value, &value).unwrap();
 
         select! {
             r = runner.run() => {
