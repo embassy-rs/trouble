@@ -159,7 +159,7 @@ impl ServiceBuilder {
                 ty: syn::Type::Verbatim(quote!(Characteristic)),
                 attrs: Vec::new(),
                 colon_token: Default::default(),
-                vis: syn::Visibility::Inherited,
+                vis: ch.vis.clone(),
                 mutability: syn::FieldMutability::None,
             });
 
