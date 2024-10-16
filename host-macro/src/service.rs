@@ -170,8 +170,9 @@ impl ServiceBuilder {
         for field in fields {
             let ident = field.ident.clone();
             let ty = field.ty.clone();
+            let vis = &field.vis;
             self.code_fields.extend(quote_spanned! {field.span()=>
-                #ident: #ty,
+                #vis #ident: #ty,
             })
         }
         self
