@@ -159,7 +159,7 @@ impl ServiceBuilder {
                 ty: syn::Type::Verbatim(quote!(Characteristic)),
                 attrs: Vec::new(),
                 colon_token: Default::default(),
-                vis: syn::Visibility::Inherited,
+                vis: ch.vis.clone(),
                 mutability: syn::FieldMutability::None,
             });
 
@@ -170,8 +170,9 @@ impl ServiceBuilder {
         for field in fields {
             let ident = field.ident.clone();
             let ty = field.ty.clone();
+            let vis = &field.vis;
             self.code_fields.extend(quote_spanned! {field.span()=>
-                #ident: #ty,
+                #vis #ident: #ty,
             })
         }
         self
