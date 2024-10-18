@@ -283,9 +283,7 @@ where
     }
 
     fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
-        if !self.connections.is_handle_connected(acl.handle()) {
-            return Err(Error::Disconnected);
-        }
+        self.connections.received(acl.handle())?;
         let (header, mut packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
                 let (header, data) = L2capHeader::from_hci_bytes(acl.data())?;
@@ -518,7 +516,7 @@ impl<'d, C: Controller> Runner<'d, C> {
         let rx_fut = self.rx.run_with_handler(vendor_handler);
         let tx_fut = self.tx.run();
         pin_mut!(control_fut, rx_fut, tx_fut);
-        match select3(&mut tx_fut, &mut control_fut, &mut rx_fut).await {
+        match select3(&mut tx_fut, &mut rx_fut, &mut control_fut).await {
             Either3::First(result) => {
                 trace!("[host] tx_fut exit");
                 result
@@ -552,21 +550,24 @@ impl<'d, C: Controller> RxRunner<'d, C> {
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
         let host = self.stack.host;
-        //use embassy_time::Instant;
-        //        let mut started = Instant::now();
+        // use embassy_time::Instant;
+        // let mut last = Instant::now();
         loop {
             // Task handling receiving data from the controller.
             let mut rx = [0u8; MAX_HCI_PACKET_LEN];
-            //          let now = Instant::now();
-            //            trace!("[host] time since last poll: {} ms", (now - started).as_millis());
-            //           started = now;
+            // let now = Instant::now();
+            // let elapsed = (now - last).as_millis();
+            // if elapsed >= 1 {
+            //     trace!("[host] time since last poll was {} us", elapsed);
+            // }
             let result = host.controller.read(&mut rx).await;
-            //         let polled = Instant::now();
+            // last = Instant::now();
             //        trace!("[host] polling took {} ms", (polled - started).as_millis());
             match result {
                 Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl) {
                     Ok(_) => {
-                        //                        trace!("[host] ACL processed in {} ms", (Instant::now() - polled).as_millis());
+                        //let processed = Instant::now();
+                        // trace!("[host] ACL process to {} ms", (processed - last).as_millis());
                         #[cfg(feature = "controller-host-flow-control")]
                         if let Err(e) =
                             HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
@@ -615,82 +616,90 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                         m.rx_errors = m.rx_errors.wrapping_add(1);
                     }
                 },
-                Ok(ControllerToHostPacket::Event(event)) => match event {
-                    Event::Le(event) => match event {
-                        LeEvent::LeConnectionComplete(e) => {
-                            if !host.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
+                Ok(ControllerToHostPacket::Event(event)) => {
+                    match event {
+                        Event::Le(event) => match event {
+                            LeEvent::LeConnectionComplete(e) => {
+                                if !host.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
+                                    let _ = host
+                                        .command(Disconnect::new(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        ))
+                                        .await;
+                                    host.connect_command_state.canceled();
+                                }
+                            }
+                            LeEvent::LeEnhancedConnectionComplete(e) => {
+                                if !host.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
+                                    let _ = host
+                                        .command(Disconnect::new(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        ))
+                                        .await;
+                                    host.connect_command_state.canceled();
+                                }
+                            }
+                            LeEvent::LeScanTimeout(_) => {
+                                #[cfg(feature = "scan")]
+                                let _ = host.scanner.try_send(None);
+                            }
+                            LeEvent::LeAdvertisingSetTerminated(set) => {
+                                host.advertise_state.terminate(set.adv_handle);
+                            }
+                            LeEvent::LeExtendedAdvertisingReport(data) => {
+                                #[cfg(feature = "scan")]
                                 let _ = host
-                                    .command(Disconnect::new(
-                                        e.handle,
-                                        DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                    ))
-                                    .await;
-                                host.connect_command_state.canceled();
+                                    .scanner
+                                    .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
                             }
-                        }
-                        LeEvent::LeEnhancedConnectionComplete(e) => {
-                            if !host.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
+                            LeEvent::LeAdvertisingReport(data) => {
+                                #[cfg(feature = "scan")]
                                 let _ = host
-                                    .command(Disconnect::new(
-                                        e.handle,
-                                        DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                    ))
-                                    .await;
-                                host.connect_command_state.canceled();
+                                    .scanner
+                                    .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
+                            }
+                            _ => {
+                                warn!("Unknown LE event!");
+                            }
+                        },
+                        Event::DisconnectionComplete(e) => {
+                            let handle = e.handle;
+                            if let Err(e) = e.status.to_result() {
+                                info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
+                            } else if let Err(e) = e.reason.to_result() {
+                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                            } else {
+                                info!("[host] disconnection event on handle {}", handle.raw());
+                            }
+                            let _ = host.connections.disconnected(handle);
+                            let _ = host.channels.disconnected(handle);
+                            host.reassembly.disconnected(handle);
+                            let mut m = host.metrics.borrow_mut();
+                            m.disconnect_events = m.disconnect_events.wrapping_add(1);
+                        }
+                        Event::NumberOfCompletedPackets(c) => {
+                            // Explicitly ignoring for now
+                            for entry in c.completed_packets.iter() {
+                                match (entry.handle(), entry.num_completed_packets()) {
+                                    (Ok(handle), Ok(completed)) => {
+                                        let _ = host.connections.confirm_sent(handle, completed as usize);
+                                    }
+                                    (Ok(handle), Err(e)) => {
+                                        warn!("[host] error processing completed packets for {:?}: {:?}", handle, e);
+                                    }
+                                    _ => {}
+                                }
                             }
                         }
-                        LeEvent::LeScanTimeout(_) => {
-                            #[cfg(feature = "scan")]
-                            let _ = host.scanner.try_send(None);
+                        Event::Vendor(vendor) => {
+                            vendor_handler(&vendor);
                         }
-                        LeEvent::LeAdvertisingSetTerminated(set) => {
-                            host.advertise_state.terminate(set.adv_handle);
-                        }
-                        LeEvent::LeExtendedAdvertisingReport(data) => {
-                            #[cfg(feature = "scan")]
-                            let _ = host
-                                .scanner
-                                .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
-                        }
-                        LeEvent::LeAdvertisingReport(data) => {
-                            #[cfg(feature = "scan")]
-                            let _ = host
-                                .scanner
-                                .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
-                        }
-                        _ => {
-                            warn!("Unknown LE event!");
-                        }
-                    },
-                    Event::DisconnectionComplete(e) => {
-                        let handle = e.handle;
-                        if let Err(e) = e.status.to_result() {
-                            info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
-                        } else if let Err(e) = e.reason.to_result() {
-                            info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
-                        } else {
-                            info!("[host] disconnection event on handle {}", handle.raw());
-                        }
-                        let _ = host.connections.disconnected(handle);
-                        let _ = host.channels.disconnected(handle);
-                        host.reassembly.disconnected(handle);
-                        let mut m = host.metrics.borrow_mut();
-                        m.disconnect_events = m.disconnect_events.wrapping_add(1);
+                        // Ignore
+                        _ => {}
                     }
-                    Event::NumberOfCompletedPackets(c) => {
-                        // Explicitly ignoring for now
-                        for entry in c.completed_packets.iter() {
-                            if let (Ok(handle), Ok(completed)) = (entry.handle(), entry.num_completed_packets()) {
-                                let _ = host.connections.confirm_sent(handle, completed as usize);
-                            }
-                        }
-                    }
-                    Event::Vendor(vendor) => {
-                        vendor_handler(&vendor);
-                    }
-                    // Ignore
-                    _ => {}
-                },
+                }
                 // Ignore
                 Ok(_) => {}
                 Err(e) => {
@@ -793,16 +802,19 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             .await
             {
                 Either4::First(request) => {
+                    trace!("[host] poll disconnecting links");
                     host.command(Disconnect::new(request.handle(), request.reason()))
                         .await?;
                     request.confirm();
                 }
                 Either4::Second(request) => {
+                    trace!("[host] poll disconnecting channels");
                     let mut grant = host.acl(request.handle(), 1).await?;
                     request.send(&mut grant).await?;
                     request.confirm();
                 }
                 Either4::Third(_) => {
+                    trace!("[host] cancel connection create");
                     // trace!("[host] cancelling create connection");
                     if host.command(LeCreateConnCancel::new()).await.is_err() {
                         // Signal to ensure no one is stuck
