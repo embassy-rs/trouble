@@ -1,5 +1,4 @@
 use embassy_futures::join::join3;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
@@ -41,20 +40,13 @@ where
         .set_random_address(address)
         .build();
 
-    let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
-
-    // Generic Access Service (mandatory)
-    let id = b"Trouble";
-    let appearance = [0x80, 0x07];
-    let mut svc = table.add_service(Service::new(0x1800));
-    let _ = svc.add_characteristic_ro(0x2a00, id);
-    let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
-    svc.build();
-
-    // Generic attribute service (mandatory)
-    table.add_service(Service::new(0x1801));
-
-    let server = Server::new(stack, &mut table);
+    let server = Server::new_with_config(
+        stack,
+        GapConfig::Peripheral(PeripheralConfig {
+            name: "TrouBLE",
+            appearance: &[0x80, 0x07],
+        }),
+    );
 
     info!("Starting advertising and GATT service");
     let _ = join3(
@@ -69,7 +61,7 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
+async fn gatt_task<C: Controller>(server: &Server<'_, C>) {
     loop {
         match server.next().await {
             Ok(GattEvent::Write { handle, connection: _ }) => {
@@ -89,7 +81,7 @@ async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
 
 async fn advertise_task<C: Controller>(
     mut peripheral: Peripheral<'_, C>,
-    server: &Server<'_, '_, C>,
+    server: &Server<'_, C>,
 ) -> Result<(), BleHostError<C::Error>> {
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(
