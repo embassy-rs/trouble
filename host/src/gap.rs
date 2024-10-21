@@ -10,6 +10,33 @@
 use crate::prelude::*;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
+pub mod appearance {
+    //! The representation of the external appearance of the device.
+    //!
+    //! This is a list of some of the most common appearance values and demonstrates the pattern to use to define new appearance values.
+    //!
+    //! https://www.bluetooth.com/wp-content/uploads/Files/Specification/Assigned_Numbers.html#bookmark49
+
+    /// Create a new appearance value.
+    pub const fn new(category: u16, subcategory: u8) -> [u8; 2] {
+        ((category << 6) | (subcategory as u16)).to_le_bytes()
+    }
+    /// Generic Unknown device appearance.
+    pub const GENERIC_UNKNOWN: [u8; 2] = new(0x000, 0x00);
+    /// Generic Phone device appearance.
+    pub const GENERIC_PHONE: [u8; 2] = new(0x001, 0x00);
+    /// Generic Computer device appearance.
+    pub const GENERIC_COMPUTER: [u8; 2] = new(0x002, 0x00);
+    /// Smart Watch device appearance.
+    pub const SMART_WATCH: [u8; 2] = new(0x003, 0x02);
+    /// Generic Power device appearance.
+    pub const GENERIC_POWER: [u8; 2] = new(0x01E, 0x00);
+    /// Generic Sensor device appearance.
+    pub const GENERIC_SENSOR: [u8; 2] = new(0x015, 0x00);
+    /// Gamepad device appearance.
+    pub const GAMEPAD: [u8; 2] = new(0x00F, 0x04);
+}
+
 /// Configuration for the GAP Service.
 pub enum GapConfig {
     /// Peripheral device configuration.
@@ -37,10 +64,12 @@ pub struct CentralConfig {
 
 impl GapConfig {
     /// Create a default peripheral configuration.
+    ///
+    /// This configuration will use the `GENERIC_UNKNOWN` appearance.
     pub fn default(name: &'static str) -> Self {
         GapConfig::Peripheral(PeripheralConfig {
             name,
-            appearance: &[0x80, 0x07],
+            appearance: &appearance::GENERIC_UNKNOWN,
         })
     }
     /// Add the GAP service to the attribute table.

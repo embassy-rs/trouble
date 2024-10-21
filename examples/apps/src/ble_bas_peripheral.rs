@@ -44,7 +44,7 @@ where
         stack,
         GapConfig::Peripheral(PeripheralConfig {
             name: "TrouBLE",
-            appearance: &[0x80, 0x07],
+            appearance: &appearance::GENERIC_POWER,
         }),
     );
 
