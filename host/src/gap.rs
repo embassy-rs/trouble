@@ -17,24 +17,38 @@ pub mod appearance {
     //!
     //! https://www.bluetooth.com/wp-content/uploads/Files/Specification/Assigned_Numbers.html#bookmark49
 
-    /// Create a new appearance value.
-    pub const fn new(category: u16, subcategory: u8) -> [u8; 2] {
-        ((category << 6) | (subcategory as u16)).to_le_bytes()
+    // TODO: Perhaps this should be it's own crate in future?
+
+    /// Construct a new appearance value for the GAP Service.
+    ///
+    /// Follow the pattern of the examples below to create new appearance values.
+    /// https://www.bluetooth.com/wp-content/uploads/Files/Specification/Assigned_Numbers.html#bookmark49
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// use trouble_host::prelude::*;
+    ///
+    /// const GAMEPAD: &[u8; 2] = &appearance::new(0x00F, 0x040);
+    /// ```
+    pub const fn new(category: u8, subcategory: u8) -> [u8; 2] {
+        (((category as u16) << 6) | (subcategory as u16)).to_le_bytes()
     }
+
     /// Generic Unknown device appearance.
-    pub const GENERIC_UNKNOWN: [u8; 2] = new(0x000, 0x00);
+    pub const GENERIC_UNKNOWN: [u8; 2] = new(0x000, 0x000);
     /// Generic Phone device appearance.
-    pub const GENERIC_PHONE: [u8; 2] = new(0x001, 0x00);
+    pub const GENERIC_PHONE: [u8; 2] = new(0x001, 0x000);
     /// Generic Computer device appearance.
-    pub const GENERIC_COMPUTER: [u8; 2] = new(0x002, 0x00);
+    pub const GENERIC_COMPUTER: [u8; 2] = new(0x002, 0x000);
     /// Smart Watch device appearance.
-    pub const SMART_WATCH: [u8; 2] = new(0x003, 0x02);
+    pub const SMART_WATCH: [u8; 2] = new(0x003, 0x020);
     /// Generic Power device appearance.
-    pub const GENERIC_POWER: [u8; 2] = new(0x01E, 0x00);
+    pub const GENERIC_POWER: [u8; 2] = new(0x01E, 0x000);
     /// Generic Sensor device appearance.
-    pub const GENERIC_SENSOR: [u8; 2] = new(0x015, 0x00);
+    pub const GENERIC_SENSOR: [u8; 2] = new(0x015, 0x000);
     /// Gamepad device appearance.
-    pub const GAMEPAD: [u8; 2] = new(0x00F, 0x04);
+    pub const GAMEPAD: [u8; 2] = new(0x00F, 0x040);
 }
 
 /// Configuration for the GAP Service.
@@ -50,7 +64,10 @@ pub struct PeripheralConfig {
     /// The name of the peripheral device.
     pub name: &'static str,
     /// The representation of the external appearance of the device.
+    ///
+    /// /// Example: `&appearance::GENERIC_SENSOR`
     pub appearance: &'static [u8; 2],
+    // TODO: Add more GAP parameters
     // pub preferred_connection_parameters: Option<ConnectionParameters>,
 }
 
@@ -59,7 +76,10 @@ pub struct CentralConfig {
     /// The name of the central device.
     pub name: &'static str,
     /// The representation of the external appearance of the device.
+    ///
+    /// Example: `&appearance::GENERIC_SENSOR`
     pub appearance: &'static [u8; 2],
+    // TODO: Add more GAP parameters
 }
 
 impl GapConfig {
