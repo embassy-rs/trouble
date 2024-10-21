@@ -22,7 +22,7 @@ pub mod appearance {
     /// Construct a new appearance value for the GAP Service.
     ///
     /// Follow the pattern of the examples below to create new appearance values.
-    /// https://www.bluetooth.com/wp-content/uploads/Files/Specification/Assigned_Numbers.html#bookmark49
+    /// Use UUIDs from the [Bluetooth Assigned Numbers list](https://www.bluetooth.com/wp-content/uploads/Files/Specification/Assigned_Numbers.html#bookmark49).
     ///
     /// ## Example
     ///
