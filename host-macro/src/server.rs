@@ -104,7 +104,7 @@ impl ServerBuilder {
 
             impl<'reference, C: Controller> #name<'reference, C>
             {
-                /// Create a new Gatt Server (BLE Peripheral) instance.
+                /// Create a new Gatt Server instance.
                 ///
                 /// Requires you to add your own GAP Service.  Use `new_default(name)` or `new_with_config(name, gap_config)` if you want to add a GAP Service.
                 #visibility fn new(stack: Stack<'reference, C>, table: &'reference mut AttributeTable<'static, #mutex_type, #attribute_data_size>) -> Self {
@@ -116,7 +116,7 @@ impl ServerBuilder {
                         #code_server_populate
                     }
                 }
-                /// Create a new Gatt Server (BLE Peripheral) instance.
+                /// Create a new Gatt Server instance.
                 ///
                 /// This function will add a Generic GAP Service with the given name.
                 #visibility fn new_default(stack: Stack<'reference, C>, name: &'static str) -> Self {
@@ -133,7 +133,7 @@ impl ServerBuilder {
                     }
                 }
 
-                /// Create a new Gatt Server (BLE Peripheral) instance.
+                /// Create a new Gatt Server instance.
                 ///
                 /// This function will add a GAP Service.
                 #visibility fn new_with_config(stack: Stack<'reference, C>, gap: GapConfig) -> Self {
