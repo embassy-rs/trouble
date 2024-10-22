@@ -136,7 +136,7 @@ impl ServerBuilder {
                 /// Create a new Gatt Server instance.
                 ///
                 /// This function will add a GAP Service.
-                #visibility fn new_with_config(stack: Stack<'reference, C>, gap: GapConfig) -> Self {
+                #visibility fn new_with_config(stack: Stack<'reference, C>, gap: GapConfig<'static>) -> Self {
                     static TABLE: static_cell::StaticCell<AttributeTable<'static, #mutex_type, #attribute_data_size>> = static_cell::StaticCell::new();
                     let table = TABLE.init(AttributeTable::new());
 
