@@ -45,6 +45,7 @@ pub use packet_pool::Qos as PacketQos;
 
 pub mod advertise;
 pub mod connection;
+pub mod gap;
 pub mod l2cap;
 pub mod scan;
 
@@ -66,6 +67,8 @@ pub mod prelude {
     #[cfg(feature = "central")]
     pub use crate::central::*;
     pub use crate::connection::*;
+    #[cfg(feature = "gatt")]
+    pub use crate::gap::*;
     #[cfg(feature = "gatt")]
     pub use crate::gatt::*;
     pub use crate::host::{ControlRunner, HostMetrics, Runner, RxRunner, TxRunner};

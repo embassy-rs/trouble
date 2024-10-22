@@ -45,19 +45,8 @@ async fn gatt_client_server() {
         let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address)
             .build();
-        let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
 
-        let id = b"Trouble";
-        let appearance = [0x80, 0x07];
-        let mut svc = table.add_service(Service::new(0x1800));
-        let _ = svc.add_characteristic_ro(0x2a00, id);
-        let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
-        svc.build();
-
-        // Generic attribute service (mandatory)
-        table.add_service(Service::new(0x1801));
-
-        let server: Server<common::Controller> = Server::new(stack, &mut table);
+        let server: Server<common::Controller> = Server::new_default(stack, "trouBLE");
 
         // Random starting value to 'prove' the incremented value is correct
         let value: [u8; 1] = [rand::prelude::random(); 1];
