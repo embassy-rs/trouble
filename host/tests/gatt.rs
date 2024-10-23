@@ -57,7 +57,7 @@ async fn gatt_client_server() {
                 &mut value)
             .build();
 
-        let server = GattServer::<common::Controller, NoopRawMutex, 10, 27>::new(stack, &table);
+        let server = GattServer::<common::Controller, NoopRawMutex, 10, 27>::new(stack, table);
         select! {
             r = runner.run() => {
                 r
@@ -71,7 +71,7 @@ async fn gatt_client_server() {
                             handle,
                         }) => {
                             assert_eq!(handle, value_handle);
-                            let _ = table.get(handle, |value| {
+                            let _ = server.server().table().get(handle, |value| {
                                 assert_eq!(expected, value[0]);
                                 expected += 1;
                                 writes += 1;

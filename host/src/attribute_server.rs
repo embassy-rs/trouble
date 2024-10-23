@@ -21,14 +21,14 @@ pub struct NotificationTable<const ENTRIES: usize> {
     state: [(u16, ConnHandle); ENTRIES],
 }
 
-pub struct AttributeServer<'c, 'd, M: RawMutex, const MAX: usize> {
-    pub(crate) table: &'c AttributeTable<'d, M, MAX>,
+pub struct AttributeServer<'d, M: RawMutex, const MAX: usize> {
+    pub(crate) table: AttributeTable<'d, M, MAX>,
     pub(crate) notification: Mutex<M, RefCell<NotificationTable<MAX_NOTIFICATIONS>>>,
 }
 
-impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
+impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
     /// Create a new instance of the AttributeServer
-    pub fn new(table: &'c AttributeTable<'d, M, MAX>) -> AttributeServer<'c, 'd, M, MAX> {
+    pub fn new(table: AttributeTable<'d, M, MAX>) -> AttributeServer<'d, M, MAX> {
         AttributeServer {
             table,
             notification: Mutex::new(RefCell::new(NotificationTable {
@@ -459,6 +459,6 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
 
     /// Get a reference to the attribute table
     pub fn table(&self) -> &AttributeTable<'d, M, MAX> {
-        self.table
+        &self.table
     }
 }

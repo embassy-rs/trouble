@@ -25,7 +25,7 @@ use crate::{config, BleHostError, Error, Stack};
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
 pub struct GattServer<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
     stack: Stack<'reference, C>,
-    server: AttributeServer<'reference, 'values, M, MAX>,
+    server: AttributeServer<'values, M, MAX>,
     tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
     rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
     connections: &'reference dyn DynamicConnectionManager,
@@ -35,7 +35,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
     GattServer<'reference, 'values, C, M, MAX, L2CAP_MTU>
 {
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
-    pub fn new(stack: Stack<'reference, C>, table: &'reference AttributeTable<'values, M, MAX>) -> Self {
+    pub fn new(stack: Stack<'reference, C>, table: AttributeTable<'values, M, MAX>) -> Self {
         stack.host.connections.set_default_att_mtu(L2CAP_MTU as u16 - 4);
         use crate::attribute_server::AttributeServer;
 
@@ -148,7 +148,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
     }
 
     /// Get reference to the underlying AttributeServer
-    pub fn server(&self) -> &AttributeServer<'reference, 'values, M, MAX> {
+    pub fn server(&self) -> &AttributeServer<'values, M, MAX> {
         &self.server
     }
 }

@@ -87,7 +87,7 @@ impl ServerBuilder {
             });
 
             code_service_init.extend(quote_spanned! {service_span=>
-                let #service_name = #service_type::new(table);
+                let #service_name = #service_type::new(&mut table);
             });
 
             code_server_populate.extend(quote_spanned! {service_span=>
@@ -96,18 +96,18 @@ impl ServerBuilder {
         }
 
         quote! {
-            #visibility struct #name<'reference, C: Controller>
+            #visibility struct #name<'reference, 'values, C: Controller>
             {
-                server: GattServer<'reference, 'static, C, #mutex_type, #attribute_data_size, #mtu>,
+                server: GattServer<'reference, 'values, C, #mutex_type, #attribute_data_size, #mtu>,
                 #code_service_definition
             }
 
-            impl<'reference, C: Controller> #name<'reference, C>
+            impl<'reference, 'values, C: Controller> #name<'reference, 'values, C>
             {
                 /// Create a new Gatt Server instance.
                 ///
                 /// Requires you to add your own GAP Service.  Use `new_default(name)` or `new_with_config(name, gap_config)` if you want to add a GAP Service.
-                #visibility fn new(stack: Stack<'reference, C>, table: &'reference mut AttributeTable<'static, #mutex_type, #attribute_data_size>) -> Self {
+                #visibility fn new(stack: Stack<'reference, C>, mut table: AttributeTable<'values, #mutex_type, #attribute_data_size>) -> Self {
 
                     #code_service_init
 
@@ -119,11 +119,10 @@ impl ServerBuilder {
                 /// Create a new Gatt Server instance.
                 ///
                 /// This function will add a Generic GAP Service with the given name.
-                #visibility fn new_default(stack: Stack<'reference, C>, name: &'static str) -> Self {
-                    static TABLE: static_cell::StaticCell<AttributeTable<'static, #mutex_type, #attribute_data_size>> = static_cell::StaticCell::new();
-                    let table = TABLE.init(AttributeTable::new());
+                #visibility fn new_default(stack: Stack<'reference, C>, name: &'values str) -> Self {
+                    let mut table: AttributeTable<'_, #mutex_type, #attribute_data_size> = AttributeTable::new();
 
-                    GapConfig::default(name).build(table);
+                    GapConfig::default(name).build(&mut table);
 
                     #code_service_init
 
@@ -136,11 +135,10 @@ impl ServerBuilder {
                 /// Create a new Gatt Server instance.
                 ///
                 /// This function will add a GAP Service.
-                #visibility fn new_with_config(stack: Stack<'reference, C>, gap: GapConfig<'static>) -> Self {
-                    static TABLE: static_cell::StaticCell<AttributeTable<'static, #mutex_type, #attribute_data_size>> = static_cell::StaticCell::new();
-                    let table = TABLE.init(AttributeTable::new());
+                #visibility fn new_with_config(stack: Stack<'reference, C>, gap: GapConfig<'values>) -> Self {
+                    let mut table: AttributeTable<'_, #mutex_type, #attribute_data_size> = AttributeTable::new();
 
-                    gap.build(table);
+                    gap.build(&mut table);
 
                     #code_service_init
 
@@ -150,7 +148,7 @@ impl ServerBuilder {
                     }
                 }
 
-                #visibility fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, mut f: F) -> Result<T, Error> {
+                #visibility fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, f: F) -> Result<T, Error> {
                     self.server.server().table().get(handle, f)
                 }
 
@@ -159,9 +157,9 @@ impl ServerBuilder {
                 }
             }
 
-            impl<'reference, C: Controller> core::ops::Deref for #name<'reference, C>
+            impl<'reference, 'values, C: Controller> core::ops::Deref for #name<'reference, 'values, C>
             {
-                type Target = GattServer<'reference, 'static, C, #mutex_type, #attribute_data_size, #mtu>;
+                type Target = GattServer<'reference, 'values, C, #mutex_type, #attribute_data_size, #mtu>;
 
                 fn deref(&self) -> &Self::Target {
                     &self.server
