@@ -32,6 +32,7 @@ async fn gatt_client_server() {
     let _ = env_logger::try_init();
     let peripheral = std::env::var("TEST_ADAPTER_ONE").unwrap();
     let central = std::env::var("TEST_ADAPTER_TWO").unwrap();
+    let name = std::env::var("DEVICE_NAME").unwrap_or("TrouBLE".into());
 
     let peripheral_address: Address = Address::random([0xff, 0x9f, 0x1a, 0x05, 0xe4, 0xff]);
 
@@ -45,8 +46,14 @@ async fn gatt_client_server() {
         let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address)
             .build();
-
-        let server: Server<common::Controller> = Server::new_default(stack, "trouBLE");
+        let gap = GapConfig::Peripheral(PeripheralConfig {
+            name: &name,
+            appearance: &appearance::GENERIC_POWER,
+        });
+        let server: Server<common::Controller> = Server::new_with_config(
+            stack,
+            gap,
+        );
 
         // Random starting value to 'prove' the incremented value is correct
         let value: [u8; 1] = [rand::prelude::random(); 1];

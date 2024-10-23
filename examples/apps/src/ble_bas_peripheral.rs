@@ -61,7 +61,7 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task<C: Controller>(server: &Server<'_, C>) {
+async fn gatt_task<C: Controller>(server: &Server<'_,'_, C>) {
     loop {
         match server.next().await {
             Ok(GattEvent::Write { handle, connection: _ }) => {
@@ -81,7 +81,7 @@ async fn gatt_task<C: Controller>(server: &Server<'_, C>) {
 
 async fn advertise_task<C: Controller>(
     mut peripheral: Peripheral<'_, C>,
-    server: &Server<'_, C>,
+    server: &Server<'_, '_, C>,
 ) -> Result<(), BleHostError<C::Error>> {
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(
