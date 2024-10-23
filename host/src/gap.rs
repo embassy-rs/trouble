@@ -52,48 +52,48 @@ pub mod appearance {
 }
 
 /// Configuration for the GAP Service.
-pub enum GapConfig {
+pub enum GapConfig<'a> {
     /// Peripheral device configuration.
-    Peripheral(PeripheralConfig),
+    Peripheral(PeripheralConfig<'a>),
     /// Central device configuration.
-    Central(CentralConfig),
+    Central(CentralConfig<'a>),
 }
 
 /// Configuration for a peripheral device GAP Service.
-pub struct PeripheralConfig {
+pub struct PeripheralConfig<'a> {
     /// The name of the peripheral device.
-    pub name: &'static str,
+    pub name: &'a str,
     /// The representation of the external appearance of the device.
     ///
     /// /// Example: `&appearance::GENERIC_SENSOR`
-    pub appearance: &'static [u8; 2],
+    pub appearance: &'a [u8; 2],
     // TODO: Add more GAP parameters
     // pub preferred_connection_parameters: Option<ConnectionParameters>,
 }
 
 /// Configuration for a central device GAP Service.
-pub struct CentralConfig {
+pub struct CentralConfig<'a> {
     /// The name of the central device.
-    pub name: &'static str,
+    pub name: &'a str,
     /// The representation of the external appearance of the device.
     ///
     /// Example: `&appearance::GENERIC_SENSOR`
-    pub appearance: &'static [u8; 2],
+    pub appearance: &'a [u8; 2],
     // TODO: Add more GAP parameters
 }
 
-impl GapConfig {
+impl<'a> GapConfig<'a> {
     /// Create a default peripheral configuration.
     ///
     /// This configuration will use the `GENERIC_UNKNOWN` appearance.
-    pub fn default(name: &'static str) -> Self {
+    pub fn default(name: &'a str) -> Self {
         GapConfig::Peripheral(PeripheralConfig {
             name,
             appearance: &appearance::GENERIC_UNKNOWN,
         })
     }
     /// Add the GAP service to the attribute table.
-    pub fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'_, M, MAX>) {
+    pub fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'a, M, MAX>) {
         // Service UUIDs.  These are mandatory services.
         const GAP_UUID: u16 = 0x1800;
         const GATT_UUID: u16 = 0x1801;
