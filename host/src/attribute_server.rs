@@ -8,7 +8,44 @@ use crate::att::{self, AttErrorCode, AttReq};
 use crate::attribute::{AttributeData, AttributeTable};
 use crate::codec;
 use crate::cursor::WriteCursor;
+use crate::prelude::AttrDataHandler;
 use crate::types::uuid::Uuid;
+
+/// A callback trait for performing operations on attributes
+pub trait AttrHandler {
+    /// Read data for an attribute
+    ///
+    /// # Arguments
+    /// - `uuid`: The UUID of the attribute
+    /// - `handle`: The handle of the attribute
+    /// - `offset`: The offset to read from
+    /// - `data`: The buffer to write the data to
+    ///
+    /// Return the number of bytes read
+    async fn read(&mut self, uuid: &Uuid, handle: u16, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode>;
+
+    /// Write data to an attribute
+    ///
+    /// # Arguments
+    /// - `uuid`: The UUID of the attribute
+    /// - `handle`: The handle of the attribute
+    /// - `offset`: The offset to write to
+    /// - `data`: The data to write
+    async fn write(&mut self, uuid: &Uuid, handle: u16, offset: usize, data: &[u8]) -> Result<(), AttErrorCode>;
+}
+
+impl<T> AttrHandler for &mut T
+where
+    T: AttrHandler,
+{
+    async fn read(&mut self, uuid: &Uuid, handle: u16, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        (**self).read(uuid, handle, offset, data).await
+    }
+
+    async fn write(&mut self, uuid: &Uuid, handle: u16, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+        (**self).write(uuid, handle, offset, data).await
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum WorkResult {
@@ -21,14 +58,14 @@ pub struct NotificationTable<const ENTRIES: usize> {
     state: [(u16, ConnHandle); ENTRIES],
 }
 
-pub struct AttributeServer<'c, 'd, M: RawMutex, const MAX: usize> {
-    pub(crate) table: &'c AttributeTable<'d, M, MAX>,
+pub struct AttributeServer<'c, M: RawMutex, const MAX: usize> {
+    pub(crate) table: &'c AttributeTable<M, MAX>,
     pub(crate) notification: Mutex<M, RefCell<NotificationTable<MAX_NOTIFICATIONS>>>,
 }
 
-impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
+impl<'c, M: RawMutex, const MAX: usize> AttributeServer<'c, M, MAX> {
     /// Create a new instance of the AttributeServer
-    pub fn new(table: &'c AttributeTable<'d, M, MAX>) -> AttributeServer<'c, 'd, M, MAX> {
+    pub fn new(table: &'c AttributeTable<M, MAX>) -> AttributeServer<'c, M, MAX> {
         AttributeServer {
             table,
             notification: Mutex::new(RefCell::new(NotificationTable {
@@ -72,18 +109,25 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         })
     }
 
-    fn handle_read_by_type_req(
+    async fn handle_read_by_type_req<R>(
         &self,
         buf: &mut [u8],
         start: u16,
         end: u16,
         attribute_type: &Uuid,
-    ) -> Result<usize, codec::Error> {
+        mut read: R,
+    ) -> Result<usize, codec::Error>
+    where
+        R: AttrHandler,
+    {
         let mut handle = start;
         let mut data = WriteCursor::new(buf);
 
         let (mut header, mut body) = data.split(2)?;
-        let err = self.table.iterate(|mut it| {
+        let err = async {
+            let mut table = self.table.lock().await;
+            let mut it = table.attr_iter();
+
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 //trace!("Check attribute {:?} {}", att.uuid, att.handle);
@@ -92,7 +136,14 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                     handle = att.handle;
 
                     if att.data.readable() {
-                        err = att.data.read(0, body.write_buf());
+                        err = att
+                            .data
+                            .read(
+                                0,
+                                body.write_buf(),
+                                &mut AttrDataHandler::new(&mut read, &att.uuid, att.handle),
+                            )
+                            .await;
                         if let Ok(len) = &err {
                             body.commit(*len)?;
                         }
@@ -103,7 +154,8 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                 }
             }
             err
-        });
+        }
+        .await;
 
         match err {
             Ok(len) => {
@@ -115,19 +167,25 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         }
     }
 
-    fn handle_read_by_group_type_req(
+    async fn handle_read_by_group_type_req<R>(
         &self,
         buf: &mut [u8],
         start: u16,
         end: u16,
         group_type: &Uuid,
-    ) -> Result<usize, codec::Error> {
+        mut read: R,
+    ) -> Result<usize, codec::Error>
+    where
+        R: AttrHandler,
+    {
         // TODO respond with all finds - not just one
         let mut handle = start;
         let mut data = WriteCursor::new(buf);
 
         let (mut header, mut body) = data.split(2)?;
-        let err = self.table.iterate(|mut it| {
+        let err = async {
+            let mut table = self.table.lock().await;
+            let mut it = table.attr_iter();
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 //            trace!("Check attribute {:x} {}", att.uuid, att.handle);
@@ -139,7 +197,14 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                     body.write(att.last_handle_in_group)?;
 
                     if att.data.readable() {
-                        err = att.data.read(0, body.write_buf());
+                        err = att
+                            .data
+                            .read(
+                                0,
+                                body.write_buf(),
+                                &mut AttrDataHandler::new(&mut read, &att.uuid, att.handle),
+                            )
+                            .await;
                         if let Ok(len) = &err {
                             body.commit(*len)?;
                         }
@@ -148,7 +213,8 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                 }
             }
             err
-        });
+        }
+        .await;
 
         match err {
             Ok(len) => {
@@ -160,17 +226,29 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         }
     }
 
-    fn handle_read_req(&self, buf: &mut [u8], handle: u16) -> Result<usize, codec::Error> {
+    async fn handle_read_req<R>(&self, buf: &mut [u8], handle: u16, mut read: R) -> Result<usize, codec::Error>
+    where
+        R: AttrHandler,
+    {
         let mut data = WriteCursor::new(buf);
 
         data.write(att::ATT_READ_RSP)?;
 
-        let err = self.table.iterate(|mut it| {
+        let err = async {
+            let mut table = self.table.lock().await;
+            let mut it = table.attr_iter();
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     if att.data.readable() {
-                        err = att.data.read(0, data.write_buf());
+                        err = att
+                            .data
+                            .read(
+                                0,
+                                data.write_buf(),
+                                &mut AttrDataHandler::new(&mut read, &att.uuid, att.handle),
+                            )
+                            .await;
                         if let Ok(len) = err {
                             data.commit(len)?;
                         }
@@ -179,7 +257,8 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                 }
             }
             err
-        });
+        }
+        .await;
 
         match err {
             Ok(_) => Ok(data.len()),
@@ -187,35 +266,56 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         }
     }
 
-    fn handle_write_cmd(&self, buf: &mut [u8], handle: u16, data: &[u8]) -> Result<usize, codec::Error> {
+    async fn handle_write_cmd<T>(
+        &self,
+        buf: &mut [u8],
+        handle: u16,
+        data: &[u8],
+        mut handler: T,
+    ) -> Result<usize, codec::Error>
+    where
+        T: AttrHandler,
+    {
         // TODO: Generate event
-        self.table.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle == handle {
-                    if att.data.writable() {
-                        // Write commands can't respond with an error.
-                        att.data.write(0, data).unwrap();
-                    }
-                    break;
+        let mut table = self.table.lock().await;
+        let mut it = table.attr_iter();
+        while let Some(att) = it.next() {
+            if att.handle == handle {
+                if att.data.writable() {
+                    // Write commands can't respond with an error.
+                    att.data
+                        .write(0, data, &mut AttrDataHandler::new(&mut handler, &att.uuid, att.handle))
+                        .await
+                        .unwrap();
                 }
+                break;
             }
-            Ok(0)
-        })
+        }
+        Ok(0)
     }
 
-    fn handle_write_req(
+    async fn handle_write_req<T>(
         &self,
         conn: ConnHandle,
         buf: &mut [u8],
         handle: u16,
         data: &[u8],
-    ) -> Result<usize, codec::Error> {
-        let err = self.table.iterate(|mut it| {
+        mut handler: T,
+    ) -> Result<usize, codec::Error>
+    where
+        T: AttrHandler,
+    {
+        let err = async {
+            let mut table = self.table.lock().await;
+            let mut it = table.attr_iter();
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     if att.data.writable() {
-                        err = att.data.write(0, data);
+                        err = att
+                            .data
+                            .write(0, data, &mut AttrDataHandler::new(&mut handler, &att.uuid, att.handle))
+                            .await;
                         if err.is_ok() {
                             if let AttributeData::Cccd {
                                 notifications,
@@ -230,7 +330,8 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                 }
             }
             err
-        });
+        }
+        .await;
 
         let mut w = WriteCursor::new(buf);
         match err {
@@ -242,7 +343,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         }
     }
 
-    fn handle_find_type_value(
+    async fn handle_find_type_value(
         &self,
         buf: &mut [u8],
         start: u16,
@@ -254,23 +355,25 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         let attr_type = Uuid::new_short(attr_type);
 
         w.write(att::ATT_FIND_BY_TYPE_VALUE_RSP)?;
-        self.table.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle >= start && att.handle <= end && att.uuid == attr_type {
-                    if let AttributeData::Service { uuid } = &att.data {
-                        if uuid.as_raw() == attr_value {
-                            if w.available() < 4 + uuid.as_raw().len() {
-                                break;
-                            }
-                            w.write(att.handle)?;
-                            w.write(att.last_handle_in_group)?;
-                            w.write_ref(uuid)?;
+
+        let mut table = self.table.lock().await;
+        let mut it = table.attr_iter();
+
+        while let Some(att) = it.next() {
+            if att.handle >= start && att.handle <= end && att.uuid == attr_type {
+                if let AttributeData::Service { uuid } = &att.data {
+                    if uuid.as_raw() == attr_value {
+                        if w.available() < 4 + uuid.as_raw().len() {
+                            break;
                         }
+                        w.write(att.handle)?;
+                        w.write(att.last_handle_in_group)?;
+                        w.write_ref(uuid)?;
                     }
                 }
             }
-            Ok::<(), codec::Error>(())
-        })?;
+        }
+
         if w.len() > 1 {
             Ok(w.len())
         } else {
@@ -283,7 +386,7 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         }
     }
 
-    fn handle_find_information(&self, buf: &mut [u8], start: u16, end: u16) -> Result<usize, codec::Error> {
+    async fn handle_find_information(&self, buf: &mut [u8], start: u16, end: u16) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(buf);
 
         let (mut header, mut body) = w.split(2)?;
@@ -291,20 +394,21 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         header.write(att::ATT_FIND_INFORMATION_RSP)?;
         let mut t = 0;
 
-        self.table.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle >= start && att.handle <= end {
-                    if t == 0 {
-                        t = att.uuid.get_type();
-                    } else if t != att.uuid.get_type() {
-                        break;
-                    }
-                    body.write(att.handle)?;
-                    body.append(att.uuid.as_raw())?;
+        let mut table = self.table.lock().await;
+        let mut it = table.attr_iter();
+
+        while let Some(att) = it.next() {
+            if att.handle >= start && att.handle <= end {
+                if t == 0 {
+                    t = att.uuid.get_type();
+                } else if t != att.uuid.get_type() {
+                    break;
                 }
+                body.write(att.handle)?;
+                body.append(att.uuid.as_raw())?;
             }
-            Ok::<(), codec::Error>(())
-        })?;
+        }
+
         header.write(t)?;
 
         if body.len() > 2 {
@@ -333,31 +437,46 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         Ok(w.len())
     }
 
-    fn handle_prepare_write(
+    async fn handle_prepare_write<T>(
         &self,
         buf: &mut [u8],
         handle: u16,
         offset: u16,
         value: &[u8],
-    ) -> Result<usize, codec::Error> {
+        mut handler: T,
+    ) -> Result<usize, codec::Error>
+    where
+        T: AttrHandler,
+    {
         let mut w = WriteCursor::new(buf);
         w.write(att::ATT_PREPARE_WRITE_RSP)?;
         w.write(handle)?;
         w.write(offset)?;
 
-        let err = self.table.iterate(|mut it| {
+        let err = async {
+            let mut table = self.table.lock().await;
+            let mut it = table.attr_iter();
+
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     if att.data.writable() {
-                        err = att.data.write(offset as usize, value);
+                        err = att
+                            .data
+                            .write(
+                                offset as usize,
+                                value,
+                                &mut AttrDataHandler::new(&mut handler, &att.uuid, att.handle),
+                            )
+                            .await;
                     }
                     w.append(value)?;
                     break;
                 }
             }
             err
-        });
+        }
+        .await;
 
         match err {
             Ok(()) => Ok(w.len()),
@@ -371,16 +490,35 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
         Ok(w.len())
     }
 
-    fn handle_read_blob(&self, buf: &mut [u8], handle: u16, offset: u16) -> Result<usize, codec::Error> {
+    async fn handle_read_blob<R>(
+        &self,
+        buf: &mut [u8],
+        handle: u16,
+        offset: u16,
+        mut read: R,
+    ) -> Result<usize, codec::Error>
+    where
+        R: AttrHandler,
+    {
         let mut w = WriteCursor::new(buf);
         w.write(att::ATT_READ_BLOB_RSP)?;
 
-        let err = self.table.iterate(|mut it| {
+        let err = async {
+            let mut table = self.table.lock().await;
+            let mut it = table.attr_iter();
+
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     if att.data.readable() {
-                        err = att.data.read(offset as usize, w.write_buf());
+                        err = att
+                            .data
+                            .read(
+                                offset as usize,
+                                w.write_buf(),
+                                &mut AttrDataHandler::new(&mut read, &att.uuid, att.handle),
+                            )
+                            .await;
                         if let Ok(n) = &err {
                             w.commit(*n)?;
                         }
@@ -389,7 +527,8 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                 }
             }
             err
-        });
+        }
+        .await;
 
         match err {
             Ok(_) => Ok(w.len()),
@@ -408,30 +547,43 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
     }
 
     /// Process an event and produce a response if necessary
-    pub fn process(&self, conn: ConnHandle, packet: &AttReq, rx: &mut [u8]) -> Result<Option<usize>, codec::Error> {
+    pub async fn process<T>(
+        &self,
+        conn: ConnHandle,
+        packet: &AttReq<'_>,
+        rx: &mut [u8],
+        mut handler: T,
+    ) -> Result<Option<usize>, codec::Error>
+    where
+        T: AttrHandler,
+    {
         let len = match packet {
             AttReq::ReadByType {
                 start,
                 end,
                 attribute_type,
-            } => self.handle_read_by_type_req(rx, *start, *end, attribute_type)?,
+            } => {
+                self.handle_read_by_type_req(rx, *start, *end, attribute_type, &mut handler)
+                    .await?
+            }
 
             AttReq::ReadByGroupType { start, end, group_type } => {
-                self.handle_read_by_group_type_req(rx, *start, *end, group_type)?
+                self.handle_read_by_group_type_req(rx, *start, *end, group_type, &mut handler)
+                    .await?
             }
             AttReq::FindInformation {
                 start_handle,
                 end_handle,
-            } => self.handle_find_information(rx, *start_handle, *end_handle)?,
+            } => self.handle_find_information(rx, *start_handle, *end_handle).await?,
 
-            AttReq::Read { handle } => self.handle_read_req(rx, *handle)?,
+            AttReq::Read { handle } => self.handle_read_req(rx, *handle, &mut handler).await?,
 
             AttReq::WriteCmd { handle, data } => {
-                self.handle_write_cmd(rx, *handle, data)?;
+                self.handle_write_cmd(rx, *handle, data, &mut handler).await?;
                 0
             }
 
-            AttReq::Write { handle, data } => self.handle_write_req(conn, rx, *handle, data)?,
+            AttReq::Write { handle, data } => self.handle_write_req(conn, rx, *handle, data, &mut handler).await?,
 
             AttReq::ExchangeMtu { mtu } => 0, // Done outside,
 
@@ -440,13 +592,19 @@ impl<'c, 'd, M: RawMutex, const MAX: usize> AttributeServer<'c, 'd, M, MAX> {
                 end_handle,
                 att_type,
                 att_value,
-            } => self.handle_find_type_value(rx, *start_handle, *end_handle, *att_type, att_value)?,
+            } => {
+                self.handle_find_type_value(rx, *start_handle, *end_handle, *att_type, att_value)
+                    .await?
+            }
 
-            AttReq::PrepareWrite { handle, offset, value } => self.handle_prepare_write(rx, *handle, *offset, value)?,
+            AttReq::PrepareWrite { handle, offset, value } => {
+                self.handle_prepare_write(rx, *handle, *offset, value, &mut handler)
+                    .await?
+            }
 
             AttReq::ExecuteWrite { flags } => self.handle_execute_write(rx, *flags)?,
 
-            AttReq::ReadBlob { handle, offset } => self.handle_read_blob(rx, *handle, *offset)?,
+            AttReq::ReadBlob { handle, offset } => self.handle_read_blob(rx, *handle, *offset, &mut handler).await?,
 
             AttReq::ReadMultiple { handles } => self.handle_read_multiple(rx, handles)?,
         };
