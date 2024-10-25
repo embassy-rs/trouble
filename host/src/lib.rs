@@ -45,6 +45,7 @@ pub use packet_pool::Qos as PacketQos;
 
 pub mod advertise;
 pub mod connection;
+#[cfg(feature = "gatt")]
 pub mod gap;
 pub mod l2cap;
 pub mod scan;
