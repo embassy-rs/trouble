@@ -159,8 +159,6 @@ impl ServerBuilder {
             }
 
             impl<'reference, 'values, C: Controller> trouble_host::types::server_trait::GattServerInterface for #name<'reference, 'values, C> {
-                type ControllerError = C::Error;
-
                 #visibility fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, f: F) -> Result<T, Error> {
                     self.server.server().table().get(handle, f)
                 }
@@ -169,7 +167,7 @@ impl ServerBuilder {
                     self.server.server().table().set(handle, input)
                 }
 
-                #visibility async fn notify(&self, handle: trouble_host::prelude::Characteristic, connection: &Connection<'_>, input: &[u8]) -> Result<(), BleHostError<Self::ControllerError>> {
+                #visibility async fn notify(&self, handle: trouble_host::prelude::Characteristic, connection: &Connection<'_>, input: &[u8]) -> Result<(), BleHostError<C::Error>> {
                     self.server.notify(handle, connection, input).await
                 }
             }
