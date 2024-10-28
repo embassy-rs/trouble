@@ -147,14 +147,6 @@ impl ServerBuilder {
                         #code_server_populate
                     }
                 }
-
-                #visibility fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, f: F) -> Result<T, Error> {
-                    self.server.server().table().get(handle, f)
-                }
-
-                #visibility fn set(&self, handle: Characteristic, input: &[u8]) -> Result<(), Error> {
-                    self.server.server().table().set(handle, input)
-                }
             }
 
             impl<'reference, 'values, C: Controller> core::ops::Deref for #name<'reference, 'values, C>
@@ -166,6 +158,21 @@ impl ServerBuilder {
                 }
             }
 
+            impl<'reference, 'values, C: Controller> trouble_host::types::server_trait::GattServerInterface for #name<'reference, 'values, C> {
+                type ControllerError = C::Error;
+
+                #visibility fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, f: F) -> Result<T, Error> {
+                    self.server.server().table().get(handle, f)
+                }
+
+                #visibility fn set(&self, handle: Characteristic, input: &[u8]) -> Result<(), Error> {
+                    self.server.server().table().set(handle, input)
+                }
+
+                #visibility async fn notify(&self, handle: trouble_host::prelude::Characteristic, connection: &Connection<'_>, input: &[u8]) -> Result<(), BleHostError<Self::ControllerError>> {
+                    self.server.notify(handle, connection, input).await
+                }
+            }
         }
     }
 }

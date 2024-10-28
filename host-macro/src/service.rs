@@ -140,11 +140,11 @@ impl ServiceBuilder {
             let uuid = ch.args.uuid;
 
             // TODO add methods to characteristic
-            let _get_fn = format_ident!("{}_get", ch.name);
-            let _set_fn = format_ident!("{}_set", ch.name);
-            let _notify_fn = format_ident!("{}_notify", ch.name);
+            let get_fn = format_ident!("{}_get", ch.name);
+            let set_fn = format_ident!("{}_set", ch.name);
+            let notify_fn = format_ident!("{}_notify", ch.name);
             let _indicate_fn = format_ident!("{}_indicate", ch.name);
-            let _fn_vis = &ch.vis;
+            let fn_vis = &ch.vis;
 
             let _notify = ch.args.notify;
             let _indicate = ch.args.indicate;
@@ -161,6 +161,20 @@ impl ServiceBuilder {
                 colon_token: Default::default(),
                 vis: ch.vis.clone(),
                 mutability: syn::FieldMutability::None,
+            });
+
+            self.code_impl.extend(quote_spanned! {ch.span=>
+                #fn_vis fn #get_fn(&self, server: &impl trouble_host::types::server_trait::GattServerInterface) -> #ty {
+                    server.get(self.#char_name, <#ty as trouble_host::types::gatt_traits::GattValue>::from_gatt).expect("Handle is provided by service so NotFound error should never occur")
+                }
+
+                #fn_vis fn #set_fn(&self, server: &impl trouble_host::types::server_trait::GattServerInterface, input: &#ty) {
+                    server.set(self.#char_name, trouble_host::types::gatt_traits::GattValue::to_gatt(input)).expect("Handle is provided by service so NotFound error should never occur")
+                }
+
+                #fn_vis async fn #notify_fn<C: bt_hci::controller::Controller>(&self, server: &impl trouble_host::types::server_trait::GattServerInterface, connection: &Connection<'_>, input: &#ty) -> Result<(), trouble_host::prelude::BleHostError<C::Error>> {
+                    server.notify(self.#char_name, connection, trouble_host::types::gatt_traits::GattValue::to_gatt(input)).await
+                }
             });
 
             self.construct_characteristic_static(&ch.name, ch.span, ty, &properties, uuid);
