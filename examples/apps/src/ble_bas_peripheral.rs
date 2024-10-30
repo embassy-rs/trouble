@@ -61,7 +61,7 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
+async fn gatt_task<C: Controller>(server: &Server<'_,'_, C>) {
     loop {
         match server.next().await {
             Ok(GattEvent::Write { handle, connection: _ }) => {
@@ -111,7 +111,6 @@ async fn advertise_task<C: Controller>(
             Timer::after(Duration::from_secs(2)).await;
             tick = tick.wrapping_add(1);
             info!("[adv] notifying connection of tick {}", tick);
-            server.battery_service.level_notify(server, &conn, &tick).await;
             let _ = server.notify(server.battery_service.level, &conn, &[tick]).await;
         }
     }

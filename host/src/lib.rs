@@ -79,8 +79,6 @@ pub mod prelude {
     pub use crate::peripheral::*;
     #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
-    #[cfg(feature = "gatt")]
-    pub use crate::types::server_trait::GattServerInterface;
     pub use crate::Address;
     #[cfg(feature = "derive")]
     pub use trouble_host_macros::*;
