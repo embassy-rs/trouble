@@ -107,12 +107,12 @@ impl<'a> GapConfig<'a> {
             GapConfig::Peripheral(config) => {
                 let id = config.name.as_bytes();
                 let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
-                let _ = gap.add_characteristic_ro(APPEARANCE_UUID, &config.appearance[..]);
+                let _ = gap.add_characteristic_ro(APPEARANCE_UUID, config.appearance);
             }
             GapConfig::Central(config) => {
                 let id = config.name.as_bytes();
                 let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
-                let _ = gap.add_characteristic_ro(APPEARANCE_UUID, &config.appearance[..]);
+                let _ = gap.add_characteristic_ro(APPEARANCE_UUID, config.appearance);
             }
         };
         gap.build();

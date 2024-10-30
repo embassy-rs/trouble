@@ -1,6 +1,7 @@
 //! GATT server and client implementation.
 use core::cell::RefCell;
 use core::future::Future;
+use core::marker::PhantomData;
 
 use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
@@ -19,6 +20,7 @@ use crate::connection::Connection;
 use crate::connection_manager::DynamicConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
+use crate::types::gatt_traits::GattValue;
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
@@ -52,7 +54,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
     ///
     /// If attributes are written or read, an event will be returned describing the handle
     /// and the connection causing the event.
-    pub async fn next(&self) -> Result<GattEvent<'reference>, Error> {
+    pub async fn next<T: GattValue>(&self) -> Result<GattEvent<'reference, T>, Error> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             if let Some(connection) = self.connections.get_connected_handle(handle) {
@@ -117,14 +119,14 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub async fn notify(
+    pub async fn notify<T: GattValue>(
         &self,
-        handle: Characteristic,
+        handle: Characteristic<T>,
         connection: &Connection<'_>,
-        value: &[u8],
+        value: &T,
     ) -> Result<(), BleHostError<C::Error>> {
         let conn = connection.handle();
-        self.server.table.set(handle, value)?;
+        self.server.table.set(&handle, value)?;
 
         let cccd_handle = handle.cccd_handle.ok_or(Error::Other)?;
 
@@ -138,7 +140,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
         let (mut header, mut data) = w.split(4)?;
         data.write(ATT_HANDLE_VALUE_NTF)?;
         data.write(handle.handle)?;
-        data.append(value)?;
+        data.append(value.to_gatt())?;
 
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
@@ -155,20 +157,20 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
 
 /// An event returned while processing GATT requests.
 #[derive(Clone)]
-pub enum GattEvent<'reference> {
+pub enum GattEvent<'reference, T: GattValue> {
     /// A characteristic was read.
     Read {
         /// Connection that read the characteristic.
         connection: Connection<'reference>,
         /// Characteristic handle that was read.
-        handle: Characteristic,
+        handle: Characteristic<T>,
     },
     /// A characteristic was written.
     Write {
         /// Connection that wrote the characteristic.
         connection: Connection<'reference>,
         /// Characteristic handle that was written.
-        handle: Characteristic,
+        handle: Characteristic<T>,
     },
 }
 
@@ -260,14 +262,14 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     }
 }
 
-impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize>
-    GattClient<'reference, T, MAX_SERVICES, L2CAP_MTU>
+impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize>
+    GattClient<'reference, C, MAX_SERVICES, L2CAP_MTU>
 {
     /// Creates a GATT client capable of processing the GATT protocol using the provided table of attributes.
     pub async fn new(
-        stack: Stack<'reference, T>,
+        stack: Stack<'reference, C>,
         connection: &Connection<'reference>,
-    ) -> Result<GattClient<'reference, T, MAX_SERVICES, L2CAP_MTU>, BleHostError<T::Error>> {
+    ) -> Result<GattClient<'reference, C, MAX_SERVICES, L2CAP_MTU>, BleHostError<C::Error>> {
         let l2cap = L2capHeader { channel: 4, length: 3 };
         let mut buf = [0; 7];
         let mut w = WriteCursor::new(&mut buf);
@@ -296,7 +298,7 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     pub async fn services_by_uuid(
         &self,
         uuid: &Uuid,
-    ) -> Result<Vec<ServiceHandle, MAX_SERVICES>, BleHostError<T::Error>> {
+    ) -> Result<Vec<ServiceHandle, MAX_SERVICES>, BleHostError<C::Error>> {
         let mut start: u16 = 0x0001;
         let mut result = Vec::new();
 
@@ -347,11 +349,11 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     }
 
     /// Discover characteristics in a given service using a UUID.
-    pub async fn characteristic_by_uuid(
+    pub async fn characteristic_by_uuid<T: GattValue>(
         &self,
         service: &ServiceHandle,
         uuid: &Uuid,
-    ) -> Result<Characteristic, BleHostError<T::Error>> {
+    ) -> Result<Characteristic<T>, BleHostError<C::Error>> {
         let mut start: u16 = service.start;
         loop {
             let data = att::AttReq::ReadByType {
@@ -382,7 +384,11 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
                                         None
                                     };
 
-                                return Ok(Characteristic { handle, cccd_handle });
+                                return Ok(Characteristic {
+                                    handle,
+                                    cccd_handle,
+                                    phantom: PhantomData,
+                                });
                             }
 
                             if handle == 0xFFFF {
@@ -402,7 +408,7 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         }
     }
 
-    async fn get_characteristic_cccd(&self, char_handle: u16) -> Result<(u16, CCCD), BleHostError<T::Error>> {
+    async fn get_characteristic_cccd(&self, char_handle: u16) -> Result<(u16, CCCD), BleHostError<C::Error>> {
         let data = att::AttReq::ReadByType {
             start: char_handle,
             end: char_handle + 1,
@@ -430,11 +436,11 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     /// Read a characteristic described by a handle.
     ///
     /// The number of bytes copied into the provided buffer is returned.
-    pub async fn read_characteristic(
+    pub async fn read_characteristic<T: GattValue>(
         &self,
-        characteristic: &Characteristic,
+        characteristic: &Characteristic<T>,
         dest: &mut [u8],
-    ) -> Result<usize, BleHostError<T::Error>> {
+    ) -> Result<usize, BleHostError<C::Error>> {
         let data = att::AttReq::Read {
             handle: characteristic.handle,
         };
@@ -460,7 +466,7 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         service: &ServiceHandle,
         uuid: &Uuid,
         dest: &mut [u8],
-    ) -> Result<usize, BleHostError<T::Error>> {
+    ) -> Result<usize, BleHostError<C::Error>> {
         let data = att::AttReq::ReadByType {
             start: service.start,
             end: service.end,
@@ -485,11 +491,11 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     }
 
     /// Write to a characteristic described by a handle.
-    pub async fn write_characteristic(
+    pub async fn write_characteristic<T: GattValue>(
         &self,
-        handle: &Characteristic,
+        handle: &Characteristic<T>,
         buf: &[u8],
-    ) -> Result<(), BleHostError<T::Error>> {
+    ) -> Result<(), BleHostError<C::Error>> {
         let data = att::AttReq::Write {
             handle: handle.handle,
             data: buf,
@@ -506,11 +512,11 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     /// Subscribe to indication/notification of a given Characteristic
     ///
     /// A listener is returned, which has a `next()` method
-    pub async fn subscribe(
+    pub async fn subscribe<T: GattValue>(
         &self,
-        characteristic: &Characteristic,
+        characteristic: &Characteristic<T>,
         indication: bool,
-    ) -> Result<NotificationListener<'_, L2CAP_MTU>, BleHostError<T::Error>> {
+    ) -> Result<NotificationListener<'_, L2CAP_MTU>, BleHostError<C::Error>> {
         let properties = u16::to_le_bytes(if indication { 0x02 } else { 0x01 });
 
         let data = att::AttReq::Write {
@@ -538,7 +544,10 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     }
 
     /// Unsubscribe from a given Characteristic
-    pub async fn unsubscribe(&self, characteristic: &Characteristic) -> Result<(), BleHostError<T::Error>> {
+    pub async fn unsubscribe<T: GattValue>(
+        &self,
+        characteristic: &Characteristic<T>,
+    ) -> Result<(), BleHostError<C::Error>> {
         let properties = u16::to_le_bytes(0);
         let data = att::AttReq::Write {
             handle: characteristic.cccd_handle.ok_or(Error::NotSupported)?,
@@ -556,7 +565,7 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     }
 
     /// Handle a notification that was received.
-    async fn handle_notification_packet(&self, data: &[u8]) -> Result<(), BleHostError<T::Error>> {
+    async fn handle_notification_packet(&self, data: &[u8]) -> Result<(), BleHostError<C::Error>> {
         let mut r = ReadCursor::new(data);
         let value_handle: u16 = r.read()?;
         let value_attr = r.remaining();
@@ -576,7 +585,7 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     }
 
     /// Task which handles GATT rx data (needed for notifications to work)
-    pub async fn task(&self) -> Result<(), BleHostError<T::Error>> {
+    pub async fn task(&self) -> Result<(), BleHostError<C::Error>> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             let data = pdu.as_ref();
