@@ -542,13 +542,12 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         value: &'d T,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = [CharacteristicProp::Read].into();
-        let gatt_value = value.to_gatt();
         self.add_characteristic_internal(
             uuid.into(),
             props,
             AttributeData::ReadOnlyData {
                 props,
-                value: gatt_value,
+                value: value.to_gatt(),
             },
         )
     }

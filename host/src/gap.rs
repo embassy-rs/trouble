@@ -9,6 +9,7 @@
 
 use crate::prelude::*;
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use static_cell::StaticCell;
 
 pub mod appearance {
     //! The representation of the external appearance of the device.
@@ -62,7 +63,7 @@ pub enum GapConfig<'a> {
 /// Configuration for a peripheral device GAP Service.
 pub struct PeripheralConfig<'a> {
     /// The name of the peripheral device.
-    pub name: &'a str,
+    pub name: &'a [u8; 22],
     /// The representation of the external appearance of the device.
     ///
     /// /// Example: `&appearance::GENERIC_SENSOR`
@@ -74,7 +75,7 @@ pub struct PeripheralConfig<'a> {
 /// Configuration for a central device GAP Service.
 pub struct CentralConfig<'a> {
     /// The name of the central device.
-    pub name: &'a str,
+    pub name: &'a [u8; 22],
     /// The representation of the external appearance of the device.
     ///
     /// Example: `&appearance::GENERIC_SENSOR`
@@ -87,8 +88,11 @@ impl<'a> GapConfig<'a> {
     ///
     /// This configuration will use the `GENERIC_UNKNOWN` appearance.
     pub fn default(name: &'a str) -> Self {
+        static NAME_BYTES: StaticCell<[u8; 22]> = StaticCell::new();
+        let name_bytes = NAME_BYTES.init([0; 22]);
+        name_bytes.copy_from_slice(name.as_bytes());
         GapConfig::Peripheral(PeripheralConfig {
-            name,
+            name: name_bytes,
             appearance: &appearance::GENERIC_UNKNOWN,
         })
     }
@@ -105,12 +109,12 @@ impl<'a> GapConfig<'a> {
         let mut gap = table.add_service(Service::new(GAP_UUID)); // GAP UUID (mandatory)
         match self {
             GapConfig::Peripheral(config) => {
-                let id = config.name.as_bytes();
+                let id = config.name;
                 let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
                 let _ = gap.add_characteristic_ro(APPEARANCE_UUID, config.appearance);
             }
             GapConfig::Central(config) => {
-                let id = config.name.as_bytes();
+                let id = config.name;
                 let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
                 let _ = gap.add_characteristic_ro(APPEARANCE_UUID, config.appearance);
             }
