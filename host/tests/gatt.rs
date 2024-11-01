@@ -43,7 +43,7 @@ async fn gatt_client_server() {
         let mut expected = value[0].wrapping_add(1);
         let mut svc = table.add_service(Service::new(0x1800));
         let _ = svc.add_characteristic_ro(0x2a00, id);
-        let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
+        let _ = svc.add_characteristic_ro(0x2a01, &appearance);
         svc.build();
 
         // Generic attribute service (mandatory)
@@ -71,7 +71,7 @@ async fn gatt_client_server() {
                             handle,
                         }) => {
                             assert_eq!(handle, value_handle);
-                            let _ = server.server().table().get(handle, |value| {
+                            let _ = server.server().table().get(&handle, |value| {
                                 assert_eq!(expected, value[0]);
                                 expected += 1;
                                 writes += 1;

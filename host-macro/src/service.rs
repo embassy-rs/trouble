@@ -156,7 +156,7 @@ impl ServiceBuilder {
             // add fields for each characteristic value handle
             fields.push(syn::Field {
                 ident: Some(char_name.clone()),
-                ty: syn::Type::Verbatim(quote!(Characteristic)),
+                ty: syn::Type::Verbatim(quote!(Characteristic<#ty>)),
                 attrs: Vec::new(),
                 colon_token: Default::default(),
                 vis: ch.vis.clone(),

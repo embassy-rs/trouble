@@ -148,11 +148,11 @@ impl ServerBuilder {
                     }
                 }
 
-                #visibility fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, f: F) -> Result<T, Error> {
-                    self.server.server().table().get(handle, f)
+                #visibility fn get<T: trouble_host::types::gatt_traits::GattValue>(&self, handle: &Characteristic<T>) -> Result<T, Error> {
+                    self.server.server().table().get(handle)
                 }
 
-                #visibility fn set(&self, handle: Characteristic, input: &[u8]) -> Result<(), Error> {
+                #visibility fn set<T: trouble_host::types::gatt_traits::GattValue>(&self, handle: &Characteristic<T>, input: &T) -> Result<(), Error> {
                     self.server.server().table().set(handle, input)
                 }
             }

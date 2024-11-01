@@ -395,12 +395,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<F: FnMut(&[u8]) -> T, T: GattValue>(&self, handle: &Characteristic<T>, mut f: F) -> Result<T, Error> {
+    pub fn get<T: GattValue>(&self, handle: &Characteristic<T>) -> Result<T, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
-                        let v = f(value);
+                        let v = <T as GattValue>::from_gatt(value);
                         return Ok(v);
                     }
                 }

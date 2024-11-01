@@ -7,9 +7,15 @@
 //! In addition, this profile includes common format requirements for
 //! parameters accessible on the user interface level.
 
+use core::fmt::Write;
+
 use crate::prelude::*;
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use heapless::Vec;
 use static_cell::StaticCell;
+
+/// Advertising packet is limited to 31 bytes. 9 of these are used by other GAP data, leaving 22 for Device Name characteristic
+const DEVICE_NAME_MAX_LENGTH: usize = 22;
 
 pub mod appearance {
     //! The representation of the external appearance of the device.
@@ -63,7 +69,7 @@ pub enum GapConfig<'a> {
 /// Configuration for a peripheral device GAP Service.
 pub struct PeripheralConfig<'a> {
     /// The name of the peripheral device.
-    pub name: &'a [u8; 22],
+    pub name: &'a Vec<u8, DEVICE_NAME_MAX_LENGTH>,
     /// The representation of the external appearance of the device.
     ///
     /// /// Example: `&appearance::GENERIC_SENSOR`
@@ -75,7 +81,7 @@ pub struct PeripheralConfig<'a> {
 /// Configuration for a central device GAP Service.
 pub struct CentralConfig<'a> {
     /// The name of the central device.
-    pub name: &'a [u8; 22],
+    pub name: &'a Vec<u8, DEVICE_NAME_MAX_LENGTH>,
     /// The representation of the external appearance of the device.
     ///
     /// Example: `&appearance::GENERIC_SENSOR`
@@ -88,9 +94,9 @@ impl<'a> GapConfig<'a> {
     ///
     /// This configuration will use the `GENERIC_UNKNOWN` appearance.
     pub fn default(name: &'a str) -> Self {
-        static NAME_BYTES: StaticCell<[u8; 22]> = StaticCell::new();
-        let name_bytes = NAME_BYTES.init([0; 22]);
-        name_bytes.copy_from_slice(name.as_bytes());
+        static NAME_BYTES: StaticCell<Vec<u8, DEVICE_NAME_MAX_LENGTH>> = StaticCell::new();
+        let name_bytes = NAME_BYTES.init(Vec::new());
+        fill_vec(name_bytes, name.as_bytes());
         GapConfig::Peripheral(PeripheralConfig {
             name: name_bytes,
             appearance: &appearance::GENERIC_UNKNOWN,
@@ -122,5 +128,12 @@ impl<'a> GapConfig<'a> {
         gap.build();
 
         table.add_service(Service::new(GATT_UUID)); // GATT UUID (mandatory)
+    }
+}
+
+fn fill_vec<const N: usize>(vector: &mut Vec<u8, N>, bytes: &[u8]) {
+    let mut byte_index = 0;
+    while byte_index < bytes.len() && vector.push(bytes[byte_index]).is_ok() {
+        byte_index += 1;
     }
 }

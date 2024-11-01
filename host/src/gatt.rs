@@ -54,7 +54,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
     ///
     /// If attributes are written or read, an event will be returned describing the handle
     /// and the connection causing the event.
-    pub async fn next<T: GattValue>(&self) -> Result<GattEvent<'reference, T>, Error> {
+    pub async fn next(&self) -> Result<GattEvent<'reference>, Error> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             if let Some(connection) = self.connections.get_connected_handle(handle) {
@@ -76,17 +76,17 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
                                 let event = match att {
                                     AttReq::Write { handle, data } => Some(GattEvent::Write {
                                         connection,
-                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
+                                        value_handle: handle,
                                     }),
 
                                     AttReq::Read { handle } => Some(GattEvent::Read {
                                         connection,
-                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
+                                        value_handle: handle,
                                     }),
 
                                     AttReq::ReadBlob { handle, offset } => Some(GattEvent::Read {
                                         connection,
-                                        handle: self.server.table.find_characteristic_by_value_handle(handle)?,
+                                        value_handle: handle,
                                     }),
                                     _ => None,
                                 };
@@ -157,20 +157,20 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
 
 /// An event returned while processing GATT requests.
 #[derive(Clone)]
-pub enum GattEvent<'reference, T: GattValue> {
+pub enum GattEvent<'reference> {
     /// A characteristic was read.
     Read {
         /// Connection that read the characteristic.
         connection: Connection<'reference>,
         /// Characteristic handle that was read.
-        handle: Characteristic<T>,
+        value_handle: u16,
     },
     /// A characteristic was written.
     Write {
         /// Connection that wrote the characteristic.
         connection: Connection<'reference>,
         /// Characteristic handle that was written.
-        handle: Characteristic<T>,
+        value_handle: u16,
     },
 }
 
