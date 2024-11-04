@@ -68,14 +68,14 @@ async fn gatt_client_server() {
                     match server.next().await {
                         Ok(GattEvent::Write {
                             connection: _,
-                            handle,
+                            value_handle: handle,
                         }) => {
-                            assert_eq!(handle, value_handle);
-                            let _ = server.server().table().get(&handle, |value| {
-                                assert_eq!(expected, value[0]);
+                            let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
+                            assert_eq!(characteristic, value_handle);
+                            let value: u8 = server.server().table().get(&characteristic).unwrap();
+                            assert_eq!(expected, value);
                                 expected += 1;
                                 writes += 1;
-                            });
                             if writes == 2 {
                                 println!("expected value written twice, test pass");
                                 // NOTE: Ensure that adapter gets polled again
@@ -168,7 +168,7 @@ async fn gatt_client_server() {
                         let service = services.first().unwrap().clone();
 
                         println!("[central] service discovered successfully");
-                        let c = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
+                        let c: Characteristic<u8> = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
 
                         let mut data = [0; 1];
                         client.read_characteristic(&c, &mut data[..]).await.unwrap();

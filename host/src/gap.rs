@@ -7,15 +7,8 @@
 //! In addition, this profile includes common format requirements for
 //! parameters accessible on the user interface level.
 
-use core::fmt::Write;
-
-use crate::prelude::*;
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use heapless::Vec;
-use static_cell::StaticCell;
-
 /// Advertising packet is limited to 31 bytes. 9 of these are used by other GAP data, leaving 22 for Device Name characteristic
-const DEVICE_NAME_MAX_LENGTH: usize = 22;
+pub const DEVICE_NAME_MAX_LENGTH: usize = 22;
 
 pub mod appearance {
     //! The representation of the external appearance of the device.
@@ -69,7 +62,7 @@ pub enum GapConfig<'a> {
 /// Configuration for a peripheral device GAP Service.
 pub struct PeripheralConfig<'a> {
     /// The name of the peripheral device.
-    pub name: &'a Vec<u8, DEVICE_NAME_MAX_LENGTH>,
+    pub name: &'a str,
     /// The representation of the external appearance of the device.
     ///
     /// /// Example: `&appearance::GENERIC_SENSOR`
@@ -81,7 +74,7 @@ pub struct PeripheralConfig<'a> {
 /// Configuration for a central device GAP Service.
 pub struct CentralConfig<'a> {
     /// The name of the central device.
-    pub name: &'a Vec<u8, DEVICE_NAME_MAX_LENGTH>,
+    pub name: &'a str,
     /// The representation of the external appearance of the device.
     ///
     /// Example: `&appearance::GENERIC_SENSOR`
@@ -94,46 +87,36 @@ impl<'a> GapConfig<'a> {
     ///
     /// This configuration will use the `GENERIC_UNKNOWN` appearance.
     pub fn default(name: &'a str) -> Self {
-        static NAME_BYTES: StaticCell<Vec<u8, DEVICE_NAME_MAX_LENGTH>> = StaticCell::new();
-        let name_bytes = NAME_BYTES.init(Vec::new());
-        fill_vec(name_bytes, name.as_bytes());
         GapConfig::Peripheral(PeripheralConfig {
-            name: name_bytes,
+            name,
             appearance: &appearance::GENERIC_UNKNOWN,
         })
     }
-    /// Add the GAP service to the attribute table.
-    pub fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'a, M, MAX>) {
-        // Service UUIDs.  These are mandatory services.
-        const GAP_UUID: u16 = 0x1800;
-        const GATT_UUID: u16 = 0x1801;
+    // /// Add the GAP service to the attribute table.
+    // pub fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'a, M, MAX>) {
+    //     // Service UUIDs.  These are mandatory services.
+    //     const GAP_UUID: u16 = 0x1800;
+    //     const GATT_UUID: u16 = 0x1801;
 
-        // Characteristic UUIDs.  These are mandatory characteristics.
-        const DEVICE_NAME_UUID: u16 = 0x2a00;
-        const APPEARANCE_UUID: u16 = 0x2a01;
+    //     // Characteristic UUIDs.  These are mandatory characteristics.
+    //     const DEVICE_NAME_UUID: u16 = 0x2a00;
+    //     const APPEARANCE_UUID: u16 = 0x2a01;
 
-        let mut gap = table.add_service(Service::new(GAP_UUID)); // GAP UUID (mandatory)
-        match self {
-            GapConfig::Peripheral(config) => {
-                let id = config.name;
-                let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
-                let _ = gap.add_characteristic_ro(APPEARANCE_UUID, config.appearance);
-            }
-            GapConfig::Central(config) => {
-                let id = config.name;
-                let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
-                let _ = gap.add_characteristic_ro(APPEARANCE_UUID, config.appearance);
-            }
-        };
-        gap.build();
+    //     let mut gap = table.add_service(Service::new(GAP_UUID)); // GAP UUID (mandatory)
+    //     match self {
+    //         GapConfig::Peripheral(config) => {
+    //             let id = config.name.as_bytes();
+    //             let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
+    //             let _ = gap.add_characteristic_ro(APPEARANCE_UUID, &config.appearance[..]);
+    //         }
+    //         GapConfig::Central(config) => {
+    //             let id = config.name.as_bytes();
+    //             let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
+    //             let _ = gap.add_characteristic_ro(APPEARANCE_UUID, &config.appearance[..]);
+    //         }
+    //     };
+    //     gap.build();
 
-        table.add_service(Service::new(GATT_UUID)); // GATT UUID (mandatory)
-    }
-}
-
-fn fill_vec<const N: usize>(vector: &mut Vec<u8, N>, bytes: &[u8]) {
-    let mut byte_index = 0;
-    while byte_index < bytes.len() && vector.push(bytes[byte_index]).is_ok() {
-        byte_index += 1;
-    }
+    //     table.add_service(Service::new(GATT_UUID)); // GATT UUID (mandatory)
+    // }
 }

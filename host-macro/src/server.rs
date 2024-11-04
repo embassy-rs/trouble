@@ -95,6 +95,12 @@ impl ServerBuilder {
             });
         }
 
+        const GAP_UUID: u16 = 0x1800;
+        const GATT_UUID: u16 = 0x1801;
+
+        const DEVICE_NAME_UUID: u16 = 0x2a00;
+        const APPEARANCE_UUID: u16 = 0x2a01;
+
         quote! {
             #visibility struct #name<'reference, 'values, C: Controller>
             {
@@ -119,33 +125,61 @@ impl ServerBuilder {
                 /// Create a new Gatt Server instance.
                 ///
                 /// This function will add a Generic GAP Service with the given name.
-                #visibility fn new_default(stack: Stack<'reference, C>, name: &'values str) -> Self {
+                /// The maximum length which the name can be is 22 bytes (limited by the size of the advertising packet).
+                /// If a name longer than this is passed, Err() is returned.
+                #visibility fn new_default(stack: Stack<'reference, C>, name: &'values str) -> Result<Self, &'static str> {
                     let mut table: AttributeTable<'_, #mutex_type, #attribute_data_size> = AttributeTable::new();
 
-                    GapConfig::default(name).build(&mut table);
+                    static DEVICE_NAME: static_cell::StaticCell<HeaplessString<{DEVICE_NAME_MAX_LENGTH}>> = static_cell::StaticCell::new();
+                    let device_name = DEVICE_NAME.init(HeaplessString::new());
+                    if device_name.push_str(name).is_err() {
+                        return Err("Name is too long. Device name must be <= 22 bytes");
+                    };
+                    let mut svc = table.add_service(Service::new(#GAP_UUID));
+                    svc.add_characteristic_ro(#DEVICE_NAME_UUID, device_name);
+                    svc.add_characteristic_ro(#APPEARANCE_UUID, &appearance::GENERIC_UNKNOWN);
+                    svc.build();
+
+                    table.add_service(Service::new(#GATT_UUID));
 
                     #code_service_init
 
-                    Self {
+                    Ok(Self {
                         server: GattServer::new(stack, table),
                         #code_server_populate
-                    }
+                    })
                 }
 
                 /// Create a new Gatt Server instance.
                 ///
                 /// This function will add a GAP Service.
-                #visibility fn new_with_config(stack: Stack<'reference, C>, gap: GapConfig<'values>) -> Self {
+                /// The maximum length which the device name can be is 22 bytes (limited by the size of the advertising packet).
+                /// If a name longer than this is passed, Err() is returned.
+                #visibility fn new_with_config(stack: Stack<'reference, C>, gap: GapConfig<'values>) -> Result<Self, &'static str> {
                     let mut table: AttributeTable<'_, #mutex_type, #attribute_data_size> = AttributeTable::new();
 
-                    gap.build(&mut table);
+                    static DEVICE_NAME: static_cell::StaticCell<HeaplessString<{DEVICE_NAME_MAX_LENGTH}>> = static_cell::StaticCell::new();
+                    let device_name = DEVICE_NAME.init(HeaplessString::new());
+                    let (name, appearance) = match gap {
+                        GapConfig::Peripheral(config) => (config.name, config.appearance),
+                        GapConfig::Central(config) => (config.name, config.appearance),
+                    };
+                    if device_name.push_str(name).is_err() {
+                        return Err("Name is too long. Device name must be <= 22 bytes");
+                    };
+                    let mut svc = table.add_service(Service::new(#GAP_UUID));
+                    svc.add_characteristic_ro(#DEVICE_NAME_UUID, device_name);
+                    svc.add_characteristic_ro(#APPEARANCE_UUID, appearance);
+                    svc.build();
+
+                    table.add_service(Service::new(#GATT_UUID));
 
                     #code_service_init
 
-                    Self {
+                    Ok(Self {
                         server: GattServer::new(stack, table),
                         #code_server_populate
-                    }
+                    })
                 }
 
                 #visibility fn get<T: trouble_host::types::gatt_traits::GattValue>(&self, handle: &Characteristic<T>) -> Result<T, Error> {

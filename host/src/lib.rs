@@ -81,6 +81,8 @@ pub mod prelude {
     pub use crate::scan::*;
     pub use crate::Address;
     #[cfg(feature = "derive")]
+    pub use heapless::String as HeaplessString;
+    #[cfg(feature = "derive")]
     pub use trouble_host_macros::*;
 }
 

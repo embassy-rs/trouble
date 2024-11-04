@@ -409,10 +409,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
-    pub(crate) fn find_characteristic_by_value_handle<T: GattValue>(
-        &self,
-        handle: u16,
-    ) -> Result<Characteristic<T>, Error> {
+    pub fn find_characteristic_by_value_handle<T: GattValue>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle {

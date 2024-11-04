@@ -43,10 +43,11 @@ where
     let server = Server::new_with_config(
         stack,
         GapConfig::Peripheral(PeripheralConfig {
-            name: b"TrouBLE",
+            name: "TrouBLE",
             appearance: &appearance::GENERIC_POWER,
         }),
-    );
+    )
+    .unwrap();
 
     info!("Starting advertising and GATT service");
     let _ = join3(

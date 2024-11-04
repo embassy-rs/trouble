@@ -53,12 +53,12 @@ async fn gatt_client_server() {
         let server: Server<common::Controller> = Server::new_with_config(
             stack,
             gap,
-        );
+        ).unwrap();
 
         // Random starting value to 'prove' the incremented value is correct
-        let value: [u8; 1] = [rand::prelude::random(); 1];
-        let mut expected = value[0].wrapping_add(1);
-        server.set(server.service.value, &value).unwrap();
+        let value: u8 = rand::prelude::random();
+        let mut expected = value.wrapping_add(1);
+        server.set(&server.service.value, &value).unwrap();
 
         select! {
             r = runner.run() => {
@@ -70,14 +70,15 @@ async fn gatt_client_server() {
                     match server.next().await {
                         Ok(GattEvent::Write {
                             connection: _,
-                            handle,
+                            value_handle,
                         }) => {
-                            assert_eq!(handle, server.service.value);
-                            let _ = server.get(handle, |value| {
-                                assert_eq!(expected, value[0]);
-                                expected += 1;
-                                writes += 1;
-                            });
+                            let characteristic = server.server().table().find_characteristic_by_value_handle(value_handle).unwrap();
+                            assert_eq!(characteristic, server.service.value);
+                            let value = server.get(&characteristic).unwrap();
+                            assert_eq!(expected, value);
+                            expected += 1;
+                            writes += 1;
+
                             if writes == 2 {
                                 println!("expected value written twice, test pass");
                                 // NOTE: Ensure that adapter gets polled again
@@ -170,7 +171,7 @@ async fn gatt_client_server() {
                         let service = services.first().unwrap().clone();
 
                         println!("[central] service discovered successfully");
-                        let c = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
+                        let c: Characteristic<u8> = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
 
                         let mut data = [0; 1];
                         client.read_characteristic(&c, &mut data[..]).await.unwrap();

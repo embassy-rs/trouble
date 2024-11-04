@@ -126,27 +126,13 @@ impl<const N: usize> GattValue for String<N> {
     const MAX_SIZE: usize = N;
 
     fn from_gatt(data: &[u8]) -> Self {
-        unwrap!(String::from_utf8(unwrap!(
-            Vec::from_slice(data).map_err(|_| FromGattError::InvalidLength)
-        ))
-        .map_err(|_| FromGattError::InvalidCharacter))
+        unwrap!(
+            String::from_utf8(unwrap!(Vec::from_slice(data).map_err(|_| FromGattError::InvalidLength)))
+                .map_err(|_| FromGattError::InvalidCharacter)
+        )
     }
 
     fn to_gatt(&self) -> &[u8] {
         self.as_ref()
-    }
-}
-
-impl GattValue for &str {
-    const MIN_SIZE: usize = 0;
-    const MAX_SIZE: usize = usize::MAX;
-
-    fn from_gatt(data: &[u8]) -> Self {
-        // SAFETY: This is the inverse of the &str::as_bytes() method
-        unsafe { core::mem::transmute(data) }
-    }
-
-    fn to_gatt(&self) -> &[u8] {
-        self.as_bytes()
     }
 }
