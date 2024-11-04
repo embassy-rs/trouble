@@ -7,6 +7,7 @@ use embassy_sync::blocking_mutex::Mutex;
 
 use crate::att::AttErrorCode;
 use crate::cursor::{ReadCursor, WriteCursor};
+use crate::prelude::Connection;
 use crate::types::gatt_traits::GattValue;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
@@ -69,6 +70,8 @@ pub struct Attribute<'a> {
     pub(crate) handle: u16,
     pub(crate) last_handle_in_group: u16,
     pub(crate) data: AttributeData<'a>,
+    pub(crate) on_read: Option<fn(Connection)>,
+    pub(crate) on_write: Option<fn(Connection, &[u8])>,
 }
 
 impl<'a> Attribute<'a> {
@@ -271,12 +274,19 @@ impl<'a> defmt::Format for Attribute<'a> {
 }
 
 impl<'a> Attribute<'a> {
-    pub(crate) fn new(uuid: Uuid, data: AttributeData<'a>) -> Attribute<'a> {
+    pub(crate) fn new(
+        uuid: Uuid,
+        data: AttributeData<'a>,
+        on_read: Option<fn(Connection)>,
+        on_write: Option<fn(Connection, &[u8])>,
+    ) -> Attribute<'a> {
         Attribute {
             uuid,
             handle: 0,
             data,
             last_handle_in_group: 0xffff,
+            on_read,
+            on_write,
         }
     }
 }
@@ -352,7 +362,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     /// Add a service to the attribute table (group of characteristics)
-    pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
+    pub fn add_service(&mut self, service: Service, on_read: Option<fn(Connection)>) -> ServiceBuilder<'_, 'd, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
         let handle = self.handle;
         self.push(Attribute {
@@ -360,6 +370,8 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Service { uuid: service.uuid },
+            on_read,
+            on_write: None,
         });
         ServiceBuilder {
             handle: AttributeHandle { handle },
@@ -475,6 +487,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
+        on_read: Option<fn(Connection)>,
+        on_write: Option<fn(Connection, &[u8])>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         // First the characteristic declaration
         let next = self.table.handle + 1;
@@ -488,6 +502,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
                 handle: next,
                 uuid: uuid.clone(),
             },
+            on_read: None,
+            on_write: None,
         });
 
         // Then the value declaration
@@ -496,6 +512,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             handle: 0,
             last_handle_in_group: 0,
             data,
+            on_read,
+            on_write,
         });
 
         // Add optional CCCD handle
@@ -508,6 +526,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
                     notifications: false,
                     indications: false,
                 },
+                on_read: None,
+                on_write: None,
             });
             Some(cccd)
         } else {
@@ -530,9 +550,17 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: U,
         props: &[CharacteristicProp],
         storage: &'d mut [u8],
+        on_read: Option<fn(Connection)>,
+        on_write: Option<fn(Connection, &[u8])>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = props.into();
-        self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
+        self.add_characteristic_internal(
+            uuid.into(),
+            props,
+            AttributeData::Data { props, value: storage },
+            on_read,
+            on_write,
+        )
     }
 
     /// Add a characteristic to this service with a refererence to an immutable storage buffer.
@@ -540,6 +568,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         &mut self,
         uuid: U,
         value: &'d T,
+        on_read: Option<fn(Connection)>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = [CharacteristicProp::Read].into();
         self.add_characteristic_internal(
@@ -549,6 +578,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
                 props,
                 value: value.to_gatt(),
             },
+            on_read,
+            None,
         )
     }
 
@@ -593,6 +624,8 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
+        on_read: Option<fn(Connection)>,
+        on_write: Option<fn(Connection, &[u8])>,
     ) -> DescriptorHandle {
         let handle = self.table.handle;
         self.table.push(Attribute {
@@ -600,6 +633,8 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
             handle: 0,
             last_handle_in_group: 0,
             data,
+            on_read,
+            on_write,
         });
 
         DescriptorHandle { handle }
@@ -611,15 +646,34 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
         uuid: U,
         props: &[CharacteristicProp],
         data: &'d mut [u8],
+        on_read: Option<fn(Connection)>,
+        on_write: Option<fn(Connection, &[u8])>,
     ) -> DescriptorHandle {
         let props = props.into();
-        self.add_descriptor_internal(uuid.into(), props, AttributeData::Data { props, value: data })
+        self.add_descriptor_internal(
+            uuid.into(),
+            props,
+            AttributeData::Data { props, value: data },
+            on_read,
+            on_write,
+        )
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> DescriptorHandle {
+    pub fn add_descriptor_ro<U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        data: &'d [u8],
+        on_read: Option<fn(Connection)>,
+    ) -> DescriptorHandle {
         let props = [CharacteristicProp::Read].into();
-        self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
+        self.add_descriptor_internal(
+            uuid.into(),
+            props,
+            AttributeData::ReadOnlyData { props, value: data },
+            on_read,
+            None,
+        )
     }
 
     /// Return the built characteristic.
@@ -659,12 +713,17 @@ impl<'a, 'd> AttributeIterator<'a, 'd> {
 pub struct Service {
     /// UUID of the service.
     pub uuid: Uuid,
+    /// Callback triggered when a read event occurs on this attribute
+    pub on_read: Option<fn(Connection)>,
 }
 
 impl Service {
     /// Create a new service with a uuid.
-    pub fn new<U: Into<Uuid>>(uuid: U) -> Self {
-        Self { uuid: uuid.into() }
+    pub fn new<U: Into<Uuid>>(uuid: U, on_read: Option<fn(Connection)>) -> Self {
+        Self {
+            uuid: uuid.into(),
+            on_read,
+        }
     }
 }
 
