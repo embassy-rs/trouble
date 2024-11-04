@@ -4,33 +4,41 @@ use heapless::{String, Vec};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Error type to signify an issue when converting from GATT bytes to a concrete type
 pub enum FromGattError {
+    /// Byte array's length did not match what was expected for the converted type
     InvalidLength,
+    /// Attempt to encode as string failed due to an invalid character representation in the byte array
     InvalidCharacter,
 }
 
+/// Trait to allow conversion of a fixed size type to and from a byte slice
 pub trait FixedGattValue: Sized {
+    /// Size of the type in bytes
     const SIZE: usize;
 
-    // Converts from gatt bytes.
-    // Must panic if and only if data.len != Self::SIZE
+    /// Converts from gatt bytes.
+    /// Must panic if and only if data.len != Self::SIZE
     fn from_gatt(data: &[u8]) -> Self;
 
-    // Converts to gatt bytes.
-    // Must return a slice of len Self::SIZE
+    /// Converts to gatt bytes.
+    /// Must return a slice of len Self::SIZE
     fn to_gatt(&self) -> &[u8];
 }
 
+/// Trait to allow conversion of a type to and from a byte slice
 pub trait GattValue: Sized {
+    /// The minimum size the type might be
     const MIN_SIZE: usize;
+    /// The maximum size the type might be
     const MAX_SIZE: usize;
 
-    // Converts from gatt bytes.
-    // Must panic if and only if data.len not in MIN_SIZE..=MAX_SIZE
+    /// Converts from gatt bytes.
+    /// Must panic if and only if data.len not in MIN_SIZE..=MAX_SIZE
     fn from_gatt(data: &[u8]) -> Self;
 
-    // Converts to gatt bytes.
-    // Must return a slice of len in MIN_SIZE..=MAX_SIZE
+    /// Converts to gatt bytes.
+    /// Must return a slice of len in MIN_SIZE..=MAX_SIZE
     fn to_gatt(&self) -> &[u8];
 }
 
@@ -47,17 +55,17 @@ impl<T: FixedGattValue> GattValue for T {
     }
 }
 
-pub unsafe trait Primitive: Copy {}
-unsafe impl Primitive for u8 {}
-unsafe impl Primitive for u16 {}
-unsafe impl Primitive for u32 {}
-unsafe impl Primitive for u64 {}
-unsafe impl Primitive for i8 {}
-unsafe impl Primitive for i16 {}
-unsafe impl Primitive for i32 {}
-unsafe impl Primitive for i64 {}
-unsafe impl Primitive for f32 {}
-unsafe impl Primitive for f64 {}
+trait Primitive: Copy {}
+impl Primitive for u8 {}
+impl Primitive for u16 {}
+impl Primitive for u32 {}
+impl Primitive for u64 {}
+impl Primitive for i8 {}
+impl Primitive for i16 {}
+impl Primitive for i32 {}
+impl Primitive for i64 {}
+impl Primitive for f32 {}
+impl Primitive for f64 {}
 
 impl<T: Primitive> FixedGattValue for T {
     const SIZE: usize = mem::size_of::<Self>();
@@ -98,7 +106,7 @@ impl<const N: usize> GattValue for Vec<u8, N> {
     }
 
     fn to_gatt(&self) -> &[u8] {
-        &self
+        self
     }
 }
 

@@ -196,15 +196,15 @@ async fn gatt_client_server() {
             (Err(e1), Err(e2)) => {
                 println!("Central error: {:?}", e1);
                 println!("Peripheral error: {:?}", e2);
-                assert!(false);
+                panic!();
             }
             (Err(e), _) => {
                 println!("Central error: {:?}", e);
-                assert!(false)
+                panic!();
             }
             (_, Err(e)) => {
                 println!("Peripheral error: {:?}", e);
-                assert!(false)
+                panic!();
             }
             _ => {
                 println!("Test completed successfully");
@@ -212,7 +212,7 @@ async fn gatt_client_server() {
         },
         Err(e) => {
             println!("Test timed out: {:?}", e);
-            assert!(false);
+            panic!();
         }
     }
 }

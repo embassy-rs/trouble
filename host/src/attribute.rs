@@ -409,6 +409,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
+    /// Return the characteristic which corresponds to the supplied value handle
+    ///
+    /// If no characteristic corresponding to the given value handle was found, returns an error
     pub fn find_characteristic_by_value_handle<T: GattValue>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
