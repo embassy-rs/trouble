@@ -47,10 +47,10 @@ pub(crate) struct DescriptorArgs {
 }
 
 /// Characteristic attribute arguments
-#[derive(Debug, FromMeta, Default)]
+#[derive(Debug, FromMeta)]
 pub(crate) struct CharacteristicArgs {
     /// The UUID of the characteristic.
-    pub uuid: Option<Uuid>,
+    pub uuid: Uuid,
     /// If true, the characteristic can be read.
     #[darling(default)]
     pub read: bool,
@@ -69,17 +69,24 @@ pub(crate) struct CharacteristicArgs {
     /// The initial value of the characteristic.
     /// This is optional and can be used to set the initial value of the characteristic.
     #[darling(default)]
-    pub value: Option<syn::Expr>,
+    pub default_value: Option<syn::Expr>,
     // /// Descriptors for the characteristic.
     // /// Descriptors are optional and can be used to add additional metadata to the characteristic.
     #[darling(default, multiple)]
-    pub _descriptor: Vec<DescriptorArgs>,
+    pub _descriptors: Vec<DescriptorArgs>,
 }
 
 impl CharacteristicArgs {
     /// Parse the arguments of a characteristic attribute
     pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
-        let mut args = CharacteristicArgs::default();
+        let mut uuid: Option<Uuid> = None;
+        let mut read = false;
+        let mut write = false;
+        let mut write_without_response = false;
+        let mut notify = false;
+        let mut indicate = false;
+        let mut default_value: Option<syn::Expr> = None;
+        let descriptors: Vec<DescriptorArgs> = Vec::new();
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(Error::custom("no ident"))?.to_string().as_str() {
                 "uuid" => {
@@ -87,18 +94,18 @@ impl CharacteristicArgs {
                     .value()
                     .map_err(|_| Error::custom("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'".to_string()))?;
                     let uuid_string: LitStr = value.parse()?;
-                    args.uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
+                    uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
                 },
-                "read" => args.read = true,
-                "write" => args.write = true,
-                "write_without_response" => args.write_without_response = true,
-                "notify" => args.notify = true,
-                "indicate" => args.indicate = true,
+                "read" => read = true,
+                "write" => write = true,
+                "write_without_response" => write_without_response = true,
+                "notify" => notify = true,
+                "indicate" => indicate = true,
                 "value" => {
                     let value = meta
                     .value()
                     .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
-                    args.value = Some(value.parse()?);
+                    default_value = Some(value.parse()?);
                 },
                 other => return Err(
                     meta.error(
@@ -108,9 +115,15 @@ impl CharacteristicArgs {
             };
             Ok(())
         })?;
-        if args.uuid.is_none() {
-            return Err(Error::custom("Characteristic must have a UUID").into());
-        }
-        Ok(args)
+        Ok(Self {
+            uuid: uuid.ok_or(Error::custom("Characteristic must have a UUID"))?,
+            read,
+            write,
+            write_without_response,
+            notify,
+            indicate,
+            default_value,
+            _descriptors: descriptors,
+        })
     }
 }
