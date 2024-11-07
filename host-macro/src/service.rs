@@ -7,7 +7,7 @@
 use crate::characteristic::{Characteristic, CharacteristicArgs};
 use crate::uuid::Uuid;
 use darling::{Error, FromMeta};
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
 use syn::parse::Result;
 use syn::spanned::Spanned;
@@ -123,24 +123,31 @@ impl ServiceBuilder {
     }
 
     /// Construct instructions for adding a characteristic to the service, with static storage.
-    fn construct_characteristic_static(
-        &mut self,
-        name: &str,
-        span: Span,
-        ty: &syn::Type,
-        properties: &Vec<TokenStream2>,
-        uuid: Uuid,
-    ) {
+    fn construct_characteristic_static(&mut self, characteristic: Characteristic) {
         let name_screaming = format_ident!(
             "{}",
-            inflector::cases::screamingsnakecase::to_screaming_snake_case(name)
+            inflector::cases::screamingsnakecase::to_screaming_snake_case(characteristic.name.as_str())
         );
-        let char_name = format_ident!("{}", name);
-        self.code_build_chars.extend(quote_spanned! {span=>
+        let char_name = format_ident!("{}", characteristic.name);
+        let ty = characteristic.ty;
+        let properties = set_access_properties(&characteristic.args);
+        let uuid = characteristic.args.uuid;
+        let read_callback = characteristic
+            .args
+            .on_read
+            .as_ref()
+            .map_or(quote!(None), |callback| quote!(Some(#callback)));
+        let write_callback = characteristic
+            .args
+            .on_write
+            .as_ref()
+            .map_or(quote!(None), |callback| quote!(Some(#callback)));
+
+        self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let #char_name = {
                 static #name_screaming: static_cell::StaticCell<[u8; size_of::<#ty>()]> = static_cell::StaticCell::new();
                 let store = #name_screaming.init([0; size_of::<#ty>()]);
-                let builder = service.add_characteristic(#uuid, &[#(#properties),*], store);
+                let builder = service.add_characteristic(#uuid, &[#(#properties),*], store, #read_callback, #write_callback);
 
                 // TODO: Descriptors
 
@@ -148,7 +155,7 @@ impl ServiceBuilder {
             };
         });
 
-        self.code_struct_init.extend(quote_spanned!(span=>
+        self.code_struct_init.extend(quote_spanned!(characteristic.span=>
             #char_name,
         ));
     }
@@ -172,21 +179,7 @@ impl ServiceBuilder {
         // Process characteristic fields
         for ch in characteristics {
             let char_name = format_ident!("{}", ch.name);
-            let uuid = ch.args.uuid;
-
-            // TODO add methods to characteristic
-            let _get_fn = format_ident!("{}_get", ch.name);
-            let _set_fn = format_ident!("{}_set", ch.name);
-            let _notify_fn = format_ident!("{}_notify", ch.name);
-            let _indicate_fn = format_ident!("{}_indicate", ch.name);
-            let _fn_vis = &ch.vis;
-
-            let _notify = ch.args.notify;
-            let _indicate = ch.args.indicate;
-
             let ty = &ch.ty;
-
-            let properties = set_access_properties(&ch.args);
 
             // add fields for each characteristic value handle
             fields.push(syn::Field {
@@ -198,7 +191,7 @@ impl ServiceBuilder {
                 mutability: syn::FieldMutability::None,
             });
 
-            self.construct_characteristic_static(&ch.name, ch.span, ty, &properties, uuid);
+            self.construct_characteristic_static(ch);
         }
 
         // Processing common to all fields

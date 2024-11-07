@@ -9,8 +9,9 @@ use darling::Error;
 use darling::FromMeta;
 use proc_macro2::Span;
 use syn::parse::Result;
-use syn::spanned::Spanned as _;
+use syn::spanned::Spanned;
 use syn::Field;
+use syn::Ident;
 use syn::LitStr;
 
 #[derive(Debug)]
@@ -66,10 +67,16 @@ pub(crate) struct CharacteristicArgs {
     /// If true, the characteristic can send indications.
     #[darling(default)]
     pub indicate: bool,
+    /// Optional callback to be triggered on a read event
+    #[darling(default)]
+    pub on_read: Option<Ident>,
+    /// Optional callback to be triggered on a write event
+    #[darling(default)]
+    pub on_write: Option<Ident>,
     /// The initial value of the characteristic.
     /// This is optional and can be used to set the initial value of the characteristic.
     #[darling(default)]
-    pub default_value: Option<syn::Expr>,
+    pub _default_value: Option<syn::Expr>,
     // /// Descriptors for the characteristic.
     // /// Descriptors are optional and can be used to add additional metadata to the characteristic.
     #[darling(default, multiple)]
@@ -85,7 +92,9 @@ impl CharacteristicArgs {
         let mut write_without_response = false;
         let mut notify = false;
         let mut indicate = false;
-        let mut default_value: Option<syn::Expr> = None;
+        let mut on_read = None;
+        let mut on_write = None;
+        let mut _default_value: Option<syn::Expr> = None;
         let descriptors: Vec<DescriptorArgs> = Vec::new();
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(Error::custom("no ident"))?.to_string().as_str() {
@@ -101,11 +110,14 @@ impl CharacteristicArgs {
                 "write_without_response" => write_without_response = true,
                 "notify" => notify = true,
                 "indicate" => indicate = true,
+                "on_read" => on_read = Some(meta.value()?.parse()?),
+                "on_write" => on_write = Some(meta.value()?.parse()?),
                 "value" => {
-                    let value = meta
-                    .value()
-                    .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
-                    default_value = Some(value.parse()?);
+                    return Err(Error::custom("Default value is currently unsupported").with_span(&meta.path.span()).into())
+                    // let value = meta
+                    // .value()
+                    // .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
+                    // default_value = Some(value.parse()?);
                 },
                 other => return Err(
                     meta.error(
@@ -122,7 +134,9 @@ impl CharacteristicArgs {
             write_without_response,
             notify,
             indicate,
-            default_value,
+            on_read,
+            on_write,
+            _default_value,
             _descriptors: descriptors,
         })
     }
