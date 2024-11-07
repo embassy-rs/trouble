@@ -35,7 +35,6 @@ fn value_on_read(_: &Connection) {
 }
 
 fn value_on_write(_: &Connection, _: &[u8]) {
-    println!("Write callback triggered");
     WRITE_FLAG.lock(|cell| {
         cell.replace_with(|&mut old| old + 1);
     })
@@ -51,8 +50,6 @@ async fn gatt_client_server() {
     let peripheral_address: Address = Address::random([0xff, 0x9f, 0x1a, 0x05, 0xe4, 0xff]);
 
     let local = tokio::task::LocalSet::new();
-
-    let mut expected_write_count = 0;
 
     // Spawn peripheral
     let peripheral = local.spawn_local(async move {
@@ -195,11 +192,9 @@ async fn gatt_client_server() {
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
                         client.write_characteristic(&c, &data[..]).await.unwrap();
-                        expected_write_count += 1;
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
                         client.write_characteristic(&c, &data[..]).await.unwrap();
-                        expected_write_count += 1;
                         println!("[central] write done");
                         Ok(())
                     } => {
@@ -231,7 +226,7 @@ async fn gatt_client_server() {
                 assert!(READ_FLAG.lock(|cell| cell.take()), "Read callback failed to trigger!");
                 let actual_write_count = WRITE_FLAG.lock(|cell| cell.take());
                 assert_eq!(
-                    actual_write_count, expected_write_count,
+                    actual_write_count, 2,
                     "Write callback didn't trigger the expected number of times"
                 );
                 println!("Test completed successfully");
