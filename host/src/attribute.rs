@@ -70,8 +70,8 @@ pub struct Attribute<'a> {
     pub(crate) handle: u16,
     pub(crate) last_handle_in_group: u16,
     pub(crate) data: AttributeData<'a>,
-    pub(crate) on_read: Option<fn(Connection)>,
-    pub(crate) on_write: Option<fn(Connection, &[u8])>,
+    pub(crate) on_read: Option<fn(&Connection)>,
+    pub(crate) on_write: Option<fn(&Connection, &[u8])>,
 }
 
 impl<'a> Attribute<'a> {
@@ -277,8 +277,8 @@ impl<'a> Attribute<'a> {
     pub(crate) fn new(
         uuid: Uuid,
         data: AttributeData<'a>,
-        on_read: Option<fn(Connection)>,
-        on_write: Option<fn(Connection, &[u8])>,
+        on_read: Option<fn(&Connection)>,
+        on_write: Option<fn(&Connection, &[u8])>,
     ) -> Attribute<'a> {
         Attribute {
             uuid,
@@ -362,7 +362,11 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     /// Add a service to the attribute table (group of characteristics)
-    pub fn add_service(&mut self, service: Service, on_read: Option<fn(Connection)>) -> ServiceBuilder<'_, 'd, M, MAX> {
+    pub fn add_service(
+        &mut self,
+        service: Service,
+        on_read: Option<fn(&Connection)>,
+    ) -> ServiceBuilder<'_, 'd, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
         let handle = self.handle;
         self.push(Attribute {
@@ -487,8 +491,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
-        on_read: Option<fn(Connection)>,
-        on_write: Option<fn(Connection, &[u8])>,
+        on_read: Option<fn(&Connection)>,
+        on_write: Option<fn(&Connection, &[u8])>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         // First the characteristic declaration
         let next = self.table.handle + 1;
@@ -550,8 +554,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: U,
         props: &[CharacteristicProp],
         storage: &'d mut [u8],
-        on_read: Option<fn(Connection)>,
-        on_write: Option<fn(Connection, &[u8])>,
+        on_read: Option<fn(&Connection)>,
+        on_write: Option<fn(&Connection, &[u8])>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = props.into();
         self.add_characteristic_internal(
@@ -568,7 +572,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         &mut self,
         uuid: U,
         value: &'d T,
-        on_read: Option<fn(Connection)>,
+        on_read: Option<fn(&Connection)>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = [CharacteristicProp::Read].into();
         self.add_characteristic_internal(
@@ -624,8 +628,8 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
-        on_read: Option<fn(Connection)>,
-        on_write: Option<fn(Connection, &[u8])>,
+        on_read: Option<fn(&Connection)>,
+        on_write: Option<fn(&Connection, &[u8])>,
     ) -> DescriptorHandle {
         let handle = self.table.handle;
         self.table.push(Attribute {
@@ -646,8 +650,8 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
         uuid: U,
         props: &[CharacteristicProp],
         data: &'d mut [u8],
-        on_read: Option<fn(Connection)>,
-        on_write: Option<fn(Connection, &[u8])>,
+        on_read: Option<fn(&Connection)>,
+        on_write: Option<fn(&Connection, &[u8])>,
     ) -> DescriptorHandle {
         let props = props.into();
         self.add_descriptor_internal(
@@ -664,7 +668,7 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
         &mut self,
         uuid: U,
         data: &'d [u8],
-        on_read: Option<fn(Connection)>,
+        on_read: Option<fn(&Connection)>,
     ) -> DescriptorHandle {
         let props = [CharacteristicProp::Read].into();
         self.add_descriptor_internal(
