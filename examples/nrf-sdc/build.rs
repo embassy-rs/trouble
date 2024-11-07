@@ -16,6 +16,8 @@ use std::path::PathBuf;
 fn linker_data() -> &'static [u8] {
     #[cfg(feature = "nrf52832")]
     return include_bytes!("memory-nrf52832.x");
+    #[cfg(feature = "nrf52833")]
+    return include_bytes!("memory-nrf52833.x");
     #[cfg(feature = "nrf52840")]
     return include_bytes!("memory-nrf52840.x");
 }
