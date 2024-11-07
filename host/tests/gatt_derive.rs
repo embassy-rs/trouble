@@ -1,6 +1,6 @@
-use std::{any::Any, borrow::BorrowMut, cell::RefCell, time::Duration};
+use std::{cell::RefCell, time::Duration};
 
-use embassy_sync::blocking_mutex::{raw::NoopRawMutex, CriticalSectionMutex, Mutex, NoopMutex};
+use embassy_sync::blocking_mutex::{raw::NoopRawMutex, CriticalSectionMutex};
 use tokio::select;
 use trouble_host::prelude::*;
 

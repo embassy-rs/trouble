@@ -92,31 +92,4 @@ impl<'a> GapConfig<'a> {
             appearance: &appearance::GENERIC_UNKNOWN,
         })
     }
-    // /// Add the GAP service to the attribute table.
-    // pub fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'a, M, MAX>) {
-    //     // Service UUIDs.  These are mandatory services.
-    //     const GAP_UUID: u16 = 0x1800;
-    //     const GATT_UUID: u16 = 0x1801;
-
-    //     // Characteristic UUIDs.  These are mandatory characteristics.
-    //     const DEVICE_NAME_UUID: u16 = 0x2a00;
-    //     const APPEARANCE_UUID: u16 = 0x2a01;
-
-    //     let mut gap = table.add_service(Service::new(GAP_UUID)); // GAP UUID (mandatory)
-    //     match self {
-    //         GapConfig::Peripheral(config) => {
-    //             let id = config.name.as_bytes();
-    //             let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
-    //             let _ = gap.add_characteristic_ro(APPEARANCE_UUID, &config.appearance[..]);
-    //         }
-    //         GapConfig::Central(config) => {
-    //             let id = config.name.as_bytes();
-    //             let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
-    //             let _ = gap.add_characteristic_ro(APPEARANCE_UUID, &config.appearance[..]);
-    //         }
-    //     };
-    //     gap.build();
-
-    //     table.add_service(Service::new(GATT_UUID)); // GATT UUID (mandatory)
-    // }
 }
