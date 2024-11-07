@@ -24,8 +24,16 @@ struct Server {
 // Battery service
 #[gatt_service(uuid = "180f")]
 struct BatteryService {
-    #[characteristic(uuid = "2a19", read, notify)]
+    #[characteristic(uuid = "2a19", read, notify, on_read = battery_level_on_read, on_write = battery_level_on_write)]
     level: u8,
+}
+
+fn battery_level_on_read(_connection: &Connection) {
+    info!("[gatt] Read event on battery level characteristic");
+}
+
+fn battery_level_on_write(_connection: &Connection, data: &[u8]) {
+    info!("[gatt] Write event on battery level characteristic: {:?}", data);
 }
 
 pub async fn run<C>(controller: C)

@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{any::Any, borrow::BorrowMut, cell::RefCell, time::Duration};
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::{raw::NoopRawMutex, CriticalSectionMutex, Mutex, NoopMutex};
 use tokio::select;
 use trouble_host::prelude::*;
 
@@ -23,8 +23,21 @@ struct Server {
 
 #[gatt_service(uuid = "408813df-5dd4-1f87-ec11-cdb000100000")]
 struct CustomService {
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
+    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, on_read = value_on_read, on_write = value_on_write)]
     value: u8,
+}
+
+static READ_FLAG: CriticalSectionMutex<RefCell<bool>> = CriticalSectionMutex::new(RefCell::new(false));
+static WRITE_FLAG: CriticalSectionMutex<RefCell<u8>> = CriticalSectionMutex::new(RefCell::new(0));
+
+fn value_on_read(_: &Connection) {
+    READ_FLAG.lock(|cell| cell.replace(true));
+}
+
+fn value_on_write(_: &Connection, _: &[u8]) {
+    WRITE_FLAG.lock(|cell| {
+        cell.replace_with(|&mut old| old + 1);
+    })
 }
 
 #[tokio::test]
@@ -37,6 +50,8 @@ async fn gatt_client_server() {
     let peripheral_address: Address = Address::random([0xff, 0x9f, 0x1a, 0x05, 0xe4, 0xff]);
 
     let local = tokio::task::LocalSet::new();
+
+    let mut expected_write_count = 0;
 
     // Spawn peripheral
     let peripheral = local.spawn_local(async move {
@@ -179,9 +194,11 @@ async fn gatt_client_server() {
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
                         client.write_characteristic(&c, &data[..]).await.unwrap();
+                        expected_write_count += 1;
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
                         client.write_characteristic(&c, &data[..]).await.unwrap();
+                        expected_write_count += 1;
                         println!("[central] write done");
                         Ok(())
                     } => {
@@ -210,6 +227,12 @@ async fn gatt_client_server() {
                 panic!();
             }
             _ => {
+                assert!(READ_FLAG.lock(|cell| cell.take()), "Read callback failed to trigger!");
+                let actual_write_count = WRITE_FLAG.lock(|cell| cell.take());
+                assert_eq!(
+                    actual_write_count, expected_write_count,
+                    "Write callback didn't trigger the expected number of times"
+                );
                 println!("Test completed successfully");
             }
         },
