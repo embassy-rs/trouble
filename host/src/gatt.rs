@@ -64,7 +64,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
                         let mut w = WriteCursor::new(&mut tx);
                         let (mut header, mut data) = w.split(4)?;
 
-                        match self.server.process(handle, &att, data.write_buf()) {
+                        match self.server.process(&connection, &att, data.write_buf()) {
                             Ok(Some(written)) => {
                                 let mtu = self.connections.get_att_mtu(handle);
                                 data.commit(written)?;

@@ -76,6 +76,26 @@ pub struct Attribute<'a> {
 
 impl<'a> Attribute<'a> {
     const EMPTY: Option<Attribute<'a>> = None;
+
+    pub(crate) fn read(&self, connection: &Connection, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        if !self.data.readable() {
+            return Err(AttErrorCode::ReadNotPermitted);
+        }
+        if let Some(callback) = self.on_read {
+            callback(connection);
+        }
+        self.data.read(offset, data)
+    }
+
+    pub(crate) fn write(&mut self, connection: &Connection, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+        if !self.data.writable() {
+            return Err(AttErrorCode::WriteNotPermitted);
+        }
+        if let Some(callback) = self.on_write {
+            callback(connection, data);
+        }
+        self.data.write(offset, data)
+    }
 }
 
 pub(crate) enum AttributeData<'d> {
@@ -126,7 +146,7 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub(crate) fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+    fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         if !self.readable() {
             return Err(AttErrorCode::ReadNotPermitted);
         }
@@ -208,7 +228,7 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         let writable = self.writable();
 
         match self {

@@ -8,6 +8,7 @@ use crate::att::{self, AttErrorCode, AttReq};
 use crate::attribute::{AttributeData, AttributeTable};
 use crate::codec;
 use crate::cursor::WriteCursor;
+use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
 
 #[derive(Debug, PartialEq)]
@@ -74,6 +75,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
 
     fn handle_read_by_type_req(
         &self,
+        connection: &Connection,
         buf: &mut [u8],
         start: u16,
         end: u16,
@@ -91,11 +93,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
                     body.write(att.handle)?;
                     handle = att.handle;
 
-                    if att.data.readable() {
-                        err = att.data.read(0, body.write_buf());
-                        if let Ok(len) = &err {
-                            body.commit(*len)?;
-                        }
+                    err = att.read(connection, 0, body.write_buf());
+                    if let Ok(len) = err {
+                        body.commit(len)?;
                     }
 
                     // debug!("found! {:?} {}", att.uuid, att.handle);
@@ -117,6 +117,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
 
     fn handle_read_by_group_type_req(
         &self,
+        connection: &Connection,
         buf: &mut [u8],
         start: u16,
         end: u16,
@@ -138,11 +139,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
                     body.write(att.handle)?;
                     body.write(att.last_handle_in_group)?;
 
-                    if att.data.readable() {
-                        err = att.data.read(0, body.write_buf());
-                        if let Ok(len) = &err {
-                            body.commit(*len)?;
-                        }
+                    err = att.read(connection, 0, body.write_buf());
+                    if let Ok(len) = err {
+                        body.commit(len)?;
                     }
                     break;
                 }
@@ -160,7 +159,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
         }
     }
 
-    fn handle_read_req(&self, buf: &mut [u8], handle: u16) -> Result<usize, codec::Error> {
+    fn handle_read_req(&self, connection: &Connection, buf: &mut [u8], handle: u16) -> Result<usize, codec::Error> {
         let mut data = WriteCursor::new(buf);
 
         data.write(att::ATT_READ_RSP)?;
@@ -169,11 +168,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    if att.data.readable() {
-                        err = att.data.read(0, data.write_buf());
-                        if let Ok(len) = err {
-                            data.commit(len)?;
-                        }
+                    err = att.read(connection, 0, data.write_buf());
+                    if let Ok(len) = err {
+                        data.commit(len)?;
                     }
                     break;
                 }
@@ -187,25 +184,29 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
         }
     }
 
-    fn handle_write_cmd(&self, buf: &mut [u8], handle: u16, data: &[u8]) -> Result<usize, codec::Error> {
+    fn handle_write_cmd(
+        &self,
+        connection: &Connection,
+        buf: &mut [u8],
+        handle: u16,
+        data: &[u8],
+    ) -> Result<usize, codec::Error> {
         // TODO: Generate event
         self.table.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    if att.data.writable() {
-                        // Write commands can't respond with an error.
-                        att.data.write(0, data).unwrap();
-                    }
+                    // Write commands can't respond with an error.
+                    let _ = att.write(connection, 0, data);
                     break;
                 }
             }
-            Ok(0)
-        })
+        });
+        Ok(0)
     }
 
     fn handle_write_req(
         &self,
-        conn: ConnHandle,
+        conn: &Connection,
         buf: &mut [u8],
         handle: u16,
         data: &[u8],
@@ -214,16 +215,14 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    if att.data.writable() {
-                        err = att.data.write(0, data);
-                        if err.is_ok() {
-                            if let AttributeData::Cccd {
-                                notifications,
-                                indications,
-                            } = att.data
-                            {
-                                self.set_notify(conn, handle, notifications);
-                            }
+                    err = att.write(conn, 0, data);
+                    if err.is_ok() {
+                        if let AttributeData::Cccd {
+                            notifications,
+                            indications,
+                        } = att.data
+                        {
+                            self.set_notify(conn.handle(), handle, notifications);
                         }
                     }
                     break;
@@ -335,6 +334,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
 
     fn handle_prepare_write(
         &self,
+        connection: &Connection,
         buf: &mut [u8],
         handle: u16,
         offset: u16,
@@ -349,9 +349,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    if att.data.writable() {
-                        err = att.data.write(offset as usize, value);
-                    }
+                    err = att.write(connection, offset as usize, value);
                     w.append(value)?;
                     break;
                 }
@@ -371,7 +369,13 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
         Ok(w.len())
     }
 
-    fn handle_read_blob(&self, buf: &mut [u8], handle: u16, offset: u16) -> Result<usize, codec::Error> {
+    fn handle_read_blob(
+        &self,
+        connection: &Connection,
+        buf: &mut [u8],
+        handle: u16,
+        offset: u16,
+    ) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(buf);
         w.write(att::ATT_READ_BLOB_RSP)?;
 
@@ -379,11 +383,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    if att.data.readable() {
-                        err = att.data.read(offset as usize, w.write_buf());
-                        if let Ok(n) = &err {
-                            w.commit(*n)?;
-                        }
+                    err = att.read(connection, offset as usize, w.write_buf());
+                    if let Ok(n) = err {
+                        w.commit(n)?;
                     }
                     break;
                 }
@@ -397,7 +399,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
         }
     }
 
-    fn handle_read_multiple(&self, buf: &mut [u8], handles: &[u8]) -> Result<usize, codec::Error> {
+    fn handle_read_multiple(
+        &self,
+        connection: &Connection,
+        buf: &mut [u8],
+        handles: &[u8],
+    ) -> Result<usize, codec::Error> {
         let w = WriteCursor::new(buf);
         Self::error_response(
             w,
@@ -408,26 +415,26 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
     }
 
     /// Process an event and produce a response if necessary
-    pub fn process(&self, conn: ConnHandle, packet: &AttReq, rx: &mut [u8]) -> Result<Option<usize>, codec::Error> {
+    pub fn process(&self, conn: &Connection, packet: &AttReq, rx: &mut [u8]) -> Result<Option<usize>, codec::Error> {
         let len = match packet {
             AttReq::ReadByType {
                 start,
                 end,
                 attribute_type,
-            } => self.handle_read_by_type_req(rx, *start, *end, attribute_type)?,
+            } => self.handle_read_by_type_req(conn, rx, *start, *end, attribute_type)?,
 
             AttReq::ReadByGroupType { start, end, group_type } => {
-                self.handle_read_by_group_type_req(rx, *start, *end, group_type)?
+                self.handle_read_by_group_type_req(conn, rx, *start, *end, group_type)?
             }
             AttReq::FindInformation {
                 start_handle,
                 end_handle,
             } => self.handle_find_information(rx, *start_handle, *end_handle)?,
 
-            AttReq::Read { handle } => self.handle_read_req(rx, *handle)?,
+            AttReq::Read { handle } => self.handle_read_req(conn, rx, *handle)?,
 
             AttReq::WriteCmd { handle, data } => {
-                self.handle_write_cmd(rx, *handle, data)?;
+                self.handle_write_cmd(conn, rx, *handle, data)?;
                 0
             }
 
@@ -442,13 +449,15 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
                 att_value,
             } => self.handle_find_type_value(rx, *start_handle, *end_handle, *att_type, att_value)?,
 
-            AttReq::PrepareWrite { handle, offset, value } => self.handle_prepare_write(rx, *handle, *offset, value)?,
+            AttReq::PrepareWrite { handle, offset, value } => {
+                self.handle_prepare_write(conn, rx, *handle, *offset, value)?
+            }
 
             AttReq::ExecuteWrite { flags } => self.handle_execute_write(rx, *flags)?,
 
-            AttReq::ReadBlob { handle, offset } => self.handle_read_blob(rx, *handle, *offset)?,
+            AttReq::ReadBlob { handle, offset } => self.handle_read_blob(conn, rx, *handle, *offset)?,
 
-            AttReq::ReadMultiple { handles } => self.handle_read_multiple(rx, handles)?,
+            AttReq::ReadMultiple { handles } => self.handle_read_multiple(conn, rx, handles)?,
         };
         if len > 0 {
             Ok(Some(len))
