@@ -6,34 +6,64 @@
 
 use crate::characteristic::{Characteristic, CharacteristicArgs};
 use crate::uuid::Uuid;
-use darling::FromMeta;
+use darling::{Error, FromMeta};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned};
-use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
-use syn::LitStr;
+use syn::{Meta, Token};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ServiceArgs {
-    pub uuid: Option<Uuid>,
+    pub uuid: Uuid,
+    pub on_read: Option<syn::Ident>,
 }
 
-impl ServiceArgs {
-    pub fn parse(&mut self, meta: ParseNestedMeta) -> Result<()> {
-        if meta.path.is_ident("uuid") {
-            let uuid_string: LitStr = meta.value()?.parse()?;
-            self.uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
-            Ok(())
-        } else {
-            Err(meta.error("Unsupported service property, 'uuid' is the only supported property"))
+impl syn::parse::Parse for ServiceArgs {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let mut uuid = None;
+        let mut on_read = None;
+
+        while !input.is_empty() {
+            let meta = input.parse()?;
+
+            match &meta {
+                Meta::NameValue(name_value) => {
+                    match name_value
+                        .path
+                        .get_ident()
+                        .ok_or(Error::custom("Argument name is missing").with_span(&name_value.span()))?
+                        .to_string()
+                        .as_str()
+                    {
+                        "uuid" => uuid = Some(Uuid::from_meta(&meta)?),
+                        "on_read" => on_read = Some(syn::Ident::from_meta(&meta)?),
+                        other => {
+                            return Err(Error::unknown_field(&format!(
+                                "Unsupported service property: '{other}'.\nSupported properties are uuid, on_read"
+                            ))
+                            .with_span(&name_value.span())
+                            .into())
+                        }
+                    }
+                }
+                _ => return Err(Error::custom("Unexpected argument").with_span(&meta.span()).into()),
+            }
+            let _ = input.parse::<Token![,]>();
         }
+
+        Ok(Self {
+            uuid: uuid.ok_or(Error::custom(
+                "Service must have a UUID (i.e. `#[gatt_service(uuid = '1234')]`)",
+            ))?,
+            on_read,
+        })
     }
 }
 
 pub(crate) struct ServiceBuilder {
     properties: syn::ItemStruct,
-    uuid: Uuid,
+    args: ServiceArgs,
     code_impl: TokenStream2,
     code_build_chars: TokenStream2,
     code_struct_init: TokenStream2,
@@ -41,10 +71,10 @@ pub(crate) struct ServiceBuilder {
 }
 
 impl ServiceBuilder {
-    pub fn new(properties: syn::ItemStruct, uuid: Uuid) -> Self {
+    pub fn new(properties: syn::ItemStruct, args: ServiceArgs) -> Self {
         Self {
-            uuid,
             properties,
+            args,
             code_struct_init: TokenStream2::new(),
             code_impl: TokenStream2::new(),
             code_fields: TokenStream2::new(),
@@ -60,7 +90,12 @@ impl ServiceBuilder {
         let code_impl = self.code_impl;
         let fields = self.code_fields;
         let code_build_chars = self.code_build_chars;
-        let uuid = self.uuid;
+        let uuid = self.args.uuid;
+        let read_callback = if let Some(function) = self.args.on_read {
+            quote!(Some(#function))
+        } else {
+            quote!(None)
+        };
 
         quote! {
             #visibility struct #struct_name {
@@ -74,7 +109,7 @@ impl ServiceBuilder {
                 where
                     M: embassy_sync::blocking_mutex::raw::RawMutex,
                 {
-                    let mut service = table.add_service(Service::new(#uuid));
+                    let mut service = table.add_service(Service::new(#uuid), #read_callback);
                     #code_build_chars
 
                     Self {
@@ -94,7 +129,7 @@ impl ServiceBuilder {
         span: Span,
         ty: &syn::Type,
         properties: &Vec<TokenStream2>,
-        uuid: Option<Uuid>,
+        uuid: Uuid,
     ) {
         let name_screaming = format_ident!(
             "{}",

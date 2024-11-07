@@ -713,17 +713,12 @@ impl<'a, 'd> AttributeIterator<'a, 'd> {
 pub struct Service {
     /// UUID of the service.
     pub uuid: Uuid,
-    /// Callback triggered when a read event occurs on this attribute
-    pub on_read: Option<fn(Connection)>,
 }
 
 impl Service {
     /// Create a new service with a uuid.
-    pub fn new<U: Into<Uuid>>(uuid: U, on_read: Option<fn(Connection)>) -> Self {
-        Self {
-            uuid: uuid.into(),
-            on_read,
-        }
+    pub fn new<U: Into<Uuid>>(uuid: U) -> Self {
+        Self { uuid: uuid.into() }
     }
 }
 

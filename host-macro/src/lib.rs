@@ -16,6 +16,7 @@ use ctxt::Ctxt;
 use proc_macro::TokenStream;
 use server::{ServerArgs, ServerBuilder};
 use service::{ServiceArgs, ServiceBuilder};
+use syn::parse_macro_input;
 
 /// Gatt Service attribute macro.
 ///
@@ -73,21 +74,11 @@ pub fn gatt_server(args: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
-    let service_uuid = {
-        // Get arguments from the gatt_service macro attribute (i.e. uuid)
-        let service_attributes: ServiceArgs = {
-            let mut attributes = ServiceArgs::default();
-            let arg_parser = syn::meta::parser(|meta| attributes.parse(meta));
-
-            syn::parse_macro_input!(args with arg_parser);
-            attributes
-        };
-        service_attributes.uuid
-    }
-    .expect("uuid is required for gatt_service");
+    // Get arguments from the gatt_service macro attribute
+    let service_arguments = parse_macro_input!(args as ServiceArgs);
 
     // Parse the contents of the struct
-    let mut service_props = syn::parse_macro_input!(item as syn::ItemStruct);
+    let mut service_props = parse_macro_input!(item as syn::ItemStruct);
 
     let ctxt = Ctxt::new(); // error handling context, must be initialized after parse_macro_input calls.
 
@@ -119,7 +110,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // Build the service struct
-    let result = ServiceBuilder::new(service_props, service_uuid)
+    let result = ServiceBuilder::new(service_props, service_arguments)
         .process_characteristics_and_fields(fields, characteristics)
         .build();
 
