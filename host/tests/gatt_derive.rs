@@ -35,6 +35,7 @@ fn value_on_read(_: &Connection) {
 }
 
 fn value_on_write(_: &Connection, _: &[u8]) {
+    println!("Write callback triggered");
     WRITE_FLAG.lock(|cell| {
         cell.replace_with(|&mut old| old + 1);
     })
