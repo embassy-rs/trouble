@@ -24,7 +24,7 @@ struct Server {
 // Battery service
 #[gatt_service(uuid = "180f")]
 struct BatteryService {
-    #[characteristic(uuid = "2a19", read, notify, on_read = battery_level_on_read, on_write = battery_level_on_write)]
+    #[characteristic(uuid = "2a19", read, write, notify, on_read = battery_level_on_read, on_write = battery_level_on_write)]
     level: u8,
 }
 
