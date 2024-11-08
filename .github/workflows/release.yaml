@@ -34,9 +34,64 @@ jobs:
         run: |
           ./ci.sh
 
-  release:
+  release_trouble_host:
     # Only run if the checks pass
-    name: Publish to crates.io
+    name: Publish Trouble Host to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # if: github.ref == 'refs/heads/main'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Enter the directory
+      run: cd host
+
+    - name: Verify Version
+      run: |
+        TAG_VERSION=${GITHUB_REF#refs/tags/v}
+        CARGO_VERSION=$(grep '^version =' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')
+        if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+          echo "Version mismatch: tag is $TAG_VERSION but Cargo.toml is $CARGO_VERSION"
+          exit 1  # Exits with a non-zero status to fail the workflow
+        fi
+      shell: bash
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+
+    - name: Build project
+      run: cargo build --release
+    
+    - name: Create GitHub release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        tag: ${{ github.ref_name }}
+      run: |
+        gh release create "$tag" \
+            --repo="$GITHUB_REPOSITORY" \
+            --title="${GITHUB_REPOSITORY#*/} ${tag#v}" \
+            --generate-notes
+
+    - name: Publish to crates.io
+      env:
+        CARGO_REGISTRIES_STAGING_TOKEN: ${{ secrets.CARGO_REGISTRIES_STAGING_TOKEN }}
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Publish to the main registry
+      run: |
+        echo "Publishing to crates.io"  
+        # cargo publish
+      # To publish to the staging/testing registry, uncomment the following lines
+      # run: |
+      #   echo "Publishing to staging"
+      #   cargo publish --registry=staging
+
+  release_trouble_host_macro:
+    # Only run if the checks pass
+    name: Publish Trouble Host to crates.io
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -45,6 +100,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
+    - name: Enter the directory
+      run: cd host-macro
+
     - name: Verify Version
       run: |
         TAG_VERSION=${GITHUB_REF#refs/tags/v}
