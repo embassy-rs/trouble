@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "bt-hci",
  "embassy-futures",
@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "Inflector",
  "darling",
