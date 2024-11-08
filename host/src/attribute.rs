@@ -445,7 +445,8 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
-                        let v = <T as GattValue>::from_gatt(value);
+                        // Type is inferred from the Characteristic so Result can be unwrapped here
+                        let v = <T as GattValue>::from_gatt(value).unwrap();
                         return Ok(v);
                     }
                 }

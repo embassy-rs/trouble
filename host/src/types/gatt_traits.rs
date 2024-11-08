@@ -19,7 +19,7 @@ pub trait FixedGattValue: Sized {
 
     /// Converts from gatt bytes.
     /// Must panic if and only if data.len != Self::SIZE
-    fn from_gatt(data: &[u8]) -> Self;
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
 
     /// Converts to gatt bytes.
     /// Must return a slice of len Self::SIZE
@@ -35,7 +35,7 @@ pub trait GattValue: Sized {
 
     /// Converts from gatt bytes.
     /// Must panic if and only if data.len not in MIN_SIZE..=MAX_SIZE
-    fn from_gatt(data: &[u8]) -> Self;
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
 
     /// Converts to gatt bytes.
     /// Must return a slice of len in MIN_SIZE..=MAX_SIZE
@@ -46,7 +46,7 @@ impl<T: FixedGattValue> GattValue for T {
     const MIN_SIZE: usize = Self::SIZE;
     const MAX_SIZE: usize = Self::SIZE;
 
-    fn from_gatt(data: &[u8]) -> Self {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         <Self as FixedGattValue>::from_gatt(data)
     }
 
@@ -70,7 +70,7 @@ impl Primitive for f64 {}
 impl<T: Primitive> FixedGattValue for T {
     const SIZE: usize = mem::size_of::<Self>();
 
-    fn from_gatt(data: &[u8]) -> Self {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
             panic!("Bad len")
         }
@@ -78,7 +78,7 @@ impl<T: Primitive> FixedGattValue for T {
         // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
         // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive, and all types implementing Primitive are valid for all possible configurations of bits
         // - Primitive trait is constrained to require Copy
-        unsafe { (data.as_ptr() as *const Self).read_unaligned() }
+        unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
     }
 
     fn to_gatt(&self) -> &[u8] {
@@ -92,8 +92,8 @@ impl<T: Primitive> FixedGattValue for T {
 impl FixedGattValue for bool {
     const SIZE: usize = 1;
 
-    fn from_gatt(data: &[u8]) -> Self {
-        data != [0x00]
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        Ok(data != [0x00])
     }
 
     fn to_gatt(&self) -> &[u8] {
@@ -108,8 +108,8 @@ impl<const N: usize> GattValue for Vec<u8, N> {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = N;
 
-    fn from_gatt(data: &[u8]) -> Self {
-        unwrap!(Self::from_slice(data))
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        Self::from_slice(data).map_err(|_| FromGattError::InvalidLength)
     }
 
     fn to_gatt(&self) -> &[u8] {
@@ -121,13 +121,13 @@ impl<const N: usize> GattValue for [u8; N] {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = N;
 
-    fn from_gatt(data: &[u8]) -> Self {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() < Self::MAX_SIZE {
             let mut actual = [0; N];
             actual[..data.len()].copy_from_slice(data);
-            actual
+            Ok(actual)
         } else {
-            unwrap!(data.try_into())
+            data.try_into().map_err(|_| FromGattError::InvalidLength)
         }
     }
 
@@ -140,11 +140,9 @@ impl<const N: usize> GattValue for String<N> {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = N;
 
-    fn from_gatt(data: &[u8]) -> Self {
-        unwrap!(
-            String::from_utf8(unwrap!(Vec::from_slice(data).map_err(|_| FromGattError::InvalidLength)))
-                .map_err(|_| FromGattError::InvalidCharacter)
-        )
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        String::from_utf8(unwrap!(Vec::from_slice(data).map_err(|_| FromGattError::InvalidLength)))
+            .map_err(|_| FromGattError::InvalidCharacter)
     }
 
     fn to_gatt(&self) -> &[u8] {
