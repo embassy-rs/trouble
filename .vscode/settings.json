@@ -1,6 +1,7 @@
 {   
     "[rust]": {
         "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "modifications",
     },
     "rust-analyzer.check.allTargets": false,
     "rust-analyzer.linkedProjects": [
