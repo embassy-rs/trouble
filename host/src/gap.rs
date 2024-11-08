@@ -7,8 +7,9 @@
 //! In addition, this profile includes common format requirements for
 //! parameters accessible on the user interface level.
 
-use crate::prelude::*;
 use embassy_sync::blocking_mutex::raw::RawMutex;
+
+use crate::prelude::*;
 
 pub mod appearance {
     //! The representation of the external appearance of the device.

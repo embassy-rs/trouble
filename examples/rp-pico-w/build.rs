@@ -38,6 +38,7 @@ fn main() {
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
 }
 
+#[cfg(not(feature = "skip-cyw43-firmware"))]
 fn download_cyw43_firmware() {
     let download_folder = "cyw43-firmware";
     let url_base = "https://github.com/embassy-rs/embassy/tree/main/cyw43-firmware";
