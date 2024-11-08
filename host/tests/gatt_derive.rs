@@ -34,9 +34,15 @@ fn value_on_read(_: &Connection) {
     READ_FLAG.lock(|cell| cell.replace(true));
 }
 
-fn value_on_write(_: &Connection, _: &[u8]) {
+fn value_on_write(_: &Connection, _: &[u8]) -> Result<(), ()> {
     WRITE_FLAG.lock(|cell| {
-        cell.replace_with(|&mut old| old + 1);
+        let old = cell.replace_with(|&mut old| old + 1);
+        if old == 0 {
+            // Return an error on the first write to test accept / reject functionality
+            Err(())
+        } else {
+            Ok(())
+        }
     })
 }
 
@@ -191,10 +197,16 @@ async fn gatt_client_server() {
                         println!("[central] read value: {}", data[0]);
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
-                        client.write_characteristic(&c, &data[..]).await.unwrap();
+                        if let Err(BleHostError::BleHost(Error::Att(AttErrorCode::ValueNotAllowed))) = client.write_characteristic(&c, &data[..]).await {
+                            println!("[central] First write was expected to be rejected by server write callback!");
+                            panic!();
+                         }
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
-                        client.write_characteristic(&c, &data[..]).await.unwrap();
+                        if let Ok(()) = client.write_characteristic(&c, &data[..]).await {
+                            println!("[central] Second write was expected to be accepted by the server!");
+                            panic!();
+                        }
                         println!("[central] write done");
                         Ok(())
                     } => {

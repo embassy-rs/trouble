@@ -32,8 +32,9 @@ fn battery_level_on_read(_connection: &Connection) {
     info!("[gatt] Read event on battery level characteristic");
 }
 
-fn battery_level_on_write(_connection: &Connection, data: &[u8]) {
+fn battery_level_on_write(_connection: &Connection, data: &[u8]) -> Result<(), ()> {
     info!("[gatt] Write event on battery level characteristic: {:?}", data);
+    Ok(())
 }
 
 pub async fn run<C>(controller: C)

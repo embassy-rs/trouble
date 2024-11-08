@@ -64,6 +64,8 @@ pub enum CharacteristicProp {
     Extended = 0x80,
 }
 
+type WriteCallback = fn(&Connection, &[u8]) -> Result<(), ()>;
+
 /// Attribute metadata.
 pub struct Attribute<'a> {
     pub(crate) uuid: Uuid,
@@ -71,7 +73,7 @@ pub struct Attribute<'a> {
     pub(crate) last_handle_in_group: u16,
     pub(crate) data: AttributeData<'a>,
     pub(crate) on_read: Option<fn(&Connection)>,
-    pub(crate) on_write: Option<fn(&Connection, &[u8])>,
+    pub(crate) on_write: Option<WriteCallback>,
 }
 
 impl<'a> Attribute<'a> {
@@ -91,10 +93,17 @@ impl<'a> Attribute<'a> {
         if !self.data.writable() {
             return Err(AttErrorCode::WriteNotPermitted);
         }
+
+        let mut callback_result = Ok(());
         if let Some(callback) = self.on_write {
-            callback(connection, data);
+            callback_result = callback(connection, data);
         }
-        self.data.write(offset, data)
+
+        if callback_result.is_ok() {
+            self.data.write(offset, data)
+        } else {
+            Err(AttErrorCode::ValueNotAllowed)
+        }
     }
 }
 
@@ -298,7 +307,7 @@ impl<'a> Attribute<'a> {
         uuid: Uuid,
         data: AttributeData<'a>,
         on_read: Option<fn(&Connection)>,
-        on_write: Option<fn(&Connection, &[u8])>,
+        on_write: Option<WriteCallback>,
     ) -> Attribute<'a> {
         Attribute {
             uuid,
@@ -512,7 +521,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         props: CharacteristicProps,
         data: AttributeData<'d>,
         on_read: Option<fn(&Connection)>,
-        on_write: Option<fn(&Connection, &[u8])>,
+        on_write: Option<WriteCallback>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         // First the characteristic declaration
         let next = self.table.handle + 1;
@@ -575,7 +584,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         props: &[CharacteristicProp],
         storage: &'d mut [u8],
         on_read: Option<fn(&Connection)>,
-        on_write: Option<fn(&Connection, &[u8])>,
+        on_write: Option<WriteCallback>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = props.into();
         self.add_characteristic_internal(
@@ -649,7 +658,7 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
         props: CharacteristicProps,
         data: AttributeData<'d>,
         on_read: Option<fn(&Connection)>,
-        on_write: Option<fn(&Connection, &[u8])>,
+        on_write: Option<WriteCallback>,
     ) -> DescriptorHandle {
         let handle = self.table.handle;
         self.table.push(Attribute {
@@ -671,7 +680,7 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
         props: &[CharacteristicProp],
         data: &'d mut [u8],
         on_read: Option<fn(&Connection)>,
-        on_write: Option<fn(&Connection, &[u8])>,
+        on_write: Option<WriteCallback>,
     ) -> DescriptorHandle {
         let props = props.into();
         self.add_descriptor_internal(

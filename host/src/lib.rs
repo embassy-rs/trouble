@@ -60,6 +60,7 @@ pub use peripheral::*;
 
 #[allow(missing_docs)]
 pub mod prelude {
+    pub use super::att::AttErrorCode;
     pub use super::{BleHostError, Controller, Error, HostResources, Stack};
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
