@@ -1,0 +1,16 @@
+{   
+    "[rust]": {
+        "editor.formatOnSave": true,
+    },
+    "rust-analyzer.check.allTargets": false,
+    "rust-analyzer.linkedProjects": [
+        "host/Cargo.toml",
+        "host-macro/Cargo.toml",
+        "examples/apps/Cargo.toml",
+        "examples/esp32/Cargo.toml",
+        "examples/nrf-sdc/Cargo.toml",
+        "examples/rp-pico-w/Cargo.toml",
+        "examples/serial-hci/Cargo.toml",
+        "examples/apache-nimble/Cargo.toml",
+    ]
+}
