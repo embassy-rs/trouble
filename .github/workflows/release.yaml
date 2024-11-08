@@ -36,7 +36,7 @@ jobs:
 
   release_trouble_host:
     # Only run if the checks pass
-    name: Publish Trouble Host to crates.io
+    name: Publish Trouble Host
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -91,7 +91,7 @@ jobs:
 
   release_trouble_host_macro:
     # Only run if the checks pass
-    name: Publish Trouble Host to crates.io
+    name: Publish Trouble Host Macro
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
