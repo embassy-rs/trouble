@@ -20,6 +20,7 @@ fn linker_data() -> &'static [u8] {
     return include_bytes!("memory-nrf52833.x");
     #[cfg(feature = "nrf52840")]
     return include_bytes!("memory-nrf52840.x");
+    unimplemented!("must select a target")
 }
 
 fn main() {
