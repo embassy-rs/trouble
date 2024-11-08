@@ -1,3 +1,6 @@
+use num_enum::TryFromPrimitive;
+use thiserror::Error;
+
 use crate::codec;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::types::uuid::*;
@@ -28,70 +31,52 @@ pub(crate) const ATT_READ_BLOB_REQ: u8 = 0x0c;
 pub(crate) const ATT_READ_BLOB_RSP: u8 = 0x0d;
 pub(crate) const ATT_HANDLE_VALUE_NTF: u8 = 0x1b;
 
+/// Attribute Error Code
+///
+/// This enum type describes the `ATT_ERROR_RSP` PDU from the Bluetooth Core Specification
+/// Version 6.0 | Vol 3, Part F (page 1491)
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, TryFromPrimitive, Error)]
 #[repr(u8)]
 pub enum AttErrorCode {
-    /// Attempted to use an `Handle` that isn't valid on this server.
+    #[error("Attempted to use an `Handle` that isn't valid on this server.")]
     InvalidHandle = 0x01,
-    /// Attribute isn't readable.
+    #[error("Attribute isn't readable.")]
     ReadNotPermitted = 0x02,
-    /// Attribute isn't writable.
+    #[error("Attribute isn't writable.")]
     WriteNotPermitted = 0x03,
-    /// Attribute PDU is invalid.
+    #[error("Attribute PDU is invalid.")]
     InvalidPdu = 0x04,
-    /// Authentication needed before attribute can be read/written.
+    #[error("Authentication needed before attribute can be read/written.")]
     InsufficientAuthentication = 0x05,
-    /// Server doesn't support this operation.
+    #[error("Server doesn't support this operation.")]
     RequestNotSupported = 0x06,
-    /// Offset was past the end of the attribute.
+    #[error("Offset was past the end of the attribute.")]
     InvalidOffset = 0x07,
-    /// Authorization needed before attribute can be read/written.
+    #[error("Authorization needed before attribute can be read/written.")]
     InsufficientAuthorization = 0x08,
-    /// Too many "prepare write" requests have been queued.
+    #[error("Too many 'prepare write' requests have been queued.")]
     PrepareQueueFull = 0x09,
-    /// No attribute found within the specified attribute handle range.
+    #[error("No attribute found within the specified attribute handle range.")]
     AttributeNotFound = 0x0A,
-    /// Attribute can't be read/written using *Read Key Blob* request.
+    #[error("Attribute can't be read/written using *Read Key Blob* request.")]
     AttributeNotLong = 0x0B,
-    /// The encryption key in use is too weak to access an attribute.
+    #[error("The encryption key in use is too weak to access an attribute.")]
     InsufficientEncryptionKeySize = 0x0C,
-    /// Attribute value has an incorrect length for the operation.
+    #[error("Attribute value has an incorrect length for the operation.")]
     InvalidAttributeValueLength = 0x0D,
-    /// Request has encountered an "unlikely" error and could not be completed.
+    #[error("Request has encountered an 'unlikely' error and could not be completed.")]
     UnlikelyError = 0x0E,
-    /// Attribute cannot be read/written without an encrypted connection.
+    #[error("Attribute cannot be read/written without an encrypted connection.")]
     InsufficientEncryption = 0x0F,
-    /// Attribute type is an invalid grouping attribute according to a higher-layer spec.
+    #[error("Attribute type is an invalid grouping attribute according to a higher-layer spec.")]
     UnsupportedGroupType = 0x10,
-    /// Server didn't have enough resources to complete a request.
+    #[error("Server didn't have enough resources to complete a request.")]
     InsufficientResources = 0x11,
-}
-
-impl TryFrom<u8> for AttErrorCode {
-    type Error = ();
-    fn try_from(code: u8) -> Result<Self, Self::Error> {
-        match code {
-            0x01 => Ok(Self::InvalidHandle),
-            0x02 => Ok(Self::ReadNotPermitted),
-            0x03 => Ok(Self::WriteNotPermitted),
-            0x04 => Ok(Self::InvalidPdu),
-            0x05 => Ok(Self::InsufficientAuthentication),
-            0x06 => Ok(Self::RequestNotSupported),
-            0x07 => Ok(Self::InvalidOffset),
-            0x08 => Ok(Self::InsufficientAuthorization),
-            0x09 => Ok(Self::PrepareQueueFull),
-            0x0A => Ok(Self::AttributeNotFound),
-            0x0B => Ok(Self::AttributeNotLong),
-            0x0C => Ok(Self::InsufficientEncryptionKeySize),
-            0x0D => Ok(Self::InvalidAttributeValueLength),
-            0x0E => Ok(Self::UnlikelyError),
-            0x0F => Ok(Self::InsufficientEncryption),
-            0x10 => Ok(Self::UnsupportedGroupType),
-            0x11 => Ok(Self::InsufficientResources),
-            _ => Err(()),
-        }
-    }
+    #[error("The server requests the client to rediscover the database.")]
+    DatabaseOutOfSync = 0x12,
+    #[error("The attribute parameter value was not allowed.")]
+    ValueNotAllowed = 0x13,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
