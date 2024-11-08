@@ -39,42 +39,61 @@ pub(crate) const ATT_HANDLE_VALUE_NTF: u8 = 0x1b;
 #[derive(Debug, PartialEq, Clone, Copy, TryFromPrimitive, Error)]
 #[repr(u8)]
 pub enum AttErrorCode {
+    /// The attribute handle given was not valid on this server.
     #[error("Attempted to use an `Handle` that isn't valid on this server.")]
     InvalidHandle = 0x01,
+    /// The attribute cannot be read.
     #[error("Attribute isn't readable.")]
     ReadNotPermitted = 0x02,
+    /// The attribute cannot be written.
     #[error("Attribute isn't writable.")]
     WriteNotPermitted = 0x03,
+    /// The attribute PDU was invalid.
     #[error("Attribute PDU is invalid.")]
     InvalidPdu = 0x04,
+    /// The attribute requires authentication before it can be read or written.
     #[error("Authentication needed before attribute can be read/written.")]
     InsufficientAuthentication = 0x05,
+    /// ATT Server does not support the request reveived from the client.
     #[error("Server doesn't support this operation.")]
     RequestNotSupported = 0x06,
+    /// Offset specified was past the end of the attribute.
     #[error("Offset was past the end of the attribute.")]
     InvalidOffset = 0x07,
+    /// The attribute requires authorisation before it can be read or written.
     #[error("Authorization needed before attribute can be read/written.")]
     InsufficientAuthorization = 0x08,
+    /// Too many prepare writes have been queued.
     #[error("Too many 'prepare write' requests have been queued.")]
     PrepareQueueFull = 0x09,
+    /// No attribute found within the given attribute handle range.
     #[error("No attribute found within the specified attribute handle range.")]
     AttributeNotFound = 0x0A,
-    #[error("Attribute can't be read/written using *Read Key Blob* request.")]
+    /// The attribute cannot be read using the ATT_READ_BLOB_REQ PDU.
+    #[error("Attribute can't be read using *Read Key Blob* request.")]
     AttributeNotLong = 0x0B,
+    /// The Encryption Key Size used for encrypting this link is too short.
     #[error("The encryption key in use is too weak to access an attribute.")]
     InsufficientEncryptionKeySize = 0x0C,
+    /// The attribute value length is invalid for the operation.
     #[error("Attribute value has an incorrect length for the operation.")]
     InvalidAttributeValueLength = 0x0D,
+    /// The attribute request that was requested had encountered an error that was unlikely, and therefore could not be completed as requested.
     #[error("Request has encountered an 'unlikely' error and could not be completed.")]
     UnlikelyError = 0x0E,
+    /// The attribute requires encryption before it can be read or written.
     #[error("Attribute cannot be read/written without an encrypted connection.")]
     InsufficientEncryption = 0x0F,
+    /// The attribute type is not a supported grouping attribute as defined by a higher layer specification.
     #[error("Attribute type is an invalid grouping attribute according to a higher-layer spec.")]
     UnsupportedGroupType = 0x10,
+    /// Insufficient Resources to complete the request.
     #[error("Server didn't have enough resources to complete a request.")]
     InsufficientResources = 0x11,
+    /// The server requests the client to rediscover the database.
     #[error("The server requests the client to rediscover the database.")]
     DatabaseOutOfSync = 0x12,
+    /// The attribute parameter value was not allowed.
     #[error("The attribute parameter value was not allowed.")]
     ValueNotAllowed = 0x13,
 }
