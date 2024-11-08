@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+     - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+  
+jobs:
+  # Re Run the Checks
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add dependencies
+        run: |
+          sudo apt-get install --no-install-recommends libudev-dev
+      - name: Set up cargo cache
+        uses: actions/cache@v3
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target_ci/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: CI
+        run: |
+          ./ci.sh
+
+  release:
+    # Only run if the checks pass
+    name: Publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Verify Version
+      run: |
+        TAG_VERSION=${GITHUB_REF#refs/tags/v}
+        CARGO_VERSION=$(grep '^version =' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')
+        if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+          echo "Version mismatch: tag is $TAG_VERSION but Cargo.toml is $CARGO_VERSION"
+          exit 1  # Exits with a non-zero status to fail the workflow
+        fi
+      shell: bash
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+
+    - name: Build project
+      run: cargo build --release
+    
+    - name: Create GitHub release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        tag: ${{ github.ref_name }}
+      run: |
+        gh release create "$tag" \
+            --repo="$GITHUB_REPOSITORY" \
+            --title="${GITHUB_REPOSITORY#*/} ${tag#v}" \
+            --generate-notes
+
+    - name: Publish to crates.io
+      env:
+        CARGO_REGISTRIES_STAGING_TOKEN: ${{ secrets.CARGO_REGISTRIES_STAGING_TOKEN }}
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Publish to the main registry
+      run: |
+        echo "Publishing to crates.io"  
+        cargo publish
+      # To publish to the staging/testing registry, uncomment the following lines
+      # run: |
+      #   echo "Publishing to staging"
+      #   cargo publish --registry=staging
