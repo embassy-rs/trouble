@@ -74,10 +74,17 @@ impl<T: Primitive> FixedGattValue for T {
         if data.len() != Self::SIZE {
             panic!("Bad len")
         }
+        // SAFETY
+        // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+        // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive, and all types implementing Primitive are valid for all possible configurations of bits
+        // - Primitive trait is constrained to require Copy
         unsafe { (data.as_ptr() as *const Self).read_unaligned() }
     }
 
     fn to_gatt(&self) -> &[u8] {
+        // SAFETY
+        // - Slice is of type u8 so data is guaranteed valid for reads of any length
+        // - Data and len are tied to the address and size of the type
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
