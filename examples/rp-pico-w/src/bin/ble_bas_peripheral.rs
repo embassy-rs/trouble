@@ -26,26 +26,22 @@ async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'stat
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
-    //
-    // IMPORTANT
-    //
-    // Download and make sure these files from https://github.com/embassy-rs/embassy/tree/main/cyw43-firmware
-    // are available in the below path.
-    //
-    // IMPORTANT
-    //
-
     #[cfg(feature = "skip-cyw43-firmware")]
-    let fw = &[];
-    let clm = &[];
-    let btfw = &[];
+    let (fw, clm, btfw) = (&[], &[], &[]);
 
     #[cfg(not(feature = "skip-cyw43-firmware"))]
-    let fw = include_bytes!("../../cyw43-firmware/43439A0.bin");
-    #[cfg(not(feature = "skip-cyw43-firmware"))]
-    let clm = include_bytes!("../../cyw43-firmware/43439A0_clm.bin");
-    #[cfg(not(feature = "skip-cyw43-firmware"))]
-    let btfw = include_bytes!("../../cyw43-firmware/43439A0_btfw.bin");
+    let (fw, clm, btfw) = {
+        // IMPORTANT
+        //
+        // Download and make sure these files from https://github.com/embassy-rs/embassy/tree/main/cyw43-firmware
+        // are available in `./examples/rp-pico-w`. (should be automatic)
+        //
+        // IMPORTANT
+        let fw = include_bytes!("../../cyw43-firmware/43439A0.bin");
+        let clm = include_bytes!("../../cyw43-firmware/43439A0_clm.bin");
+        let btfw = include_bytes!("../../cyw43-firmware/43439A0_btfw.bin");
+        (fw, clm, btfw)
+    };
 
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
