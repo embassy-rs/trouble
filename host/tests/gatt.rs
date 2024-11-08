@@ -41,21 +41,21 @@ async fn gatt_client_server() {
         // Random starting value to 'prove' the incremented value is correct
         let mut value: [u8; 1] = [rand::prelude::random(); 1];
         let mut expected = value[0].wrapping_add(1);
-        let mut svc = table.add_service(Service::new(0x1800), None);
-        let _ = svc.add_characteristic_ro(0x2a00, id, None);
-        let _ = svc.add_characteristic_ro(0x2a01, &appearance, None);
+        let mut svc = table.add_service(Service::new(0x1800));
+        let _ = svc.add_characteristic_ro(0x2a00, id);
+        let _ = svc.add_characteristic_ro(0x2a01, &appearance);
         svc.build();
 
         // Generic attribute service (mandatory)
-        table.add_service(Service::new(0x1801), None);
+        table.add_service(Service::new(0x1801));
 
         // Custom service
-        let value_handle = table.add_service(Service::new(SERVICE_UUID.clone()), None)
+        let value_handle = table.add_service(Service::new(SERVICE_UUID.clone()))
             .add_characteristic(
                 VALUE_UUID.clone(),
                 &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
-                &mut value, None, None)
-            .build();
+                &mut value
+            ).build();
 
         let server = GattServer::<common::Controller, NoopRawMutex, 10, 27>::new(stack, table);
         select! {

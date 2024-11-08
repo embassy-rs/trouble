@@ -135,12 +135,12 @@ impl ServerBuilder {
                     if device_name.push_str(name).is_err() {
                         return Err("Name is too long. Device name must be <= 22 bytes");
                     };
-                    let mut svc = table.add_service(Service::new(#GAP_UUID), None);
-                    svc.add_characteristic_ro(#DEVICE_NAME_UUID, device_name, None);
-                    svc.add_characteristic_ro(#APPEARANCE_UUID, &appearance::GENERIC_UNKNOWN, None);
+                    let mut svc = table.add_service(Service::new(#GAP_UUID));
+                    svc.add_characteristic_ro(#DEVICE_NAME_UUID, device_name);
+                    svc.add_characteristic_ro(#APPEARANCE_UUID, &appearance::GENERIC_UNKNOWN);
                     svc.build();
 
-                    table.add_service(Service::new(#GATT_UUID), None);
+                    table.add_service(Service::new(#GATT_UUID));
 
                     #code_service_init
 
@@ -167,12 +167,12 @@ impl ServerBuilder {
                     if device_name.push_str(name).is_err() {
                         return Err("Name is too long. Device name must be <= 22 bytes");
                     };
-                    let mut svc = table.add_service(Service::new(#GAP_UUID), None);
-                    svc.add_characteristic_ro(#DEVICE_NAME_UUID, device_name, None);
-                    svc.add_characteristic_ro(#APPEARANCE_UUID, appearance, None);
+                    let mut svc = table.add_service(Service::new(#GAP_UUID));
+                    svc.add_characteristic_ro(#DEVICE_NAME_UUID, device_name);
+                    svc.add_characteristic_ro(#APPEARANCE_UUID, appearance);
                     svc.build();
 
-                    table.add_service(Service::new(#GATT_UUID), None);
+                    table.add_service(Service::new(#GATT_UUID));
 
                     #code_service_init
 

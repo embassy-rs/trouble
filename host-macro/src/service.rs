@@ -91,11 +91,10 @@ impl ServiceBuilder {
         let fields = self.code_fields;
         let code_build_chars = self.code_build_chars;
         let uuid = self.args.uuid;
-        let read_callback = if let Some(function) = self.args.on_read {
-            quote!(Some(#function))
-        } else {
-            quote!(None)
-        };
+        let read_callback = self
+            .args
+            .on_read
+            .map(|callback| quote!(service.set_read_callback(#callback);));
 
         quote! {
             #visibility struct #struct_name {
@@ -109,7 +108,8 @@ impl ServiceBuilder {
                 where
                     M: embassy_sync::blocking_mutex::raw::RawMutex,
                 {
-                    let mut service = table.add_service(Service::new(#uuid), #read_callback);
+                    let mut service = table.add_service(Service::new(#uuid));
+                    #read_callback
                     #code_build_chars
 
                     Self {
@@ -136,18 +136,20 @@ impl ServiceBuilder {
             .args
             .on_read
             .as_ref()
-            .map_or(quote!(None), |callback| quote!(Some(#callback)));
+            .map(|callback| quote!(builder.set_read_callback(#callback);));
         let write_callback = characteristic
             .args
             .on_write
             .as_ref()
-            .map_or(quote!(None), |callback| quote!(Some(#callback)));
+            .map(|callback| quote!(builder.set_write_callback(#callback);));
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let #char_name = {
                 static #name_screaming: static_cell::StaticCell<[u8; size_of::<#ty>()]> = static_cell::StaticCell::new();
                 let store = #name_screaming.init([0; size_of::<#ty>()]);
-                let builder = service.add_characteristic(#uuid, &[#(#properties),*], store, #read_callback, #write_callback);
+                let mut builder = service.add_characteristic(#uuid, &[#(#properties),*], store);
+                #read_callback
+                #write_callback
 
                 // TODO: Descriptors
 

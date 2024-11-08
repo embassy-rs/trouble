@@ -391,11 +391,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     /// Add a service to the attribute table (group of characteristics)
-    pub fn add_service(
-        &mut self,
-        service: Service,
-        on_read: Option<fn(&Connection)>,
-    ) -> ServiceBuilder<'_, 'd, M, MAX> {
+    pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
         let handle = self.handle;
         self.push(Attribute {
@@ -403,7 +399,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Service { uuid: service.uuid },
-            on_read,
+            on_read: None,
             on_write: None,
         });
         ServiceBuilder {
@@ -411,6 +407,28 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             start: len,
             table: self,
         }
+    }
+
+    fn set_read_callback(&mut self, handle: u16, on_read: fn(&Connection)) {
+        self.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                if att.handle == handle {
+                    att.on_read = Some(on_read);
+                    break;
+                }
+            }
+        })
+    }
+
+    fn set_write_callback(&mut self, handle: u16, on_write: fn(&Connection, &[u8]) -> Result<(), ()>) {
+        self.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                if att.handle == handle {
+                    att.on_write = Some(on_write);
+                    break;
+                }
+            }
+        })
     }
 
     /// Set the value of a characteristic
@@ -521,8 +539,6 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
-        on_read: Option<fn(&Connection)>,
-        on_write: Option<WriteCallback>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         // First the characteristic declaration
         let next = self.table.handle + 1;
@@ -546,8 +562,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             handle: 0,
             last_handle_in_group: 0,
             data,
-            on_read,
-            on_write,
+            on_read: None,
+            on_write: None,
         });
 
         // Add optional CCCD handle
@@ -584,17 +600,9 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         uuid: U,
         props: &[CharacteristicProp],
         storage: &'d mut [u8],
-        on_read: Option<fn(&Connection)>,
-        on_write: Option<WriteCallback>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = props.into();
-        self.add_characteristic_internal(
-            uuid.into(),
-            props,
-            AttributeData::Data { props, value: storage },
-            on_read,
-            on_write,
-        )
+        self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
     }
 
     /// Add a characteristic to this service with a refererence to an immutable storage buffer.
@@ -602,7 +610,6 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         &mut self,
         uuid: U,
         value: &'d T,
-        on_read: Option<fn(&Connection)>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = [CharacteristicProp::Read].into();
         self.add_characteristic_internal(
@@ -612,9 +619,12 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
                 props,
                 value: value.to_gatt(),
             },
-            on_read,
-            None,
         )
+    }
+
+    /// Add a callback to be triggered when the attribute is read
+    pub fn set_read_callback(&mut self, on_read: fn(&Connection)) {
+        self.table.set_read_callback(self.handle.handle, on_read);
     }
 
     /// Finish construction of the service and return a handle.
@@ -708,6 +718,16 @@ impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<
             on_read,
             None,
         )
+    }
+
+    /// Add a callback to be triggered when a read event occurs
+    pub fn set_read_callback(&mut self, on_read: fn(&Connection)) {
+        self.table.set_read_callback(self.handle.handle, on_read);
+    }
+
+    /// Add a callback to be triggered when a write event occurs
+    pub fn set_write_callback(&mut self, on_write: WriteCallback) {
+        self.table.set_write_callback(self.handle.handle, on_write)
     }
 
     /// Return the built characteristic.
