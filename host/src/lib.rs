@@ -62,7 +62,7 @@ pub use peripheral::*;
 pub mod prelude {
     #[cfg(feature = "derive")]
     pub use trouble_host_macros::*;
-    
+
     pub use super::{BleHostError, Controller, Error, HostResources, Stack};
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
