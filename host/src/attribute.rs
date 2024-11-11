@@ -436,16 +436,20 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The provided data must exactly match the size of the storage for the characteristic,
     /// otherwise this function will panic.
     ///
-    /// If the characteristic for the handle cannot be found, an error is returned.
+    /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
+    /// an error is returned
     pub fn set<T: GattValue>(&self, handle: &Characteristic<T>, input: &T) -> Result<(), Error> {
         let gatt_value = input.to_gatt();
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
-                        assert_eq!(value.len(), gatt_value.len());
-                        value.copy_from_slice(gatt_value);
-                        return Ok(());
+                        if value.len() == gatt_value.len() {
+                            value.copy_from_slice(gatt_value);
+                            return Ok(());
+                        } else {
+                            return Err(Error::InvalidValue);
+                        }
                     }
                 }
             }
