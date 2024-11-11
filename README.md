@@ -1,7 +1,6 @@
 # trouble
 
 [![CI](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml/badge.svg)](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml)
-[![Release](https://github.com/embassy-rs/trouble/actions/workflows/release.yaml/badge.svg)](https://github.com/embassy-rs/trouble/actions/workflows/release.yaml)
 
 TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification. The initial implementation was based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adopted to work with types and traits from [`bt-hci`](https://github.com/embassy-rs/bt-hci) and adding support for more of the BLE specification such as L2CAP connection oriented channels.
 
