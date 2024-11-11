@@ -199,6 +199,8 @@ async fn gatt_client_server() {
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
                         if let Err(BleHostError::BleHost(Error::Att(AttErrorCode::ValueNotAllowed))) = client.write_characteristic(&c, &data[..]).await {
+                            println!("[central] Frist write was rejected by write callback as expected.");
+                        } else {
                             println!("[central] First write was expected to be rejected by server write callback!");
                             panic!();
                          }
