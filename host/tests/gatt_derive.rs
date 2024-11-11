@@ -76,7 +76,8 @@ async fn gatt_client_server() {
 
         // Random starting value to 'prove' the incremented value is correct
         let value: u8 = rand::prelude::random();
-        let mut expected = value.wrapping_add(1);
+        // The first write will be rejected by the write callback, so value is not expected to change the first time
+        let mut expected = value;
         server.set(&server.service.value, &value).unwrap();
 
         select! {
@@ -95,7 +96,7 @@ async fn gatt_client_server() {
                             assert_eq!(characteristic, server.service.value);
                             let value = server.get(&characteristic).unwrap();
                             assert_eq!(expected, value);
-                            expected += 1;
+                            expected += 2;
                             writes += 1;
 
                             if writes == 2 {
