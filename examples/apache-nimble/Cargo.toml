@@ -20,13 +20,13 @@ static_cell = "1.0.0"
 
 [patch.crates-io]
 apache-nimble = { git = "https://github.com/benbrittain/apache-nimble-sys.git", branch = "master" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
-embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
-#embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "1cfd5370ac012814b7b386ba9ad8499529bdde4e" }
-embassy-sync = { version = "0.5.0", package = "embassy-sync", git = "https://github.com/embassy-rs/embassy.git", rev= "53dedd2ff5076a5bb100eea26a1053cb70bf6c9d" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
+#embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev= "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
 
 [profile.dev]
 debug = 2
