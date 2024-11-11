@@ -207,6 +207,8 @@ async fn gatt_client_server() {
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
                         if let Ok(()) = client.write_characteristic(&c, &data[..]).await {
+                            println!("[central] Second write accepted by server.");
+                        } else {
                             println!("[central] Second write was expected to be accepted by the server!");
                             panic!();
                         }
