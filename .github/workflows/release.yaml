@@ -83,7 +83,7 @@ jobs:
       run: |
         echo "Publishing to crates.io"  
         # cargo publish
-      # To publish to the staging/testing registry, uncomment the following lines
+      # To perform a dry run uncomment the following lines
       # run: |
       #   echo "Performing dry-run publish to crates.io"
       #   cargo publish --dry-run
@@ -137,7 +137,7 @@ jobs:
       run: |
         echo "Publishing to crates.io"  
         # cargo publish
-      # To publish to the staging/testing registry, uncomment the following lines
+      # To perform a dry-run, uncomment the following lines
       # run: |
       #   echo "Performing dry-run publish to crates.io"
       #   cargo publish --dry-run
