@@ -18,7 +18,7 @@ pub trait FixedGattValue: Sized {
     const SIZE: usize;
 
     /// Converts from gatt bytes.
-    /// Must panic if and only if data.len != Self::SIZE
+    /// Must return FromGattError::InvalidLength if data.len != Self::SIZE
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
 
     /// Converts to gatt bytes.
@@ -34,7 +34,7 @@ pub trait GattValue: Sized {
     const MAX_SIZE: usize;
 
     /// Converts from gatt bytes.
-    /// Must panic if and only if data.len not in MIN_SIZE..=MAX_SIZE
+    /// Must return FromGattError::InvalidLength if data.len not in MIN_SIZE..=MAX_SIZE
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
 
     /// Converts to gatt bytes.
@@ -72,13 +72,14 @@ impl<T: Primitive> FixedGattValue for T {
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
-            panic!("Bad len")
+            Err(FromGattError::InvalidLength)
+        } else {
+            // SAFETY
+            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive, and all types implementing Primitive are valid for all possible configurations of bits
+            // - Primitive trait is constrained to require Copy
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
         }
-        // SAFETY
-        // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
-        // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive, and all types implementing Primitive are valid for all possible configurations of bits
-        // - Primitive trait is constrained to require Copy
-        unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
     }
 
     fn to_gatt(&self) -> &[u8] {
@@ -93,7 +94,11 @@ impl FixedGattValue for bool {
     const SIZE: usize = 1;
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        Ok(data != [0x00])
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            Ok(data != [0x00])
+        }
     }
 
     fn to_gatt(&self) -> &[u8] {
