@@ -121,12 +121,12 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
     /// If the characteristic for the handle cannot be found, an error is returned.
     pub async fn notify<T: GattValue>(
         &self,
-        handle: Characteristic<T>,
+        handle: &Characteristic<T>,
         connection: &Connection<'_>,
         value: &T,
     ) -> Result<(), BleHostError<C::Error>> {
         let conn = connection.handle();
-        self.server.table.set(&handle, value)?;
+        self.server.table.set(handle, value)?;
 
         let cccd_handle = handle.cccd_handle.ok_or(Error::Other)?;
 
