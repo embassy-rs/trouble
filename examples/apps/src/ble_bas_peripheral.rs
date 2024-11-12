@@ -125,7 +125,7 @@ async fn advertise_task<C: Controller>(
             Timer::after(Duration::from_secs(2)).await;
             tick = tick.wrapping_add(1);
             info!("[adv] notifying connection of tick {}", tick);
-            let _ = server.notify(server.battery_service.level, &conn, &tick).await;
+            let _ = server.notify(&server.battery_service.level, &conn, &tick).await;
         }
     }
 }
