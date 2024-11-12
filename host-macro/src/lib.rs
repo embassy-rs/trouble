@@ -16,6 +16,7 @@ use ctxt::Ctxt;
 use proc_macro::TokenStream;
 use server::{ServerArgs, ServerBuilder};
 use service::{ServiceArgs, ServiceBuilder};
+use syn::parse_macro_input;
 
 /// Gatt Service attribute macro.
 ///
@@ -57,37 +58,50 @@ pub fn gatt_server(args: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```rust
+/// use trouble_host::prelude::*;
 /// use trouble_host_macro::gatt_service;
 ///
-/// #[gatt_service(uuid = "7e701cf1-b1df-42a1-bb5f-6a1028c793b0")]
+/// #[gatt_service(uuid = "7e701cf1-b1df-42a1-bb5f-6a1028c793b0", on_read = service_on_read)]
 /// struct HeartRateService {
-///    #[characteristic(uuid = "0x2A37", read, notify, value = 3.14)]
+///    #[characteristic(uuid = "0x2A37", read, notify, value = 3.14, on_read = rate_on_read)]
 ///    rate: f32,
 ///    #[characteristic(uuid = "0x2A38", read)]
 ///    location: f32,
-///    #[characteristic(uuid = "0x2A39", write)]
+///    #[characteristic(uuid = "0x2A39", write, on_write = control_on_write)]
 ///    control: u8,
 ///    #[characteristic(uuid = "0x2A63", read, notify)]
 ///    energy_expended: u16,
 /// }
+///
+/// fn service_on_read(connection: &Connection) {
+///     info!("Read callback triggered for {:?}", connection);
+/// }
+///
+/// fn rate_on_read(connection: &Connection) {
+///     info!("Heart rate read on {:?}", connection);
+/// }
+///
+/// fn control_on_write(connection: &Connection, data: &[u8] -> Result<(), ()> {
+///     info!("Write event on control attribute from {:?} with data {:?}", connectioni, data);
+///     let control = u8::from_gatt(data).unwrap();
+///     match control {
+///         0 => info!("Control setting 0 selected"),
+///         1 => info!("Control setting 1 selected"),
+///         _ => {
+///             warn!("Unsupported control setting! Rejecting write request.");
+///             return Err(())
+///         }
+///     }
+///     Ok(())
+/// })
 /// ```
 #[proc_macro_attribute]
 pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
-    let service_uuid = {
-        // Get arguments from the gatt_service macro attribute (i.e. uuid)
-        let service_attributes: ServiceArgs = {
-            let mut attributes = ServiceArgs::default();
-            let arg_parser = syn::meta::parser(|meta| attributes.parse(meta));
-
-            syn::parse_macro_input!(args with arg_parser);
-            attributes
-        };
-        service_attributes.uuid
-    }
-    .expect("uuid is required for gatt_service");
+    // Get arguments from the gatt_service macro attribute
+    let service_arguments = parse_macro_input!(args as ServiceArgs);
 
     // Parse the contents of the struct
-    let mut service_props = syn::parse_macro_input!(item as syn::ItemStruct);
+    let mut service_props = parse_macro_input!(item as syn::ItemStruct);
 
     let ctxt = Ctxt::new(); // error handling context, must be initialized after parse_macro_input calls.
 
@@ -119,7 +133,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // Build the service struct
-    let result = ServiceBuilder::new(service_props, service_uuid)
+    let result = ServiceBuilder::new(service_props, service_arguments)
         .process_characteristics_and_fields(fields, characteristics)
         .build();
 

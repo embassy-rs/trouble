@@ -7,8 +7,22 @@
 //! In addition, this profile includes common format requirements for
 //! parameters accessible on the user interface level.
 
-use crate::prelude::*;
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use heapless::String;
+use static_cell::StaticCell;
+
+use crate::prelude::*;
+
+// GAP Service UUIDs
+const GAP_UUID: u16 = 0x1800;
+const GATT_UUID: u16 = 0x1801;
+
+// GAP Characteristic UUIDs
+const DEVICE_NAME_UUID: u16 = 0x2a00;
+const APPEARANCE_UUID: u16 = 0x2a01;
+
+/// Advertising packet is limited to 31 bytes. 9 of these are used by other GAP data, leaving 22 bytes for the Device Name characteristic
+const DEVICE_NAME_MAX_LENGTH: usize = 22;
 
 pub mod appearance {
     //! The representation of the external appearance of the device.
@@ -92,31 +106,55 @@ impl<'a> GapConfig<'a> {
             appearance: &appearance::GENERIC_UNKNOWN,
         })
     }
-    /// Add the GAP service to the attribute table.
-    pub fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'a, M, MAX>) {
-        // Service UUIDs.  These are mandatory services.
-        const GAP_UUID: u16 = 0x1800;
-        const GATT_UUID: u16 = 0x1801;
 
-        // Characteristic UUIDs.  These are mandatory characteristics.
-        const DEVICE_NAME_UUID: u16 = 0x2a00;
-        const APPEARANCE_UUID: u16 = 0x2a01;
-
-        let mut gap = table.add_service(Service::new(GAP_UUID)); // GAP UUID (mandatory)
+    /// Add the GAP config to the attribute table
+    pub fn build<M: RawMutex, const MAX: usize>(
+        self,
+        table: &mut AttributeTable<'a, M, MAX>,
+    ) -> Result<(), &'static str> {
         match self {
-            GapConfig::Peripheral(config) => {
-                let id = config.name.as_bytes();
-                let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
-                let _ = gap.add_characteristic_ro(APPEARANCE_UUID, &config.appearance[..]);
-            }
-            GapConfig::Central(config) => {
-                let id = config.name.as_bytes();
-                let _ = gap.add_characteristic_ro(DEVICE_NAME_UUID, id);
-                let _ = gap.add_characteristic_ro(APPEARANCE_UUID, &config.appearance[..]);
-            }
-        };
-        gap.build();
+            GapConfig::Peripheral(config) => config.build(table),
+            GapConfig::Central(config) => config.build(table),
+        }
+    }
+}
 
-        table.add_service(Service::new(GATT_UUID)); // GATT UUID (mandatory)
+impl<'a> PeripheralConfig<'a> {
+    /// Add the peripheral GAP config to the attribute table
+    fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'a, M, MAX>) -> Result<(), &'static str> {
+        static PERIPHERAL_NAME: StaticCell<String<DEVICE_NAME_MAX_LENGTH>> = StaticCell::new();
+        let peripheral_name = PERIPHERAL_NAME.init(String::new());
+        peripheral_name
+            .push_str(self.name)
+            .map_err(|_| "Device name is too long. Max length is 22 bytes")?;
+
+        let mut gap_builder = table.add_service(Service::new(GAP_UUID));
+        gap_builder.add_characteristic_ro(DEVICE_NAME_UUID, peripheral_name);
+        gap_builder.add_characteristic_ro(APPEARANCE_UUID, self.appearance);
+        gap_builder.build();
+
+        table.add_service(Service::new(GATT_UUID));
+
+        Ok(())
+    }
+}
+
+impl<'a> CentralConfig<'a> {
+    /// Add the peripheral GAP config to the attribute table
+    fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'a, M, MAX>) -> Result<(), &'static str> {
+        static CENTRAL_NAME: StaticCell<String<DEVICE_NAME_MAX_LENGTH>> = StaticCell::new();
+        let central_name = CENTRAL_NAME.init(String::new());
+        central_name
+            .push_str(self.name)
+            .map_err(|_| "Device name is too long. Max length is 22 bytes")?;
+
+        let mut gap_builder = table.add_service(Service::new(GAP_UUID));
+        gap_builder.add_characteristic_ro(DEVICE_NAME_UUID, central_name);
+        gap_builder.add_characteristic_ro(APPEARANCE_UUID, self.appearance);
+        gap_builder.build();
+
+        table.add_service(Service::new(GATT_UUID));
+
+        Ok(())
     }
 }

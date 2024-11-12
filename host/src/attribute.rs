@@ -1,12 +1,14 @@
 //! Attribute protocol implementation.
 use core::cell::RefCell;
 use core::fmt;
-
+use core::marker::PhantomData;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
 use crate::att::AttErrorCode;
 use crate::cursor::{ReadCursor, WriteCursor};
+use crate::prelude::Connection;
+use crate::types::gatt_traits::GattValue;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
 
@@ -62,16 +64,47 @@ pub enum CharacteristicProp {
     Extended = 0x80,
 }
 
+type WriteCallback = fn(&Connection, &[u8]) -> Result<(), ()>;
+
 /// Attribute metadata.
 pub struct Attribute<'a> {
     pub(crate) uuid: Uuid,
     pub(crate) handle: u16,
     pub(crate) last_handle_in_group: u16,
     pub(crate) data: AttributeData<'a>,
+    pub(crate) on_read: Option<fn(&Connection)>,
+    pub(crate) on_write: Option<WriteCallback>,
 }
 
 impl<'a> Attribute<'a> {
     const EMPTY: Option<Attribute<'a>> = None;
+
+    pub(crate) fn read(&self, connection: &Connection, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        if !self.data.readable() {
+            return Err(AttErrorCode::ReadNotPermitted);
+        }
+        if let Some(callback) = self.on_read {
+            callback(connection);
+        }
+        self.data.read(offset, data)
+    }
+
+    pub(crate) fn write(&mut self, connection: &Connection, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+        if !self.data.writable() {
+            return Err(AttErrorCode::WriteNotPermitted);
+        }
+
+        let mut callback_result = Ok(());
+        if let Some(callback) = self.on_write {
+            callback_result = callback(connection, data);
+        }
+
+        if callback_result.is_ok() {
+            self.data.write(offset, data)
+        } else {
+            Err(AttErrorCode::ValueNotAllowed)
+        }
+    }
 }
 
 pub(crate) enum AttributeData<'d> {
@@ -122,7 +155,7 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub(crate) fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+    fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         if !self.readable() {
             return Err(AttErrorCode::ReadNotPermitted);
         }
@@ -204,7 +237,7 @@ impl<'d> AttributeData<'d> {
         }
     }
 
-    pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         let writable = self.writable();
 
         match self {
@@ -270,12 +303,19 @@ impl<'a> defmt::Format for Attribute<'a> {
 }
 
 impl<'a> Attribute<'a> {
-    pub(crate) fn new(uuid: Uuid, data: AttributeData<'a>) -> Attribute<'a> {
+    pub(crate) fn new(
+        uuid: Uuid,
+        data: AttributeData<'a>,
+        on_read: Option<fn(&Connection)>,
+        on_write: Option<WriteCallback>,
+    ) -> Attribute<'a> {
         Attribute {
             uuid,
             handle: 0,
             data,
             last_handle_in_group: 0xffff,
+            on_read,
+            on_write,
         }
     }
 }
@@ -359,6 +399,8 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Service { uuid: service.uuid },
+            on_read: None,
+            on_write: None,
         });
         ServiceBuilder {
             handle: AttributeHandle { handle },
@@ -367,20 +409,47 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         }
     }
 
+    fn set_read_callback(&mut self, handle: u16, on_read: fn(&Connection)) {
+        self.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                if att.handle == handle {
+                    att.on_read = Some(on_read);
+                    break;
+                }
+            }
+        })
+    }
+
+    fn set_write_callback(&mut self, handle: u16, on_write: fn(&Connection, &[u8]) -> Result<(), ()>) {
+        self.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                if att.handle == handle {
+                    att.on_write = Some(on_write);
+                    break;
+                }
+            }
+        })
+    }
+
     /// Set the value of a characteristic
     ///
     /// The provided data must exactly match the size of the storage for the characteristic,
     /// otherwise this function will panic.
     ///
-    /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn set(&self, handle: Characteristic, input: &[u8]) -> Result<(), Error> {
+    /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
+    /// an error is returned
+    pub fn set<T: GattValue>(&self, handle: &Characteristic<T>, input: &T) -> Result<(), Error> {
+        let gatt_value = input.to_gatt();
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
-                        assert_eq!(value.len(), input.len());
-                        value.copy_from_slice(input);
-                        return Ok(());
+                        if value.len() == gatt_value.len() {
+                            value.copy_from_slice(gatt_value);
+                            return Ok(());
+                        } else {
+                            return Err(Error::InvalidValue);
+                        }
                     }
                 }
             }
@@ -393,12 +462,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<F: FnMut(&[u8]) -> T, T>(&self, handle: Characteristic, mut f: F) -> Result<T, Error> {
+    pub fn get<T: GattValue>(&self, handle: &Characteristic<T>) -> Result<T, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
-                        let v = f(value);
+                        let v = <T as GattValue>::from_gatt(value).map_err(|_| Error::InvalidValue)?;
                         return Ok(v);
                     }
                 }
@@ -407,7 +476,10 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
-    pub(crate) fn find_characteristic_by_value_handle(&self, handle: u16) -> Result<Characteristic, Error> {
+    /// Return the characteristic which corresponds to the supplied value handle
+    ///
+    /// If no characteristic corresponding to the given value handle was found, returns an error
+    pub fn find_characteristic_by_value_handle<T: GattValue>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle {
@@ -421,17 +493,20 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                             return Ok(Characteristic {
                                 handle,
                                 cccd_handle: Some(next.handle),
+                                phantom: PhantomData,
                             });
                         } else {
                             return Ok(Characteristic {
                                 handle,
                                 cccd_handle: None,
+                                phantom: PhantomData,
                             });
                         }
                     } else {
                         return Ok(Characteristic {
                             handle,
                             cccd_handle: None,
+                            phantom: PhantomData,
                         });
                     }
                 }
@@ -462,12 +537,12 @@ pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
 }
 
 impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
-    fn add_characteristic_internal(
+    fn add_characteristic_internal<T: GattValue>(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
-    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
+    ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         // First the characteristic declaration
         let next = self.table.handle + 1;
         let cccd = self.table.handle + 2;
@@ -480,6 +555,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
                 handle: next,
                 uuid: uuid.clone(),
             },
+            on_read: None,
+            on_write: None,
         });
 
         // Then the value declaration
@@ -488,6 +565,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             handle: 0,
             last_handle_in_group: 0,
             data,
+            on_read: None,
+            on_write: None,
         });
 
         // Add optional CCCD handle
@@ -500,6 +579,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
                     notifications: false,
                     indications: false,
                 },
+                on_read: None,
+                on_write: None,
             });
             Some(cccd)
         } else {
@@ -510,30 +591,43 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
             handle: Characteristic {
                 handle: next,
                 cccd_handle,
+                phantom: PhantomData,
             },
             table: self.table,
         }
     }
 
     /// Add a characteristic to this service with a refererence to a mutable storage buffer.
-    pub fn add_characteristic<U: Into<Uuid>>(
+    pub fn add_characteristic<T: GattValue, U: Into<Uuid>>(
         &mut self,
         uuid: U,
         props: &[CharacteristicProp],
         storage: &'d mut [u8],
-    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
+    ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = props.into();
         self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
     }
 
     /// Add a characteristic to this service with a refererence to an immutable storage buffer.
-    pub fn add_characteristic_ro<U: Into<Uuid>>(
+    pub fn add_characteristic_ro<T: GattValue, U: Into<Uuid>>(
         &mut self,
         uuid: U,
-        value: &'d [u8],
-    ) -> CharacteristicBuilder<'_, 'd, M, MAX> {
+        value: &'d T,
+    ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = [CharacteristicProp::Read].into();
-        self.add_characteristic_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value })
+        self.add_characteristic_internal(
+            uuid.into(),
+            props,
+            AttributeData::ReadOnlyData {
+                props,
+                value: value.to_gatt(),
+            },
+        )
+    }
+
+    /// Add a callback to be triggered when the attribute is read
+    pub fn set_read_callback(&mut self, on_read: fn(&Connection)) {
+        self.table.set_read_callback(self.handle.handle, on_read);
     }
 
     /// Finish construction of the service and return a handle.
@@ -559,23 +653,26 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
 /// A characteristic in the attribute table.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Characteristic {
+pub struct Characteristic<T: GattValue> {
     pub(crate) cccd_handle: Option<u16>,
     pub(crate) handle: u16,
+    pub(crate) phantom: PhantomData<T>,
 }
 
 /// Builder for characteristics.
-pub struct CharacteristicBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
-    handle: Characteristic,
+pub struct CharacteristicBuilder<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> {
+    handle: Characteristic<T>,
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX> {
+impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, T, M, MAX> {
     fn add_descriptor_internal(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
+        on_read: Option<fn(&Connection)>,
+        on_write: Option<WriteCallback>,
     ) -> DescriptorHandle {
         let handle = self.table.handle;
         self.table.push(Attribute {
@@ -583,6 +680,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX
             handle: 0,
             last_handle_in_group: 0,
             data,
+            on_read,
+            on_write,
         });
 
         DescriptorHandle { handle }
@@ -594,19 +693,48 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, M, MAX
         uuid: U,
         props: &[CharacteristicProp],
         data: &'d mut [u8],
+        on_read: Option<fn(&Connection)>,
+        on_write: Option<WriteCallback>,
     ) -> DescriptorHandle {
         let props = props.into();
-        self.add_descriptor_internal(uuid.into(), props, AttributeData::Data { props, value: data })
+        self.add_descriptor_internal(
+            uuid.into(),
+            props,
+            AttributeData::Data { props, value: data },
+            on_read,
+            on_write,
+        )
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> DescriptorHandle {
+    pub fn add_descriptor_ro<U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        data: &'d [u8],
+        on_read: Option<fn(&Connection)>,
+    ) -> DescriptorHandle {
         let props = [CharacteristicProp::Read].into();
-        self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
+        self.add_descriptor_internal(
+            uuid.into(),
+            props,
+            AttributeData::ReadOnlyData { props, value: data },
+            on_read,
+            None,
+        )
+    }
+
+    /// Add a callback to be triggered when a read event occurs
+    pub fn set_read_callback(&mut self, on_read: fn(&Connection)) {
+        self.table.set_read_callback(self.handle.handle, on_read);
+    }
+
+    /// Add a callback to be triggered when a write event occurs
+    pub fn set_write_callback(&mut self, on_write: WriteCallback) {
+        self.table.set_write_callback(self.handle.handle, on_write)
     }
 
     /// Return the built characteristic.
-    pub fn build(self) -> Characteristic {
+    pub fn build(self) -> Characteristic<T> {
         self.handle
     }
 }
