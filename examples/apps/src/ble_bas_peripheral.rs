@@ -24,8 +24,17 @@ struct Server {
 // Battery service
 #[gatt_service(uuid = "180f")]
 struct BatteryService {
-    #[characteristic(uuid = "2a19", read, notify)]
+    #[characteristic(uuid = "2a19", read, write, notify, on_read = battery_level_on_read, on_write = battery_level_on_write)]
     level: u8,
+}
+
+fn battery_level_on_read(_connection: &Connection) {
+    info!("[gatt] Read event on battery level characteristic");
+}
+
+fn battery_level_on_write(_connection: &Connection, data: &[u8]) -> Result<(), ()> {
+    info!("[gatt] Write event on battery level characteristic: {:?}", data);
+    Ok(())
 }
 
 pub async fn run<C>(controller: C)
@@ -46,7 +55,8 @@ where
             name: "TrouBLE",
             appearance: &appearance::GENERIC_POWER,
         }),
-    );
+    )
+    .unwrap();
 
     info!("Starting advertising and GATT service");
     let _ = join3(
@@ -61,16 +71,20 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task<C: Controller>(server: &Server<'_,'_, C>) {
+async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
     loop {
         match server.next().await {
-            Ok(GattEvent::Write { handle, connection: _ }) => {
-                let _ = server.get(handle, |value| {
-                    info!("[gatt] Write event on {:?}. Value written: {:?}", handle, value);
-                });
+            Ok(GattEvent::Write {
+                value_handle,
+                connection: _,
+            }) => {
+                info!("[gatt] Write event on {:?}", value_handle);
             }
-            Ok(GattEvent::Read { handle, connection: _ }) => {
-                info!("[gatt] Read event on {:?}", handle);
+            Ok(GattEvent::Read {
+                value_handle,
+                connection: _,
+            }) => {
+                info!("[gatt] Read event on {:?}", value_handle);
             }
             Err(e) => {
                 error!("[gatt] Error processing GATT events: {:?}", e);
@@ -111,7 +125,7 @@ async fn advertise_task<C: Controller>(
             Timer::after(Duration::from_secs(2)).await;
             tick = tick.wrapping_add(1);
             info!("[adv] notifying connection of tick {}", tick);
-            let _ = server.notify(server.battery_service.level, &conn, &[tick]).await;
+            let _ = server.notify(&server.battery_service.level, &conn, &tick).await;
         }
     }
 }
