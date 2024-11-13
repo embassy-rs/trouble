@@ -6,10 +6,6 @@ on:
       prNr:
         description: A PR number to build
         required: true
-  push:
-    tags:
-     - 'trouble-host-v[0-9]+.[0-9]+.[0-9]+'
-     - 'trouble-host-macro-v[0-9]+.[0-9]+.[0-9]+'
   
 jobs:
   integration-tests:
