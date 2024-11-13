@@ -85,5 +85,4 @@ jobs:
       # To perform a dry run uncomment the following lines
       run: |
         echo "Performing dry-run publish to crates.io" && \
-        cd host && \
-        cargo publish --dry-run
+        cd host && cargo publish --dry-run
