@@ -72,7 +72,7 @@ jobs:
       run: |
         gh release create "$tag" \
             --repo="$GITHUB_REPOSITORY" \
-            --title="${GITHUB_REPOSITORY#*/} Host Macros ${tag#trouble-host-macros-v}" \
+            --title="${GITHUB_REPOSITORY#*/} Host Macros v${tag#trouble-host-macros-v}" \
             --generate-notes
 
     - name: Publish to crates.io
