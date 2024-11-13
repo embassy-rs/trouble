@@ -44,12 +44,10 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
-    - name: Enter the directory
-      run: cd host-macro
 
     - name: Verify Version
       run: |
+        cd host-macro
         TAG_VERSION=${GITHUB_REF#refs/tags/trouble-host-macro-v}
         CARGO_VERSION=$(grep '^version =' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')
         if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
