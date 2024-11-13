@@ -34,9 +34,9 @@ jobs:
         run: |
           ./ci.sh
 
-  release_trouble_host:
+  release_trouble_host_macros:
     # Only run if the checks pass
-    name: Publish Trouble Host
+    name: Publish Trouble Host Macros
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
