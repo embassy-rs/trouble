@@ -61,7 +61,9 @@ jobs:
         toolchain: stable
 
     - name: Build project
-      run: cargo build --release
+      run: |
+        cd host && \
+        cargo build --release
     
     - name: Create GitHub release
       env:
