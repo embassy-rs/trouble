@@ -71,7 +71,7 @@ jobs:
         tag: ${{ github.ref_name }}
       run: |
         gh release create "$tag" \
-            --repo="$GITHUB_REPOSITORY" \
+            --repo="$GITHUB_REPOSITORY" host \
             --title="${GITHUB_REPOSITORY#*/} ${tag#trouble-host-v}" \
             --generate-notes
 
