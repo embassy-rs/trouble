@@ -36,35 +36,25 @@ jobs:
           ./ci.sh
 
   cargo_bloat_host:
-    name: Cargo Bloat trouble host
+    name: Cargo Bloat trouble esp32 example
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./host
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - name: Install cargo-bloat
+        run: cargo install cargo-bloat
       - name: Run cargo bloat
-        uses: orf/cargo-bloat-action@v1
+        run: |
+          cd examples/esp32 \
+          cargo bloat --release --crates
+      - name: Post results to PR
+        uses: marocchino/sticky-pull-request-comment@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  cargo_bloat_host_macro:
-    name: Cargo Bloat trouble host macros
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./host-macro
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - name: Run cargo bloat
-        uses: orf/cargo-bloat-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          header: cargo bloat report
+          message: |
+            \`\`\`
+            $(cargo bloat --release --crates)
+            \`\`\`
