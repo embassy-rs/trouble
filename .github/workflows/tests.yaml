@@ -6,7 +6,7 @@ on:
       prNr:
         description: A PR number to build
         required: true
-  
+
 jobs:
   integration-tests:
     runs-on: self-hosted
