@@ -1,33 +1,154 @@
 name: Bloat
 
 on:
-    pull_request:
+  pull_request:
+
 
 permissions:
   pull-requests: write
 
 jobs:
-    cargo_bloat_esp32:
-        name: Cargo Bloat trouble esp32 example
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
-            - name: Install Rust
-              uses: actions-rs/toolchain@v1
-              with:
-                toolchain: stable
-            - name: Install cargo-bloat
-              run: cargo install cargo-bloat
-            - name: Run cargo bloat
-              run: |
-                cd examples/esp32 &&\
-                echo "Bloat report for ESP32 example" > bloat.txt &&\
-                cargo bloat --release >> ./bloat.txt
-            - name: Post results to PR
-              uses: marocchino/sticky-pull-request-comment@v2
-              with:
-                hide_and_recreate: true
-                hide_classify: "OUTDATED"
-                header: ESP32 Bloat Report
-                path: ./examples/esp32/bloat.txt
-            
+
+  cargo_bloat_apache_nimble:
+    name: apache-nimble example
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: Install cargo-bloat
+      run: cargo install cargo-bloat
+    - name: Run cargo bloat
+      run: |
+        cd examples/apache-nimble &&\
+        echo "Bloat report for Apache Nimble example" > bloat.txt &&\
+        cargo bloat --release >> ./bloat.txt
+    - name: Post results to PR
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        hide_and_recreate: true
+        hide_classify: "OUTDATED"
+        header: Apache Nimble Bloat Report
+        path: ./examples/apache-nimble/bloat.txt
+
+  cargo_bloat_apps:
+    name: apps example
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: Install cargo-bloat
+      run: cargo install cargo-bloat
+    - name: Run cargo bloat
+      run: |
+        cd examples/apps &&\
+        echo "Bloat report for Apps example" > bloat.txt &&\
+        cargo bloat --release >> ./bloat.txt
+    - name: Post results to PR
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        hide_and_recreate: true
+        hide_classify: "OUTDATED"
+        header: Apps Bloat Report
+        path: ./examples/apps/bloat.txt
+
+  cargo_bloat_esp32:
+    name: esp32 example
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: Install cargo-bloat
+      run: cargo install cargo-bloat
+    - name: Run cargo bloat
+      run: |
+        cd examples/esp32 &&\
+        echo "Bloat report for ESP32 example" > bloat.txt &&\
+        cargo bloat --release >> ./bloat.txt
+    - name: Post results to PR
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        hide_and_recreate: true
+        hide_classify: "OUTDATED"
+        header: ESP32 Bloat Report
+        path: ./examples/esp32/bloat.txt
+
+  cargo_bloat_nrf_sdc:
+    name: nrf-sdc example
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: Install cargo-bloat
+      run: cargo install cargo-bloat
+    - name: Run cargo bloat
+      run: |
+        cd examples/nrf-sdc &&\
+        echo "Bloat report for NRF SDC example" > bloat.txt &&\
+        cargo bloat --release >> ./bloat.txt
+    - name: Post results to PR
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        hide_and_recreate: true
+        hide_classify: "OUTDATED"
+        header: NRF SDC Bloat Report
+        path: ./examples/nrf-sdc/bloat.txt
+
+  cargo_bloat_rp_pico_w:
+    name: rp-pico-w example
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: Install cargo-bloat
+      run: cargo install cargo-bloat
+    - name: Run cargo bloat
+      run: |
+        cd examples/rp-pico-w &&\
+        echo "Bloat report for RP Pico W example" > bloat.txt &&\
+        cargo bloat --release >> ./bloat.txt
+    - name: Post results to PR
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        hide_and_recreate: true
+        hide_classify: "OUTDATED"
+        header: RP Pico W Bloat Report
+        path: ./examples/rp-pico-w/bloat.txt
+
+  cargo_bloat_serial_hci:
+    name: serial-hci example
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: Install cargo-bloat
+      run: cargo install cargo-bloat
+    - name: Run cargo bloat
+      run: |
+        cd examples/serial-hci &&\
+        echo "Bloat report for Serial HCI example" > bloat.txt &&\
+        cargo bloat --release >> ./bloat.txt
+    - name: Post results to PR
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        hide_and_recreate: true
+        hide_classify: "OUTDATED"
+        header: Serial HCI Bloat Report
+        path: ./examples/serial-hci/bloat.txt
