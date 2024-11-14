@@ -21,14 +21,13 @@ jobs:
             - name: Run cargo bloat
               run: |
                 cd examples/esp32 &&\
-                cargo bloat --release --crates
+                echo "Bloat report for ESP32 example" > bloat.txt &&\
+                cargo bloat --release >> ./bloat.txt
             - name: Post results to PR
               uses: marocchino/sticky-pull-request-comment@v2
               with:
                 hide_and_recreate: true
+                hide_classify: "OUTDATED"
                 header: ESP32 Bloat Report
-                message: |
-                    \`\`\`
-                    $(cargo bloat --release --crates)
-                    \`\`\`
+                path: ./examples/esp32/bloat.txt
             
