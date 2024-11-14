@@ -33,27 +33,3 @@ jobs:
       - name: CI
         run: |
           ./ci.sh
-
-  cargo_bloat_host:
-    name: Cargo Bloat trouble esp32 example
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - name: Install cargo-bloat
-        run: cargo install cargo-bloat
-      - name: Run cargo bloat
-        run: |
-          cd examples/esp32 &&\
-          cargo bloat --release --crates
-      - name: Post results to PR
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: cargo bloat report
-          message: |
-            \`\`\`
-            $(cargo bloat --release --crates)
-            \`\`\`
