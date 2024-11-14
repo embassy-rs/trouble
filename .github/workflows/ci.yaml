@@ -35,8 +35,8 @@ jobs:
         run: |
           ./ci.sh
 
-  cargo_bloat:
-    name: Cargo Bloat
+  cargo_bloat_host:
+    name: Cargo Bloat trouble host
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
@@ -44,6 +44,24 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - name: CD into host
+        run: cd host
+      - name: Run cargo bloat
+        uses: orf/cargo-bloat-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  cargo_bloat_host_macros:
+    name: Cargo Bloat trouble host macros
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: CD into host_macros
+        run: cd host_macros
       - name: Run cargo bloat
         uses: orf/cargo-bloat-action@v1
         with:
