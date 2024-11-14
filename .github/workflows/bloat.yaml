@@ -3,6 +3,9 @@ name: Bloat
 on:
     pull_request:
 
+permissions:
+  pull-requests: write
+
 jobs:
     cargo_bloat_esp32:
         name: Cargo Bloat trouble esp32 example
@@ -22,8 +25,10 @@ jobs:
             - name: Post results to PR
               uses: marocchino/sticky-pull-request-comment@v2
               with:
-                header: cargo bloat report
+                hide_and_recreate: true
+                header: ESP32 Bloat Report
                 message: |
                     \`\`\`
                     $(cargo bloat --release --crates)
                     \`\`\`
+            
