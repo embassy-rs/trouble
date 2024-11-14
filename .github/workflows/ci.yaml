@@ -38,33 +38,33 @@ jobs:
   cargo_bloat_host:
     name: Cargo Bloat trouble host
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./host
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-      - name: CD into host
-        run: cd host
       - name: Run cargo bloat
         uses: orf/cargo-bloat-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          exclude_packages: "host-macro"
 
   cargo_bloat_host_macro:
     name: Cargo Bloat trouble host macros
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./host-macro
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-      - name: CD into host_macro
-        run: cd host-macro
       - name: Run cargo bloat
         uses: orf/cargo-bloat-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          exclude_packages: "host"
