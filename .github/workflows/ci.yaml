@@ -48,7 +48,7 @@ jobs:
         run: cargo install cargo-bloat
       - name: Run cargo bloat
         run: |
-          cd examples/esp32 \
+          cd examples/esp32 &&\
           cargo bloat --release --crates
       - name: Post results to PR
         uses: marocchino/sticky-pull-request-comment@v2
