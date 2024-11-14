@@ -1,0 +1,24 @@
+{   
+    "[rust]": {
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "modifications",
+    },
+    "[toml]": {
+        "editor.formatOnSave": false
+    },
+    "[markdown]": {
+        "editor.formatOnSave": false
+    },
+    "rust-analyzer.check.allTargets": false,
+    "rust-analyzer.linkedProjects": [
+        "host/Cargo.toml",
+        "host-macro/Cargo.toml",
+        "examples/apps/Cargo.toml",
+        // uncomment the examples you want to explore below
+        // "examples/esp32/Cargo.toml", 
+        // "examples/nrf-sdc/Cargo.toml",
+        // "examples/rp-pico-w/Cargo.toml",
+        // "examples/serial-hci/Cargo.toml",
+        // "examples/apache-nimble/Cargo.toml",
+    ]
+}
