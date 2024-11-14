@@ -79,11 +79,11 @@ jobs:
       env:
         CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       # Publish to the main registry
-      # run: |
-      #   echo "Publishing to crates.io"  
-      #   # cargo publish
-      # To perform a dry run uncomment the following lines
       run: |
-        echo "Performing dry-run publish to crates.io"
-        cd host
-        cargo publish --dry-run
+        echo "Publishing to crates.io"  
+        # cargo publish
+      # To perform a dry run uncomment the following lines
+      # run: |
+      #   echo "Performing dry-run publish to crates.io"
+      #   cd host
+      #   cargo publish --dry-run
