@@ -43,7 +43,7 @@ async fn gatt_client_server() {
         let mut expected = value[0].wrapping_add(1);
         let mut svc = table.add_service(Service::new(0x1800));
         let _ = svc.add_characteristic_ro(0x2a00, id);
-        let _ = svc.add_characteristic_ro(0x2a01, &appearance[..]);
+        let _ = svc.add_characteristic_ro(0x2a01, &appearance);
         svc.build();
 
         // Generic attribute service (mandatory)
@@ -54,8 +54,8 @@ async fn gatt_client_server() {
             .add_characteristic(
                 VALUE_UUID.clone(),
                 &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
-                &mut value)
-            .build();
+                &mut value
+            ).build();
 
         let server = GattServer::<common::Controller, NoopRawMutex, 10, 27>::new(stack, table);
         select! {
@@ -68,14 +68,14 @@ async fn gatt_client_server() {
                     match server.next().await {
                         Ok(GattEvent::Write {
                             connection: _,
-                            handle,
+                            value_handle: handle,
                         }) => {
-                            assert_eq!(handle, value_handle);
-                            let _ = server.server().table().get(handle, |value| {
-                                assert_eq!(expected, value[0]);
+                            let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
+                            assert_eq!(characteristic, value_handle);
+                            let value: u8 = server.server().table().get(&characteristic).unwrap();
+                            assert_eq!(expected, value);
                                 expected += 1;
                                 writes += 1;
-                            });
                             if writes == 2 {
                                 println!("expected value written twice, test pass");
                                 // NOTE: Ensure that adapter gets polled again
@@ -168,7 +168,7 @@ async fn gatt_client_server() {
                         let service = services.first().unwrap().clone();
 
                         println!("[central] service discovered successfully");
-                        let c = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
+                        let c: Characteristic<u8> = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
 
                         let mut data = [0; 1];
                         client.read_characteristic(&c, &mut data[..]).await.unwrap();
@@ -196,15 +196,15 @@ async fn gatt_client_server() {
             (Err(e1), Err(e2)) => {
                 println!("Central error: {:?}", e1);
                 println!("Peripheral error: {:?}", e2);
-                assert!(false);
+                panic!();
             }
             (Err(e), _) => {
                 println!("Central error: {:?}", e);
-                assert!(false)
+                panic!();
             }
             (_, Err(e)) => {
                 println!("Peripheral error: {:?}", e);
-                assert!(false)
+                panic!();
             }
             _ => {
                 println!("Test completed successfully");
@@ -212,7 +212,7 @@ async fn gatt_client_server() {
         },
         Err(e) => {
             println!("Test timed out: {:?}", e);
-            assert!(false);
+            panic!();
         }
     }
 }

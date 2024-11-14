@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{cell::RefCell, time::Duration};
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::{raw::NoopRawMutex, CriticalSectionMutex};
 use tokio::select;
 use trouble_host::prelude::*;
 
@@ -23,8 +23,27 @@ struct Server {
 
 #[gatt_service(uuid = "408813df-5dd4-1f87-ec11-cdb000100000")]
 struct CustomService {
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
+    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, on_read = value_on_read, on_write = value_on_write)]
     value: u8,
+}
+
+static READ_FLAG: CriticalSectionMutex<RefCell<bool>> = CriticalSectionMutex::new(RefCell::new(false));
+static WRITE_FLAG: CriticalSectionMutex<RefCell<u8>> = CriticalSectionMutex::new(RefCell::new(0));
+
+fn value_on_read(_: &Connection) {
+    READ_FLAG.lock(|cell| cell.replace(true));
+}
+
+fn value_on_write(_: &Connection, _: &[u8]) -> Result<(), ()> {
+    WRITE_FLAG.lock(|cell| {
+        let old = cell.replace_with(|&mut old| old + 1);
+        if old == 0 {
+            // Return an error on the first write to test accept / reject functionality
+            Err(())
+        } else {
+            Ok(())
+        }
+    })
 }
 
 #[tokio::test]
@@ -53,12 +72,13 @@ async fn gatt_client_server() {
         let server: Server<common::Controller> = Server::new_with_config(
             stack,
             gap,
-        );
+        ).unwrap();
 
         // Random starting value to 'prove' the incremented value is correct
-        let value: [u8; 1] = [rand::prelude::random(); 1];
-        let mut expected = value[0].wrapping_add(1);
-        server.set(server.service.value, &value).unwrap();
+        let value: u8 = rand::prelude::random();
+        // The first write will be rejected by the write callback, so value is not expected to change the first time
+        let mut expected = value;
+        server.set(&server.service.value, &value).unwrap();
 
         select! {
             r = runner.run() => {
@@ -70,14 +90,15 @@ async fn gatt_client_server() {
                     match server.next().await {
                         Ok(GattEvent::Write {
                             connection: _,
-                            handle,
+                            value_handle,
                         }) => {
-                            assert_eq!(handle, server.service.value);
-                            let _ = server.get(handle, |value| {
-                                assert_eq!(expected, value[0]);
-                                expected += 1;
-                                writes += 1;
-                            });
+                            let characteristic = server.server().table().find_characteristic_by_value_handle(value_handle).unwrap();
+                            assert_eq!(characteristic, server.service.value);
+                            let value = server.get(&characteristic).unwrap();
+                            assert_eq!(expected, value);
+                            expected += 2;
+                            writes += 1;
+
                             if writes == 2 {
                                 println!("expected value written twice, test pass");
                                 // NOTE: Ensure that adapter gets polled again
@@ -170,17 +191,27 @@ async fn gatt_client_server() {
                         let service = services.first().unwrap().clone();
 
                         println!("[central] service discovered successfully");
-                        let c = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
+                        let c: Characteristic<u8> = client.characteristic_by_uuid(&service, &VALUE_UUID).await.unwrap();
 
                         let mut data = [0; 1];
                         client.read_characteristic(&c, &mut data[..]).await.unwrap();
                         println!("[central] read value: {}", data[0]);
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
-                        client.write_characteristic(&c, &data[..]).await.unwrap();
+                        if let Err(BleHostError::BleHost(Error::Att(AttErrorCode::ValueNotAllowed))) = client.write_characteristic(&c, &data[..]).await {
+                            println!("[central] Frist write was rejected by write callback as expected.");
+                        } else {
+                            println!("[central] First write was expected to be rejected by server write callback!");
+                            panic!();
+                         }
                         data[0] = data[0].wrapping_add(1);
                         println!("[central] write value: {}", data[0]);
-                        client.write_characteristic(&c, &data[..]).await.unwrap();
+                        if let Ok(()) = client.write_characteristic(&c, &data[..]).await {
+                            println!("[central] Second write accepted by server.");
+                        } else {
+                            println!("[central] Second write was expected to be accepted by the server!");
+                            panic!();
+                        }
                         println!("[central] write done");
                         Ok(())
                     } => {
@@ -209,6 +240,12 @@ async fn gatt_client_server() {
                 panic!();
             }
             _ => {
+                assert!(READ_FLAG.lock(|cell| cell.take()), "Read callback failed to trigger!");
+                let actual_write_count = WRITE_FLAG.lock(|cell| cell.take());
+                assert_eq!(
+                    actual_write_count, 2,
+                    "Write callback didn't trigger the expected number of times"
+                );
                 println!("Test completed successfully");
             }
         },

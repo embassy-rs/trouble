@@ -47,7 +47,7 @@ where
             let service = services.first().unwrap().clone();
 
             info!("Looking for value handle");
-            let c = client
+            let c: Characteristic<u8> = client
                 .characteristic_by_uuid(&service, &Uuid::new_short(0x2a19))
                 .await
                 .unwrap();
