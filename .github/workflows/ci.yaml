@@ -50,8 +50,9 @@ jobs:
         uses: orf/cargo-bloat-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          exclude_packages: "host-macro"
 
-  cargo_bloat_host_macros:
+  cargo_bloat_host_macro:
     name: Cargo Bloat trouble host macros
     runs-on: ubuntu-latest
     steps:
@@ -60,9 +61,10 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-      - name: CD into host_macros
-        run: cd host_macros
+      - name: CD into host_macro
+        run: cd host-macro
       - name: Run cargo bloat
         uses: orf/cargo-bloat-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          exclude_packages: "host"
