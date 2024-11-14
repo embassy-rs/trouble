@@ -23,7 +23,7 @@ jobs:
     - name: Run cargo bloat
       run: |
         cd examples/apache-nimble &&\
-        echo "Bloat report for Apache Nimble example" > bloat.txt &&\
+        echo "#Bloat Report for Apache Nimble example" > bloat.txt &&\
         cargo bloat --release >> ./bloat.txt
     - name: Post results to PR
       uses: marocchino/sticky-pull-request-comment@v2
@@ -47,7 +47,7 @@ jobs:
     - name: Run cargo bloat
       run: |
         cd examples/apps &&\
-        echo "Bloat report for Apps example" > bloat.txt &&\
+        echo "#Bloat Report for Apps example" > bloat.txt &&\
         cargo bloat --release >> ./bloat.txt
     - name: Post results to PR
       uses: marocchino/sticky-pull-request-comment@v2
@@ -71,7 +71,7 @@ jobs:
     - name: Run cargo bloat
       run: |
         cd examples/esp32 &&\
-        echo "Bloat report for ESP32 example" > bloat.txt &&\
+        echo "#Bloat Report for ESP32 example" > bloat.txt &&\
         cargo bloat --release >> ./bloat.txt
     - name: Post results to PR
       uses: marocchino/sticky-pull-request-comment@v2
@@ -95,7 +95,7 @@ jobs:
     - name: Run cargo bloat
       run: |
         cd examples/nrf-sdc &&\
-        echo "Bloat report for NRF SDC example" > bloat.txt &&\
+        echo "#Bloat Report for NRF SDC example" > bloat.txt &&\
         cargo bloat --release >> ./bloat.txt
     - name: Post results to PR
       uses: marocchino/sticky-pull-request-comment@v2
@@ -119,7 +119,7 @@ jobs:
     - name: Run cargo bloat
       run: |
         cd examples/rp-pico-w &&\
-        echo "Bloat report for RP Pico W example" > bloat.txt &&\
+        echo "#Bloat Report for RP Pico W example" > bloat.txt &&\
         cargo bloat --release >> ./bloat.txt
     - name: Post results to PR
       uses: marocchino/sticky-pull-request-comment@v2
@@ -143,7 +143,7 @@ jobs:
     - name: Run cargo bloat
       run: |
         cd examples/serial-hci &&\
-        echo "Bloat report for Serial HCI example" > bloat.txt &&\
+        echo "#Bloat Report for Serial HCI example" > bloat.txt &&\
         cargo bloat --release >> ./bloat.txt
     - name: Post results to PR
       uses: marocchino/sticky-pull-request-comment@v2
