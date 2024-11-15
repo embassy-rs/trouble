@@ -606,15 +606,23 @@ impl<'a, 'd> Drop for PacketGrant<'a, 'd> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate std;
+    use embassy_futures::block_on;
+    use std::boxed::Box;
 
     const ADDR_1: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
     const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
 
+    fn setup() -> &'static ConnectionManager<'static> {
+        let storage = Box::leak(Box::new([ConnectionStorage::DISCONNECTED; 3]));
+        let events = Box::leak(Box::new([const { EventChannel::new() }; 3]));
+        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..]);
+        Box::leak(Box::new(mgr))
+    }
+
     #[test]
     fn peripheral_connection_established() {
-        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
-        let mgr = ConnectionManager::new(&mut storage[..]);
-
+        let mgr = setup();
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
 
         unwrap!(mgr.connect(
@@ -635,8 +643,7 @@ mod tests {
 
     #[test]
     fn central_connection_established() {
-        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
-        let mgr = ConnectionManager::new(&mut storage[..]);
+        let mgr = setup();
 
         assert!(mgr.poll_accept(LeConnRole::Central, &[], None).is_pending());
 
@@ -656,8 +663,7 @@ mod tests {
 
     #[test]
     fn controller_disconnects_before_host() {
-        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
-        let mgr = ConnectionManager::new(&mut storage[..]);
+        let mgr = setup();
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
@@ -709,8 +715,7 @@ mod tests {
 
     #[test]
     fn controller_disconnects_after_host() {
-        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
-        let mgr = ConnectionManager::new(&mut storage[..]);
+        let mgr = setup();
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
@@ -754,14 +759,16 @@ mod tests {
         // Disconnection event from host arrives before we confirm
         unwrap!(mgr.disconnected(ConnHandle::new(2)));
 
+        // Check that we get an event
+        assert!(matches!(block_on(peripheral.event()), ConnectionEvent::Disconnected));
+
         // Polling should not return anything
         assert!(mgr.poll_disconnecting(None).is_pending());
     }
 
     #[test]
     fn referenced_handle_not_reused() {
-        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
-        let mgr = ConnectionManager::new(&mut storage[..]);
+        let mgr = setup();
 
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
 
@@ -798,8 +805,7 @@ mod tests {
 
     #[test]
     fn disconnect_correct_handle() {
-        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
-        let mgr = ConnectionManager::new(&mut storage[..]);
+        let mgr = setup();
 
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
 
@@ -834,8 +840,7 @@ mod tests {
 
     #[test]
     fn disconnecting_iterator_invalid() {
-        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
-        let mgr = ConnectionManager::new(&mut storage[..]);
+        let mgr = setup();
 
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
 
@@ -871,8 +876,7 @@ mod tests {
 
     #[test]
     fn nonexisting_handle_is_disconnected() {
-        let mut storage = [ConnectionStorage::DISCONNECTED; 3];
-        let mgr = ConnectionManager::new(&mut storage[..]);
+        let mgr = setup();
 
         assert!(!mgr.is_handle_connected(ConnHandle::new(5)));
 
