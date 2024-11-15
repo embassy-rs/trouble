@@ -60,6 +60,11 @@ pub use peripheral::*;
 
 #[allow(missing_docs)]
 pub mod prelude {
+    #[cfg(feature = "derive")]
+    pub use heapless::String as HeaplessString;
+    #[cfg(feature = "derive")]
+    pub use trouble_host_macros::*;
+
     pub use super::att::AttErrorCode;
     pub use super::{BleHostError, Controller, Error, HostResources, Stack};
     #[cfg(feature = "peripheral")]
@@ -81,10 +86,6 @@ pub mod prelude {
     #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
     pub use crate::Address;
-    #[cfg(feature = "derive")]
-    pub use heapless::String as HeaplessString;
-    #[cfg(feature = "derive")]
-    pub use trouble_host_macros::*;
 }
 
 #[cfg(feature = "gatt")]

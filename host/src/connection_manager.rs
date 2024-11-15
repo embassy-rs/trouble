@@ -7,9 +7,8 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
-use crate::config;
 use crate::connection::{Connection, ConnectionEvent};
-use crate::Error;
+use crate::{config, Error};
 
 struct State<'d> {
     connections: &'d mut [ConnectionStorage],
@@ -607,8 +606,9 @@ impl<'a, 'd> Drop for PacketGrant<'a, 'd> {
 mod tests {
     use super::*;
     extern crate std;
-    use embassy_futures::block_on;
     use std::boxed::Box;
+
+    use embassy_futures::block_on;
 
     const ADDR_1: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
     const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
