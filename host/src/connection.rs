@@ -31,6 +31,17 @@ pub struct ConnectParams {
     pub supervision_timeout: Duration,
 }
 
+/// An event
+#[derive(Clone)]
+pub enum ConnectionEvent<'d> {
+    /// Connection disconnected.
+    Disconnected,
+    #[allow(unused, missing_docs)]
+    /// GATT write event.
+    // TODO: Might need to wrap this in a type that holds a Pdu<'d> or a resources from a pool
+    GattWrite { data: &'d [u8] },
+}
+
 impl Default for ConnectParams {
     fn default() -> Self {
         Self {
@@ -71,6 +82,11 @@ impl<'d> Connection<'d> {
 
     pub(crate) fn set_att_mtu(&self, mtu: u16) {
         self.manager.set_att_mtu(self.index, mtu);
+    }
+
+    /// Wait for connection events.
+    pub async fn event(&self) -> ConnectionEvent<'_> {
+        self.manager.event(self.index).await
     }
 
     /// Check if still connected

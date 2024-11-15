@@ -3,9 +3,12 @@ use core::future::poll_fn;
 use core::task::{Context, Poll};
 
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
-use crate::connection::Connection;
+use crate::config;
+use crate::connection::{Connection, ConnectionEvent};
 use crate::Error;
 
 struct State<'d> {
@@ -35,12 +38,15 @@ impl<'d> State<'d> {
     }
 }
 
+pub(crate) type EventChannel<'d> = Channel<NoopRawMutex, ConnectionEvent<'d>, { config::CONNECTION_EVENT_QUEUE_SIZE }>;
+
 pub(crate) struct ConnectionManager<'d> {
     state: RefCell<State<'d>>,
+    events: &'d mut [EventChannel<'d>],
 }
 
 impl<'d> ConnectionManager<'d> {
-    pub(crate) fn new(connections: &'d mut [ConnectionStorage]) -> Self {
+    pub(crate) fn new(connections: &'d mut [ConnectionStorage], events: &'d mut [EventChannel<'d>]) -> Self {
         Self {
             state: RefCell::new(State {
                 connections,
@@ -50,6 +56,7 @@ impl<'d> ConnectionManager<'d> {
                 default_link_credits: 0,
                 default_att_mtu: 23,
             }),
+            events,
         }
     }
 
@@ -72,6 +79,10 @@ impl<'d> ConnectionManager<'d> {
             let state = &mut state.connections[index as usize];
             state.state == ConnectionState::Connected
         })
+    }
+
+    pub(crate) async fn event(&self, index: u8) -> ConnectionEvent<'_> {
+        self.events[index as usize].receive().await
     }
 
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
@@ -178,6 +189,7 @@ impl<'d> ConnectionManager<'d> {
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
+                let _ = self.events[idx].try_send(ConnectionEvent::Disconnected);
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
                 return Ok(());
@@ -197,8 +209,9 @@ impl<'d> ConnectionManager<'d> {
         let mut state = self.state.borrow_mut();
         let default_credits = state.default_link_credits;
         let default_att_mtu = state.default_att_mtu;
-        for storage in state.connections.iter_mut() {
+        for (idx, storage) in state.connections.iter_mut().enumerate() {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 {
+                self.events[idx].clear();
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
                 storage.att_mtu = default_att_mtu;

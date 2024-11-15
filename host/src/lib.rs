@@ -19,7 +19,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::{ChannelStorage, PacketChannel};
-use crate::connection_manager::ConnectionStorage;
+use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::{PacketPool, Qos};
 
@@ -296,6 +296,7 @@ pub struct HostResources<
     qos: Qos,
     rx_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }, CHANNELS>>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
+    events: MaybeUninit<[EventChannel<'static>; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
     channels_rx: MaybeUninit<[PacketChannel<'static, { config::L2CAP_RX_QUEUE_SIZE }>; CHANNELS]>,
     sar: MaybeUninit<[SarType<'static>; CONNS]>,
@@ -312,6 +313,7 @@ impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: 
             qos,
             rx_pool: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
+            events: MaybeUninit::uninit(),
             sar: MaybeUninit::uninit(),
             channels: MaybeUninit::uninit(),
             channels_rx: MaybeUninit::uninit(),
@@ -351,6 +353,8 @@ pub fn new<
 
     let connections = &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
     let connections = unsafe { transmute_slice(connections) };
+    let events = &mut *resources.events.write([const { EventChannel::new() }; CONNS]);
+    let events = unsafe { transmute_slice(events) };
     let channels = &mut *resources.channels.write([ChannelStorage::DISCONNECTED; CHANNELS]);
     let channels = unsafe { transmute_slice(channels) };
     let channels_rx = &mut *resources.channels_rx.write([PacketChannel::NEW; CHANNELS]);
@@ -363,6 +367,7 @@ pub fn new<
         controller,
         rx_pool,
         connections,
+        events,
         channels,
         channels_rx,
         sar,

@@ -34,7 +34,7 @@ use futures::pin_mut;
 
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
-use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::{AllocId, GlobalPacketPool};
@@ -189,6 +189,7 @@ where
         controller: T,
         rx_pool: &'d dyn GlobalPacketPool<'d>,
         connections: &'d mut [ConnectionStorage],
+        events: &'d mut [EventChannel<'d>],
         channels: &'d mut [ChannelStorage],
         channels_rx: &'d mut [PacketChannel<'d, { config::L2CAP_RX_QUEUE_SIZE }>],
         sar: &'d mut [SarType<'d>],
@@ -199,7 +200,7 @@ where
             initialized: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             controller,
-            connections: ConnectionManager::new(connections),
+            connections: ConnectionManager::new(connections, events),
             reassembly: PacketReassembly::new(sar),
             channels: ChannelManager::new(rx_pool, channels, channels_rx),
             rx_pool,

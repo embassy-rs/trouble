@@ -1,4 +1,7 @@
-use embassy_futures::join::join3;
+use embassy_futures::{
+    join::join3,
+    select::{select, Either},
+};
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
@@ -121,11 +124,21 @@ async fn advertise_task<C: Controller>(
         info!("[adv] connection established");
         // Keep connection alive
         let mut tick: u8 = 0;
-        while conn.is_connected() {
-            Timer::after(Duration::from_secs(2)).await;
-            tick = tick.wrapping_add(1);
-            info!("[adv] notifying connection of tick {}", tick);
-            let _ = server.notify(&server.battery_service.level, &conn, &tick).await;
+        loop {
+            match select(conn.event(), Timer::after(Duration::from_secs(2))).await {
+                Either::First(event) => match event {
+                    ConnectionEvent::Disconnected => {
+                        info!("[adv] disconnected");
+                        break;
+                    }
+                    _ => {}
+                },
+                Either::Second(_) => {
+                    tick = tick.wrapping_add(1);
+                    info!("[adv] notifying connection of tick {}", tick);
+                    let _ = server.notify(&server.battery_service.level, &conn, &tick).await;
+                }
+            }
         }
     }
 }
