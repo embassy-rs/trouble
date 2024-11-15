@@ -17,7 +17,7 @@ use crate::attribute::{
 };
 use crate::attribute_server::AttributeServer;
 use crate::connection::Connection;
-use crate::connection_manager::DynamicConnectionManager;
+use crate::connection_manager::ConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::types::gatt_traits::GattValue;
@@ -30,7 +30,7 @@ pub struct GattServer<'reference, 'values, C: Controller, M: RawMutex, const MAX
     server: AttributeServer<'values, M, MAX>,
     tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
     rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
-    connections: &'reference dyn DynamicConnectionManager,
+    connections: &'reference ConnectionManager<'reference>,
 }
 
 impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
