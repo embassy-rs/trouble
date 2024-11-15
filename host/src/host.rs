@@ -34,7 +34,7 @@ use futures::pin_mut;
 
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
-use crate::connection_manager::{ConnectionManager, ConnectionStorage, DynamicConnectionManager, PacketGrant};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::{AllocId, GlobalPacketPool};

@@ -127,7 +127,7 @@ impl<'d> ConnectionManager<'d> {
         Poll::Pending
     }
 
-    pub(crate) fn get_connected_handle(&self, h: ConnHandle) -> Option<Connection<'_>> {
+    pub(crate) fn get_connected_handle(&'d self, h: ConnHandle) -> Option<Connection<'d>> {
         let mut state = self.state.borrow_mut();
         for (index, storage) in state.connections.iter().enumerate() {
             match (storage.handle, &storage.state) {
@@ -222,11 +222,11 @@ impl<'d> ConnectionManager<'d> {
     }
 
     pub(crate) fn poll_accept(
-        &self,
+        &'d self,
         role: LeConnRole,
         peers: &[(AddrKind, &BdAddr)],
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<Connection<'_>> {
+    ) -> Poll<Connection<'d>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
             match role {
@@ -305,7 +305,7 @@ impl<'d> ConnectionManager<'d> {
         });
     }
 
-    pub(crate) async fn accept(&self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> Connection<'_> {
+    pub(crate) async fn accept(&'d self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> Connection<'d> {
         poll_fn(|cx| self.poll_accept(role, peers, Some(cx))).await
     }
 
@@ -370,49 +370,8 @@ impl<'d> ConnectionManager<'d> {
         trace!("[link][pool_request_to_send] connection {:?} not found", handle);
         Poll::Ready(Err(Error::NotFound))
     }
-}
 
-pub(crate) trait DynamicConnectionManager {
-    fn role(&self, index: u8) -> LeConnRole;
-    fn is_connected(&self, index: u8) -> bool;
-    fn handle(&self, index: u8) -> ConnHandle;
-    fn peer_address(&self, index: u8) -> BdAddr;
-    fn set_att_mtu(&self, index: u8, mtu: u16);
-    fn inc_ref(&self, index: u8);
-    fn dec_ref(&self, index: u8);
-    fn disconnect(&self, index: u8, reason: DisconnectReason);
-    fn get_att_mtu(&self, conn: ConnHandle) -> u16;
-    fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16;
-    fn get_connected_handle(&self, h: ConnHandle) -> Option<Connection<'_>>;
-}
-
-impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
-    fn role(&self, index: u8) -> LeConnRole {
-        ConnectionManager::role(self, index)
-    }
-    fn handle(&self, index: u8) -> ConnHandle {
-        ConnectionManager::handle(self, index)
-    }
-    fn is_connected(&self, index: u8) -> bool {
-        ConnectionManager::is_connected(self, index)
-    }
-    fn peer_address(&self, index: u8) -> BdAddr {
-        ConnectionManager::peer_address(self, index)
-    }
-    fn inc_ref(&self, index: u8) {
-        ConnectionManager::inc_ref(self, index)
-    }
-    fn dec_ref(&self, index: u8) {
-        ConnectionManager::dec_ref(self, index)
-    }
-    fn set_att_mtu(&self, index: u8, mtu: u16) {
-        ConnectionManager::set_att_mtu(self, index, mtu);
-    }
-    fn disconnect(&self, index: u8, reason: DisconnectReason) {
-        ConnectionManager::request_disconnect(self, index, reason)
-    }
-
-    fn get_att_mtu(&self, conn: ConnHandle) -> u16 {
+    pub(crate) fn get_att_mtu(&self, conn: ConnHandle) -> u16 {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match storage.state {
@@ -424,7 +383,8 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
         }
         state.default_att_mtu
     }
-    fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16 {
+
+    pub(crate) fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16 {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match storage.state {
@@ -436,10 +396,6 @@ impl<'d> DynamicConnectionManager for ConnectionManager<'d> {
             }
         }
         mtu
-    }
-
-    fn get_connected_handle(&self, h: ConnHandle) -> Option<Connection<'_>> {
-        ConnectionManager::get_connected_handle(self, h)
     }
 }
 

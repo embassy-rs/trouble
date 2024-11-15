@@ -5,7 +5,7 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole};
 use embassy_time::Duration;
 
-use crate::connection_manager::DynamicConnectionManager;
+use crate::connection_manager::ConnectionManager;
 use crate::scan::ScanConfig;
 use crate::{BleHostError, Stack};
 
@@ -48,7 +48,7 @@ impl Default for ConnectParams {
 /// When the last reference to a connection is dropped, the connection is automatically disconnected.
 pub struct Connection<'d> {
     index: u8,
-    manager: &'d dyn DynamicConnectionManager,
+    manager: &'d ConnectionManager<'d>,
 }
 
 impl<'d> Clone for Connection<'d> {
@@ -65,7 +65,7 @@ impl<'d> Drop for Connection<'d> {
 }
 
 impl<'d> Connection<'d> {
-    pub(crate) fn new(index: u8, manager: &'d dyn DynamicConnectionManager) -> Self {
+    pub(crate) fn new(index: u8, manager: &'d ConnectionManager<'d>) -> Self {
         Self { index, manager }
     }
 
@@ -96,7 +96,7 @@ impl<'d> Connection<'d> {
     /// Request connection to be disconnected.
     pub fn disconnect(&self) {
         self.manager
-            .disconnect(self.index, DisconnectReason::RemoteUserTerminatedConn);
+            .request_disconnect(self.index, DisconnectReason::RemoteUserTerminatedConn);
     }
 
     /// The RSSI value for this connection.
