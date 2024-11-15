@@ -2,7 +2,7 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
@@ -183,12 +183,12 @@ impl<'d> ConnectionManager<'d> {
         self.with_connected_handle(h, |_storage| Ok(())).is_ok()
     }
 
-    pub(crate) fn disconnected(&self, h: ConnHandle) -> Result<(), Error> {
+    pub(crate) fn disconnected(&self, h: ConnHandle, reason: Status) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
-                let _ = self.events[idx].try_send(ConnectionEvent::Disconnected);
+                let _ = self.events[idx].try_send(ConnectionEvent::Disconnected { reason });
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
                 return Ok(());
@@ -704,7 +704,7 @@ mod tests {
         };
 
         // Disconnection event from host arrives before we confirm
-        unwrap!(mgr.disconnected(ConnHandle::new(2)));
+        unwrap!(mgr.disconnected(ConnHandle::new(2), Status::UNSPECIFIED));
 
         // This should be a noop
         req.confirm();
@@ -757,10 +757,15 @@ mod tests {
         assert!(mgr.poll_disconnecting(None).is_pending());
 
         // Disconnection event from host arrives before we confirm
-        unwrap!(mgr.disconnected(ConnHandle::new(2)));
+        unwrap!(mgr.disconnected(ConnHandle::new(2), Status::UNSPECIFIED));
 
         // Check that we get an event
-        assert!(matches!(block_on(peripheral.event()), ConnectionEvent::Disconnected));
+        assert!(matches!(
+            block_on(peripheral.event()),
+            ConnectionEvent::Disconnected {
+                reason: Status::UNSPECIFIED
+            }
+        ));
 
         // Polling should not return anything
         assert!(mgr.poll_disconnecting(None).is_pending());
@@ -781,7 +786,7 @@ mod tests {
         assert_eq!(conn.role(), LeConnRole::Peripheral);
         assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
 
-        unwrap!(mgr.disconnected(handle));
+        unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
 
         // New incoming connection reusing handle
         let handle = ConnHandle::new(42);
@@ -818,7 +823,7 @@ mod tests {
         assert_eq!(conn.role(), LeConnRole::Peripheral);
         assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
 
-        unwrap!(mgr.disconnected(handle));
+        unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
 
         // New incoming connection reusing handle
         let handle = ConnHandle::new(42);
@@ -833,7 +838,7 @@ mod tests {
         assert_eq!(conn2.peer_address(), BdAddr::new(ADDR_2));
         assert!(conn2.is_connected());
 
-        unwrap!(mgr.disconnected(handle));
+        unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
 
         assert!(!conn2.is_connected());
     }

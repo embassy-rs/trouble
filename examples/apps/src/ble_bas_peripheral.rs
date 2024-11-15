@@ -127,8 +127,8 @@ async fn advertise_task<C: Controller>(
         loop {
             match select(conn.event(), Timer::after(Duration::from_secs(2))).await {
                 Either::First(event) => match event {
-                    ConnectionEvent::Disconnected => {
-                        info!("[adv] disconnected");
+                    ConnectionEvent::Disconnected { reason } => {
+                        info!("[adv] disconnected: {:?}", reason);
                         break;
                     }
                     _ => {}

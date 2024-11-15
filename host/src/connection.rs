@@ -2,7 +2,7 @@
 use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole};
+use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
@@ -35,7 +35,10 @@ pub struct ConnectParams {
 #[derive(Clone)]
 pub enum ConnectionEvent<'d> {
     /// Connection disconnected.
-    Disconnected,
+    Disconnected {
+        /// The reason (status code) for the disconnect.
+        reason: Status,
+    },
     #[allow(unused, missing_docs)]
     /// GATT write event.
     // TODO: Might need to wrap this in a type that holds a Pdu<'d> or a resources from a pool

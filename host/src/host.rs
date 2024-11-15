@@ -668,14 +668,22 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                         },
                         Event::DisconnectionComplete(e) => {
                             let handle = e.handle;
-                            if let Err(e) = e.status.to_result() {
+                            let reason = if let Err(e) = e.status.to_result() {
                                 info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
-                            } else if let Err(e) = e.reason.to_result() {
-                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                                None
+                            } else if let Err(err) = e.reason.to_result() {
+                                info!(
+                                    "[host] disconnection event on handle {}, reason: {:?}",
+                                    handle.raw(),
+                                    err
+                                );
+                                Some(e.reason)
                             } else {
                                 info!("[host] disconnection event on handle {}", handle.raw());
+                                None
                             }
-                            let _ = host.connections.disconnected(handle);
+                            .unwrap_or(Status::UNSPECIFIED);
+                            let _ = host.connections.disconnected(handle, reason);
                             let _ = host.channels.disconnected(handle);
                             host.reassembly.disconnected(handle);
                             let mut m = host.metrics.borrow_mut();

@@ -1006,7 +1006,7 @@ impl<'reference, 'state> Drop for CreditGrant<'reference, 'state> {
 mod tests {
     extern crate std;
 
-    use bt_hci::param::{AddrKind, BdAddr, LeConnRole};
+    use bt_hci::param::{AddrKind, BdAddr, LeConnRole, Status};
 
     use super::*;
     use crate::mock_controller::MockController;
@@ -1035,7 +1035,7 @@ mod tests {
         let chan = ble.channels.poll_created(conn, idx, &ble, None);
         assert!(matches!(chan, Poll::Pending));
 
-        ble.connections.disconnected(conn).unwrap();
+        ble.connections.disconnected(conn, Status::UNSPECIFIED).unwrap();
         ble.channels.disconnected(conn).unwrap();
 
         let chan = ble.channels.poll_created(conn, idx, &ble, None);
