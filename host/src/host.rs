@@ -185,6 +185,7 @@ where
     ///
     /// The host requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
         rx_pool: &'d dyn GlobalPacketPool<'d>,
