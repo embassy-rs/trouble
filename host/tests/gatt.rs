@@ -74,7 +74,7 @@ async fn gatt_client_server() {
                             assert_eq!(characteristic, value_handle);
                             let value: u8 = server.server().table().get(&characteristic).unwrap();
                             assert_eq!(expected, value);
-                                expected += 1;
+                                expected = expected.wrapping_add(1);
                                 writes += 1;
                             if writes == 2 {
                                 println!("expected value written twice, test pass");

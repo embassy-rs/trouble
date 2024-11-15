@@ -1,6 +1,8 @@
-use std::{cell::RefCell, time::Duration};
+use std::cell::RefCell;
+use std::time::Duration;
 
-use embassy_sync::blocking_mutex::{raw::NoopRawMutex, CriticalSectionMutex};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use tokio::select;
 use trouble_host::prelude::*;
 
@@ -36,7 +38,7 @@ fn value_on_read(_: &Connection) {
 
 fn value_on_write(_: &Connection, _: &[u8]) -> Result<(), ()> {
     WRITE_FLAG.lock(|cell| {
-        let old = cell.replace_with(|&mut old| old + 1);
+        let old = cell.replace_with(|&mut old| old.wrapping_add(1));
         if old == 0 {
             // Return an error on the first write to test accept / reject functionality
             Err(())
@@ -96,7 +98,7 @@ async fn gatt_client_server() {
                             assert_eq!(characteristic, server.service.value);
                             let value = server.get(&characteristic).unwrap();
                             assert_eq!(expected, value);
-                            expected += 2;
+                            expected = expected.wrapping_add(2);
                             writes += 1;
 
                             if writes == 2 {
