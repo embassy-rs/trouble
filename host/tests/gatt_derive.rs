@@ -102,7 +102,8 @@ async fn gatt_client_server() {
                     &mut scan_data[..],
                 ).unwrap();
 
-                loop {
+                let mut done = false;
+                while !done {
                     println!("[peripheral] advertising");
                     let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
@@ -111,13 +112,13 @@ async fn gatt_client_server() {
                     let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
                     let mut writes = 0;
-                    loop {
+                    while !done {
                         match conn.next().await {
                             ConnectionEvent::Disconnected { reason } => {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            ConnectionEvent::Gatt { connection: _, event } => match event {
+                            ConnectionEvent::Gatt { event, .. } => match event {
                                 GattEvent::Write {
                                     value_handle: handle
                                 } => {
@@ -125,12 +126,12 @@ async fn gatt_client_server() {
                                     let value: u8 = server.server().table().get(&characteristic).unwrap();
                                     assert_eq!(expected, value);
                                     expected = expected.wrapping_add(1);
-                                    writes += 2;
+                                    writes += 1;
                                     if writes == 2 {
                                         println!("expected value written twice, test pass");
                                         // NOTE: Ensure that adapter gets polled again
                                         tokio::time::sleep(Duration::from_secs(2)).await;
-                                        break;
+                                        done = true;
                                     }
                                 }
                                 _ => {},
@@ -138,6 +139,7 @@ async fn gatt_client_server() {
                         }
                     }
                 }
+                Ok(())
             } => {
                 r
             }
