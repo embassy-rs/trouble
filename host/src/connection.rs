@@ -39,10 +39,15 @@ pub enum ConnectionEvent<'d> {
         /// The reason (status code) for the disconnect.
         reason: Status,
     },
-    #[allow(unused, missing_docs)]
-    /// GATT write event.
-    // TODO: Might need to wrap this in a type that holds a Pdu<'d> or a resources from a pool
-    GattWrite { data: &'d [u8] },
+    #[cfg(feature = "gatt")]
+    /// GATT event.
+    Gatt {
+        /// Connection that caused the event.
+        // TODO: Can probably be removed, but keeping around for lifetime
+        connection: Connection<'d>,
+        /// The event that was returned,
+        event: crate::gatt::GattEvent,
+    },
 }
 
 impl Default for ConnectParams {
@@ -87,9 +92,13 @@ impl<'d> Connection<'d> {
         self.manager.set_att_mtu(self.index, mtu);
     }
 
-    /// Wait for connection events.
-    pub async fn event(&self) -> ConnectionEvent<'_> {
-        self.manager.event(self.index).await
+    pub(crate) async fn post_event(&self, event: ConnectionEvent<'d>) {
+        self.manager.post_event(self.index, event).await
+    }
+
+    /// Wait for next connection event.
+    pub async fn next(&self) -> ConnectionEvent<'d> {
+        self.manager.next(self.index).await
     }
 
     /// Check if still connected

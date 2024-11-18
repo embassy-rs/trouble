@@ -80,8 +80,12 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
-    pub(crate) async fn event(&self, index: u8) -> ConnectionEvent<'_> {
+    pub(crate) async fn next(&self, index: u8) -> ConnectionEvent<'d> {
         self.events[index as usize].receive().await
+    }
+
+    pub(crate) async fn post_event(&self, index: u8, event: ConnectionEvent<'d>) {
+        self.events[index as usize].send(event).await
     }
 
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
@@ -761,7 +765,7 @@ mod tests {
 
         // Check that we get an event
         assert!(matches!(
-            block_on(peripheral.event()),
+            block_on(peripheral.next()),
             ConnectionEvent::Disconnected {
                 reason: Status::UNSPECIFIED
             }

@@ -86,36 +86,7 @@ async fn gatt_client_server() {
             r = runner.run() => {
                 r
             }
-            r = async {
-                let mut writes = 0;
-                loop {
-                    match server.next().await {
-                        Ok(GattEvent::Write {
-                            connection: _,
-                            value_handle,
-                        }) => {
-                            let characteristic = server.server().table().find_characteristic_by_value_handle(value_handle).unwrap();
-                            assert_eq!(characteristic, server.service.value);
-                            let value = server.get(&characteristic).unwrap();
-                            assert_eq!(expected, value);
-                            expected = expected.wrapping_add(2);
-                            writes += 1;
-
-                            if writes == 2 {
-                                println!("expected value written twice, test pass");
-                                // NOTE: Ensure that adapter gets polled again
-                                tokio::time::sleep(Duration::from_secs(2)).await;
-                                break;
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            println!("Error processing GATT events: {:?}", e);
-                        }
-                    }
-                }
-                Ok(())
-            } => {
+            r = server.run() => {
                 r
             }
             r = async {
@@ -137,11 +108,34 @@ async fn gatt_client_server() {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
-                    let _conn = acceptor.accept().await?;
+                    let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
-                    // Keep it alive
+                    let mut writes = 0;
                     loop {
-                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        match conn.next().await {
+                            ConnectionEvent::Disconnected { reason } => {
+                                println!("Disconnected: {:?}", reason);
+                                break;
+                            }
+                            ConnectionEvent::Gatt { connection: _, event } => match event {
+                                GattEvent::Write {
+                                    value_handle: handle
+                                } => {
+                                    let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
+                                    let value: u8 = server.server().table().get(&characteristic).unwrap();
+                                    assert_eq!(expected, value);
+                                        expected = expected.wrapping_add(1);
+                                        writes += 1;
+                                    if writes == 2 {
+                                        println!("expected value written twice, test pass");
+                                        // NOTE: Ensure that adapter gets polled again
+                                        tokio::time::sleep(Duration::from_secs(2)).await;
+                                        break;
+                                    }
+                                }
+                                _ => {},
+                            }
+                        }
                     }
                 }
             } => {

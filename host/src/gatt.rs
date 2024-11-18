@@ -16,7 +16,7 @@ use crate::attribute::{
     CHARACTERISTIC_UUID16, PRIMARY_SERVICE_UUID16,
 };
 use crate::attribute_server::AttributeServer;
-use crate::connection::Connection;
+use crate::connection::{Connection, ConnectionEvent};
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
@@ -52,9 +52,9 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
 
     /// Process GATT requests and update the attribute table accordingly.
     ///
-    /// If attributes are written or read, an event will be returned describing the handle
-    /// and the connection causing the event.
-    pub async fn next(&self) -> Result<GattEvent<'reference>, Error> {
+    /// If attributes are written or read, an event will be posted on the corresponding
+    /// connection's event queue.
+    pub async fn run(&self) -> Result<(), BleHostError<C::Error>> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             if let Some(connection) = self.connections.get_connected_handle(handle) {
@@ -74,20 +74,13 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
                                 let len = header.len() + data.len();
 
                                 let event = match att {
-                                    AttReq::Write { handle, data } => Some(GattEvent::Write {
-                                        connection,
-                                        value_handle: handle,
-                                    }),
+                                    AttReq::Write { handle, data } => Some(GattEvent::Write { value_handle: handle }),
 
-                                    AttReq::Read { handle } => Some(GattEvent::Read {
-                                        connection,
-                                        value_handle: handle,
-                                    }),
+                                    AttReq::Read { handle } => Some(GattEvent::Read { value_handle: handle }),
 
-                                    AttReq::ReadBlob { handle, offset } => Some(GattEvent::Read {
-                                        connection,
-                                        value_handle: handle,
-                                    }),
+                                    AttReq::ReadBlob { handle, offset } => {
+                                        Some(GattEvent::Read { value_handle: handle })
+                                    }
                                     _ => None,
                                 };
 
@@ -95,7 +88,12 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
                                 packet.as_mut()[..len].copy_from_slice(&tx[..len]);
                                 self.tx.send((handle, Pdu::new(packet, len))).await;
                                 if let Some(event) = event {
-                                    return Ok(event);
+                                    connection
+                                        .post_event(ConnectionEvent::Gatt {
+                                            connection: connection.clone(),
+                                            event,
+                                        })
+                                        .await;
                                 }
                             }
                             Ok(None) => {
@@ -157,18 +155,14 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
 
 /// An event returned while processing GATT requests.
 #[derive(Clone)]
-pub enum GattEvent<'reference> {
+pub enum GattEvent {
     /// A characteristic was read.
     Read {
-        /// Connection that read the characteristic.
-        connection: Connection<'reference>,
         /// Characteristic handle that was read.
         value_handle: u16,
     },
     /// A characteristic was written.
     Write {
-        /// Connection that wrote the characteristic.
-        connection: Connection<'reference>,
         /// Characteristic handle that was written.
         value_handle: u16,
     },
