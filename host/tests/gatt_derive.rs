@@ -124,8 +124,8 @@ async fn gatt_client_server() {
                                     let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
                                     let value: u8 = server.server().table().get(&characteristic).unwrap();
                                     assert_eq!(expected, value);
-                                        expected = expected.wrapping_add(1);
-                                        writes += 1;
+                                    expected = expected.wrapping_add(1);
+                                    writes += 2;
                                     if writes == 2 {
                                         println!("expected value written twice, test pass");
                                         // NOTE: Ensure that adapter gets polled again
