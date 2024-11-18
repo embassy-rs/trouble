@@ -1,4 +1,7 @@
-use embassy_futures::join::join3;
+use embassy_futures::{
+    join::join3,
+    select::{select, Either},
+};
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
@@ -71,26 +74,8 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
-    loop {
-        match server.next().await {
-            Ok(GattEvent::Write {
-                value_handle,
-                connection: _,
-            }) => {
-                info!("[gatt] Write event on {:?}", value_handle);
-            }
-            Ok(GattEvent::Read {
-                value_handle,
-                connection: _,
-            }) => {
-                info!("[gatt] Read event on {:?}", value_handle);
-            }
-            Err(e) => {
-                error!("[gatt] Error processing GATT events: {:?}", e);
-            }
-        }
-    }
+async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) -> Result<(), BleHostError<C::Error>> {
+    server.run().await
 }
 
 async fn advertise_task<C: Controller>(
@@ -119,13 +104,22 @@ async fn advertise_task<C: Controller>(
             .await?;
         let conn = advertiser.accept().await?;
         info!("[adv] connection established");
-        // Keep connection alive
         let mut tick: u8 = 0;
-        while conn.is_connected() {
-            Timer::after(Duration::from_secs(2)).await;
-            tick = tick.wrapping_add(1);
-            info!("[adv] notifying connection of tick {}", tick);
-            let _ = server.notify(&server.battery_service.level, &conn, &tick).await;
+        loop {
+            match select(conn.next(), Timer::after(Duration::from_secs(2))).await {
+                Either::First(event) => match event {
+                    ConnectionEvent::Disconnected { reason } => {
+                        info!("[adv] disconnected: {:?}", reason);
+                        break;
+                    }
+                    _ => {}
+                },
+                Either::Second(_) => {
+                    tick = tick.wrapping_add(1);
+                    info!("[adv] notifying connection of tick {}", tick);
+                    let _ = server.notify(&server.battery_service.level, &conn, &tick).await;
+                }
+            }
         }
     }
 }

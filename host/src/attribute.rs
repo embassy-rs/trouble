@@ -2,6 +2,7 @@
 use core::cell::RefCell;
 use core::fmt;
 use core::marker::PhantomData;
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 

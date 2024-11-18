@@ -28,6 +28,13 @@ mod raw {
     include!(concat!(env!("OUT_DIR"), "/config.rs"));
 }
 
+/// Connection event queue size
+///
+/// This is the connection event queue size for every connection.
+///
+/// Default: 2.
+pub const CONNECTION_EVENT_QUEUE_SIZE: usize = raw::CONNECTION_EVENT_QUEUE_SIZE;
+
 // ======== L2CAP parameters
 //
 /// L2CAP TX queue size

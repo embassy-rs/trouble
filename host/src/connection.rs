@@ -2,7 +2,7 @@
 use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole};
+use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
@@ -29,6 +29,25 @@ pub struct ConnectParams {
     pub event_length: Duration,
     /// Supervision timeout.
     pub supervision_timeout: Duration,
+}
+
+/// An event
+#[derive(Clone)]
+pub enum ConnectionEvent<'d> {
+    /// Connection disconnected.
+    Disconnected {
+        /// The reason (status code) for the disconnect.
+        reason: Status,
+    },
+    /// GATT event.
+    Gatt {
+        /// Connection that caused the event.
+        // TODO: Can probably be removed, but keeping around for lifetime
+        connection: Connection<'d>,
+        /// The event that was returned,
+        #[cfg(feature = "gatt")]
+        event: crate::gatt::GattEvent,
+    },
 }
 
 impl Default for ConnectParams {
@@ -71,6 +90,15 @@ impl<'d> Connection<'d> {
 
     pub(crate) fn set_att_mtu(&self, mtu: u16) {
         self.manager.set_att_mtu(self.index, mtu);
+    }
+
+    pub(crate) async fn post_event(&self, event: ConnectionEvent<'d>) {
+        self.manager.post_event(self.index, event).await
+    }
+
+    /// Wait for next connection event.
+    pub async fn next(&self) -> ConnectionEvent<'d> {
+        self.manager.next(self.index).await
     }
 
     /// Check if still connected

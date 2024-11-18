@@ -1,6 +1,8 @@
-use std::{cell::RefCell, time::Duration};
+use std::cell::RefCell;
+use std::time::Duration;
 
-use embassy_sync::blocking_mutex::{raw::NoopRawMutex, CriticalSectionMutex};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use tokio::select;
 use trouble_host::prelude::*;
 
@@ -36,7 +38,7 @@ fn value_on_read(_: &Connection) {
 
 fn value_on_write(_: &Connection, _: &[u8]) -> Result<(), ()> {
     WRITE_FLAG.lock(|cell| {
-        let old = cell.replace_with(|&mut old| old + 1);
+        let old = cell.replace_with(|&mut old| old.wrapping_add(1));
         if old == 0 {
             // Return an error on the first write to test accept / reject functionality
             Err(())
@@ -84,36 +86,7 @@ async fn gatt_client_server() {
             r = runner.run() => {
                 r
             }
-            r = async {
-                let mut writes = 0;
-                loop {
-                    match server.next().await {
-                        Ok(GattEvent::Write {
-                            connection: _,
-                            value_handle,
-                        }) => {
-                            let characteristic = server.server().table().find_characteristic_by_value_handle(value_handle).unwrap();
-                            assert_eq!(characteristic, server.service.value);
-                            let value = server.get(&characteristic).unwrap();
-                            assert_eq!(expected, value);
-                            expected += 2;
-                            writes += 1;
-
-                            if writes == 2 {
-                                println!("expected value written twice, test pass");
-                                // NOTE: Ensure that adapter gets polled again
-                                tokio::time::sleep(Duration::from_secs(2)).await;
-                                break;
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            println!("Error processing GATT events: {:?}", e);
-                        }
-                    }
-                }
-                Ok(())
-            } => {
+            r = server.run() => {
                 r
             }
             r = async {
@@ -129,19 +102,44 @@ async fn gatt_client_server() {
                     &mut scan_data[..],
                 ).unwrap();
 
-                loop {
+                let mut done = false;
+                while !done {
                     println!("[peripheral] advertising");
                     let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
-                    let _conn = acceptor.accept().await?;
+                    let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
-                    // Keep it alive
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(10)).await;
+                    let mut writes = 0;
+                    while !done {
+                        match conn.next().await {
+                            ConnectionEvent::Disconnected { reason } => {
+                                println!("Disconnected: {:?}", reason);
+                                break;
+                            }
+                            ConnectionEvent::Gatt { event, .. } => match event {
+                                GattEvent::Write {
+                                    value_handle: handle
+                                } => {
+                                    let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
+                                    let value: u8 = server.server().table().get(&characteristic).unwrap();
+                                    assert_eq!(expected, value);
+                                    expected = expected.wrapping_add(2);
+                                    writes += 1;
+                                    if writes == 2 {
+                                        println!("expected value written twice, test pass");
+                                        // NOTE: Ensure that adapter gets polled again
+                                        tokio::time::sleep(Duration::from_secs(2)).await;
+                                        done = true;
+                                    }
+                                }
+                                _ => {},
+                            }
+                        }
                     }
                 }
+                Ok(())
             } => {
                 r
             }

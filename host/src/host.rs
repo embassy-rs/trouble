@@ -34,7 +34,7 @@ use futures::pin_mut;
 
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
-use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::{AllocId, GlobalPacketPool};
@@ -185,10 +185,12 @@ where
     ///
     /// The host requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
         rx_pool: &'d dyn GlobalPacketPool<'d>,
         connections: &'d mut [ConnectionStorage],
+        events: &'d mut [EventChannel<'d>],
         channels: &'d mut [ChannelStorage],
         channels_rx: &'d mut [PacketChannel<'d, { config::L2CAP_RX_QUEUE_SIZE }>],
         sar: &'d mut [SarType<'d>],
@@ -199,7 +201,7 @@ where
             initialized: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             controller,
-            connections: ConnectionManager::new(connections),
+            connections: ConnectionManager::new(connections, events),
             reassembly: PacketReassembly::new(sar),
             channels: ChannelManager::new(rx_pool, channels, channels_rx),
             rx_pool,
@@ -666,14 +668,22 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                         },
                         Event::DisconnectionComplete(e) => {
                             let handle = e.handle;
-                            if let Err(e) = e.status.to_result() {
+                            let reason = if let Err(e) = e.status.to_result() {
                                 info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
-                            } else if let Err(e) = e.reason.to_result() {
-                                info!("[host] disconnection event on handle {}, reason: {:?}", handle.raw(), e);
+                                None
+                            } else if let Err(err) = e.reason.to_result() {
+                                info!(
+                                    "[host] disconnection event on handle {}, reason: {:?}",
+                                    handle.raw(),
+                                    err
+                                );
+                                Some(e.reason)
                             } else {
                                 info!("[host] disconnection event on handle {}", handle.raw());
+                                None
                             }
-                            let _ = host.connections.disconnected(handle);
+                            .unwrap_or(Status::UNSPECIFIED);
+                            let _ = host.connections.disconnected(handle, reason);
                             let _ = host.channels.disconnected(handle);
                             host.reassembly.disconnected(handle);
                             let mut m = host.metrics.borrow_mut();
