@@ -39,13 +39,13 @@ pub enum ConnectionEvent<'d> {
         /// The reason (status code) for the disconnect.
         reason: Status,
     },
-    #[cfg(feature = "gatt")]
     /// GATT event.
     Gatt {
         /// Connection that caused the event.
         // TODO: Can probably be removed, but keeping around for lifetime
         connection: Connection<'d>,
         /// The event that was returned,
+        #[cfg(feature = "gatt")]
         event: crate::gatt::GattEvent,
     },
 }
