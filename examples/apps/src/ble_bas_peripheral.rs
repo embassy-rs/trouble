@@ -48,7 +48,7 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources = Resources::new(PacketQos::None);
-    let (stack, mut peripheral, _, mut runner) = trouble_host::new(controller, &mut resources)
+    let (stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
         .build();
 
@@ -62,7 +62,7 @@ where
     )
     .unwrap();
 
-    let ble_runner_task = ble_task(&mut runner);
+    let ble_runner_task = ble_task(runner);
     let app_task = async {
         loop {
             match advertise("Trouble Example", &mut peripheral).await {
@@ -82,7 +82,21 @@ where
 }
 
 /// This is a background task that is required to run forever alongside any other BLE tasks.
-async fn ble_task<C: Controller>(runner: &mut Runner<'_, C>) -> Result<(), BleHostError<C::Error>> {
+/// 
+/// ## Alternative
+/// 
+/// If you didn't require this to be generic for your application, you could statically spawn this with i.e.
+/// 
+/// ```rust [ignore]
+/// 
+/// #[embassy_executor::task]
+/// async fn ble_task(mut runner: Runner<'static, SoftdeviceController<'static>>) {
+///     runner.run().await;
+/// }
+/// 
+/// spawner.must_spawn(ble_task(runner));
+/// ```
+async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHostError<C::Error>> {
     runner.run().await
 }
 
