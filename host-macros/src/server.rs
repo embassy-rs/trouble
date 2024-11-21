@@ -6,7 +6,7 @@
 use darling::Error;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::{meta::ParseNestedMeta, spanned::Spanned, LitInt, Result};
+use syn::{meta::ParseNestedMeta, parse_quote, spanned::Spanned, Expr, Result};
 
 /// Default size for the memory block storing attribute data in bytes
 const DEFAULT_ATTRIBUTE_DATA_SIZE: usize = 32;
@@ -16,8 +16,8 @@ const LEGACY_BLE_MTU: usize = 27;
 #[derive(Default)]
 pub(crate) struct ServerArgs {
     mutex_type: Option<syn::Type>,
-    attribute_data_size: Option<usize>,
-    mtu: Option<usize>,
+    attribute_data_size: Option<Expr>,
+    mtu: Option<Expr>,
 }
 
 impl ServerArgs {
@@ -35,13 +35,11 @@ impl ServerArgs {
             }
             "attribute_data_size" => {
                 let buffer = meta.value().map_err(|_| Error::custom("attribute_data_size msut be followed by `= [size]`. e.g. attribute_data_size = 32".to_string()))?;
-                let value: LitInt = buffer.parse()?;
-                self.attribute_data_size = Some(value.base10_parse()?);
+                self.attribute_data_size = Some(buffer.parse()?);
             }
             "mtu" => {
                 let buffer = meta.value().map_err(|_| Error::custom("mtu must be followed by `= [size]`. e.g. mtu = 27".to_string()))?;
-                let value: LitInt = buffer.parse()?;
-                self.mtu = Some(value.base10_parse()?);
+                self.mtu = Some(buffer.parse()?);
             }
             other => return Err(meta.error(format!("Unsupported server property: '{other}'.\nSupported properties are: mutex_type, attribute_data_size, mtu"))),
         }
@@ -67,11 +65,18 @@ impl ServerBuilder {
         let mutex_type = self.arguments.mutex_type.unwrap_or(syn::Type::Verbatim(quote!(
             embassy_sync::blocking_mutex::raw::NoopRawMutex
         )));
-        let attribute_data_size = self
-            .arguments
-            .attribute_data_size
-            .unwrap_or(DEFAULT_ATTRIBUTE_DATA_SIZE);
-        let mtu = self.arguments.mtu.unwrap_or(LEGACY_BLE_MTU);
+        let attribute_data_size = if let Some(value) = self.arguments.attribute_data_size {
+            value
+        } else {
+            let tokens = quote!(#DEFAULT_ATTRIBUTE_DATA_SIZE);
+            parse_quote!(#tokens)
+        };
+        let mtu = if let Some(value) = self.arguments.mtu {
+            value
+        } else {
+            let tokens = quote!(#LEGACY_BLE_MTU);
+            parse_quote!(#tokens)
+        };
 
         let mut code_service_definition = TokenStream2::new();
         let mut code_service_init = TokenStream2::new();
