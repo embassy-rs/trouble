@@ -656,7 +656,8 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, M
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Characteristic<T: GattValue> {
     pub(crate) cccd_handle: Option<u16>,
-    pub(crate) handle: u16,
+    /// Handle value assigned to this characteristic when it is added to the Gatt Attribute Table
+    pub handle: u16,
     pub(crate) phantom: PhantomData<T>,
 }
 
