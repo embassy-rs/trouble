@@ -107,6 +107,7 @@ async fn advertise_task<C: Controller>(
         let conn = advertiser.accept().await?;
         info!("[adv] connection established");
         let mut tick: u8 = 0;
+        let level = server.battery_service.level;
         loop {
             match select(conn.next(), Timer::after(Duration::from_secs(2))).await {
                 Either::First(event) => match event {
@@ -114,7 +115,21 @@ async fn advertise_task<C: Controller>(
                         info!("[adv] disconnected: {:?}", reason);
                         break;
                     }
-                    _ => {}
+                    ConnectionEvent::Gatt { event, .. } => match event {
+                        GattEvent::Read { value_handle } => { 
+                            if value_handle == level.handle {
+                                let value = server.get(&level);
+                                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                            }
+                        },
+                        GattEvent::Write { value_handle } => {
+                            if value_handle == level.handle {
+                                let value = server.get(&level);
+                                info!("[gatt] Write Event to Level Characteristic: {:?}", value);
+                            }
+                        },
+                    },
+                    
                 },
                 Either::Second(_) => {
                     tick = tick.wrapping_add(1);
