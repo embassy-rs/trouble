@@ -64,10 +64,8 @@ where
     let ble_runner_task = ble_task(&mut runner);
     let app_task = async {
         loop {
-            info!("[adv] advertising");
             match advertise("Trouble Example", &mut peripheral).await {
                 Ok(conn) => {
-                    info!("[adv] connection established");
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let gatt = gatt_task(&server, &conn);
                     let counter_task = example_application_task(&server, &conn);
@@ -152,7 +150,10 @@ async fn advertise<'a, C: Controller>(
             },
         )
         .await?;
-    Ok(advertiser.accept().await?)
+    info!("[adv] advertising");
+    let conn = advertiser.accept().await?;
+    info!("[adv] connection established");
+    Ok(conn)
 }
 
 /// Example task to use the BLE notifier interface.
