@@ -61,7 +61,7 @@ where
         }),
     )
     .unwrap();
-    let ble_task = ble_task(&mut runner);
+    let ble_runner_task = ble_task(&mut runner);
     let app_task = async {
         loop {
             info!("[adv] advertising");
@@ -79,7 +79,7 @@ where
             }
         }
     };
-    select(ble_task, app_task).await;
+    select(ble_runner_task, app_task).await; // runner must run in the background forever whilst any other ble service runs.
 }
 
 async fn ble_task<C: Controller>(runner: &mut Runner<'_, C>) -> Result<(), BleHostError<C::Error>> {
@@ -127,7 +127,7 @@ async fn advertise<'a, C: Controller>(
     name: &'a str,
     peripheral: &mut Peripheral<'a, C>,
 ) -> Result<Connection<'a>, BleHostError<C::Error>> {
-    let name= if name.len() > 22 {
+    let name = if name.len() > 22 {
         let truncated_name = &name[..22];
         info!("Name truncated to {}", truncated_name);
         truncated_name
