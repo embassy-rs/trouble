@@ -74,13 +74,13 @@ pub mod prelude {
     pub use trouble_host_macros::*;
 
     #[cfg(feature = "gatt")]
-    pub use crate::types::gatt_traits::{GattValue as _, FixedGattValue as _};
+    pub use crate::attribute::*;
     #[cfg(feature = "gatt")]
     pub use crate::gap::*;
     #[cfg(feature = "gatt")]
     pub use crate::gatt::*;
     #[cfg(feature = "gatt")]
-    pub use crate::attribute::*;
+    pub use crate::types::gatt_traits::{FixedGattValue, GattValue};
 
     #[cfg(feature = "central")]
     pub use crate::central::*;
