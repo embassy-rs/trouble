@@ -4,6 +4,7 @@
 //! It should contain one or more Gatt Services, which are decorated with the `#[gatt_service(uuid = "...")]` attribute.
 
 use darling::Error;
+use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::{meta::ParseNestedMeta, parse_quote, spanned::Spanned, Expr, Result};
@@ -65,12 +66,6 @@ impl ServerBuilder {
         let mutex_type = self.arguments.mutex_type.unwrap_or(syn::Type::Verbatim(quote!(
             embassy_sync::blocking_mutex::raw::NoopRawMutex
         )));
-        let attribute_data_size = if let Some(value) = self.arguments.attribute_data_size {
-            value
-        } else {
-            let tokens = quote!(#DEFAULT_ATTRIBUTE_DATA_SIZE);
-            parse_quote!(#tokens)
-        };
         let mtu = if let Some(value) = self.arguments.mtu {
             value
         } else {
@@ -81,6 +76,7 @@ impl ServerBuilder {
         let mut code_service_definition = TokenStream2::new();
         let mut code_service_init = TokenStream2::new();
         let mut code_server_populate = TokenStream2::new();
+        let mut code_attribute_summation = TokenStream2::new();
         for service in &self.properties.fields {
             let vis = &service.vis;
             let service_span = service.span();
@@ -98,12 +94,24 @@ impl ServerBuilder {
             code_server_populate.extend(quote_spanned! {service_span=>
                 #service_name,
             });
+
+            code_attribute_summation.extend(quote_spanned! {service_span=>
+               + #service_type::ATTRIBUTE_COUNT
+            })
         }
 
+        let attribute_table_summation = if let Some(value) = self.arguments.attribute_data_size {
+            value
+        } else {
+            parse_quote!(code_attribute_summation)
+        };
+
         quote! {
+            const ATTRIBUTE_TABLE_SIZE: usize = GAP_SERVICE_ATTRIBUTE_COUNT #attribute_table_summation;
+
             #visibility struct #name<'reference, 'values, C: Controller>
             {
-                server: GattServer<'reference, 'values, C, #mutex_type, #attribute_data_size, #mtu>,
+                server: GattServer<'reference, 'values, C, #mutex_type, ATTRIBUTE_TABLE_SIZE, #mtu>,
                 #code_service_definition
             }
 
@@ -112,7 +120,7 @@ impl ServerBuilder {
                 /// Create a new Gatt Server instance.
                 ///
                 /// Requires you to add your own GAP Service.  Use `new_default(name)` or `new_with_config(name, gap_config)` if you want to add a GAP Service.
-                #visibility fn new(stack: Stack<'reference, C>, mut table: AttributeTable<'values, #mutex_type, #attribute_data_size>) -> Self {
+                #visibility fn new(stack: Stack<'reference, C>, mut table: AttributeTable<'values, #mutex_type, ATTRIBUTE_TABLE_SIZE>) -> Self {
 
                     #code_service_init
 
@@ -127,7 +135,7 @@ impl ServerBuilder {
                 /// The maximum length which the name can be is 22 bytes (limited by the size of the advertising packet).
                 /// If a name longer than this is passed, Err() is returned.
                 #visibility fn new_default(stack: Stack<'reference, C>, name: &'values str) -> Result<Self, &'static str> {
-                    let mut table: AttributeTable<'_, #mutex_type, #attribute_data_size> = AttributeTable::new();
+                    let mut table: AttributeTable<'_, #mutex_type, ATTRIBUTE_TABLE_SIZE> = AttributeTable::new();
 
                     GapConfig::default(name).build(&mut table)?;
 
@@ -145,7 +153,7 @@ impl ServerBuilder {
                 /// The maximum length which the device name can be is 22 bytes (limited by the size of the advertising packet).
                 /// If a name longer than this is passed, Err() is returned.
                 #visibility fn new_with_config(stack: Stack<'reference, C>, gap: GapConfig<'values>) -> Result<Self, &'static str> {
-                    let mut table: AttributeTable<'_, #mutex_type, #attribute_data_size> = AttributeTable::new();
+                    let mut table: AttributeTable<'_, #mutex_type, ATTRIBUTE_TABLE_SIZE> = AttributeTable::new();
 
                     gap.build(&mut table)?;
 
@@ -168,7 +176,7 @@ impl ServerBuilder {
 
             impl<'reference, 'values, C: Controller> core::ops::Deref for #name<'reference, 'values, C>
             {
-                type Target = GattServer<'reference, 'values, C, #mutex_type, #attribute_data_size, #mtu>;
+                type Target = GattServer<'reference, 'values, C, #mutex_type, ATTRIBUTE_TABLE_SIZE, #mtu>;
 
                 fn deref(&self) -> &Self::Target {
                     &self.server

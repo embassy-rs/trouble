@@ -24,6 +24,9 @@ const APPEARANCE_UUID: u16 = 0x2a01;
 /// Advertising packet is limited to 31 bytes. 9 of these are used by other GAP data, leaving 22 bytes for the Device Name characteristic
 const DEVICE_NAME_MAX_LENGTH: usize = 22;
 
+/// The number of attributes added by the GAP and GATT services
+pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 4;
+
 pub mod appearance {
     //! The representation of the external appearance of the device.
     //!
