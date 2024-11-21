@@ -61,6 +61,7 @@ where
         }),
     )
     .unwrap();
+
     let ble_runner_task = ble_task(&mut runner);
     let app_task = async {
         loop {
@@ -73,17 +74,16 @@ where
                     // then return to advertising state.
                     select(gatt, counter_task).await;
                 }
-                Err(err) => info!("[adv] error: {:?}", err),
+                Err(_) => info!("[adv] error"),
             }
         }
     };
-    select(ble_runner_task, app_task).await; // runner must run in the background forever whilst any other ble service runs.
+    select(ble_runner_task, app_task).await;
 }
 
+/// This is a background task that is required to run forever alongside any other BLE tasks.
 async fn ble_task<C: Controller>(runner: &mut Runner<'_, C>) -> Result<(), BleHostError<C::Error>> {
-    runner.run().await?;
-    info!("BLE task finished");
-    Ok(())
+    runner.run().await
 }
 
 /// Stream Events until the connection closes.
@@ -163,8 +163,8 @@ async fn example_application_task<C: Controller>(server: &Server<'_, '_, C>, con
     loop {
         tick = tick.wrapping_add(1);
         info!("[adv] notifying connection of tick {}", tick);
-        if let Err(err) = server.notify(&level, &conn, &tick).await {
-            info!("[adv] error notifying connection: {:?}", err);
+        if let Err(_) = server.notify(&level, conn, &tick).await {
+            info!("[adv] error notifying connection");
             break;
         };
         Timer::after_secs(2).await;
