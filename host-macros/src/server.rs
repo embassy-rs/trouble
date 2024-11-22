@@ -105,8 +105,9 @@ impl ServerBuilder {
 
         quote! {
             const _ATTRIBUTE_TABLE_SIZE: usize = #attribute_table_size;
+            // This pattern causes the assertion to happen at compile time
             const _: () = {
-                assert!(_ATTRIBUTE_TABLE_SIZE >= GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation, "Specified attribute table size is insufficient. Please increase attribute_table_size");
+                core::assert!(_ATTRIBUTE_TABLE_SIZE >= GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation, "Specified attribute table size is insufficient. Please increase attribute_table_size or remove the argument entirely to allow automatic sizing of the attribute table.");
             };
 
             #visibility struct #name<'reference, 'values, C: Controller>
