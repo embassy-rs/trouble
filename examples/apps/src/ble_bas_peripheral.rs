@@ -114,20 +114,19 @@ async fn advertise_task<C: Controller>(
                         break;
                     }
                     ConnectionEvent::Gatt { event, .. } => match event {
-                        GattEvent::Read { value_handle } => { 
+                        GattEvent::Read { value_handle } => {
                             if value_handle == level.handle {
                                 let value = server.get(&level);
                                 info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                             }
-                        },
+                        }
                         GattEvent::Write { value_handle } => {
                             if value_handle == level.handle {
                                 let value = server.get(&level);
                                 info!("[gatt] Write Event to Level Characteristic: {:?}", value);
                             }
-                        },
+                        }
                     },
-                    
                 },
                 Either::Second(_) => {
                     tick = tick.wrapping_add(1);
