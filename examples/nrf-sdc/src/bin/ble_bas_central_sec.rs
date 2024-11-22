@@ -5,11 +5,12 @@ use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, rng};
-use embassy_time::{Duration, Timer};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
+use rand_chacha::ChaCha12Rng;
+use rand_core::SeedableRng;
 use static_cell::StaticCell;
-use trouble_example_apps::ble_scanner;
+use trouble_example_apps::ble_bas_central_sec;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -26,7 +27,14 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-const L2CAP_MTU: usize = 27;
+/// How many outgoing L2CAP buffers per link
+const L2CAP_TXQ: u8 = 10;
+
+/// How many incoming L2CAP buffers per link
+const L2CAP_RXQ: u8 = 10;
+
+/// Size of L2CAP packets
+const L2CAP_MTU: usize = 72;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
@@ -36,10 +44,9 @@ fn build_sdc<'d, const N: usize>(
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
     sdc::Builder::new()?
         .support_scan()?
-        .support_ext_scan()?
         .support_central()?
-        .support_ext_central()?
         .central_count(1)?
+        .buffer_cfg(L2CAP_MTU as u8, L2CAP_MTU as u8, L2CAP_TXQ, L2CAP_RXQ)?
         .build(p, rng, mpsl, mem)
 }
 
@@ -64,11 +71,10 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
+    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
 
-    let mut sdc_mem = sdc::Mem::<2712>::new();
+    let mut sdc_mem = sdc::Mem::<6544>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    Timer::after(Duration::from_millis(200)).await;
-
-    ble_scanner::run::<_, L2CAP_MTU>(sdc).await;
+    ble_bas_central_sec::run::<_, _, L2CAP_MTU>(sdc, &mut rng_2).await;
 }
