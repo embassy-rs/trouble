@@ -4,13 +4,10 @@
 //! It should contain one or more Gatt Services, which are decorated with the `#[gatt_service(uuid = "...")]` attribute.
 
 use darling::Error;
-use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::{meta::ParseNestedMeta, parse_quote, spanned::Spanned, Expr, Result};
 
-/// Default size for the memory block storing attribute data in bytes
-const DEFAULT_ATTRIBUTE_DATA_SIZE: usize = 32;
 /// MTU for a legacy BLE packet
 const LEGACY_BLE_MTU: usize = 27;
 
