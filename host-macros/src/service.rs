@@ -199,9 +199,14 @@ impl ServiceBuilder {
                 mutability: syn::FieldMutability::None,
             });
 
-            self.construct_characteristic_static(ch);
+            // At least two attributes will be added to the attribute table for each characteristic:
+            // - The characteristic declaration
+            // - The characteristic's value declaration
+            //
+            // If the characteristic has either the notify or indicate property, a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
+            self.attribute_count += if ch.args.notify || ch.args.indicate { 3 } else { 2 };
 
-            self.attribute_count += 1;
+            self.construct_characteristic_static(ch);
         }
 
         // Processing common to all fields

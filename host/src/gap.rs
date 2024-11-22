@@ -25,7 +25,13 @@ const APPEARANCE_UUID: u16 = 0x2a01;
 const DEVICE_NAME_MAX_LENGTH: usize = 22;
 
 /// The number of attributes added by the GAP and GATT services
-pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 4;
+/// GAP_SERVICE:       1
+/// ├── DEVICE_NAME:   2
+/// └── APPEARANCE:    2
+/// GATT_SERVICE:    + 1
+///                  ---
+///                  = 6
+pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 6;
 
 pub mod appearance {
     //! The representation of the external appearance of the device.
