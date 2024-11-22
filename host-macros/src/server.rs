@@ -32,7 +32,7 @@ impl ServerArgs {
                 self.mutex_type = Some(buffer.parse()?);
             }
             "attribute_table_size" => {
-                let buffer = meta.value().map_err(|_| Error::custom("attribute_table_size msut be followed by `= [size]`. e.g. attribute_table_size = 32".to_string()))?;
+                let buffer = meta.value().map_err(|_| Error::custom("attribute_table_size must be followed by `= [size]`. e.g. attribute_table_size = 32".to_string()))?;
                 self.attribute_table_size = Some(buffer.parse()?);
             }
             "mtu" => {
