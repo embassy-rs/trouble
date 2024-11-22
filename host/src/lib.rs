@@ -42,6 +42,8 @@ pub mod packet_pool;
 mod pdu;
 #[cfg(feature = "peripheral")]
 pub mod peripheral;
+#[cfg(feature = "security")]
+mod security_manager;
 pub mod types;
 
 #[cfg(feature = "peripheral")]
@@ -126,6 +128,16 @@ impl Address {
             addr: BdAddr::new(val),
         }
     }
+
+    /// To bytes
+    pub fn to_bytes(&self) -> [u8; 7] {
+        let mut bytes = [0; 7];
+        bytes[0] = self.kind.into_inner();
+        let mut addr_bytes = self.addr.into_inner();
+        addr_bytes.reverse();
+        bytes[1..].copy_from_slice(&addr_bytes);
+        bytes
+    }
 }
 
 /// Errors returned by the host.
@@ -139,7 +151,7 @@ pub enum BleHostError<E> {
 }
 
 /// Errors related to Host.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Error encoding parameters for HCI commands.
@@ -148,6 +160,9 @@ pub enum Error {
     HciDecode(FromHciBytesError),
     /// Error from the Attribute Protocol.
     Att(AttErrorCode),
+    #[cfg(feature = "security")]
+    /// Error from the security manager
+    Security(crate::security_manager::Reason),
     /// Insufficient space in the buffer.
     InsufficientSpace,
     /// Invalid value.
@@ -245,6 +260,7 @@ pub trait Controller:
     + ControllerCmdSync<LeReadBufferSize>
     + ControllerCmdSync<Disconnect>
     + ControllerCmdSync<SetEventMask>
+    + ControllerCmdSync<SetEventMaskPage2>
     + ControllerCmdSync<LeSetEventMask>
     + ControllerCmdSync<LeSetRandomAddr>
     + ControllerCmdSync<HostBufferSize>
@@ -267,6 +283,8 @@ pub trait Controller:
     + ControllerCmdSync<LeSetAdvParams>
     + for<'t> ControllerCmdSync<LeSetAdvEnable>
     + for<'t> ControllerCmdSync<LeSetScanResponseData>
+    + ControllerCmdSync<LeLongTermKeyRequestReply>
+    + ControllerCmdAsync<LeEnableEncryption>
 {
 }
 
@@ -276,6 +294,7 @@ impl<
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
+            + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
@@ -297,7 +316,9 @@ impl<
             + for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+            + for<'t> ControllerCmdSync<LeSetScanResponseData>
+            + ControllerCmdSync<LeLongTermKeyRequestReply>
+            + ControllerCmdAsync<LeEnableEncryption>,
     > Controller for C
 {
 }
@@ -435,6 +456,14 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     /// Set the random address used by this host.
     pub fn set_random_address(mut self, address: Address) -> Self {
         self.host.address.replace(address);
+        #[cfg(feature = "security")]
+        self.host.security_manager.set_local_address(address);
+        self
+    }
+    /// Set the random seed
+    pub fn set_random_seed(self, random_seed: &[u8; 32]) -> Self {
+        #[cfg(feature = "security")]
+        self.host.security_manager.set_random_seed(random_seed);
         self
     }
 

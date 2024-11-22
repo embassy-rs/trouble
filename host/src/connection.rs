@@ -274,4 +274,9 @@ impl<'stack> Connection<'stack> {
             Err(e) => Err(e),
         }
     }
+
+    /// Get encrypted state of connection
+    pub fn encrypted(&self) -> bool {
+        self.manager.get_encrypted_index(self.index)
+    }
 }

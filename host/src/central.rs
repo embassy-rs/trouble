@@ -143,6 +143,16 @@ impl<'stack, C: Controller> Central<'stack, C> {
         }
         Ok(())
     }
+
+    /// Initiate pairing
+    #[cfg(feature = "security")]
+    pub fn pairing(&self, connection: &Connection<'stack>) -> Result<(), BleHostError<C::Error>> {
+        self.stack
+            .host
+            .security_manager
+            .initiate(connection)
+            .map_err(|e| e.into())
+    }
 }
 
 pub(crate) fn create_phy_params<P: Copy>(phy: P, phys: PhySet) -> PhyParams<P> {
