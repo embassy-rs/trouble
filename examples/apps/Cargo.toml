@@ -33,3 +33,6 @@ log = [
     "trouble-host/log",
     "bt-hci/log"
 ]
+security = [
+    "trouble-host/security",
+]

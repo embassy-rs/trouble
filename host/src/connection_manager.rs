@@ -114,6 +114,17 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
+    pub(crate) fn index(&self, handle: ConnHandle) -> Option<u8> {
+        self.with_mut(|state| {
+            for (i, entry) in state.connections.iter_mut().enumerate() {
+                if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+                    return Some(i as u8);
+                }
+            }
+            None
+        })
+    }
+
     pub(crate) fn is_connected(&self, index: u8) -> bool {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
@@ -548,6 +559,48 @@ impl<'d> ConnectionManager<'d> {
         }
         mtu
     }
+
+    pub(crate) fn get_encrypted_index(&self, index: u8) -> bool {
+        #[cfg(feature = "security")]
+        {
+            self.state.borrow().connections[usize::from(index)].encrypted
+        }
+        #[cfg(not(feature = "security"))]
+        false
+    }
+
+    pub(crate) fn get_encrypted(&self, conn: ConnHandle) -> bool {
+        #[cfg(feature = "security")]
+        {
+            let state = self.state.borrow();
+            for storage in state.connections.iter() {
+                match storage.state {
+                    ConnectionState::Connected if storage.handle.unwrap() == conn => {
+                        return storage.encrypted;
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+        #[cfg(not(feature = "security"))]
+        false
+    }
+
+    pub(crate) fn set_encrypted(&self, conn: ConnHandle, encrypted: bool) {
+        #[cfg(feature = "security")]
+        {
+            let mut state = self.state.borrow_mut();
+            for storage in state.connections.iter_mut() {
+                match storage.state {
+                    ConnectionState::Connected if storage.handle.unwrap() == conn => {
+                        storage.encrypted = encrypted;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 pub struct DisconnectRequest<'a, 'd> {
@@ -615,6 +668,8 @@ pub struct ConnectionStorage {
     pub refcount: u8,
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
+    #[cfg(feature = "security")]
+    pub encrypted: bool,
 }
 
 #[cfg(feature = "connection-metrics")]
@@ -681,6 +736,8 @@ impl ConnectionStorage {
         refcount: 0,
         #[cfg(feature = "connection-metrics")]
         metrics: Metrics::new(),
+        #[cfg(feature = "security")]
+        encrypted: false,
     };
 }
 
