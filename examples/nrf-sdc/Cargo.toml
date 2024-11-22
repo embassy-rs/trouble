@@ -23,7 +23,10 @@ defmt-rtt = "0.4.0"
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
+rand = { version = "0.8.4", default-features = false }
 static_cell = "2"
+rand_core = { version = "0.6"}
+rand_chacha = { version = "0.3", default-features = false }
 
 [profile.release]
 debug = 2
@@ -31,6 +34,7 @@ debug = 2
 [patch.crates-io]
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "551a95436e999b4290b4a33383aa3d6747b63dd9" }
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "551a95436e999b4290b4a33383aa3d6747b63dd9" }
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "3755da87d0ef8660c5f9d4694b928ad7f679299a" }
 
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
 #embassy-nrf = {path = "../../../embassy/embassy-nrf"}
@@ -60,3 +64,14 @@ nrf52840 = [
     "embassy-nrf/nrf52840",
     "nrf-sdc/nrf52840",
 ]
+security = [
+    "trouble-example-apps/security",
+]
+
+[[bin]]
+name = "ble_bas_central_sec"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_sec"
+required-features = ["security"]

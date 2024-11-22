@@ -4,6 +4,7 @@ use crate::codec::Error;
 
 pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
 pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
+pub(crate) const L2CAP_CID_LE_U_SECURITY_MANAGER: u16 = 0x0006;
 pub(crate) const L2CAP_CID_DYN_START: u16 = 0x0040;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

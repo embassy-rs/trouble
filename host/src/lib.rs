@@ -18,6 +18,7 @@ use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
+use rand_core::{CryptoRng, RngCore};
 
 mod fmt;
 
@@ -37,6 +38,8 @@ pub mod packet_pool;
 mod pdu;
 #[cfg(feature = "peripheral")]
 pub mod peripheral;
+#[cfg(feature = "security")]
+mod security_manager;
 pub mod types;
 
 #[cfg(feature = "central")]
@@ -102,8 +105,7 @@ mod attribute_server;
 pub mod gatt;
 
 /// A BLE address.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Address {
     /// Address type.
     pub kind: AddrKind,
@@ -119,6 +121,44 @@ impl Address {
             addr: BdAddr::new(val),
         }
     }
+
+    /// To bytes
+    pub fn to_bytes(&self) -> [u8; 7] {
+        let mut bytes = [0; 7];
+        bytes[0] = self.kind.into_inner();
+        let mut addr_bytes = self.addr.into_inner();
+        addr_bytes.reverse();
+        bytes[1..].copy_from_slice(&addr_bytes);
+        bytes
+    }
+}
+
+impl core::fmt::Display for Address {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let a = self.addr.into_inner();
+        write!(
+            f,
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            a[5], a[4], a[3], a[2], a[1], a[0]
+        )
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Address {
+    fn format(&self, fmt: defmt::Formatter) {
+        let a = self.addr.into_inner();
+        defmt::write!(
+            fmt,
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            a[5],
+            a[4],
+            a[3],
+            a[2],
+            a[1],
+            a[0]
+        )
+    }
 }
 
 /// Errors returned by the host.
@@ -132,7 +172,7 @@ pub enum BleHostError<E> {
 }
 
 /// Errors related to Host.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Error encoding parameters for HCI commands.
@@ -141,6 +181,9 @@ pub enum Error {
     HciDecode(FromHciBytesError),
     /// Error from the Attribute Protocol.
     Att(AttErrorCode),
+    #[cfg(feature = "security")]
+    /// Error from the security manager
+    Security(crate::security_manager::Reason),
     /// Insufficient space in the buffer.
     InsufficientSpace,
     /// Invalid value.
@@ -227,6 +270,7 @@ impl<E> From<codec::Error> for BleHostError<E> {
 }
 
 use bt_hci::cmd::controller_baseband::*;
+use bt_hci::cmd::info::*;
 use bt_hci::cmd::le::*;
 use bt_hci::cmd::link_control::*;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -240,6 +284,7 @@ pub trait Controller:
     + ControllerCmdSync<LeReadBufferSize>
     + ControllerCmdSync<Disconnect>
     + ControllerCmdSync<SetEventMask>
+    + ControllerCmdSync<SetEventMaskPage2>
     + ControllerCmdSync<LeSetEventMask>
     + ControllerCmdSync<LeSetRandomAddr>
     + ControllerCmdSync<HostBufferSize>
@@ -262,6 +307,9 @@ pub trait Controller:
     + ControllerCmdSync<LeSetAdvParams>
     + for<'t> ControllerCmdSync<LeSetAdvEnable>
     + for<'t> ControllerCmdSync<LeSetScanResponseData>
+    + ControllerCmdSync<LeLongTermKeyRequestReply>
+    + ControllerCmdAsync<LeEnableEncryption>
+    + ControllerCmdSync<ReadBdAddr>
 {
 }
 
@@ -271,6 +319,7 @@ impl<
         + ControllerCmdSync<LeReadBufferSize>
         + ControllerCmdSync<Disconnect>
         + ControllerCmdSync<SetEventMask>
+        + ControllerCmdSync<SetEventMaskPage2>
         + ControllerCmdSync<LeSetEventMask>
         + ControllerCmdSync<LeSetRandomAddr>
         + ControllerCmdSync<HostBufferSize>
@@ -292,7 +341,10 @@ impl<
         + for<'t> ControllerCmdSync<LeSetAdvData>
         + ControllerCmdSync<LeSetAdvParams>
         + for<'t> ControllerCmdSync<LeSetAdvEnable>
-        + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+        + for<'t> ControllerCmdSync<LeSetScanResponseData>
+        + ControllerCmdSync<LeLongTermKeyRequestReply>
+        + ControllerCmdAsync<LeEnableEncryption>
+        + ControllerCmdSync<ReadBdAddr>,
 > Controller for C
 {
 }
@@ -431,11 +483,34 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     /// Set the random address used by this host.
     pub fn set_random_address(mut self, address: Address) -> Self {
         self.host.address.replace(address);
+        #[cfg(feature = "security")]
+        self.host.connections.security_manager.set_local_address(address);
+        self
+    }
+    /// Set the random generator seed for random generator used by security manager
+    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
+        #[cfg(feature = "security")]
+        {
+            let mut random_seed = [0u8; 32];
+            _random_generator.fill_bytes(&mut random_seed);
+            self.host
+                .connections
+                .security_manager
+                .set_random_generator_seed(random_seed);
+        }
         self
     }
 
     /// Build the stack.
     pub fn build(&'stack self) -> Host<'stack, C> {
+        #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
+        {
+            if !self.host.connections.security_manager.get_random_generator_seeded() {
+                panic!(
+                    "The security manager random number generator has not been seeded from a cryptographically secure random number generator"
+                )
+            }
+        }
         Host {
             #[cfg(feature = "central")]
             central: Central::new(self),
