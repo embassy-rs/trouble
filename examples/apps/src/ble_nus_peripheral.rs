@@ -1,5 +1,8 @@
 /* Nordic Uart Service (NUS) peripheral example */
-use embassy_futures::join::join3;
+use embassy_futures::{
+    join::join3,
+    select::{select, Either},
+};
 use embassy_time::{Duration, Timer};
 use heapless::Vec;
 use trouble_host::prelude::*;
@@ -13,15 +16,13 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
-const MAX_ATTRIBUTES: usize = 32;
-
 pub const MTU: usize = 120;
 // Aligned to 4 bytes + 3 bytes for header
 pub const ATT_MTU: usize = MTU + 3;
 
 type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
-// GATT Server
+// GATT Server definition
 #[gatt_server]
 struct Server {
     nrf_uart: NrfUartService,
@@ -52,10 +53,11 @@ where
     let server = Server::new_with_config(
         stack,
         GapConfig::Peripheral(PeripheralConfig {
-            name: "TrouBLE",
+            name: "TrouBLE NUS",
             appearance: &appearance::GENERIC_UNKNOWN,
         }),
-    );
+    )
+    .unwrap();
 
     info!("Starting advertising and GATT service");
     let _ = join3(
@@ -70,33 +72,20 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHos
     runner.run().await
 }
 
-async fn gatt_task<C: Controller>(server: &Server<'_, C>) {
-    loop {
-        match server.next().await {
-            Ok(GattEvent::Write { handle, connection: _ }) => {
-                let _ = server.get(handle, |value| {
-                    info!("[gatt] Write event on {:?}. Value written: {:?}", handle, value);
-                });
-            }
-            Ok(GattEvent::Read { handle, connection: _ }) => {
-                info!("[gatt] Read event on {:?}", handle);
-            }
-            Err(e) => {
-                error!("[gatt] Error processing GATT events: {:?}", e);
-            }
-        }
-    }
+async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) -> Result<(), BleHostError<C::Error>> {
+    server.run().await
 }
 
 async fn advertise_task<C: Controller>(
     mut peripheral: Peripheral<'_, C>,
-    server: &Server<'_, C>,
+    server: &Server<'_, '_, C>,
 ) -> Result<(), BleHostError<C::Error>> {
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::CompleteLocalName(b"Trouble NRF UART (NUS) Service"),
+            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+            AdStructure::CompleteLocalName(b"TrouBLE NUS"),
         ],
         &mut adv_data[..],
     )?;
@@ -113,17 +102,51 @@ async fn advertise_task<C: Controller>(
             .await?;
         let conn = advertiser.accept().await?;
 
-        /* TODO: Implement "echo" and push rx bytes back to tx? */
-        // XXX: I have to manually "fix" the size from 123 -> 128
-        let mut tx = [0; 128];
         let mut tick: u8 = 0;
+        let mut buf = Vec::<u8, ATT_MTU>::from_slice(&[0; ATT_MTU]).unwrap();
+
         // Keep connection alive
-        while conn.is_connected() {
-            Timer::after(Duration::from_secs(2)).await;
-            tick = tick.wrapping_add(1);
-            tx[0] = tick;
-            info!("[adv] notifying connection of tick {}", tick);
-            let _ = server.notify(server.nrf_uart.tx, &conn, &tx[..]).await;
+        loop {
+            match select(conn.next(), Timer::after(Duration::from_secs(2))).await {
+                Either::First(event) => match event {
+                    ConnectionEvent::Disconnected { reason } => {
+                        info!("[adv] disconnected: {:?}", reason);
+                        break;
+                    }
+                    ConnectionEvent::Gatt { event, .. } => match event {
+                        GattEvent::Read { value_handle } => {
+                            /*
+                            if value_handle == server.nrf_uart.rx_buf.handle {
+                                let value = server.get(&rx_buf).unwrap();
+                                info!("[gatt] Read Event to rx_buf Characteristic: {:?}", value.len());
+                            } else if value_handle == tx_buf.handle {
+                                let value = server.get(&tx_buf).unwrap();
+                                info!("[gatt] Read Event to tx_buf Characteristic: {:?}", value.len());
+                            }
+                            */
+                            defmt::info!("Read...");
+                        }
+                        GattEvent::Write { value_handle } => {
+                            /*
+                            if value_handle == rx_buf.handle {
+                                let value = server.get(&rx_buf).unwrap();
+                                info!("[gatt] Write Event to rx_buf Characteristic: {:?}", value.len());
+                            } else if value_handle == tx_buf.handle {
+                                let value = server.get(&tx_buf).unwrap();
+                                info!("[gatt] Write Event to tx_buf Characteristic: {:?}", value.len());
+                            }
+                            */
+                            defmt::info!("Write...");
+                        }
+                    },
+                },
+                Either::Second(_) => {
+                    tick = tick.wrapping_add(1);
+                    info!("[adv] notifying connection of tick {}", tick);
+                    buf[0] = tick;
+                    let _ = server.notify(&server.nrf_uart.tx, &conn, &buf).await;
+                }
+            }
         }
     }
 }
