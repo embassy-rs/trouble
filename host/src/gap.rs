@@ -70,8 +70,16 @@ pub mod appearance {
     pub const GENERIC_POWER: [u8; 2] = new(0x01E, 0x000);
     /// Generic Sensor device appearance.
     pub const GENERIC_SENSOR: [u8; 2] = new(0x015, 0x000);
+    /// Generic HID device appearance.
+    pub const GENERIC_HID: [u8; 2] = new(0x00F, 0x000);
+    /// Keyboard device appearance.
+    pub const KEYBOARD: [u8; 2] = new(0x00F, 0x001);
+    /// Mouse device appearance.
+    pub const MOUSE: [u8; 2] = new(0x00F, 0x002);
+    /// Joystick device appearance.
+    pub const JOYSTICK: [u8; 2] = new(0x00F, 0x003);
     /// Gamepad device appearance.
-    pub const GAMEPAD: [u8; 2] = new(0x00F, 0x040);
+    pub const GAMEPAD: [u8; 2] = new(0x00F, 0x004);
 }
 
 /// Configuration for the GAP Service.
