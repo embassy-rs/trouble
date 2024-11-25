@@ -60,32 +60,37 @@ pub use peripheral::*;
 
 #[allow(missing_docs)]
 pub mod prelude {
+    pub use super::att::AttErrorCode;
+    pub use super::{BleHostError, Controller, Error, HostResources, Stack};
+    pub use crate::connection::*;
+    pub use crate::host::{ControlRunner, HostMetrics, Runner, RxRunner, TxRunner};
+    pub use crate::l2cap::*;
+    pub use crate::packet_pool::{PacketPool, Qos as PacketQos};
+    pub use crate::Address;
+
     #[cfg(feature = "derive")]
     pub use heapless::String as HeaplessString;
     #[cfg(feature = "derive")]
     pub use trouble_host_macros::*;
 
-    pub use super::att::AttErrorCode;
-    pub use super::{BleHostError, Controller, Error, HostResources, Stack};
-    #[cfg(feature = "peripheral")]
-    pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
     pub use crate::attribute::*;
-    #[cfg(feature = "central")]
-    pub use crate::central::*;
-    pub use crate::connection::*;
     #[cfg(feature = "gatt")]
     pub use crate::gap::*;
     #[cfg(feature = "gatt")]
     pub use crate::gatt::*;
-    pub use crate::host::{ControlRunner, HostMetrics, Runner, RxRunner, TxRunner};
-    pub use crate::l2cap::*;
-    pub use crate::packet_pool::{PacketPool, Qos as PacketQos};
+    #[cfg(feature = "gatt")]
+    pub use crate::types::gatt_traits::{FixedGattValue, GattValue};
+
+    #[cfg(feature = "central")]
+    pub use crate::central::*;
+
+    #[cfg(feature = "peripheral")]
+    pub use crate::advertise::*;
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
     #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
-    pub use crate::Address;
 }
 
 #[cfg(feature = "gatt")]

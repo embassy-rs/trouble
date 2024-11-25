@@ -1,7 +1,7 @@
 {   
     "[rust]": {
         "editor.formatOnSave": true,
-        "editor.formatOnSaveMode": "modifications",
+        "editor.formatOnSaveMode": "file",
     },
     "[toml]": {
         "editor.formatOnSave": false

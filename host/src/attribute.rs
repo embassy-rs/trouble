@@ -439,11 +439,11 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
     /// an error is returned
-    pub fn set<T: GattValue>(&self, handle: &Characteristic<T>, input: &T) -> Result<(), Error> {
+    pub fn set<T: GattValue>(&self, characteristic: &Characteristic<T>, input: &T) -> Result<(), Error> {
         let gatt_value = input.to_gatt();
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
-                if att.handle == handle.handle {
+                if att.handle == characteristic.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
                         if value.len() == gatt_value.len() {
                             value.copy_from_slice(gatt_value);
@@ -463,10 +463,10 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<T: GattValue>(&self, handle: &Characteristic<T>) -> Result<T, Error> {
+    pub fn get<T: GattValue>(&self, characteristic: &Characteristic<T>) -> Result<T, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
-                if att.handle == handle.handle {
+                if att.handle == characteristic.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
                         let v = <T as GattValue>::from_gatt(value).map_err(|_| Error::InvalidValue)?;
                         return Ok(v);
