@@ -15,10 +15,8 @@ const MAX_ATTRIBUTES: usize = 10;
 
 type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
-const ATTRIBUTE_DATA_SIZE: usize = 10;
-
 // GATT Server definition
-#[gatt_server(attribute_data_size = ATTRIBUTE_DATA_SIZE)]
+#[gatt_server]
 struct Server {
     battery_service: BatteryService,
 }

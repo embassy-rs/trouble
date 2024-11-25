@@ -64,6 +64,7 @@ impl syn::parse::Parse for ServiceArgs {
 pub(crate) struct ServiceBuilder {
     properties: syn::ItemStruct,
     args: ServiceArgs,
+    attribute_count: usize,
     code_impl: TokenStream2,
     code_build_chars: TokenStream2,
     code_struct_init: TokenStream2,
@@ -75,6 +76,7 @@ impl ServiceBuilder {
         Self {
             properties,
             args,
+            attribute_count: 1, // Service counts as an attribute
             code_struct_init: TokenStream2::new(),
             code_impl: TokenStream2::new(),
             code_fields: TokenStream2::new(),
@@ -91,6 +93,7 @@ impl ServiceBuilder {
         let fields = self.code_fields;
         let code_build_chars = self.code_build_chars;
         let uuid = self.args.uuid;
+        let attribute_count = self.attribute_count;
         let read_callback = self
             .args
             .on_read
@@ -104,6 +107,8 @@ impl ServiceBuilder {
 
             #[allow(unused)]
             impl #struct_name {
+                const ATTRIBUTE_COUNT: usize = #attribute_count;
+
                 #visibility fn new<M, const MAX_ATTRIBUTES: usize>(table: &mut AttributeTable<'_, M, MAX_ATTRIBUTES>) -> Self
                 where
                     M: embassy_sync::blocking_mutex::raw::RawMutex,
@@ -152,6 +157,7 @@ impl ServiceBuilder {
                 #write_callback
 
                 // TODO: Descriptors
+                // NOTE: Descriptors are attributes too - will need to increment self.attribute_count
 
                 builder.build()
             };
@@ -192,6 +198,13 @@ impl ServiceBuilder {
                 vis: ch.vis.clone(),
                 mutability: syn::FieldMutability::None,
             });
+
+            // At least two attributes will be added to the attribute table for each characteristic:
+            // - The characteristic declaration
+            // - The characteristic's value declaration
+            //
+            // If the characteristic has either the notify or indicate property, a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
+            self.attribute_count += if ch.args.notify || ch.args.indicate { 3 } else { 2 };
 
             self.construct_characteristic_static(ch);
         }
