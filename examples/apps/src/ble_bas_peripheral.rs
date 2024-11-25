@@ -69,7 +69,7 @@ where
                 Ok(conn) => {
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let connection_task = conn_task(&server, &conn);
-                    let counter_task = example_application_task(&server, &conn);
+                    let counter_task = counter_task(&server, &conn);
                     // run until any task ends (usually because the connection has been closed),
                     // then return to advertising state.
                     select(connection_task, counter_task).await;
@@ -174,7 +174,7 @@ async fn advertise<'a, C: Controller>(
 }
 
 /// Example task to use the BLE notifier interface.
-async fn example_application_task<C: Controller>(server: &Server<'_, '_, C>, conn: &Connection<'_>) {
+async fn counter_task<C: Controller>(server: &Server<'_, '_, C>, conn: &Connection<'_>) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
     loop {
