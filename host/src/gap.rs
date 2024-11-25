@@ -51,8 +51,10 @@ pub mod appearance {
     ///
     /// ```rust
     /// use trouble_host::prelude::*;
-    ///
-    /// const GAMEPAD: &[u8; 2] = &appearance::new(0x00F, 0x040);
+    /// // Commonly used appearance values are included in this module:
+    /// const HID_GAMEPAD: &[u8; 2] = &appearance::HID_GAMEPAD;
+    /// // Or use raw values for category/subcategory:
+    /// const HID_GAMEPAD: &[u8; 2] = &appearance::new(0x00F, 0x004);
     /// ```
     pub const fn new(category: u8, subcategory: u8) -> [u8; 2] {
         (((category as u16) << 6) | (subcategory as u16)).to_le_bytes()
@@ -73,13 +75,13 @@ pub mod appearance {
     /// Generic HID device appearance.
     pub const GENERIC_HID: [u8; 2] = new(0x00F, 0x000);
     /// Keyboard device appearance.
-    pub const KEYBOARD: [u8; 2] = new(0x00F, 0x001);
+    pub const HID_KEYBOARD: [u8; 2] = new(0x00F, 0x001);
     /// Mouse device appearance.
-    pub const MOUSE: [u8; 2] = new(0x00F, 0x002);
+    pub const HID_MOUSE: [u8; 2] = new(0x00F, 0x002);
     /// Joystick device appearance.
-    pub const JOYSTICK: [u8; 2] = new(0x00F, 0x003);
+    pub const HID_JOYSTICK: [u8; 2] = new(0x00F, 0x003);
     /// Gamepad device appearance.
-    pub const GAMEPAD: [u8; 2] = new(0x00F, 0x004);
+    pub const HID_GAMEPAD: [u8; 2] = new(0x00F, 0x004);
 }
 
 /// Configuration for the GAP Service.
