@@ -1,4 +1,4 @@
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::select;
 use embassy_time::Timer;
 use trouble_host::prelude::*;
 
@@ -44,9 +44,8 @@ pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
-
-    // Using a fixed seed means the "random" address will be the same every time the program runs, 
-    // which can be useful for testing. If truly random addresses are required, a different, 
+    // Using a fixed seed means the "random" address will be the same every time the program runs,
+    // which can be useful for testing. If truly random addresses are required, a different,
     // dynamically generated seed should be used.
     let address = Address::random([0x41, 0x5A, 0xE3, 0x1E, 0x83, 0xE7]);
     info!("Our address = {:?}", address);
@@ -65,73 +64,75 @@ where
         }),
     )
     .unwrap();
-
-    let ble_runner_task = ble_task(runner);
+    let ble_background_tasks = select(ble_task(runner), gatt_task(&server));
     let app_task = async {
         loop {
             match advertise("Trouble Example", &mut peripheral).await {
                 Ok(conn) => {
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
-                    let gatt = gatt_task(&server, &conn);
+                    let connection_task = conn_task(&server, &conn);
                     let counter_task = example_application_task(&server, &conn);
                     // run until any task ends (usually because the connection has been closed),
                     // then return to advertising state.
-                    select(gatt, counter_task).await;
+                    select(connection_task, counter_task).await;
                 }
                 Err(_) => info!("[adv] error"),
             }
         }
     };
-    select(ble_runner_task, app_task).await;
+    select(ble_background_tasks, app_task).await;
 }
 
 /// This is a background task that is required to run forever alongside any other BLE tasks.
-/// 
+///
 /// ## Alternative
-/// 
+///
 /// If you didn't require this to be generic for your application, you could statically spawn this with i.e.
-/// 
+///
 /// ```rust [ignore]
-/// 
+///
 /// #[embassy_executor::task]
 /// async fn ble_task(mut runner: Runner<'static, SoftdeviceController<'static>>) {
 ///     runner.run().await;
 /// }
-/// 
+///
 /// spawner.must_spawn(ble_task(runner));
 /// ```
 async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHostError<C::Error>> {
     runner.run().await
 }
 
+/// Run the Gatt Server.
+async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) -> Result<(), BleHostError<C::Error>> {
+    server.run().await
+}
+
 /// Stream Events until the connection closes.
-async fn gatt_task<C: Controller>(
+async fn conn_task<C: Controller>(
     server: &Server<'_, '_, C>,
     conn: &Connection<'_>,
 ) -> Result<(), BleHostError<C::Error>> {
     let level = server.battery_service.level;
     loop {
-        if let Either::First(event) = select(conn.next(), server.run()).await {
-            match event {
-                ConnectionEvent::Disconnected { reason } => {
-                    info!("[adv] disconnected: {:?}", reason);
-                    break;
-                }
-                ConnectionEvent::Gatt { event, .. } => match event {
-                    GattEvent::Read { value_handle } => {
-                        if value_handle == level.handle {
-                            let value = server.get(&level);
-                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-                        }
-                    }
-                    GattEvent::Write { value_handle } => {
-                        if value_handle == level.handle {
-                            let value = server.get(&level);
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", value);
-                        }
-                    }
-                },
+        match conn.next().await {
+            ConnectionEvent::Disconnected { reason } => {
+                info!("[gatt] disconnected: {:?}", reason);
+                break;
             }
+            ConnectionEvent::Gatt { event, .. } => match event {
+                GattEvent::Read { value_handle } => {
+                    if value_handle == level.handle {
+                        let value = server.get(&level);
+                        info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                    }
+                }
+                GattEvent::Write { value_handle } => {
+                    if value_handle == level.handle {
+                        let value = server.get(&level);
+                        info!("[gatt] Write Event to Level Characteristic: {:?}", value);
+                    }
+                }
+            },
         }
     }
     info!("[gatt] task finished");
@@ -181,7 +182,7 @@ async fn example_application_task<C: Controller>(server: &Server<'_, '_, C>, con
     loop {
         tick = tick.wrapping_add(1);
         info!("[adv] notifying connection of tick {}", tick);
-        if let Err(_) = server.notify(&level, conn, &tick).await {
+        if server.notify(&level, conn, &tick).await.is_err() {
             info!("[adv] error notifying connection");
             break;
         };
