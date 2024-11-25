@@ -107,7 +107,7 @@ impl ServiceBuilder {
 
             #[allow(unused)]
             impl #struct_name {
-                const ATTRIBUTE_COUNT: usize = #attribute_count;
+                #visibility const ATTRIBUTE_COUNT: usize = #attribute_count;
 
                 #visibility fn new<M, const MAX_ATTRIBUTES: usize>(table: &mut AttributeTable<'_, M, MAX_ATTRIBUTES>) -> Self
                 where
