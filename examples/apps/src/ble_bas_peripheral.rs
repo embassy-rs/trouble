@@ -18,10 +18,8 @@ const MAX_ATTRIBUTES: usize = 10;
 
 type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
-const ATTRIBUTE_DATA_SIZE: usize = 10;
-
 // GATT Server definition
-#[gatt_server(attribute_data_size = ATTRIBUTE_DATA_SIZE)]
+#[gatt_server]
 struct Server {
     battery_service: BatteryService,
 }
@@ -116,20 +114,19 @@ async fn advertise_task<C: Controller>(
                         break;
                     }
                     ConnectionEvent::Gatt { event, .. } => match event {
-                        GattEvent::Read { value_handle } => { 
+                        GattEvent::Read { value_handle } => {
                             if value_handle == level.handle {
                                 let value = server.get(&level);
                                 info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                             }
-                        },
+                        }
                         GattEvent::Write { value_handle } => {
                             if value_handle == level.handle {
                                 let value = server.get(&level);
                                 info!("[gatt] Write Event to Level Characteristic: {:?}", value);
                             }
-                        },
+                        }
                     },
-                    
                 },
                 Either::Second(_) => {
                     tick = tick.wrapping_add(1);
