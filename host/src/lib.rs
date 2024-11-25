@@ -22,6 +22,7 @@ use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::{PacketPool, Qos};
+use crate::security_manager::SecurityManagerError;
 
 mod fmt;
 
@@ -39,6 +40,7 @@ mod cursor;
 pub mod packet_pool;
 mod pdu;
 pub mod peripheral;
+mod security_manager;
 pub mod types;
 
 pub use packet_pool::Qos as PacketQos;
@@ -135,6 +137,8 @@ pub enum Error {
     HciDecode(FromHciBytesError),
     /// Error from the Attribute Protocol.
     Att(AttErrorCode),
+    /// Error from the security manager
+    Security(SecurityManagerError),
     /// Insufficient space in the buffer.
     InsufficientSpace,
     /// Invalid value.

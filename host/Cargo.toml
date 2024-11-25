@@ -9,6 +9,7 @@ categories = ["embedded", "hardware-support", "no-std"]
 resolver = "2"
 
 [dependencies]
+bitfield-struct = "0.9.2"
 bt-hci = { version = "0.1.1", features = ["embassy-time"] }
 embedded-io-async = { version = "0.6" }
 embedded-io = { version = "0.6" }
