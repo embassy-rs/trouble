@@ -3,6 +3,8 @@ use core::cell::RefCell;
 use core::fmt;
 use core::marker::PhantomData;
 
+use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
+use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
@@ -12,36 +14,6 @@ use crate::prelude::Connection;
 use crate::types::gatt_traits::GattValue;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
-
-/// UUID for generic access service
-pub const GENERIC_ACCESS_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1800u16.to_le_bytes());
-
-/// UUID for device name characteristic
-pub const CHARACTERISTIC_DEVICE_NAME_UUID16: Uuid = Uuid::Uuid16(0x2A00u16.to_le_bytes());
-
-/// UUID for appearance characteristic
-pub const CHARACTERISTIC_APPEARANCE_UUID16: Uuid = Uuid::Uuid16(0x2A03u16.to_le_bytes());
-
-/// UUID for generic attribute service
-pub const GENERIC_ATTRIBUTE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
-
-/// UUID for primary service
-pub const PRIMARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2800u16.to_le_bytes());
-
-/// UUID for secondary service
-pub const SECONDARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2801u16.to_le_bytes());
-
-/// UUID for include service
-pub const INCLUDE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2802u16.to_le_bytes());
-
-/// UUID for characteristic declaration
-pub const CHARACTERISTIC_UUID16: Uuid = Uuid::Uuid16(0x2803u16.to_le_bytes());
-
-/// UUID for characteristic notification/indication
-pub const CHARACTERISTIC_CCCD_UUID16: Uuid = Uuid::Uuid16(0x2902u16.to_le_bytes());
-
-/// UUID for generic attribute.
-pub const GENERIC_ATTRIBUTE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
@@ -396,7 +368,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
         let handle = self.handle;
         self.push(Attribute {
-            uuid: PRIMARY_SERVICE_UUID16,
+            uuid: PRIMARY_SERVICE.into(),
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Service { uuid: service.uuid },
@@ -548,7 +520,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         let next = self.table.handle + 1;
         let cccd = self.table.handle + 2;
         self.table.push(Attribute {
-            uuid: CHARACTERISTIC_UUID16,
+            uuid: CHARACTERISTIC.into(),
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Declaration {
@@ -573,7 +545,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         // Add optional CCCD handle
         let cccd_handle = if props.any(&[CharacteristicProp::Notify, CharacteristicProp::Indicate]) {
             self.table.push(Attribute {
-                uuid: CHARACTERISTIC_CCCD_UUID16,
+                uuid: CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
                 handle: 0,
                 last_handle_in_group: 0,
                 data: AttributeData::Cccd {
