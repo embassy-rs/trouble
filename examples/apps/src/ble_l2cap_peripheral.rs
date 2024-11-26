@@ -17,7 +17,7 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
+type Resources = HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
 pub async fn run<C>(controller: C)
 where
@@ -28,9 +28,8 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let (stack, mut peripheral, _, mut runner) = trouble_host::new(controller, &mut resources)
-        .set_random_address(address)
-        .build();
+    let host = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let (stack, mut peripheral, _, mut runner) = host.build();
 
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(

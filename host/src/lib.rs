@@ -292,13 +292,7 @@ impl<
 ///
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<
-    C: Controller,
-    const CONNS: usize,
-    const CHANNELS: usize,
-    const L2CAP_MTU: usize,
-    const ADV_SETS: usize = 1,
-> {
+pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize = 1> {
     qos: Qos,
     rx_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }, CHANNELS>>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
@@ -307,11 +301,10 @@ pub struct HostResources<
     channels_rx: MaybeUninit<[PacketChannel<'static, { config::L2CAP_RX_QUEUE_SIZE }>; CHANNELS]>,
     sar: MaybeUninit<[SarType<'static>; CONNS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
-    inner: MaybeUninit<BleHost<'static, C>>,
 }
 
-impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
-    HostResources<C, CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
+    HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
 {
     /// Create a new instance of host resources with the provided QoS requirements for packets.
     pub fn new(qos: Qos) -> Self {
@@ -324,7 +317,6 @@ impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: 
             channels: MaybeUninit::uninit(),
             channels_rx: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
-            inner: MaybeUninit::uninit(),
         }
     }
 }
@@ -340,8 +332,8 @@ pub fn new<
     const ADV_SETS: usize,
 >(
     controller: C,
-    resources: &'d mut HostResources<C, CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
-) -> Builder<'d, C> {
+    resources: &'d mut HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
+) -> Host<'d, C> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         core::mem::transmute(x)
     }
@@ -369,7 +361,7 @@ pub fn new<
     let sar = unsafe { transmute_slice(sar) };
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles = unsafe { transmute_slice(advertise_handles) };
-    let host = BleHost::new(
+    let inner = BleHost::new(
         controller,
         rx_pool,
         connections,
@@ -379,42 +371,41 @@ pub fn new<
         sar,
         advertise_handles,
     );
+    let inner = unsafe { core::mem::transmute::<BleHost<'static, C>, BleHost<'d, C>>(inner) };
 
-    let host = &mut *resources.inner.write(host);
-    let host = unsafe { core::mem::transmute::<&mut BleHost<'_, C>, &'d mut BleHost<'d, C>>(host) };
-    Builder { host }
+    Host { inner }
 }
 
 /// Type for configuring the BLE host.
-pub struct Builder<'d, C: Controller> {
-    host: &'d mut BleHost<'d, C>,
+pub struct Host<'d, C: Controller> {
+    inner: BleHost<'d, C>,
 }
 
-impl<'d, C: Controller> Builder<'d, C> {
+impl<'d, C: Controller> Host<'d, C> {
     /// Set the random address used by this host.
-    pub fn set_random_address(self, address: Address) -> Self {
-        self.host.address.replace(address);
+    pub fn set_random_address(mut self, address: Address) -> Self {
+        self.inner.address.replace(address);
         self
     }
 
     /// Build the stack.
     #[cfg(all(feature = "central", feature = "peripheral"))]
-    pub fn build(self) -> (Stack<'d, C>, Peripheral<'d, C>, Central<'d, C>, Runner<'d, C>) {
-        let stack = Stack::new(self.host);
+    pub fn build(&'d self) -> (Stack<'d, C>, Peripheral<'d, C>, Central<'d, C>, Runner<'d, C>) {
+        let stack = Stack::new(&self.inner);
         (stack, Peripheral::new(stack), Central::new(stack), Runner::new(stack))
     }
 
     /// Build the stack.
     #[cfg(all(not(feature = "central"), feature = "peripheral"))]
-    pub fn build(self) -> (Stack<'d, C>, Peripheral<'d, C>, Runner<'d, C>) {
-        let stack = Stack::new(self.host);
+    pub fn build(&'d self) -> (Stack<'d, C>, Peripheral<'d, C>, Runner<'d, C>) {
+        let stack = Stack::new(self);
         (stack, Peripheral::new(stack), Runner::new(stack))
     }
 
     /// Build the stack.
     #[cfg(all(feature = "central", not(feature = "peripheral")))]
-    pub fn build(self) -> (Stack<'d, C>, Central<'d, C>, Runner<'d, C>) {
-        let stack = Stack::new(self.host);
+    pub fn build(&'d self) -> (Stack<'d, C>, Central<'d, C>, Runner<'d, C>) {
+        let stack = Stack::new(&self.inner);
         (stack, Central::new(stack), Runner::new(stack))
     }
 }

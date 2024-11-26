@@ -13,7 +13,7 @@ const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
 const MAX_ATTRIBUTES: usize = 10;
 
-type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
+type Resources = HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
 // GATT Server definition
 #[gatt_server]

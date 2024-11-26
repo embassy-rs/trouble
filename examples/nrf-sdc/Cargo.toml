@@ -16,6 +16,7 @@ nrf-sdc = { version = "0.1.0", default-features = false, features = ["defmt", "p
 nrf-mpsl = { version = "0.1.0", default-features = false, features = ["defmt", "critical-section-impl"] }
 bt-hci = { version = "0.1.1", default-features = false, features = ["defmt"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
+trouble-host = { path = "../../host", features = ["derive"] }
 
 defmt = "0.3"
 defmt-rtt = "0.4.0"
