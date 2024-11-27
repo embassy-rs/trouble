@@ -69,7 +69,7 @@ async fn gatt_client_server() {
             .build();
         let gap = GapConfig::Peripheral(PeripheralConfig {
             name: &name,
-            appearance: &appearance::GENERIC_POWER,
+            appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
         });
         let server: Server<common::Controller> = Server::new_with_config(
             stack,

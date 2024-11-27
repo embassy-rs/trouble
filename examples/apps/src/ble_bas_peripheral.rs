@@ -58,7 +58,7 @@ where
         stack,
         GapConfig::Peripheral(PeripheralConfig {
             name: "TrouBLE",
-            appearance: &appearance::GENERIC_POWER,
+            appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
         }),
     )
     .unwrap();
