@@ -502,3 +502,22 @@ impl<'d> Iterator for AdStructureIter<'d> {
         Some(self.read())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adv_name_truncate() {
+        let mut adv_data = [0; 31];
+        assert!(AdStructure::encode_slice(
+            &[
+                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+                AdStructure::CompleteLocalName(b"12345678901234567890123"),
+            ],
+            &mut adv_data[..],
+        )
+        .is_err());
+    }
+}
