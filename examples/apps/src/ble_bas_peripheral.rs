@@ -74,7 +74,11 @@ where
                     // then return to advertising state.
                     select(connection_task, counter_task).await;
                 }
-                Err(_) => info!("[adv] error"),
+                Err(e) => {
+                    #[cfg(feature = "defmt")]
+                    let e = defmt::Debug2Format(&e);
+                    panic!("[adv] error: {:?}", e);
+                }
             }
         }
     };
@@ -142,13 +146,6 @@ async fn advertise<'a, C: Controller>(
     name: &'a str,
     peripheral: &mut Peripheral<'a, C>,
 ) -> Result<Connection<'a>, BleHostError<C::Error>> {
-    let name = if name.len() > 22 {
-        let truncated_name = &name[..22];
-        info!("Name truncated to {}", truncated_name);
-        truncated_name
-    } else {
-        name
-    };
     let mut advertiser_data = [0; 31];
     AdStructure::encode_slice(
         &[
