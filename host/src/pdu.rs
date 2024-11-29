@@ -16,13 +16,13 @@ impl<'d> Pdu<'d> {
     }
 }
 
-impl<'d> AsRef<[u8]> for Pdu<'d> {
+impl AsRef<[u8]> for Pdu<'_> {
     fn as_ref(&self) -> &[u8] {
         &self.packet.as_ref()[..self.len]
     }
 }
 
-impl<'d> AsMut<[u8]> for Pdu<'d> {
+impl AsMut<[u8]> for Pdu<'_> {
     fn as_mut(&mut self) -> &mut [u8] {
         &mut self.packet.as_mut()[..self.len]
     }

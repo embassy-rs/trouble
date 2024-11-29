@@ -70,7 +70,7 @@ impl<'d, const QLEN: usize> PacketChannel<'d, QLEN> {
     }
 }
 
-impl<'d> State<'d> {
+impl State<'_> {
     fn print(&self, verbose: bool) {
         for (idx, storage) in self.channels.iter().enumerate() {
             if verbose || storage.state != ChannelState::Disconnected {
@@ -800,7 +800,7 @@ pub(crate) trait DynamicChannelManager {
     fn print(&self, index: ChannelIndex, f: defmt::Formatter);
 }
 
-impl<'d, const RXQ: usize> DynamicChannelManager for ChannelManager<'d, RXQ> {
+impl<const RXQ: usize> DynamicChannelManager for ChannelManager<'_, RXQ> {
     fn inc_ref(&self, index: ChannelIndex) {
         ChannelManager::inc_ref(self, index)
     }
@@ -987,7 +987,7 @@ impl<'reference, 'state> CreditGrant<'reference, 'state> {
     }
 }
 
-impl<'reference, 'state> Drop for CreditGrant<'reference, 'state> {
+impl Drop for CreditGrant<'_, '_> {
     fn drop(&mut self) {
         if self.credits > 0 {
             let mut state = self.state.borrow_mut();

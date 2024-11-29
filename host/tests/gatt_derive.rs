@@ -118,23 +118,20 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            ConnectionEvent::Gatt { event, .. } => match event {
-                                GattEvent::Write {
+                            ConnectionEvent::Gatt { event, .. } => if let GattEvent::Write {
                                     value_handle: handle
-                                } => {
-                                    let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
-                                    let value: u8 = server.server().table().get(&characteristic).unwrap();
-                                    assert_eq!(expected, value);
-                                    expected = expected.wrapping_add(2);
-                                    writes += 1;
-                                    if writes == 2 {
-                                        println!("expected value written twice, test pass");
-                                        // NOTE: Ensure that adapter gets polled again
-                                        tokio::time::sleep(Duration::from_secs(2)).await;
-                                        done = true;
-                                    }
+                                } = event {
+                                let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
+                                let value: u8 = server.server().table().get(&characteristic).unwrap();
+                                assert_eq!(expected, value);
+                                expected = expected.wrapping_add(2);
+                                writes += 1;
+                                if writes == 2 {
+                                    println!("expected value written twice, test pass");
+                                    // NOTE: Ensure that adapter gets polled again
+                                    tokio::time::sleep(Duration::from_secs(2)).await;
+                                    done = true;
                                 }
-                                _ => {},
                             }
                         }
                     }

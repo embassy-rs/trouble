@@ -14,7 +14,7 @@ pub struct L2capChannel<'d> {
     manager: &'d dyn DynamicChannelManager,
 }
 
-impl<'d> Clone for L2capChannel<'d> {
+impl Clone for L2capChannel<'_> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
         L2capChannel::new(self.index, self.manager)
@@ -29,7 +29,7 @@ impl defmt::Format for L2capChannel<'_> {
     }
 }
 
-impl<'d> Drop for L2capChannel<'d> {
+impl Drop for L2capChannel<'_> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);
     }
