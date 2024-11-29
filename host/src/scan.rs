@@ -22,7 +22,7 @@ pub struct ScanConfig<'d> {
     pub timeout: Duration,
 }
 
-impl<'d> Default for ScanConfig<'d> {
+impl Default for ScanConfig<'_> {
     fn default() -> Self {
         Self {
             active: true,
@@ -119,13 +119,13 @@ impl<'a> Iterator for ScanReportIter<'a> {
     }
 }
 
-impl<'a> ExactSizeIterator for ScanReportIter<'a> {
+impl ExactSizeIterator for ScanReportIter<'_> {
     fn len(&self) -> usize {
         self.len
     }
 }
 
-impl<'a> FusedIterator for ScanReportIter<'a> {}
+impl FusedIterator for ScanReportIter<'_> {}
 
 /// Iterator over extended scan reports.
 pub struct ExtScanReportIter<'a> {
@@ -159,10 +159,10 @@ impl<'a> Iterator for ExtScanReportIter<'a> {
     }
 }
 
-impl<'a> ExactSizeIterator for ExtScanReportIter<'a> {
+impl ExactSizeIterator for ExtScanReportIter<'_> {
     fn len(&self) -> usize {
         self.len
     }
 }
 
-impl<'a> FusedIterator for ExtScanReportIter<'a> {}
+impl FusedIterator for ExtScanReportIter<'_> {}

@@ -103,7 +103,7 @@ pub(crate) enum AttributeData<'d> {
     },
 }
 
-impl<'d> AttributeData<'d> {
+impl AttributeData<'_> {
     pub(crate) fn readable(&self) -> bool {
         match self {
             Self::Data { props, value } => props.0 & (CharacteristicProp::Read as u8) != 0,
@@ -256,7 +256,7 @@ impl<'d> AttributeData<'d> {
     }
 }
 
-impl<'a> fmt::Debug for Attribute<'a> {
+impl fmt::Debug for Attribute<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Attribute")
             .field("uuid", &self.uuid)
@@ -314,7 +314,7 @@ impl<'d, const MAX: usize> InnerTable<'d, MAX> {
     }
 }
 
-impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
+impl<M: RawMutex, const MAX: usize> Default for AttributeTable<'_, M, MAX> {
     fn default() -> Self {
         Self::new()
     }
@@ -509,7 +509,7 @@ pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
+impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     fn add_characteristic_internal<T: GattValue>(
         &mut self,
         uuid: Uuid,
@@ -609,7 +609,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
     }
 }
 
-impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, MAX> {
+impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
     fn drop(&mut self) {
         let last_handle = self.table.handle + 1;
         self.table.with_inner(|inner| {
@@ -639,7 +639,7 @@ pub struct CharacteristicBuilder<'r, 'd, T: GattValue, M: RawMutex, const MAX: u
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, T, M, MAX> {
+impl<'d, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
     fn add_descriptor_internal(
         &mut self,
         uuid: Uuid,
@@ -727,7 +727,7 @@ pub struct AttributeIterator<'a, 'd> {
     len: usize,
 }
 
-impl<'a, 'd> AttributeIterator<'a, 'd> {
+impl<'d> AttributeIterator<'_, 'd> {
     /// Return next attribute in iterator.
     pub fn next<'m>(&'m mut self) -> Option<&'m mut Attribute<'d>> {
         if self.pos < self.len {
@@ -794,7 +794,7 @@ pub struct AttributeValue<'d, M: RawMutex> {
     value: Mutex<M, &'d mut [u8]>,
 }
 
-impl<'d, M: RawMutex> AttributeValue<'d, M> {}
+impl<M: RawMutex> AttributeValue<'_, M> {}
 
 /// CCCD flag values.
 #[derive(Clone, Copy)]

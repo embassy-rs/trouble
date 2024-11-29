@@ -238,7 +238,7 @@ impl<'d, C: Controller> Advertiser<'d, C> {
     }
 }
 
-impl<'d, C: Controller> Drop for Advertiser<'d, C> {
+impl<C: Controller> Drop for Advertiser<'_, C> {
     fn drop(&mut self) {
         self.stack.host.advertise_command_state.cancel(self.extended);
     }

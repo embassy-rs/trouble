@@ -129,7 +129,7 @@ pub(crate) struct RawAdvertisement<'d> {
     pub(crate) peer: Option<Address>,
 }
 
-impl<'d> Default for RawAdvertisement<'d> {
+impl Default for RawAdvertisement<'_> {
     fn default() -> Self {
         Self {
             props: AdvEventProps::new()
@@ -403,7 +403,7 @@ pub enum AdStructure<'a> {
     },
 }
 
-impl<'d> AdStructure<'d> {
+impl AdStructure<'_> {
     /// Encode a slice of advertisement structures into a buffer.
     pub fn encode_slice(data: &[AdStructure<'_>], dest: &mut [u8]) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(dest);

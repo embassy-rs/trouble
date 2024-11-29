@@ -456,10 +456,10 @@ impl<'d, C: Controller> Stack<'d, C> {
     }
 }
 
-impl<'d, C> Clone for Stack<'d, C> {
+impl<C> Clone for Stack<'_, C> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'d, C> Copy for Stack<'d, C> {}
+impl<C> Copy for Stack<'_, C> {}
