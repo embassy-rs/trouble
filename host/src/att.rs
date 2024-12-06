@@ -173,13 +173,13 @@ pub enum AttRsp<'d> {
     Write,
 }
 
-impl<'d> codec::Type for AttRsp<'d> {
+impl codec::Type for AttRsp<'_> {
     fn size(&self) -> usize {
         AttRsp::size(self)
     }
 }
 
-impl<'d> codec::Encode for AttRsp<'d> {
+impl codec::Encode for AttRsp<'_> {
     fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
         AttRsp::encode(self, dest)
     }
@@ -196,7 +196,7 @@ pub struct FindByTypeValueIter<'d> {
     cursor: ReadCursor<'d>,
 }
 
-impl<'d> FindByTypeValueIter<'d> {
+impl FindByTypeValueIter<'_> {
     pub fn next(&mut self) -> Option<Result<(u16, u16), crate::Error>> {
         if self.cursor.available() >= 4 {
             let res = (|| {
@@ -325,13 +325,13 @@ impl From<codec::Error> for AttErrorCode {
     }
 }
 
-impl<'d> codec::Type for AttReq<'d> {
+impl codec::Type for AttReq<'_> {
     fn size(&self) -> usize {
         AttReq::size(self)
     }
 }
 
-impl<'d> codec::Encode for AttReq<'d> {
+impl codec::Encode for AttReq<'_> {
     fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
         AttReq::encode(self, dest)
     }

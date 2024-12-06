@@ -19,7 +19,7 @@ struct State<'d> {
     default_att_mtu: u16,
 }
 
-impl<'d> State<'d> {
+impl State<'_> {
     fn print(&self, verbose: bool) {
         for (idx, storage) in self.connections.iter().enumerate() {
             if verbose || storage.state != ConnectionState::Disconnected {
@@ -422,7 +422,7 @@ pub struct DisconnectRequest<'a, 'd> {
     state: &'a RefCell<State<'d>>,
 }
 
-impl<'a, 'd> DisconnectRequest<'a, 'd> {
+impl DisconnectRequest<'_, '_> {
     pub fn handle(&self) -> ConnHandle {
         self.handle
     }
@@ -586,7 +586,7 @@ impl<'a, 'd> PacketGrant<'a, 'd> {
     }
 }
 
-impl<'a, 'd> Drop for PacketGrant<'a, 'd> {
+impl Drop for PacketGrant<'_, '_> {
     fn drop(&mut self) {
         if self.packets > 0 {
             let mut state = self.state.borrow_mut();

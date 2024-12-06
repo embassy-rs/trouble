@@ -129,7 +129,7 @@ pub(crate) struct RawAdvertisement<'d> {
     pub(crate) peer: Option<Address>,
 }
 
-impl<'d> Default for RawAdvertisement<'d> {
+impl Default for RawAdvertisement<'_> {
     fn default() -> Self {
         Self {
             props: AdvEventProps::new()
@@ -403,7 +403,7 @@ pub enum AdStructure<'a> {
     },
 }
 
-impl<'d> AdStructure<'d> {
+impl AdStructure<'_> {
     /// Encode a slice of advertisement structures into a buffer.
     pub fn encode_slice(data: &[AdStructure<'_>], dest: &mut [u8]) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(dest);
@@ -500,5 +500,24 @@ impl<'d> Iterator for AdStructureIter<'d> {
             return None;
         }
         Some(self.read())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adv_name_truncate() {
+        let mut adv_data = [0; 31];
+        assert!(AdStructure::encode_slice(
+            &[
+                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+                AdStructure::CompleteLocalName(b"12345678901234567890123"),
+            ],
+            &mut adv_data[..],
+        )
+        .is_err());
     }
 }

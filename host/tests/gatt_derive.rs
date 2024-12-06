@@ -18,7 +18,7 @@ const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
-#[gatt_server(mutex_type = NoopRawMutex, attribute_data_size = 10, mtu = 27)]
+#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 10, mtu = 27)]
 struct Server {
     service: CustomService,
 }
@@ -69,7 +69,7 @@ async fn gatt_client_server() {
             .build();
         let gap = GapConfig::Peripheral(PeripheralConfig {
             name: &name,
-            appearance: &appearance::GENERIC_POWER,
+            appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
         });
         let server: Server<common::Controller> = Server::new_with_config(
             stack,
@@ -118,23 +118,20 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            ConnectionEvent::Gatt { event, .. } => match event {
-                                GattEvent::Write {
+                            ConnectionEvent::Gatt { event, .. } => if let GattEvent::Write {
                                     value_handle: handle
-                                } => {
-                                    let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
-                                    let value: u8 = server.server().table().get(&characteristic).unwrap();
-                                    assert_eq!(expected, value);
-                                    expected = expected.wrapping_add(2);
-                                    writes += 1;
-                                    if writes == 2 {
-                                        println!("expected value written twice, test pass");
-                                        // NOTE: Ensure that adapter gets polled again
-                                        tokio::time::sleep(Duration::from_secs(2)).await;
-                                        done = true;
-                                    }
+                                } = event {
+                                let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
+                                let value: u8 = server.server().table().get(&characteristic).unwrap();
+                                assert_eq!(expected, value);
+                                expected = expected.wrapping_add(2);
+                                writes += 1;
+                                if writes == 2 {
+                                    println!("expected value written twice, test pass");
+                                    // NOTE: Ensure that adapter gets polled again
+                                    tokio::time::sleep(Duration::from_secs(2)).await;
+                                    done = true;
                                 }
-                                _ => {},
                             }
                         }
                     }

@@ -62,6 +62,7 @@ pub use peripheral::*;
 
 #[allow(missing_docs)]
 pub mod prelude {
+    pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
     pub use heapless::String as HeaplessString;
     #[cfg(feature = "derive")]
@@ -87,6 +88,8 @@ pub mod prelude {
     pub use crate::peripheral::*;
     #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
+    #[cfg(feature = "gatt")]
+    pub use crate::types::gatt_traits::{FixedGattValue, GattValue};
     pub use crate::Address;
 }
 
@@ -457,10 +460,10 @@ impl<'d, C: Controller> Stack<'d, C> {
     }
 }
 
-impl<'d, C> Clone for Stack<'d, C> {
+impl<C> Clone for Stack<'_, C> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'d, C> Copy for Stack<'d, C> {}
+impl<C> Copy for Stack<'_, C> {}

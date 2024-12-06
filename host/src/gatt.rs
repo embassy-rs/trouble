@@ -5,16 +5,15 @@ use core::marker::PhantomData;
 
 use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
+use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
+use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
 
 use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
-use crate::attribute::{
-    AttributeData, AttributeTable, Characteristic, CharacteristicProp, Uuid, CCCD, CHARACTERISTIC_CCCD_UUID16,
-    CHARACTERISTIC_UUID16, PRIMARY_SERVICE_UUID16,
-};
+use crate::attribute::{AttributeData, AttributeTable, Characteristic, CharacteristicProp, Uuid, CCCD};
 use crate::attribute_server::AttributeServer;
 use crate::connection::{Connection, ConnectionEvent};
 use crate::connection_manager::ConnectionManager;
@@ -119,14 +118,14 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
     /// If the characteristic for the handle cannot be found, an error is returned.
     pub async fn notify<T: GattValue>(
         &self,
-        handle: &Characteristic<T>,
+        characteristic: &Characteristic<T>,
         connection: &Connection<'_>,
         value: &T,
     ) -> Result<(), BleHostError<C::Error>> {
         let conn = connection.handle();
-        self.server.table.set(handle, value)?;
+        self.server.table.set(characteristic, value)?;
 
-        let cccd_handle = handle.cccd_handle.ok_or(Error::Other)?;
+        let cccd_handle = characteristic.cccd_handle.ok_or(Error::Other)?;
 
         if !self.server.should_notify(conn, cccd_handle) {
             // No reason to fail?
@@ -137,7 +136,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
         let mut w = WriteCursor::new(&mut tx[..]);
         let (mut header, mut data) = w.split(4)?;
         data.write(ATT_HANDLE_VALUE_NTF)?;
-        data.write(handle.handle)?;
+        data.write(characteristic.handle)?;
         data.append(value.to_gatt())?;
 
         header.write(data.len() as u16)?;
@@ -300,7 +299,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             let data = att::AttReq::FindByTypeValue {
                 start_handle: start,
                 end_handle: 0xffff,
-                att_type: PRIMARY_SERVICE_UUID16.as_short(),
+                att_type: PRIMARY_SERVICE.into(),
                 att_value: uuid.as_raw(),
             };
 
@@ -353,7 +352,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             let data = att::AttReq::ReadByType {
                 start,
                 end: service.end,
-                attribute_type: CHARACTERISTIC_UUID16,
+                attribute_type: CHARACTERISTIC.into(),
             };
             let pdu = self.request(data).await?;
 
@@ -406,7 +405,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         let data = att::AttReq::ReadByType {
             start: char_handle,
             end: char_handle + 1,
-            attribute_type: CHARACTERISTIC_CCCD_UUID16,
+            attribute_type: CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
         };
 
         let pdu = self.request(data).await?;

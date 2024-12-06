@@ -10,7 +10,7 @@ resolver = "2"
 
 [dependencies]
 bitfield-struct = "0.9.2"
-bt-hci = { version = "0.1.1", features = ["embassy-time"] }
+bt-hci = { version = "0.1.2", features = ["embassy-time", "uuid"] }
 embedded-io-async = { version = "0.6" }
 embedded-io = { version = "0.6" }
 embassy-sync = "0.6"

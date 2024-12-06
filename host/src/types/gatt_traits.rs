@@ -1,5 +1,6 @@
 use core::{mem, slice};
 
+use bt_hci::uuid::BluetoothUuid16;
 use heapless::{String, Vec};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -66,6 +67,7 @@ impl Primitive for i32 {}
 impl Primitive for i64 {}
 impl Primitive for f32 {}
 impl Primitive for f64 {}
+impl Primitive for BluetoothUuid16 {} // ok as this is just a NewType(u16)
 
 impl<T: Primitive> FixedGattValue for T {
     const SIZE: usize = mem::size_of::<Self>();

@@ -3,6 +3,8 @@ use core::cell::RefCell;
 use core::fmt;
 use core::marker::PhantomData;
 
+use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
+use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
@@ -12,36 +14,6 @@ use crate::prelude::Connection;
 use crate::types::gatt_traits::GattValue;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
-
-/// UUID for generic access service
-pub const GENERIC_ACCESS_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1800u16.to_le_bytes());
-
-/// UUID for device name characteristic
-pub const CHARACTERISTIC_DEVICE_NAME_UUID16: Uuid = Uuid::Uuid16(0x2A00u16.to_le_bytes());
-
-/// UUID for appearance characteristic
-pub const CHARACTERISTIC_APPEARANCE_UUID16: Uuid = Uuid::Uuid16(0x2A03u16.to_le_bytes());
-
-/// UUID for generic attribute service
-pub const GENERIC_ATTRIBUTE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
-
-/// UUID for primary service
-pub const PRIMARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2800u16.to_le_bytes());
-
-/// UUID for secondary service
-pub const SECONDARY_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2801u16.to_le_bytes());
-
-/// UUID for include service
-pub const INCLUDE_SERVICE_UUID16: Uuid = Uuid::Uuid16(0x2802u16.to_le_bytes());
-
-/// UUID for characteristic declaration
-pub const CHARACTERISTIC_UUID16: Uuid = Uuid::Uuid16(0x2803u16.to_le_bytes());
-
-/// UUID for characteristic notification/indication
-pub const CHARACTERISTIC_CCCD_UUID16: Uuid = Uuid::Uuid16(0x2902u16.to_le_bytes());
-
-/// UUID for generic attribute.
-pub const GENERIC_ATTRIBUTE_UUID16: Uuid = Uuid::Uuid16(0x1801u16.to_le_bytes());
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
@@ -131,7 +103,7 @@ pub(crate) enum AttributeData<'d> {
     },
 }
 
-impl<'d> AttributeData<'d> {
+impl AttributeData<'_> {
     pub(crate) fn readable(&self) -> bool {
         match self {
             Self::Data { props, value } => props.0 & (CharacteristicProp::Read as u8) != 0,
@@ -284,7 +256,7 @@ impl<'d> AttributeData<'d> {
     }
 }
 
-impl<'a> fmt::Debug for Attribute<'a> {
+impl fmt::Debug for Attribute<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Attribute")
             .field("uuid", &self.uuid)
@@ -342,7 +314,7 @@ impl<'d, const MAX: usize> InnerTable<'d, MAX> {
     }
 }
 
-impl<'d, M: RawMutex, const MAX: usize> Default for AttributeTable<'d, M, MAX> {
+impl<M: RawMutex, const MAX: usize> Default for AttributeTable<'_, M, MAX> {
     fn default() -> Self {
         Self::new()
     }
@@ -396,7 +368,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         let len = self.inner.lock(|i| i.borrow().len);
         let handle = self.handle;
         self.push(Attribute {
-            uuid: PRIMARY_SERVICE_UUID16,
+            uuid: PRIMARY_SERVICE.into(),
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Service { uuid: service.uuid },
@@ -439,11 +411,11 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
     /// an error is returned
-    pub fn set<T: GattValue>(&self, handle: &Characteristic<T>, input: &T) -> Result<(), Error> {
+    pub fn set<T: GattValue>(&self, characteristic: &Characteristic<T>, input: &T) -> Result<(), Error> {
         let gatt_value = input.to_gatt();
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
-                if att.handle == handle.handle {
+                if att.handle == characteristic.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
                         if value.len() == gatt_value.len() {
                             value.copy_from_slice(gatt_value);
@@ -463,10 +435,10 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<T: GattValue>(&self, handle: &Characteristic<T>) -> Result<T, Error> {
+    pub fn get<T: GattValue>(&self, characteristic: &Characteristic<T>) -> Result<T, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
-                if att.handle == handle.handle {
+                if att.handle == characteristic.handle {
                     if let AttributeData::Data { props, value } = &mut att.data {
                         let v = <T as GattValue>::from_gatt(value).map_err(|_| Error::InvalidValue)?;
                         return Ok(v);
@@ -537,7 +509,7 @@ pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
+impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     fn add_characteristic_internal<T: GattValue>(
         &mut self,
         uuid: Uuid,
@@ -548,7 +520,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         let next = self.table.handle + 1;
         let cccd = self.table.handle + 2;
         self.table.push(Attribute {
-            uuid: CHARACTERISTIC_UUID16,
+            uuid: CHARACTERISTIC.into(),
             handle: 0,
             last_handle_in_group: 0,
             data: AttributeData::Declaration {
@@ -573,7 +545,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
         // Add optional CCCD handle
         let cccd_handle = if props.any(&[CharacteristicProp::Notify, CharacteristicProp::Indicate]) {
             self.table.push(Attribute {
-                uuid: CHARACTERISTIC_CCCD_UUID16,
+                uuid: CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
                 handle: 0,
                 last_handle_in_group: 0,
                 data: AttributeData::Cccd {
@@ -637,7 +609,7 @@ impl<'r, 'd, M: RawMutex, const MAX: usize> ServiceBuilder<'r, 'd, M, MAX> {
     }
 }
 
-impl<'r, 'd, M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'r, 'd, M, MAX> {
+impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
     fn drop(&mut self) {
         let last_handle = self.table.handle + 1;
         self.table.with_inner(|inner| {
@@ -667,7 +639,7 @@ pub struct CharacteristicBuilder<'r, 'd, T: GattValue, M: RawMutex, const MAX: u
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, T, M, MAX> {
+impl<'d, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
     fn add_descriptor_internal(
         &mut self,
         uuid: Uuid,
@@ -755,7 +727,7 @@ pub struct AttributeIterator<'a, 'd> {
     len: usize,
 }
 
-impl<'a, 'd> AttributeIterator<'a, 'd> {
+impl<'d> AttributeIterator<'_, 'd> {
     /// Return next attribute in iterator.
     pub fn next<'m>(&'m mut self) -> Option<&'m mut Attribute<'d>> {
         if self.pos < self.len {
@@ -822,7 +794,7 @@ pub struct AttributeValue<'d, M: RawMutex> {
     value: Mutex<M, &'d mut [u8]>,
 }
 
-impl<'d, M: RawMutex> AttributeValue<'d, M> {}
+impl<M: RawMutex> AttributeValue<'_, M> {}
 
 /// CCCD flag values.
 #[derive(Clone, Copy)]

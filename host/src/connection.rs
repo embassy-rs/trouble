@@ -70,14 +70,14 @@ pub struct Connection<'d> {
     manager: &'d ConnectionManager<'d>,
 }
 
-impl<'d> Clone for Connection<'d> {
+impl Clone for Connection<'_> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
         Connection::new(self.index, self.manager)
     }
 }
 
-impl<'d> Drop for Connection<'d> {
+impl Drop for Connection<'_> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);
     }
