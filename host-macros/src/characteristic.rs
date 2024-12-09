@@ -113,11 +113,10 @@ impl CharacteristicArgs {
                 "on_read" => on_read = Some(meta.value()?.parse()?),
                 "on_write" => on_write = Some(meta.value()?.parse()?),
                 "value" => {
-                    // return Err(Error::custom("Default value is currently unsupported").with_span(&meta.path.span()).into())
                     let value = meta
                     .value()
                     .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
-                    default_value = Some(value.parse()?);
+                    default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
                 },
                 other => return Err(
                     meta.error(
