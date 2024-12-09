@@ -41,10 +41,23 @@ impl Characteristic {
 #[derive(Debug, FromMeta)]
 pub(crate) struct DescriptorArgs {
     /// The UUID of the descriptor.
-    _uuid: Uuid,
-    /// The value of the descriptor.
+    pub uuid: Uuid,
+    /// The initial value of the descriptor.
+    /// This is optional and can be used to set the initial value of the descriptor.
     #[darling(default)]
-    _value: Option<syn::Expr>,
+    pub default_value: Option<syn::Expr>,
+    /// If true, the descriptor can be written.
+    #[darling(default)]
+    pub read: bool,
+    /// If true, the descriptor can be written.
+    #[darling(default)]
+    pub write: bool,
+    /// If true, the descriptor can be written without a response.
+    #[darling(default)]
+    pub write_without_response: bool,
+    /// If true, the descriptor can send notifications.
+    #[darling(default)]
+    pub notify: bool,
 }
 
 /// Characteristic attribute arguments
@@ -76,11 +89,13 @@ pub(crate) struct CharacteristicArgs {
     /// The initial value of the characteristic.
     /// This is optional and can be used to set the initial value of the characteristic.
     #[darling(default)]
-    pub _default_value: Option<syn::Expr>,
-    // /// Descriptors for the characteristic.
-    // /// Descriptors are optional and can be used to add additional metadata to the characteristic.
+    pub default_value: Option<syn::Expr>,
+    /// Descriptors for the characteristic.
+    /// Descriptors are optional and can be used to add additional metadata to the characteristic.
     #[darling(default, multiple)]
-    pub _descriptors: Vec<DescriptorArgs>,
+    pub descriptors: Vec<DescriptorArgs>,
+    #[darling(default)]
+    pub doc_string: String,
 }
 
 impl CharacteristicArgs {
@@ -94,7 +109,7 @@ impl CharacteristicArgs {
         let mut indicate = false;
         let mut on_read = None;
         let mut on_write = None;
-        let mut _default_value: Option<syn::Expr> = None;
+        let mut default_value: Option<syn::Expr> = None;
         let descriptors: Vec<DescriptorArgs> = Vec::new();
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(Error::custom("no ident"))?.to_string().as_str() {
@@ -113,11 +128,10 @@ impl CharacteristicArgs {
                 "on_read" => on_read = Some(meta.value()?.parse()?),
                 "on_write" => on_write = Some(meta.value()?.parse()?),
                 "value" => {
-                    return Err(Error::custom("Default value is currently unsupported").with_span(&meta.path.span()).into())
-                    // let value = meta
-                    // .value()
-                    // .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
-                    // default_value = Some(value.parse()?);
+                    let value = meta
+                    .value()
+                    .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
+                    default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
                 },
                 other => return Err(
                     meta.error(
@@ -136,8 +150,55 @@ impl CharacteristicArgs {
             indicate,
             on_read,
             on_write,
-            _default_value,
-            _descriptors: descriptors,
+            default_value,
+            descriptors,
+            doc_string: String::new(),
+        })
+    }
+}
+
+impl DescriptorArgs {
+    pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
+        let mut uuid: Option<Uuid> = None;
+        let mut read = false;
+        let mut write = false;
+        let mut notify = false;
+        let mut default_value: Option<syn::Expr> = None;
+        let mut write_without_response = false;
+        attribute.parse_nested_meta(|meta| {
+            match meta.path.get_ident().ok_or(Error::custom("no ident"))?.to_string().as_str() {
+                "uuid" => {
+                    let value = meta
+                    .value()
+                    .map_err(|_| Error::custom("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'".to_string()))?;
+                    let uuid_string: LitStr = value.parse()?;
+                    uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
+                },
+                "read" => read = true,
+                "write" => write = true,
+                "notify" => notify = true,
+                "write_without_response" => write_without_response = true,
+                "value" => {
+                    let value = meta
+                    .value()
+                    .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
+                    default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
+                },
+                other => return Err(
+                    meta.error(
+                        format!(
+                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, notify, value"
+                        ))),
+            };
+            Ok(())
+        })?;
+        Ok(Self {
+            uuid: uuid.ok_or(Error::custom("Descriptor must have a UUID"))?,
+            read,
+            write,
+            notify,
+            default_value,
+            write_without_response,
         })
     }
 }
