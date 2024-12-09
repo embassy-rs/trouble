@@ -147,11 +147,17 @@ impl ServiceBuilder {
             .on_write
             .as_ref()
             .map(|callback| quote!(builder.set_write_callback(#callback);));
-
+        let default_value = match characteristic.args.default_value {
+            Some(val) => quote!(#val),      // if set by user
+            None => quote!(#ty::default()), // or default otherwise
+        };
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let #char_name = {
                 static #name_screaming: static_cell::StaticCell<[u8; size_of::<#ty>()]> = static_cell::StaticCell::new();
-                let store = #name_screaming.init([0; size_of::<#ty>()]);
+                let store = #name_screaming.init(Default::default());
+                let mut val = #ty::default(); // constrain the type of the value here
+                val = #default_value; // update the temporary value with our new default
+                store.copy_from_slice(GattValue::to_gatt(&val)); // convert to bytes
                 let mut builder = service.add_characteristic(#uuid, &[#(#properties),*], store);
                 #read_callback
                 #write_callback

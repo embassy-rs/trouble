@@ -76,7 +76,7 @@ pub(crate) struct CharacteristicArgs {
     /// The initial value of the characteristic.
     /// This is optional and can be used to set the initial value of the characteristic.
     #[darling(default)]
-    pub _default_value: Option<syn::Expr>,
+    pub default_value: Option<syn::Expr>,
     // /// Descriptors for the characteristic.
     // /// Descriptors are optional and can be used to add additional metadata to the characteristic.
     #[darling(default, multiple)]
@@ -94,7 +94,7 @@ impl CharacteristicArgs {
         let mut indicate = false;
         let mut on_read = None;
         let mut on_write = None;
-        let mut _default_value: Option<syn::Expr> = None;
+        let mut default_value: Option<syn::Expr> = None;
         let descriptors: Vec<DescriptorArgs> = Vec::new();
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(Error::custom("no ident"))?.to_string().as_str() {
@@ -113,11 +113,11 @@ impl CharacteristicArgs {
                 "on_read" => on_read = Some(meta.value()?.parse()?),
                 "on_write" => on_write = Some(meta.value()?.parse()?),
                 "value" => {
-                    return Err(Error::custom("Default value is currently unsupported").with_span(&meta.path.span()).into())
-                    // let value = meta
-                    // .value()
-                    // .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
-                    // default_value = Some(value.parse()?);
+                    // return Err(Error::custom("Default value is currently unsupported").with_span(&meta.path.span()).into())
+                    let value = meta
+                    .value()
+                    .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
+                    default_value = Some(value.parse()?);
                 },
                 other => return Err(
                     meta.error(
@@ -136,7 +136,7 @@ impl CharacteristicArgs {
             indicate,
             on_read,
             on_write,
-            _default_value,
+            default_value,
             _descriptors: descriptors,
         })
     }
