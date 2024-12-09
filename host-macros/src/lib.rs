@@ -11,7 +11,7 @@ mod server;
 mod service;
 mod uuid;
 
-use characteristic::{Characteristic, CharacteristicArgs};
+use characteristic::{Characteristic, CharacteristicArgs, DescriptorArgs};
 use ctxt::Ctxt;
 use proc_macro::TokenStream;
 use server::{ServerArgs, ServerBuilder};
@@ -144,6 +144,8 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Check if a field has a characteristic attribute and parse it.
+///
+/// If so also check if that field has descriptors and/or docstrings.
 fn check_for_characteristic(
     field: &syn::Field,
     err: &mut Option<syn::Error>,
@@ -151,18 +153,43 @@ fn check_for_characteristic(
 ) -> bool {
     const RETAIN: bool = true;
     const REMOVE: bool = false;
-    let Some(attr) = field.attrs.iter().find(|attr| {
-        attr.path().segments.len() == 1 && attr.path().segments.first().unwrap().ident == "characteristic"
-    }) else {
+
+    let Some(attr) = field.attrs.iter().find(|attr| attr.path().is_ident("characteristic")) else {
         return RETAIN; // If the field does not have a characteristic attribute, retain it.
     };
-    let args = match CharacteristicArgs::parse(attr) {
+    let mut descriptors = Vec::new();
+    let mut doc_string = String::new();
+    for attr in &field.attrs {
+        if attr.path().is_ident("doc") {
+            if let Ok(meta_name_value) = attr.meta.require_name_value() {
+                if let syn::Expr::Lit(value) = &meta_name_value.value {
+                    if let Some(text) = &value.lit.span().source_text() {
+                        if !doc_string.is_empty() {
+                            doc_string.push('\n');
+                        }
+                        doc_string.push_str(text);
+                    }
+                }
+            }
+        } else if attr.path().is_ident("descriptor") {
+            match DescriptorArgs::parse(attr) {
+                Ok(args) => descriptors.push(args),
+                Err(e) => {
+                    *err = Some(e);
+                    return REMOVE; // If there was an error parsing the descriptor, remove the field.
+                }
+            }
+        }
+    }
+    let mut args = match CharacteristicArgs::parse(attr) {
         Ok(args) => args,
         Err(e) => {
             *err = Some(e);
             return REMOVE; // If there was an error parsing the characteristic, remove the field.
         }
     };
+    args.doc_string = doc_string;
+    args.descriptors = descriptors;
     characteristics.push(Characteristic::new(field, args));
     REMOVE // Successfully parsed, remove the field from the fields vec.
 }
