@@ -8,6 +8,7 @@ use crate::uuid::Uuid;
 use darling::Error;
 use darling::FromMeta;
 use proc_macro2::Span;
+use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
 use syn::Field;
@@ -98,15 +99,25 @@ pub(crate) struct CharacteristicArgs {
     pub doc_string: String,
 }
 
+/// Check if this bool type has been specified more than once.
+fn check_multi(val: &mut Option<bool>, name: &str, meta: &ParseNestedMeta<'_>) -> Result<()> {
+    if val.is_none() {
+        *val = Some(true);
+        Ok(())
+    } else {
+        Err(meta.error(format!("'{name}' should not be specified more than once")))
+    }
+}
+
 impl CharacteristicArgs {
     /// Parse the arguments of a characteristic attribute
     pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
         let mut uuid: Option<Uuid> = None;
-        let mut read = false;
-        let mut write = false;
-        let mut write_without_response = false;
-        let mut notify = false;
-        let mut indicate = false;
+        let mut read: Option<bool> = None;
+        let mut write: Option<bool> = None;
+        let mut write_without_response: Option<bool> = None;
+        let mut notify: Option<bool> = None;
+        let mut indicate: Option<bool> = None;
         let mut on_read = None;
         let mut on_write = None;
         let mut default_value: Option<syn::Expr> = None;
@@ -114,25 +125,41 @@ impl CharacteristicArgs {
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(Error::custom("no ident"))?.to_string().as_str() {
                 "uuid" => {
+                    if uuid.is_some() {
+                        return Err(meta.error("'uuid' should not be specified more than once"))
+                    }
                     let value = meta
                     .value()
                     .map_err(|_| Error::custom("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'".to_string()))?;
                     let uuid_string: LitStr = value.parse()?;
                     uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
                 },
-                "read" => read = true,
-                "write" => write = true,
-                "write_without_response" => write_without_response = true,
-                "notify" => notify = true,
-                "indicate" => indicate = true,
-                "on_read" => on_read = Some(meta.value()?.parse()?),
-                "on_write" => on_write = Some(meta.value()?.parse()?),
+                "read" => check_multi(&mut read, "read", &meta)?,
+                "write" => check_multi(&mut write, "write", &meta)?,
+                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta)?,
+                "notify" => check_multi(&mut notify, "notify", &meta)?,
+                "indicate" => check_multi(&mut indicate, "indicate", &meta)?,
+                "on_read" => if on_read.is_none() { 
+                        on_read = Some(meta.value()?.parse()?) 
+                    } else {
+                        return Err(meta.error("'on_read' should not be specified more than once"))
+                    },
+                "on_write" => if on_write.is_none() {
+                        on_write = Some(meta.value()?.parse()?)
+                    } else {
+                        return Err(meta.error("'on_write' should not be specified more than once"))
+                    },
                 "value" => {
+                    if default_value.is_some() {
+                        return Err(meta.error("'value' should not be specified more than once"))
+                    }
                     let value = meta
                     .value()
                     .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
                     default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
                 },
+                "default_value" => return Err(meta.error("use 'value' for default value")),
+                "descriptor" => return Err(meta.error("descriptors are added as separate tags i.e. #[descriptor(uuid = \"1234\", value = 42)]")),
                 other => return Err(
                     meta.error(
                         format!(
@@ -143,11 +170,11 @@ impl CharacteristicArgs {
         })?;
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Characteristic must have a UUID"))?,
-            read,
-            write,
-            write_without_response,
-            notify,
-            indicate,
+            read: read.unwrap_or_default(),
+            write: write.unwrap_or_default(),
+            write_without_response: write_without_response.unwrap_or_default(),
+            notify: notify.unwrap_or_default(),
+            indicate: indicate.unwrap_or_default(),
             on_read,
             on_write,
             default_value,
@@ -160,30 +187,37 @@ impl CharacteristicArgs {
 impl DescriptorArgs {
     pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
         let mut uuid: Option<Uuid> = None;
-        let mut read = false;
-        let mut write = false;
-        let mut notify = false;
+        let mut read: Option<bool> = None;
+        let mut write: Option<bool> = None;
+        let mut notify: Option<bool> = None;
         let mut default_value: Option<syn::Expr> = None;
-        let mut write_without_response = false;
+        let mut write_without_response: Option<bool> = None;
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(Error::custom("no ident"))?.to_string().as_str() {
                 "uuid" => {
+                    if uuid.is_some() {
+                        return Err(meta.error("'uuid' should not be specified more than once"))
+                    }
                     let value = meta
                     .value()
                     .map_err(|_| Error::custom("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'".to_string()))?;
                     let uuid_string: LitStr = value.parse()?;
                     uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
                 },
-                "read" => read = true,
-                "write" => write = true,
-                "notify" => notify = true,
-                "write_without_response" => write_without_response = true,
+                "read" => check_multi(&mut read, "read", &meta)?,
+                "write" => check_multi(&mut write, "write", &meta)?,
+                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta)?,
+                "notify" => check_multi(&mut notify, "notify", &meta)?,
                 "value" => {
+                    if default_value.is_some() {
+                        return Err(meta.error("'value' should not be specified more than once"))
+                    }
                     let value = meta
                     .value()
                     .map_err(|_| Error::custom("value must be followed by '= [data]'.  i.e. value = 'hello'".to_string()))?;
                     default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
                 },
+                "default_value" => return Err(meta.error("use 'value' for default value")),
                 other => return Err(
                     meta.error(
                         format!(
@@ -194,11 +228,11 @@ impl DescriptorArgs {
         })?;
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Descriptor must have a UUID"))?,
-            read,
-            write,
-            notify,
+            read: read.unwrap_or_default(),
+            write: write.unwrap_or_default(),
+            write_without_response: write_without_response.unwrap_or_default(),
+            notify: notify.unwrap_or_default(),
             default_value,
-            write_without_response,
         })
     }
 }
