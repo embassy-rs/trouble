@@ -164,10 +164,13 @@ fn check_for_characteristic(
             if let Ok(meta_name_value) = attr.meta.require_name_value() {
                 if let syn::Expr::Lit(value) = &meta_name_value.value {
                     if let Some(text) = &value.lit.span().source_text() {
-                        if !doc_string.is_empty() {
-                            doc_string.push('\n');
+                        let text: Vec<&str> = text.split("///").collect();
+                        if let Some(text) = text.get(1) {
+                            if !doc_string.is_empty() {
+                                doc_string.push('\n');
+                            }
+                            doc_string.push_str(text);
                         }
-                        doc_string.push_str(text);
                     }
                 }
             }

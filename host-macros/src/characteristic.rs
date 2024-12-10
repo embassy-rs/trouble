@@ -121,7 +121,6 @@ impl CharacteristicArgs {
         let mut on_read = None;
         let mut on_write = None;
         let mut default_value: Option<syn::Expr> = None;
-        let descriptors: Vec<DescriptorArgs> = Vec::new();
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(Error::custom("no ident"))?.to_string().as_str() {
                 "uuid" => {
@@ -178,7 +177,7 @@ impl CharacteristicArgs {
             on_read,
             on_write,
             default_value,
-            descriptors,
+            descriptors: Vec::new(),
             doc_string: String::new(),
         })
     }

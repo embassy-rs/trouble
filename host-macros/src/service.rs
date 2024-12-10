@@ -185,16 +185,16 @@ impl ServiceBuilder {
         for field in &fields {
             let ident = field.ident.as_ref().expect("All fields should have names");
             let ty = &field.ty;
+            let vis = &field.vis;
             self.code_struct_init.extend(quote_spanned! {field.span() =>
-                #ident: #ty::default(),
+                #vis #ident: #ty::default(),
             })
         }
-
+        let mut doc_strings = Vec::new();
         // Process characteristic fields
         for ch in characteristics {
             let char_name = format_ident!("{}", ch.name);
             let ty = &ch.ty;
-
             // add fields for each characteristic value handle
             fields.push(syn::Field {
                 ident: Some(char_name.clone()),
@@ -204,6 +204,7 @@ impl ServiceBuilder {
                 vis: ch.vis.clone(),
                 mutability: syn::FieldMutability::None,
             });
+            doc_strings.push(ch.args.doc_string.to_owned());
 
             // At least two attributes will be added to the attribute table for each characteristic:
             // - The characteristic declaration
@@ -214,13 +215,22 @@ impl ServiceBuilder {
 
             self.construct_characteristic_static(ch);
         }
-
         // Processing common to all fields
-        for field in fields {
+        for (field, doc_string) in fields.iter().zip(doc_strings) {
+            let docs: TokenStream2 = doc_string
+                .lines()
+                .map(|line| {
+                    let span = field.span();
+                    quote_spanned!(span=>
+                        #[doc = #line]
+                    )
+                })
+                .collect();
             let ident = field.ident.clone();
             let ty = field.ty.clone();
             let vis = &field.vis;
             self.code_fields.extend(quote_spanned! {field.span()=>
+                #docs
                 #vis #ident: #ty,
             })
         }
