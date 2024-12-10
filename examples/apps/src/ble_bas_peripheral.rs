@@ -100,13 +100,25 @@ where
 ///
 /// spawner.must_spawn(ble_task(runner));
 /// ```
-async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) -> Result<(), BleHostError<C::Error>> {
-    runner.run().await
+async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
+    loop {
+        if let Err(e) = runner.run().await {
+            #[cfg(feature = "defmt")]
+            let e = defmt::Debug2Format(&e);
+            panic!("[ble_task] error: {:?}", e);
+        }
+    }
 }
 
 /// Run the Gatt Server.
-async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) -> Result<(), BleHostError<C::Error>> {
-    server.run().await
+async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
+    loop {
+        if let Err(e) = server.run().await {
+            #[cfg(feature = "defmt")]
+            let e = defmt::Debug2Format(&e);
+            panic!("[gatt_task] error: {:?}", e);
+        }
+    }
 }
 
 /// Stream Events until the connection closes.
