@@ -45,7 +45,7 @@ where
     let _ = join(runner.run(), async {
         loop {
             info!("Advertising, waiting for connection...");
-            let mut advertiser = peripheral
+            let advertiser = peripheral
                 .advertise(
                     &Default::default(),
                     Advertisement::ConnectableScannableUndirected {

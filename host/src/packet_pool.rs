@@ -1,5 +1,5 @@
 //! A packet pool for allocating and freeing packet buffers with quality of service policy.
-use core::cell::{RefCell, UnsafeCell};
+use core::cell::RefCell;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
@@ -59,26 +59,25 @@ pub enum Qos {
 }
 
 struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
-    packets: UnsafeCell<[PacketBuf<MTU>; N]>,
-    usage: RefCell<[usize; CLIENTS]>,
+    packets: [PacketBuf<MTU>; N],
+    usage: [usize; CLIENTS],
 }
 
 impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIENTS> {
     pub(crate) const fn new() -> Self {
         Self {
-            packets: UnsafeCell::new([PacketBuf::NEW; N]),
-            usage: RefCell::new([0; CLIENTS]),
+            packets: [PacketBuf::NEW; N],
+            usage: [0; CLIENTS],
         }
     }
 
     // Guaranteed available
     fn min_available(&self, qos: Qos, client: AllocId) -> usize {
-        let usage = self.usage.borrow();
         let min = match qos {
-            Qos::None => N.saturating_sub(usage.iter().sum()),
-            Qos::Fair => (N / CLIENTS).saturating_sub(usage[client.0]),
+            Qos::None => N.saturating_sub(self.usage.iter().sum()),
+            Qos::Fair => (N / CLIENTS).saturating_sub(self.usage[client.0]),
             Qos::Guaranteed(n) => {
-                let usage = usage[client.0];
+                let usage = self.usage[client.0];
                 n.saturating_sub(usage)
             }
         };
@@ -87,15 +86,19 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
     }
 
     fn available(&self, qos: Qos, client: AllocId) -> usize {
-        let usage = self.usage.borrow();
         let available = match qos {
-            Qos::None => N.saturating_sub(usage.iter().sum()),
-            Qos::Fair => (N / CLIENTS).saturating_sub(usage[client.0]),
+            Qos::None => N.saturating_sub(self.usage.iter().sum()),
+            Qos::Fair => (N / CLIENTS).saturating_sub(self.usage[client.0]),
             Qos::Guaranteed(n) => {
                 // Reserved for clients that should have minimum
-                let reserved = n * usage.iter().filter(|c| **c == 0).count();
-                let reserved = reserved - if usage[client.0] < n { n - usage[client.0] } else { 0 };
-                let usage = reserved + usage.iter().sum::<usize>();
+                let reserved = n * self.usage.iter().filter(|c| **c == 0).count();
+                let reserved = reserved
+                    - if self.usage[client.0] < n {
+                        n - self.usage[client.0]
+                    } else {
+                        0
+                    };
+                let usage = reserved + self.usage.iter().sum::<usize>();
                 N.saturating_sub(usage)
             }
         };
@@ -103,15 +106,13 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
         available
     }
 
-    fn alloc(&self, id: AllocId) -> Option<PacketRef> {
-        let mut usage = self.usage.borrow_mut();
-        let packets = unsafe { &mut *self.packets.get() };
-        for (idx, packet) in packets.iter_mut().enumerate() {
+    fn alloc(&mut self, id: AllocId) -> Option<PacketRef> {
+        for (idx, packet) in self.packets.iter_mut().enumerate() {
             if packet.free {
                 // info!("[{}] alloc {}", id.0, idx);
                 packet.free = false;
                 packet.buf.iter_mut().for_each(|b| *b = 0);
-                usage[id.0] += 1;
+                self.usage[id.0] += 1;
                 return Some(PacketRef {
                     idx,
                     buf: &mut packet.buf[..],
@@ -121,12 +122,10 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
         None
     }
 
-    fn free(&self, id: AllocId, p_ref: PacketRef) {
-        let mut usage = self.usage.borrow_mut();
-        let packets = unsafe { &mut *self.packets.get() };
+    fn free(&mut self, id: AllocId, p_ref: PacketRef) {
         // info!("[{}] free {}", id.0, p_ref.idx);
-        packets[p_ref.idx].free = true;
-        usage[id.0] -= 1;
+        self.packets[p_ref.idx].free = true;
+        self.usage[id.0] -= 1;
     }
 }
 
@@ -135,7 +134,7 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
 ///
 /// The pool has a concept QoS to control quota for multiple clients.
 pub struct PacketPool<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> {
-    state: Mutex<M, State<MTU, N, CLIENTS>>,
+    state: Mutex<M, RefCell<State<MTU, N, CLIENTS>>>,
     qos: Qos,
 }
 
@@ -154,13 +153,14 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
             }
         }
         Self {
-            state: Mutex::new(State::new()),
+            state: Mutex::new(RefCell::new(State::new())),
             qos,
         }
     }
 
     fn alloc(&self, id: AllocId) -> Option<Packet> {
         self.state.lock(|state| {
+            let mut state = state.borrow_mut();
             let available = state.available(self.qos, id);
             if available == 0 {
                 return None;
@@ -176,16 +176,23 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
 
     fn free(&self, id: AllocId, p_ref: PacketRef) {
         self.state.lock(|state| {
+            let mut state = state.borrow_mut();
             state.free(id, p_ref);
         });
     }
 
     fn min_available(&self, id: AllocId) -> usize {
-        self.state.lock(|state| state.min_available(self.qos, id))
+        self.state.lock(|state| {
+            let state = state.borrow();
+            state.min_available(self.qos, id)
+        })
     }
 
     fn available(&self, id: AllocId) -> usize {
-        self.state.lock(|state| state.available(self.qos, id))
+        self.state.lock(|state| {
+            let state = state.borrow();
+            state.available(self.qos, id)
+        })
     }
 }
 

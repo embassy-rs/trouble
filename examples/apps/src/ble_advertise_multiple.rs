@@ -86,7 +86,7 @@ where
     let _ = join(runner.run(), async {
         loop {
             let start = Instant::now();
-            let mut advertiser = peripheral.advertise_ext(&sets, &mut handles).await.unwrap();
+            let advertiser = peripheral.advertise_ext(&sets, &mut handles).await.unwrap();
             match advertiser.accept().await {
                 Ok(_) => {}
                 Err(trouble_host::Error::Timeout) => {
