@@ -155,7 +155,7 @@ async fn advertise<'a, C: Controller>(
         ],
         &mut advertiser_data[..],
     )?;
-    let mut advertiser = peripheral
+    let advertiser = peripheral
         .advertise(
             &Default::default(),
             Advertisement::ConnectableScannableUndirected {
