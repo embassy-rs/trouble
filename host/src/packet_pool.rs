@@ -60,25 +60,24 @@ pub enum Qos {
 
 struct State<const MTU: usize, const N: usize, const CLIENTS: usize> {
     packets: [PacketBuf<MTU>; N],
-    usage: RefCell<[usize; CLIENTS]>,
+    usage: [usize; CLIENTS],
 }
 
 impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIENTS> {
     pub(crate) const fn new() -> Self {
         Self {
             packets: [PacketBuf::NEW; N],
-            usage: RefCell::new([0; CLIENTS]),
+            usage: [0; CLIENTS],
         }
     }
 
     // Guaranteed available
     fn min_available(&self, qos: Qos, client: AllocId) -> usize {
-        let usage = self.usage.borrow();
         let min = match qos {
-            Qos::None => N.saturating_sub(usage.iter().sum()),
-            Qos::Fair => (N / CLIENTS).saturating_sub(usage[client.0]),
+            Qos::None => N.saturating_sub(self.usage.iter().sum()),
+            Qos::Fair => (N / CLIENTS).saturating_sub(self.usage[client.0]),
             Qos::Guaranteed(n) => {
-                let usage = usage[client.0];
+                let usage = self.usage[client.0];
                 n.saturating_sub(usage)
             }
         };
@@ -87,15 +86,19 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
     }
 
     fn available(&self, qos: Qos, client: AllocId) -> usize {
-        let usage = self.usage.borrow();
         let available = match qos {
-            Qos::None => N.saturating_sub(usage.iter().sum()),
-            Qos::Fair => (N / CLIENTS).saturating_sub(usage[client.0]),
+            Qos::None => N.saturating_sub(self.usage.iter().sum()),
+            Qos::Fair => (N / CLIENTS).saturating_sub(self.usage[client.0]),
             Qos::Guaranteed(n) => {
                 // Reserved for clients that should have minimum
-                let reserved = n * usage.iter().filter(|c| **c == 0).count();
-                let reserved = reserved - if usage[client.0] < n { n - usage[client.0] } else { 0 };
-                let usage = reserved + usage.iter().sum::<usize>();
+                let reserved = n * self.usage.iter().filter(|c| **c == 0).count();
+                let reserved = reserved
+                    - if self.usage[client.0] < n {
+                        n - self.usage[client.0]
+                    } else {
+                        0
+                    };
+                let usage = reserved + self.usage.iter().sum::<usize>();
                 N.saturating_sub(usage)
             }
         };
@@ -104,13 +107,12 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
     }
 
     fn alloc(&mut self, id: AllocId) -> Option<PacketRef> {
-        let mut usage = self.usage.borrow_mut();
         for (idx, packet) in self.packets.iter_mut().enumerate() {
             if packet.free {
                 // info!("[{}] alloc {}", id.0, idx);
                 packet.free = false;
                 packet.buf.iter_mut().for_each(|b| *b = 0);
-                usage[id.0] += 1;
+                self.usage[id.0] += 1;
                 return Some(PacketRef {
                     idx,
                     buf: &mut packet.buf[..],
@@ -121,10 +123,9 @@ impl<const MTU: usize, const N: usize, const CLIENTS: usize> State<MTU, N, CLIEN
     }
 
     fn free(&mut self, id: AllocId, p_ref: PacketRef) {
-        let mut usage = self.usage.borrow_mut();
         // info!("[{}] free {}", id.0, p_ref.idx);
         self.packets[p_ref.idx].free = true;
-        usage[id.0] -= 1;
+        self.usage[id.0] -= 1;
     }
 }
 
