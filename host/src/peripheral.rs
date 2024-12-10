@@ -100,6 +100,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         Ok(Advertiser {
             stack: self.stack,
             extended: false,
+            done: false,
         })
     }
 
@@ -211,6 +212,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         Ok(Advertiser {
             stack: self.stack,
             extended: true,
+            done: false,
         })
     }
 }
@@ -219,14 +221,15 @@ impl<'d, C: Controller> Peripheral<'d, C> {
 pub struct Advertiser<'d, C: Controller> {
     stack: Stack<'d, C>,
     extended: bool,
+    done: bool,
 }
 
 impl<'d, C: Controller> Advertiser<'d, C> {
     /// Accept the next peripheral connection for this advertiser.
     ///
     /// Returns Error::Timeout if advertiser stopped.
-    pub async fn accept(&mut self) -> Result<Connection<'d>, Error> {
-        match select(
+    pub async fn accept(mut self) -> Result<Connection<'d>, Error> {
+        let result = match select(
             self.stack.host.connections.accept(LeConnRole::Peripheral, &[]),
             self.stack.host.advertise_state.wait(),
         )
@@ -234,12 +237,18 @@ impl<'d, C: Controller> Advertiser<'d, C> {
         {
             Either::First(conn) => Ok(conn),
             Either::Second(_) => Err(Error::Timeout),
-        }
+        };
+        self.done = true;
+        result
     }
 }
 
 impl<C: Controller> Drop for Advertiser<'_, C> {
     fn drop(&mut self) {
-        self.stack.host.advertise_command_state.cancel(self.extended);
+        if !self.done {
+            self.stack.host.advertise_command_state.cancel(self.extended);
+        } else {
+            self.stack.host.advertise_command_state.canceled();
+        }
     }
 }
