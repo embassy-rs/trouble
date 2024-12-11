@@ -186,7 +186,7 @@ fn check_for_characteristic(
     };
     let mut descriptors = Vec::new();
     let mut doc_string = String::new();
-    let mut characteristic_count = 0;
+    let mut characteristic_checked = false;
     for attr in &field.attrs {
         if let Some(ident) = attr.path().get_ident() {
             match ident.to_string().as_str() {
@@ -214,13 +214,14 @@ fn check_for_characteristic(
                 },
                 "characteristic" => {
                     // make sure we only have one characteristic meta tag
-                    characteristic_count += 1;
-                    if characteristic_count > 1 {
+                    if characteristic_checked {
                         *err = Some(Error::new(
                             attr.path().span(),
                             "only one characteristic tag should be applied per field",
                         ));
                         return REMOVE; // If there was an error parsing the descriptor, remove the field.
+                    } else {
+                        characteristic_checked = true;
                     }
                 }
                 "descriptors" => {

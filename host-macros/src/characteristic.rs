@@ -112,9 +112,9 @@ pub(crate) struct CharacteristicArgs {
 }
 
 /// Check if this bool type has been specified more than once.
-fn check_multi(val: &mut Option<bool>, name: &str, meta: &ParseNestedMeta<'_>) -> Result<()> {
-    if val.is_none() {
-        *val = Some(true);
+fn check_multi<T>(arg: &mut Option<T>, name: &str, meta: &ParseNestedMeta<'_>, value: T) -> Result<()> {
+    if arg.is_none() {
+        *arg = Some(value);
         Ok(())
     } else {
         Err(meta.error(format!("'{name}' should not be specified more than once")))
@@ -136,38 +136,26 @@ impl CharacteristicArgs {
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(meta.error("no ident"))?.to_string().as_str() {
                 "uuid" => {
-                    if uuid.is_some() {
-                        return Err(meta.error("'uuid' should not be specified more than once"))
-                    }
-                    let value = meta
+                    let parser = meta
                     .value()
                     .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
-                    let uuid_string: LitStr = value.parse()?;
-                    uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
+                    let uuid_string: LitStr = parser.parse()?;
+                    let value = Uuid::from_string(uuid_string.value().as_str())?;
+                    check_multi(&mut uuid, "uuid", &meta, value)?
                 },
-                "read" => check_multi(&mut read, "read", &meta)?,
-                "write" => check_multi(&mut write, "write", &meta)?,
-                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta)?,
-                "notify" => check_multi(&mut notify, "notify", &meta)?,
-                "indicate" => check_multi(&mut indicate, "indicate", &meta)?,
-                "on_read" => if on_read.is_some() {
-                        return Err(meta.error("'on_read' should not be specified more than once"))
-                    } else {
-                        on_read = Some(meta.value()?.parse()?) 
-                    },
-                "on_write" => if on_write.is_some() {
-                        return Err(meta.error("'on_write' should not be specified more than once"))
-                    } else {
-                        on_write = Some(meta.value()?.parse()?)
-                    },
-                "value" => if default_value.is_some() {
-                        return Err(meta.error("'value' should not be specified more than once"))
-                    } else {
-                        let value = meta
+                "read" => check_multi(&mut read, "read", &meta, true)?,
+                "write" => check_multi(&mut write, "write", &meta, true)?,
+                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
+                "notify" => check_multi(&mut notify, "notify", &meta, true)?,
+                "indicate" => check_multi(&mut indicate, "indicate", &meta, true)?,
+                "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
+                "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
+                "value" => {
+                    let value = meta
                         .value()
                         .map_err(|_| meta.error("'value' must be followed by '= [data]'.  i.e. value = \"42\""))?;
-                        default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
-                    },
+                    check_multi(&mut default_value, "value", &meta, value.parse()?)?
+                }
                 "default_value" => return Err(meta.error("Use 'value' for default value")),
                 "descriptor" => return Err(meta.error("Descriptors are added as separate tags i.e. #[descriptor(uuid = \"1234\", value = 42, read, write, notify, indicate)]")),
                 other => return Err(
@@ -209,45 +197,30 @@ impl DescriptorArgs {
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(meta.error("no ident"))?.to_string().as_str() {
                 "uuid" => {
-                    if uuid.is_some() {
-                        return Err(meta.error("'uuid' should not be specified more than once"))
-                    }
-                    let value = meta
+                    let parser = meta
                     .value()
                     .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
-                    let uuid_string: LitStr = value.parse()?;
-                    uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
+                    let uuid_string: LitStr = parser.parse()?;
+                    let value = Uuid::from_string(uuid_string.value().as_str())?;
+                    check_multi(&mut uuid, "uuid", &meta, value)?
                 },
-                "read" => check_multi(&mut read, "read", &meta)?,
-                "write" => check_multi(&mut write, "write", &meta)?,
-                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta)?,
-                "notify" => check_multi(&mut notify, "notify", &meta)?,
-                "indicate" => check_multi(&mut indicate, "indicate", &meta)?,
-                // TODO Parse read and write callbacks for descriptors
-                // "on_read" => if on_read.is_some() { 
-                //         return Err(meta.error("'on_read' should not be specified more than once"))
-                //     } else {
-                //         on_read = Some(meta.value()?.parse()?) 
-                //     },
-                // "on_write" => if on_write.is_some() {
-                //         return Err(meta.error("'on_write' should not be specified more than once"))
-                //     } else {
-                //         on_write = Some(meta.value()?.parse()?)
-                //     },
-                "capacity" => if capacity.is_some() {
-                        return Err(meta.error("'capacity' should not be specified more than once"))
-                    } else {
-                        let value = meta.value().map_err(|_| meta.error("'capacity' must be followed by '= [data]'.  i.e. value = 100"))?;
-                        capacity = Some(value.parse()?);
-                    }
-                "value" => if default_value.is_some() {
-                        return Err(meta.error("'value' should not be specified more than once"))
-                    } else {
-                        let value = meta
+                "read" => check_multi(&mut read, "read", &meta, true)?,
+                "write" => check_multi(&mut write, "write", &meta, true)?,
+                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
+                "notify" => check_multi(&mut notify, "notify", &meta, true)?,
+                "indicate" => check_multi(&mut indicate, "indicate", &meta, true)?,
+                // "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
+                // "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
+                "value" => {
+                    let value = meta
                         .value()
-                        .map_err(|_| meta.error("'value' must be followed by '= [data]'.  i.e. value = \"hello\""))?;
-                        default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
-                    },
+                        .map_err(|_| meta.error("'value' must be followed by '= [data]'.  i.e. value = \"42\""))?;
+                    check_multi(&mut default_value, "value", &meta, value.parse()?)?
+                }
+                "capacity" => {
+                    let value = meta.value().map_err(|_| meta.error("'capacity' must be followed by '= [data]'.  i.e. value = 100"))?;
+                    check_multi(&mut capacity, "capacity", &meta, value.parse()?)?
+                    }
                 "default_value" => return Err(meta.error("use 'value' for default value")),
                 other => return Err(
                     meta.error(
@@ -260,7 +233,10 @@ impl DescriptorArgs {
         let write = write.unwrap_or_default();
         let write_without_response = write_without_response.unwrap_or_default();
         if (write || write_without_response) && capacity.is_none() {
-            return Err(syn::Error::new(attribute.meta.span(), "'capacity' must be specified for a writeable descriptor"));
+            return Err(syn::Error::new(
+                attribute.meta.span(),
+                "'capacity' must be specified for a writeable descriptor",
+            ));
         }
 
         Ok(Self {
@@ -274,7 +250,6 @@ impl DescriptorArgs {
             // on_read,
             capacity,
             write,
-
         })
     }
 }

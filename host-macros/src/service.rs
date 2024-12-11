@@ -312,7 +312,7 @@ fn set_access_properties(args: &CharacteristicArgs) -> Vec<TokenStream2> {
     properties
 }
 
-/// Parse the properties of a characteristic and return a list of properties
+/// Parse the properties of a descriptor and return a list of properties
 fn set_desc_access_properties(args: &DescriptorArgs) -> Vec<TokenStream2> {
     let mut properties = Vec::new();
     parse_property_into_list(args.read, quote! {CharacteristicProp::Read}, &mut properties);
