@@ -130,6 +130,57 @@ impl ServiceBuilder {
 
     /// Construct instructions for adding a characteristic to the service, with static storage.
     fn construct_characteristic_static(&mut self, characteristic: Characteristic) {
+        let descriptors: TokenStream2 = characteristic
+            .args
+            .descriptors
+            .iter()
+            .enumerate()
+            .map(|(index, args)| {
+                let name_screaming =
+                    format_ident!("DESC_{}_{index}", to_screaming_snake_case(characteristic.name.as_str()));
+                let properties = set_desc_access_properties(&args);
+                let uuid = args.uuid;
+                // let read_callback = args.on_read.as_ref();
+                // let write_callback = args.on_write.as_ref();
+                let writeable = args.write || args.write_without_response;
+                let capacity = match &args.capacity {
+                    Some(cap) => quote!(#cap),
+                    None => {
+                        if writeable {
+                            panic!("'capacity' must be specified for writeable descriptors");
+                        }
+                        quote!(0u8)
+                    },
+                };
+                let default_value = match &args.default_value {
+                    Some(val) => quote!(#val), // if set by user
+                    None => quote!(""),
+                };
+                // At least two attributes will be added to the attribute table for each characteristic:
+                // - The characteristic declaration
+                // - The characteristic's value declaration
+                //
+                // If the characteristic has either the notify or indicate property,
+                // a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
+                self.attribute_count += if args.notify { 3 } else { 2 };
+                quote_spanned! {characteristic.span=>
+                    {
+                        const CAPACITY: u8 = #capacity;
+                        static #name_screaming: static_cell::StaticCell<[u8; CAPACITY as usize]> = static_cell::StaticCell::new();
+                        let store = #name_screaming.init([0; CAPACITY as usize]);
+                        store.copy_from_slice(#default_value.as_bytes());
+                        builder.add_descriptor(
+                            #uuid,
+                            &[#(#properties),*],
+                            store,
+                            None,
+                            None,
+                        );
+                    };
+                }
+            })
+            .collect();
+
         let name_screaming = format_ident!("{}", to_screaming_snake_case(characteristic.name.as_str()));
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
@@ -149,51 +200,6 @@ impl ServiceBuilder {
             Some(val) => quote!(#val),      // if set by user
             None => quote!(#ty::default()), // or default otherwise
         };
-        let descriptors: TokenStream2 = characteristic
-            .args
-            .descriptors
-            .iter()
-            .enumerate()
-            .map(|(index, args)| {
-                let name_screaming =
-                    format_ident!("DESC_{}_{index}", to_screaming_snake_case(characteristic.name.as_str()));
-                let properties = set_desc_access_properties(&args);
-                let uuid = args.uuid;
-                // let read_callback = args.on_read.as_ref();
-                // let write_callback = args.on_write.as_ref();
-                let writeable = args.write || args.write_without_response;
-                let (default_value, length) = match &args.default_value {
-                    Some(val) => (quote!(#val), quote!(#val.len())), // if set by user
-                    None => {
-                        // if the descriptor is writeable, give it some capacity otherwise set it to zero.
-                        let length: usize = if writeable { 100 } else { 0 };
-                        (quote!(""), quote!(#length))
-                    }
-                };
-                // At least two attributes will be added to the attribute table for each characteristic:
-                // - The characteristic declaration
-                // - The characteristic's value declaration
-                //
-                // If the characteristic has either the notify or indicate property,
-                // a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
-                self.attribute_count += if args.notify { 3 } else { 2 };
-                quote_spanned! {characteristic.span=>
-                    {
-                        const CAPACITY: usize = #length;
-                        static #name_screaming: static_cell::StaticCell<[u8; CAPACITY]> = static_cell::StaticCell::new();
-                        let store = #name_screaming.init([0; CAPACITY]);
-                        store.copy_from_slice(#default_value.as_bytes());
-                        builder.add_descriptor(
-                            #uuid,
-                            &[#(#properties),*],
-                            store,
-                            None,
-                            None,
-                        );
-                    };
-                }
-            })
-            .collect();
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let #char_name = {

@@ -43,7 +43,7 @@ impl Characteristic {
 pub(crate) struct DescriptorArgs {
     /// The UUID of the descriptor.
     pub uuid: Uuid,
-    /// The initial value of the descriptor.
+    /// The initial value of the descriptor (&str).
     /// This is optional and can be used to set the initial value of the descriptor.
     #[darling(default)]
     pub default_value: Option<syn::Expr>,
@@ -62,6 +62,9 @@ pub(crate) struct DescriptorArgs {
     /// If true, the characteristic can send indications.
     #[darling(default)]
     pub indicate: bool,
+    /// Capacity for writing new descriptors (u8)
+    #[darling(default)]
+    pub capacity: Option<syn::Expr>,
     // /// Optional callback to be triggered on a read event
     // #[darling(default)]
     // pub on_read: Option<Ident>,
@@ -138,7 +141,7 @@ impl CharacteristicArgs {
                     }
                     let value = meta
                     .value()
-                    .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'"))?;
+                    .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
                     let uuid_string: LitStr = value.parse()?;
                     uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
                 },
@@ -162,11 +165,11 @@ impl CharacteristicArgs {
                     } else {
                         let value = meta
                         .value()
-                        .map_err(|_| meta.error("value must be followed by '= [data]'.  i.e. value = 'hello'"))?;
+                        .map_err(|_| meta.error("'value' must be followed by '= [data]'.  i.e. value = \"42\""))?;
                         default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
                     },
-                "default_value" => return Err(meta.error("use 'value' for default value")),
-                "descriptor" => return Err(meta.error("descriptors are added as separate tags i.e. #[descriptor(uuid = \"1234\", value = 42, read, write, notify, indicate)]")),
+                "default_value" => return Err(meta.error("Use 'value' for default value")),
+                "descriptor" => return Err(meta.error("Descriptors are added as separate tags i.e. #[descriptor(uuid = \"1234\", value = 42, read, write, notify, indicate)]")),
                 other => return Err(
                     meta.error(
                         format!(
@@ -200,6 +203,7 @@ impl DescriptorArgs {
         let mut indicate: Option<bool> = None;
         // let mut on_read: Option<Ident> = None;
         // let mut on_write: Option<Ident> = None;
+        let mut capacity: Option<syn::Expr> = None;
         let mut default_value: Option<syn::Expr> = None;
         let mut write_without_response: Option<bool> = None;
         attribute.parse_nested_meta(|meta| {
@@ -210,7 +214,7 @@ impl DescriptorArgs {
                     }
                     let value = meta
                     .value()
-                    .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = '0x2A37'"))?;
+                    .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
                     let uuid_string: LitStr = value.parse()?;
                     uuid = Some(Uuid::from_string(uuid_string.value().as_str())?);
                 },
@@ -230,33 +234,46 @@ impl DescriptorArgs {
                 //     } else {
                 //         on_write = Some(meta.value()?.parse()?)
                 //     },
+                "capacity" => if capacity.is_some() {
+                        return Err(meta.error("'capacity' should not be specified more than once"))
+                    } else {
+                        let value = meta.value().map_err(|_| meta.error("'capacity' must be followed by '= [data]'.  i.e. value = 100"))?;
+                        capacity = Some(value.parse()?);
+                    }
                 "value" => if default_value.is_some() {
                         return Err(meta.error("'value' should not be specified more than once"))
                     } else {
                         let value = meta
                         .value()
-                        .map_err(|_| meta.error("value must be followed by '= [data]'.  i.e. value = 'hello'"))?;
+                        .map_err(|_| meta.error("'value' must be followed by '= [data]'.  i.e. value = \"hello\""))?;
                         default_value = Some(value.parse()?); // type checking done in construct_characteristic_static
                     },
                 "default_value" => return Err(meta.error("use 'value' for default value")),
                 other => return Err(
                     meta.error(
                         format!(
-                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, notify, value"
+                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, notify, value, capacity"
                         ))),
             };
             Ok(())
         })?;
+        let write = write.unwrap_or_default();
+        let write_without_response = write_without_response.unwrap_or_default();
+        if (write || write_without_response) && capacity.is_none() {
+            return Err(syn::Error::new(attribute.meta.span(), "'capacity' must be specified for a writeable descriptor"));
+        }
+
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Descriptor must have a UUID"))?,
-            write_without_response: write_without_response.unwrap_or_default(),
             indicate: indicate.unwrap_or_default(),
             notify: notify.unwrap_or_default(),
-            write: write.unwrap_or_default(),
             read: read.unwrap_or_default(),
+            write_without_response,
             default_value,
             // on_write,
             // on_read,
+            capacity,
+            write,
 
         })
     }
