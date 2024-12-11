@@ -36,17 +36,8 @@ impl Characteristic {
     }
 }
 
-/// Descriptor attribute arguments.
-///
-/// Descriptors are optional and can be used to add additional metadata to the characteristic.
-#[derive(Debug, FromMeta)]
-pub(crate) struct DescriptorArgs {
-    /// The UUID of the descriptor.
-    pub uuid: Uuid,
-    /// The initial value of the descriptor (&str).
-    /// This is optional and can be used to set the initial value of the descriptor.
-    #[darling(default)]
-    pub default_value: Option<syn::Expr>,
+#[derive(Debug, FromMeta, Default)]
+pub(crate) struct AccessArgs {
     /// If true, the descriptor can be written.
     #[darling(default)]
     pub read: bool,
@@ -62,9 +53,6 @@ pub(crate) struct DescriptorArgs {
     /// If true, the characteristic can send indications.
     #[darling(default)]
     pub indicate: bool,
-    /// Capacity for writing new descriptors (u8)
-    #[darling(default)]
-    pub capacity: Option<syn::Expr>,
     /// Optional callback to be triggered on a read event
     #[darling(default)]
     pub on_read: Option<Ident>,
@@ -73,34 +61,29 @@ pub(crate) struct DescriptorArgs {
     pub on_write: Option<Ident>,
 }
 
+/// Descriptor attribute arguments.
+///
+/// Descriptors are optional and can be used to add additional metadata to the characteristic.
+#[derive(Debug, FromMeta)]
+pub(crate) struct DescriptorArgs {
+    /// The UUID of the descriptor.
+    pub uuid: Uuid,
+    /// The initial value of the descriptor (&str).
+    /// This is optional and can be used to set the initial value of the descriptor.
+    #[darling(default)]
+    pub default_value: Option<syn::Expr>,
+    #[darling(default)]
+    /// Capacity for writing new descriptors (u8)
+    pub capacity: Option<syn::Expr>,
+    #[darling(default)]
+    pub access: AccessArgs,
+}
+
 /// Characteristic attribute arguments
 #[derive(Debug, FromMeta)]
 pub(crate) struct CharacteristicArgs {
     /// The UUID of the characteristic.
     pub uuid: Uuid,
-    /// If true, the characteristic can be read.
-    #[darling(default)]
-    pub read: bool,
-    /// If true, the characteristic can be written.
-    #[darling(default)]
-    pub write: bool,
-    /// If true, the characteristic can be written without a response.
-    #[darling(default)]
-    pub write_without_response: bool,
-    /// If true, the characteristic can send notifications.
-    #[darling(default)]
-    pub notify: bool,
-    /// If true, the characteristic can send indications.
-    #[darling(default)]
-    pub indicate: bool,
-    /// Optional callback to be triggered on a read event
-    #[darling(default)]
-    pub on_read: Option<Ident>,
-    /// Optional callback to be triggered on a write event
-    #[darling(default)]
-    pub on_write: Option<Ident>,
-    /// The initial value of the characteristic.
-    /// This is optional and can be used to set the initial value of the characteristic.
     #[darling(default)]
     pub default_value: Option<syn::Expr>,
     /// Descriptors for the characteristic.
@@ -109,6 +92,8 @@ pub(crate) struct CharacteristicArgs {
     pub descriptors: Vec<DescriptorArgs>,
     #[darling(default)]
     pub doc_string: String,
+    #[darling(default)]
+    pub access: AccessArgs,
 }
 
 /// Check if this bool type has been specified more than once.
@@ -145,11 +130,11 @@ impl CharacteristicArgs {
                 },
                 "read" => check_multi(&mut read, "read", &meta, true)?,
                 "write" => check_multi(&mut write, "write", &meta, true)?,
-                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "notify" => check_multi(&mut notify, "notify", &meta, true)?,
                 "indicate" => check_multi(&mut indicate, "indicate", &meta, true)?,
                 "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
                 "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
+                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "value" => {
                     let value = meta
                         .value()
@@ -168,16 +153,18 @@ impl CharacteristicArgs {
         })?;
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Characteristic must have a UUID"))?,
-            write_without_response: write_without_response.unwrap_or_default(),
-            indicate: indicate.unwrap_or_default(),
-            notify: notify.unwrap_or_default(),
-            write: write.unwrap_or_default(),
-            read: read.unwrap_or_default(),
             doc_string: String::new(),
             descriptors: Vec::new(),
             default_value,
-            on_write,
-            on_read,
+            access: AccessArgs {
+                write_without_response: write_without_response.unwrap_or_default(),
+                indicate: indicate.unwrap_or_default(),
+                notify: notify.unwrap_or_default(),
+                write: write.unwrap_or_default(),
+                read: read.unwrap_or_default(),
+                on_write,
+                on_read,
+            },
         })
     }
 }
@@ -206,11 +193,11 @@ impl DescriptorArgs {
                 },
                 "read" => check_multi(&mut read, "read", &meta, true)?,
                 "write" => check_multi(&mut write, "write", &meta, true)?,
-                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "notify" => check_multi(&mut notify, "notify", &meta, true)?,
                 "indicate" => check_multi(&mut indicate, "indicate", &meta, true)?,
                 "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
                 "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
+                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "value" => {
                     let value = meta
                         .value()
@@ -241,15 +228,17 @@ impl DescriptorArgs {
 
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Descriptor must have a UUID"))?,
-            indicate: indicate.unwrap_or_default(),
-            notify: notify.unwrap_or_default(),
-            read: read.unwrap_or_default(),
-            write_without_response,
             default_value,
             capacity,
-            on_write,
-            on_read,
-            write,
+            access: AccessArgs {
+                indicate: indicate.unwrap_or_default(),
+                notify: notify.unwrap_or_default(),
+                read: read.unwrap_or_default(),
+                write_without_response,
+                on_write,
+                on_read,
+                write,
+            },
         })
     }
 }

@@ -4,7 +4,7 @@
 //! The struct definition is used to define the characteristics of the service, and the ServiceBuilder is used to
 //! generate the code required to create the service.
 
-use crate::characteristic::{Characteristic, CharacteristicArgs, DescriptorArgs};
+use crate::characteristic::{AccessArgs, Characteristic};
 use crate::uuid::Uuid;
 use darling::{Error, FromMeta};
 use inflector::cases::screamingsnakecase::to_screaming_snake_case;
@@ -138,17 +138,18 @@ impl ServiceBuilder {
             .map(|(index, args)| {
                 let name_screaming =
                     format_ident!("DESC_{}_{index}", to_screaming_snake_case(characteristic.name.as_str()));
-                let properties = set_desc_access_properties(&args);
+                let access = &args.access;
+                let properties = set_access_properties(access);
                 let uuid = args.uuid;
-                let read_callback = match &args.on_read {
+                let read_callback = match &access.on_read {
                     Some(callback) => quote!(Some(#callback)),
                     None => quote!(None),
                 };
-                let write_callback = match &args.on_write {
+                let write_callback = match &access.on_write {
                     Some(callback) => quote!(Some(#callback)),
                     None => quote!(None),
                 };
-                let writeable = args.write || args.write_without_response;
+                let writeable = access.write || access.write_without_response;
                 let capacity = match &args.capacity {
                     Some(cap) => quote!(#cap),
                     None => {
@@ -168,7 +169,7 @@ impl ServiceBuilder {
                 //
                 // If the characteristic has either the notify or indicate property,
                 // a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
-                self.attribute_count += if args.notify { 3 } else { 2 };
+                self.attribute_count += if access.notify { 3 } else { 2 };
                 quote_spanned! {characteristic.span=>
                     {
                         const CAPACITY: u8 = #capacity;
@@ -192,15 +193,14 @@ impl ServiceBuilder {
         let name_screaming = format_ident!("{}", to_screaming_snake_case(characteristic.name.as_str()));
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
-        let properties = set_access_properties(&characteristic.args);
+        let access = &characteristic.args.access;
+        let properties = set_access_properties(access);
         let uuid = characteristic.args.uuid;
-        let read_callback = characteristic
-            .args
+        let read_callback = access
             .on_read
             .as_ref()
             .map(|callback| quote!(builder.set_read_callback(#callback);));
-        let write_callback = characteristic
-            .args
+        let write_callback = access
             .on_write
             .as_ref()
             .map(|callback| quote!(builder.set_write_callback(#callback);));
@@ -270,7 +270,8 @@ impl ServiceBuilder {
             //
             // If the characteristic has either the notify or indicate property,
             // a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
-            self.attribute_count += if ch.args.notify || ch.args.indicate { 3 } else { 2 };
+            let access = &ch.args.access;
+            self.attribute_count += if access.notify || access.indicate { 3 } else { 2 };
 
             self.construct_characteristic_static(ch);
         }
@@ -304,22 +305,7 @@ fn parse_property_into_list(property: bool, variant: TokenStream2, properties: &
 }
 
 /// Parse the properties of a characteristic and return a list of properties
-fn set_access_properties(args: &CharacteristicArgs) -> Vec<TokenStream2> {
-    let mut properties = Vec::new();
-    parse_property_into_list(args.read, quote! {CharacteristicProp::Read}, &mut properties);
-    parse_property_into_list(args.write, quote! {CharacteristicProp::Write}, &mut properties);
-    parse_property_into_list(
-        args.write_without_response,
-        quote! {CharacteristicProp::WriteWithoutResponse},
-        &mut properties,
-    );
-    parse_property_into_list(args.notify, quote! {CharacteristicProp::Notify}, &mut properties);
-    parse_property_into_list(args.indicate, quote! {CharacteristicProp::Indicate}, &mut properties);
-    properties
-}
-
-/// Parse the properties of a descriptor and return a list of properties
-fn set_desc_access_properties(args: &DescriptorArgs) -> Vec<TokenStream2> {
+fn set_access_properties(args: &AccessArgs) -> Vec<TokenStream2> {
     let mut properties = Vec::new();
     parse_property_into_list(args.read, quote! {CharacteristicProp::Read}, &mut properties);
     parse_property_into_list(args.write, quote! {CharacteristicProp::Write}, &mut properties);
