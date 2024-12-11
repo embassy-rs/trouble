@@ -168,7 +168,9 @@ impl ServiceBuilder {
                         const CAPACITY: u8 = #capacity;
                         static #name_screaming: static_cell::StaticCell<[u8; CAPACITY as usize]> = static_cell::StaticCell::new();
                         let store = #name_screaming.init([0; CAPACITY as usize]);
-                        store.copy_from_slice(#default_value.as_bytes());
+                        if !#default_value.is_empty() {
+                            store[..#default_value.len()].copy_from_slice(#default_value.as_bytes());
+                        }
                         builder.add_descriptor(
                             #uuid,
                             &[#(#properties),*],
