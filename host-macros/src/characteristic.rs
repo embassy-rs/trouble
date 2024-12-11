@@ -225,7 +225,7 @@ impl DescriptorArgs {
                 other => return Err(
                     meta.error(
                         format!(
-                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, notify, value, capacity"
+                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, indicate, write_without_response, notify, value, capacity"
                         ))),
             };
             Ok(())
