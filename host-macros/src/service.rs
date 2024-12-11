@@ -4,9 +4,10 @@
 //! The struct definition is used to define the characteristics of the service, and the ServiceBuilder is used to
 //! generate the code required to create the service.
 
-use crate::characteristic::{Characteristic, CharacteristicArgs};
+use crate::characteristic::{Characteristic, CharacteristicArgs, DescriptorArgs};
 use crate::uuid::Uuid;
 use darling::{Error, FromMeta};
+use inflector::cases::screamingsnakecase::to_screaming_snake_case;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
 use syn::parse::Result;
@@ -129,10 +130,7 @@ impl ServiceBuilder {
 
     /// Construct instructions for adding a characteristic to the service, with static storage.
     fn construct_characteristic_static(&mut self, characteristic: Characteristic) {
-        let name_screaming = format_ident!(
-            "{}",
-            inflector::cases::screamingsnakecase::to_screaming_snake_case(characteristic.name.as_str())
-        );
+        let name_screaming = format_ident!("{}", to_screaming_snake_case(characteristic.name.as_str()));
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
         let properties = set_access_properties(&characteristic.args);
@@ -151,6 +149,52 @@ impl ServiceBuilder {
             Some(val) => quote!(#val),      // if set by user
             None => quote!(#ty::default()), // or default otherwise
         };
+        let descriptors: TokenStream2 = characteristic
+            .args
+            .descriptors
+            .iter()
+            .enumerate()
+            .map(|(index, args)| {
+                let name_screaming =
+                    format_ident!("DESC_{}_{index}", to_screaming_snake_case(characteristic.name.as_str()));
+                let properties = set_desc_access_properties(&args);
+                let uuid = args.uuid;
+                // let read_callback = args.on_read.as_ref();
+                // let write_callback = args.on_write.as_ref();
+                let writeable = args.write || args.write_without_response;
+                let (default_value, length) = match &args.default_value {
+                    Some(val) => (quote!(#val), quote!(#val.len())), // if set by user
+                    None => {
+                        // if the descriptor is writeable, give it some capacity otherwise set it to zero.
+                        let length: usize = if writeable { 100 } else { 0 };
+                        (quote!(""), quote!(#length))
+                    }
+                };
+                // At least two attributes will be added to the attribute table for each characteristic:
+                // - The characteristic declaration
+                // - The characteristic's value declaration
+                //
+                // If the characteristic has either the notify or indicate property,
+                // a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
+                self.attribute_count += if args.notify { 3 } else { 2 };
+                quote_spanned! {characteristic.span=>
+                    {
+                        const CAPACITY: usize = #length;
+                        static #name_screaming: static_cell::StaticCell<[u8; CAPACITY]> = static_cell::StaticCell::new();
+                        let store = #name_screaming.init([0; CAPACITY]);
+                        store.copy_from_slice(#default_value.as_bytes());
+                        builder.add_descriptor(
+                            #uuid,
+                            &[#(#properties),*],
+                            store,
+                            None,
+                            None,
+                        );
+                    };
+                }
+            })
+            .collect();
+
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let #char_name = {
                 static #name_screaming: static_cell::StaticCell<[u8; size_of::<#ty>()]> = static_cell::StaticCell::new();
@@ -158,12 +202,12 @@ impl ServiceBuilder {
                 let mut val = #ty::default(); // constrain the type of the value here
                 val = #default_value; // update the temporary value with our new default
                 store.copy_from_slice(GattValue::to_gatt(&val)); // convert to bytes
-                let mut builder = service.add_characteristic(#uuid, &[#(#properties),*], store);
+                let mut builder = service
+                    .add_characteristic(#uuid, &[#(#properties),*], store);
                 #read_callback
                 #write_callback
 
-                // TODO: Descriptors
-                // NOTE: Descriptors are attributes too - will need to increment self.attribute_count
+                #descriptors
 
                 builder.build()
             };
@@ -210,7 +254,8 @@ impl ServiceBuilder {
             // - The characteristic declaration
             // - The characteristic's value declaration
             //
-            // If the characteristic has either the notify or indicate property, a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
+            // If the characteristic has either the notify or indicate property,
+            // a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
             self.attribute_count += if ch.args.notify || ch.args.indicate { 3 } else { 2 };
 
             self.construct_characteristic_static(ch);
@@ -246,6 +291,21 @@ fn parse_property_into_list(property: bool, variant: TokenStream2, properties: &
 
 /// Parse the properties of a characteristic and return a list of properties
 fn set_access_properties(args: &CharacteristicArgs) -> Vec<TokenStream2> {
+    let mut properties = Vec::new();
+    parse_property_into_list(args.read, quote! {CharacteristicProp::Read}, &mut properties);
+    parse_property_into_list(args.write, quote! {CharacteristicProp::Write}, &mut properties);
+    parse_property_into_list(
+        args.write_without_response,
+        quote! {CharacteristicProp::WriteWithoutResponse},
+        &mut properties,
+    );
+    parse_property_into_list(args.notify, quote! {CharacteristicProp::Notify}, &mut properties);
+    parse_property_into_list(args.indicate, quote! {CharacteristicProp::Indicate}, &mut properties);
+    properties
+}
+
+/// Parse the properties of a characteristic and return a list of properties
+fn set_desc_access_properties(args: &DescriptorArgs) -> Vec<TokenStream2> {
     let mut properties = Vec::new();
     parse_property_into_list(args.read, quote! {CharacteristicProp::Read}, &mut properties);
     parse_property_into_list(args.write, quote! {CharacteristicProp::Write}, &mut properties);
