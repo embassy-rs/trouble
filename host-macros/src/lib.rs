@@ -164,7 +164,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
 ///    /// Docstrings can be
 ///    /// Multiple lines
 ///    #[characteristic(uuid = "2a19", read, write, notify, value = 99, on_read = battery_level_on_read)]
-///    #[descriptor(uuid = "2a20", read, write, notify)]
+///    #[descriptor(uuid = "2a20", read, write, notify, on_read = battery_level_on_read)]
 ///    #[descriptor(uuid = "2a20", read, write, notify, value = "Demo description")]
 ///    level: u8,
 ///    #[descriptor(uuid = "2a21", read, write, notify, value = VAL)]

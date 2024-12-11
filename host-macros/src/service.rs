@@ -140,8 +140,14 @@ impl ServiceBuilder {
                     format_ident!("DESC_{}_{index}", to_screaming_snake_case(characteristic.name.as_str()));
                 let properties = set_desc_access_properties(&args);
                 let uuid = args.uuid;
-                // let read_callback = args.on_read.as_ref();
-                // let write_callback = args.on_write.as_ref();
+                let read_callback = match &args.on_read {
+                    Some(callback) => quote!(Some(#callback)),
+                    None => quote!(None),
+                };
+                let write_callback = match &args.on_write {
+                    Some(callback) => quote!(Some(#callback)),
+                    None => quote!(None),
+                };
                 let writeable = args.write || args.write_without_response;
                 let capacity = match &args.capacity {
                     Some(cap) => quote!(#cap),
@@ -175,8 +181,8 @@ impl ServiceBuilder {
                             #uuid,
                             &[#(#properties),*],
                             store,
-                            None,
-                            None,
+                            #read_callback,
+                            #write_callback,
                         );
                     };
                 }

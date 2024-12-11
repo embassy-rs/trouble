@@ -65,12 +65,12 @@ pub(crate) struct DescriptorArgs {
     /// Capacity for writing new descriptors (u8)
     #[darling(default)]
     pub capacity: Option<syn::Expr>,
-    // /// Optional callback to be triggered on a read event
-    // #[darling(default)]
-    // pub on_read: Option<Ident>,
-    // /// Optional callback to be triggered on a write event
-    // #[darling(default)]
-    // pub on_write: Option<Ident>,
+    /// Optional callback to be triggered on a read event
+    #[darling(default)]
+    pub on_read: Option<Ident>,
+    /// Optional callback to be triggered on a write event
+    #[darling(default)]
+    pub on_write: Option<Ident>,
 }
 
 /// Characteristic attribute arguments
@@ -189,8 +189,8 @@ impl DescriptorArgs {
         let mut write: Option<bool> = None;
         let mut notify: Option<bool> = None;
         let mut indicate: Option<bool> = None;
-        // let mut on_read: Option<Ident> = None;
-        // let mut on_write: Option<Ident> = None;
+        let mut on_read: Option<Ident> = None;
+        let mut on_write: Option<Ident> = None;
         let mut capacity: Option<syn::Expr> = None;
         let mut default_value: Option<syn::Expr> = None;
         let mut write_without_response: Option<bool> = None;
@@ -209,8 +209,8 @@ impl DescriptorArgs {
                 "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "notify" => check_multi(&mut notify, "notify", &meta, true)?,
                 "indicate" => check_multi(&mut indicate, "indicate", &meta, true)?,
-                // "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
-                // "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
+                "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
+                "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
                 "value" => {
                     let value = meta
                         .value()
@@ -225,7 +225,7 @@ impl DescriptorArgs {
                 other => return Err(
                     meta.error(
                         format!(
-                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, indicate, write_without_response, notify, value, capacity"
+                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, indicate, write_without_response, notify, value,\ncapacity, on_read, on_write"
                         ))),
             };
             Ok(())
@@ -246,9 +246,9 @@ impl DescriptorArgs {
             read: read.unwrap_or_default(),
             write_without_response,
             default_value,
-            // on_write,
-            // on_read,
             capacity,
+            on_write,
+            on_read,
             write,
         })
     }
