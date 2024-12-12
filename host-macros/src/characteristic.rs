@@ -2,7 +2,7 @@
 //!
 //! This module contains the parsing and handling of the characteristic attribute.
 //! The characteristic attribute is used to define a characteristic in a service.
-//! A characteristic is a data value that can be read, written, or notified.
+//! A characteristic is a data value that can be accessed from a connected client.
 
 use crate::uuid::Uuid;
 use darling::Error;
@@ -38,16 +38,16 @@ impl Characteristic {
 
 #[derive(Debug, FromMeta, Default)]
 pub(crate) struct AccessArgs {
-    /// If true, the descriptor can be written.
+    /// If true, the characteristic can be written.
     #[darling(default)]
     pub read: bool,
-    /// If true, the descriptor can be written.
+    /// If true, the characteristic can be written.
     #[darling(default)]
     pub write: bool,
-    /// If true, the descriptor can be written without a response.
+    /// If true, the characteristic can be written without a response.
     #[darling(default)]
     pub write_without_response: bool,
-    /// If true, the descriptor can send notifications.
+    /// If true, the characteristic can send notifications.
     #[darling(default)]
     pub notify: bool,
     /// If true, the characteristic can send indications.
@@ -84,12 +84,15 @@ pub(crate) struct DescriptorArgs {
 pub(crate) struct CharacteristicArgs {
     /// The UUID of the characteristic.
     pub uuid: Uuid,
+    /// Starting value for this characteristic.
     #[darling(default)]
     pub default_value: Option<syn::Expr>,
     /// Descriptors for the characteristic.
     /// Descriptors are optional and can be used to add additional metadata to the characteristic.
+    /// Parsed in super::check_for_characteristic.
     #[darling(default, multiple)]
     pub descriptors: Vec<DescriptorArgs>,
+    /// Any '///' comments on each field, parsed in super::check_for_characteristic.
     #[darling(default)]
     pub doc_string: String,
     #[darling(default)]
@@ -174,8 +177,6 @@ impl DescriptorArgs {
         let mut uuid: Option<Uuid> = None;
         let mut read: Option<bool> = None;
         let mut write: Option<bool> = None;
-        let mut notify: Option<bool> = None;
-        let mut indicate: Option<bool> = None;
         let mut on_read: Option<Ident> = None;
         let mut on_write: Option<Ident> = None;
         let mut capacity: Option<syn::Expr> = None;
@@ -193,8 +194,6 @@ impl DescriptorArgs {
                 },
                 "read" => check_multi(&mut read, "read", &meta, true)?,
                 "write" => check_multi(&mut write, "write", &meta, true)?,
-                "notify" => check_multi(&mut notify, "notify", &meta, true)?,
-                "indicate" => check_multi(&mut indicate, "indicate", &meta, true)?,
                 "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
                 "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
                 "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
@@ -212,7 +211,7 @@ impl DescriptorArgs {
                 other => return Err(
                     meta.error(
                         format!(
-                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, indicate, write_without_response, notify, value,\ncapacity, on_read, on_write"
+                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, value,\ncapacity, on_read, on_write"
                         ))),
             };
             Ok(())
@@ -231,8 +230,8 @@ impl DescriptorArgs {
             default_value,
             capacity,
             access: AccessArgs {
-                indicate: indicate.unwrap_or_default(),
-                notify: notify.unwrap_or_default(),
+                indicate: false, // not possible for descriptor
+                notify: false,   // not possible for descriptor
                 read: read.unwrap_or_default(),
                 write_without_response,
                 on_write,

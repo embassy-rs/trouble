@@ -28,18 +28,18 @@ struct CustomService {
     #[descriptor(uuid = "2b20", read, value = "Read Only Descriptor", on_read = value_on_read)]
     /// Battery Level
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, on_read = value_on_read, on_write = value_on_write, value = 42)]
-    #[descriptor(uuid = "2b21", read, write, notify, value = "Writeable Descriptor requires capacity", capacity = 255, on_write = value_on_write)]
-    first: u8,
+    #[descriptor(uuid = "2b21", read, write, value = "Writeable Descriptor requires capacity", capacity = 255, on_write = value_on_write)]
+    pub first: u8,
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, on_read = value_on_read, on_write = value_on_write, value = 123.321)]
     /// Order doesn't matter
-    #[descriptor(uuid = "2b20", read, write, notify, capacity = 100, on_read = value_on_read)] // empty descriptor
-    second: f32,
+    #[descriptor(uuid = "2b20", read, write, capacity = 100, on_read = value_on_read)] // empty descriptor
+    pub second: f32,
     /// Multi
     ///
     /// Line
     /// Comment
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, value = [0,1])]
-    third: [u8; 2],
+    pub third: [u8; 2],
 }
 
 static READ_FLAG: CriticalSectionMutex<RefCell<bool>> = CriticalSectionMutex::new(RefCell::new(false));
