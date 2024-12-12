@@ -114,8 +114,8 @@ impl ServiceBuilder {
 
         quote! {
             #visibility struct #struct_name {
-                handle: AttributeHandle,
                 #fields
+                handle: AttributeHandle,
             }
 
             #[allow(unused)]
@@ -142,62 +142,7 @@ impl ServiceBuilder {
 
     /// Construct instructions for adding a characteristic to the service, with static storage.
     fn construct_characteristic_static(&mut self, characteristic: Characteristic) {
-        let descriptors: TokenStream2 = characteristic
-            .args
-            .descriptors
-            .iter()
-            .enumerate()
-            .map(|(index, args)| {
-                let name_screaming =
-                    format_ident!("DESC_{index}_{}", to_screaming_snake_case(characteristic.name.as_str()));
-                let access = &args.access;
-                let properties = set_access_properties(access);
-                let uuid = args.uuid;
-                let read_callback = match &access.on_read {
-                    Some(callback) => quote!(Some(#callback)),
-                    None => quote!(None),
-                };
-                let write_callback = match &access.on_write {
-                    Some(callback) => quote!(Some(#callback)),
-                    None => quote!(None),
-                };
-                let writeable = access.write || access.write_without_response;
-                let default_value = match &args.default_value {
-                    Some(val) => quote!(#val), // if set by user
-                    None => quote!(""),
-                };
-                let capacity = match &args.capacity {
-                    Some(cap) => quote!(#cap),
-                    None => {
-                        if writeable {
-                            panic!("'capacity' must be specified for writeable descriptors");
-                        }
-                        quote!(#default_value.len() as u8)
-                    },
-                };
-
-                self.increment_attributes(access);
-
-                quote_spanned! {characteristic.span=>
-                    {
-                        const CAPACITY: u8 = #capacity;
-                        static #name_screaming: static_cell::StaticCell<[u8; CAPACITY as usize]> = static_cell::StaticCell::new();
-                        let store = #name_screaming.init([0; CAPACITY as usize]);
-                        if !#default_value.is_empty() {
-                            store[..#default_value.len()].copy_from_slice(#default_value.as_bytes());
-                        }
-                        builder.add_descriptor(
-                            #uuid,
-                            &[#(#properties),*],
-                            store,
-                            #read_callback,
-                            #write_callback,
-                        );
-                    };
-                }
-            })
-            .collect();
-
+        let descriptors = self.build_descriptors(&characteristic);
         let name_screaming = format_ident!("{}", to_screaming_snake_case(characteristic.name.as_str()));
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
@@ -296,6 +241,66 @@ impl ServiceBuilder {
             })
         }
         self
+    }
+
+    /// Generate token stream for any descriptors tagged against this characteristic.
+    fn build_descriptors(&mut self, characteristic: &Characteristic) -> TokenStream2 {
+        characteristic
+                .args
+                .descriptors
+                .iter()
+                .enumerate()
+                .map(|(index, args)| {
+                    let name_screaming =
+                        format_ident!("DESC_{index}_{}", to_screaming_snake_case(characteristic.name.as_str()));
+                    let access = &args.access;
+                    let properties = set_access_properties(access);
+                    let uuid = args.uuid;
+                    let read_callback = match &access.on_read {
+                        Some(callback) => quote!(Some(#callback)),
+                        None => quote!(None),
+                    };
+                    let write_callback = match &access.on_write {
+                        Some(callback) => quote!(Some(#callback)),
+                        None => quote!(None),
+                    };
+                    let writeable = access.write || access.write_without_response;
+                    let default_value = match &args.default_value {
+                        Some(val) => quote!(#val), // if set by user
+                        None => quote!(""),
+                    };
+                    let capacity = match &args.capacity {
+                        Some(cap) => quote!(#cap),
+                        None => {
+                            if writeable {
+                                panic!("'capacity' must be specified for writeable descriptors");
+                            }
+                            quote!(#default_value.len() as u8)
+                        },
+                    };
+
+                    self.attribute_count += 1; // descriptors should always only be one attribute.
+
+                    quote_spanned! {characteristic.span=>
+                        {
+                            let value = #default_value;
+                            const CAPACITY: u8 = #capacity;
+                            static #name_screaming: static_cell::StaticCell<[u8; CAPACITY as usize]> = static_cell::StaticCell::new();
+                            let store = #name_screaming.init([0; CAPACITY as usize]);
+                            if !value.is_empty() {
+                                store[..value.len()].copy_from_slice(value.as_bytes());
+                            }
+                            builder.add_descriptor(
+                                #uuid,
+                                &[#(#properties),*],
+                                store,
+                                #read_callback,
+                                #write_callback,
+                            );
+                        };
+                    }
+                })
+                .collect()
     }
 }
 
