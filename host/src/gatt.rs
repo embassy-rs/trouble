@@ -43,7 +43,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
         Self {
             stack,
             server: AttributeServer::new(table),
-            rx: stack.host.att_inbound.receiver().into(),
+            rx: stack.host.att_server.receiver().into(),
             tx: stack.host.outbound.sender().into(),
             connections: &stack.host.connections,
         }
@@ -277,7 +277,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
 
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),
-            rx: stack.host.att_inbound.receiver().into(),
+            rx: stack.host.att_client.receiver().into(),
             stack,
             connection: connection.clone(),
 
@@ -304,7 +304,8 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             };
 
             let pdu = self.request(data).await?;
-            match AttRsp::decode(pdu.as_ref())? {
+            let res = AttRsp::decode(pdu.as_ref())?;
+            match res {
                 AttRsp::Error { request, handle, code } => {
                     if code == att::AttErrorCode::AttributeNotFound {
                         break;
@@ -332,7 +333,8 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
                     }
                     start = end + 1;
                 }
-                _ => {
+                res => {
+                    trace!("[gatt client] response: {:?}", res);
                     return Err(Error::InvalidValue.into());
                 }
             }

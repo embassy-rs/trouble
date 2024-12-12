@@ -62,7 +62,9 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) reassembly: PacketReassembly<'d>,
     pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
-    pub(crate) att_inbound: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
+    pub(crate) att_server: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
+    #[cfg(feature = "gatt")]
+    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) rx_pool: &'d dyn GlobalPacketPool<'d>,
     pub(crate) outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_TX_QUEUE_SIZE }>,
 
@@ -206,7 +208,9 @@ where
             channels: ChannelManager::new(rx_pool, channels, channels_rx),
             rx_pool,
             #[cfg(feature = "gatt")]
-            att_inbound: Channel::new(),
+            att_server: Channel::new(),
+            #[cfg(feature = "gatt")]
+            att_client: Channel::new(),
             #[cfg(feature = "scan")]
             scanner: Channel::new(),
             advertise_state: AdvState::new(advertise_handles),
@@ -337,9 +341,8 @@ where
             L2CAP_CID_ATT => {
                 // Handle ATT MTU exchange here since it doesn't strictly require
                 // gatt to be enabled.
-                if let Ok(att::AttReq::ExchangeMtu { mtu }) =
-                    att::AttReq::decode(&packet.as_ref()[..header.length as usize])
-                {
+                let a = att::Att::decode(&packet.as_ref()[..header.length as usize]);
+                if let Ok(att::Att::Req(att::AttReq::ExchangeMtu { mtu })) = a {
                     let mtu = self.connections.exchange_att_mtu(acl.handle(), mtu);
 
                     let rsp = att::AttRsp::ExchangeMtu { mtu };
@@ -352,25 +355,37 @@ where
                     w.write_hci(&l2cap)?;
                     w.write(rsp)?;
 
-                    trace!("[host] agreed att MTU of {}", mtu);
+                    info!("[host] agreed att MTU of {}", mtu);
                     let len = w.len();
                     if let Err(e) = self.outbound.try_send((acl.handle(), Pdu::new(packet, len))) {
                         return Err(Error::OutOfMemory);
                     }
-                } else if let Ok(att::AttRsp::ExchangeMtu { mtu }) =
-                    att::AttRsp::decode(&packet.as_ref()[..header.length as usize])
-                {
-                    trace!("[host] remote agreed att MTU of {}", mtu);
+                } else if let Ok(att::Att::Rsp(att::AttRsp::ExchangeMtu { mtu })) = a {
+                    info!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
                 } else {
                     #[cfg(feature = "gatt")]
-                    if let Err(e) = self
-                        .att_inbound
-                        .try_send((acl.handle(), Pdu::new(packet, header.length as usize)))
-                    {
-                        return Err(Error::OutOfMemory);
+                    match a {
+                        Ok(att::Att::Req(_)) => {
+                            if let Err(e) = self
+                                .att_server
+                                .try_send((acl.handle(), Pdu::new(packet, header.length as usize)))
+                            {
+                                return Err(Error::OutOfMemory);
+                            }
+                        }
+                        Ok(att::Att::Rsp(_)) => {
+                            if let Err(e) = self
+                                .att_client
+                                .try_send((acl.handle(), Pdu::new(packet, header.length as usize)))
+                            {
+                                return Err(Error::OutOfMemory);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Error decoding attribute payload: {:?}", e);
+                        }
                     }
-
                     #[cfg(not(feature = "gatt"))]
                     return Err(Error::NotSupported);
                 }
