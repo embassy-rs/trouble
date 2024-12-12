@@ -109,6 +109,8 @@ impl<'d> WriteCursor<'d> {
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
 pub struct ReadCursor<'d> {
     pos: usize,
     data: &'d [u8],
