@@ -84,6 +84,18 @@ impl ServiceBuilder {
             code_build_chars: TokenStream2::new(),
         }
     }
+    /// Increment the number of access arguments required for this characteristic
+    ///
+    /// At least two attributes will be added to the attribute table for each characteristic:
+    /// - The characteristic declaration
+    /// - The characteristic's value declaration
+    ///
+    /// If the characteristic has either the notify or indicate property,
+    /// a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
+    fn increment_attributes(&mut self, access: &AccessArgs) -> usize {
+        self.attribute_count += if access.notify || access.indicate { 3 } else { 2 };
+        self.attribute_count
+    }
     /// Construct the macro blueprint for the service struct.
     pub fn build(self) -> TokenStream2 {
         let properties = self.properties;
@@ -137,7 +149,7 @@ impl ServiceBuilder {
             .enumerate()
             .map(|(index, args)| {
                 let name_screaming =
-                    format_ident!("DESC_{}_{index}", to_screaming_snake_case(characteristic.name.as_str()));
+                    format_ident!("DESC_{index}_{}", to_screaming_snake_case(characteristic.name.as_str()));
                 let access = &args.access;
                 let properties = set_access_properties(access);
                 let uuid = args.uuid;
@@ -150,26 +162,22 @@ impl ServiceBuilder {
                     None => quote!(None),
                 };
                 let writeable = access.write || access.write_without_response;
+                let default_value = match &args.default_value {
+                    Some(val) => quote!(#val), // if set by user
+                    None => quote!(""),
+                };
                 let capacity = match &args.capacity {
                     Some(cap) => quote!(#cap),
                     None => {
                         if writeable {
                             panic!("'capacity' must be specified for writeable descriptors");
                         }
-                        quote!(0u8)
+                        quote!(#default_value.len() as u8)
                     },
                 };
-                let default_value = match &args.default_value {
-                    Some(val) => quote!(#val), // if set by user
-                    None => quote!(""),
-                };
-                // At least two attributes will be added to the attribute table for each characteristic:
-                // - The characteristic declaration
-                // - The characteristic's value declaration
-                //
-                // If the characteristic has either the notify or indicate property,
-                // a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
-                self.attribute_count += if access.notify { 3 } else { 2 };
+
+                self.increment_attributes(access);
+
                 quote_spanned! {characteristic.span=>
                     {
                         const CAPACITY: u8 = #capacity;
@@ -213,7 +221,7 @@ impl ServiceBuilder {
             let #char_name = {
                 static #name_screaming: static_cell::StaticCell<[u8; size_of::<#ty>()]> = static_cell::StaticCell::new();
                 let store = #name_screaming.init(Default::default());
-                let mut val = #ty::default(); // constrain the type of the value here
+                let mut val = <#ty>::default(); // constrain the type of the value here
                 val = #default_value; // update the temporary value with our new default
                 store.copy_from_slice(GattValue::to_gatt(&val)); // convert to bytes
                 let mut builder = service
@@ -264,14 +272,7 @@ impl ServiceBuilder {
             });
             doc_strings.push(ch.args.doc_string.to_owned());
 
-            // At least two attributes will be added to the attribute table for each characteristic:
-            // - The characteristic declaration
-            // - The characteristic's value declaration
-            //
-            // If the characteristic has either the notify or indicate property,
-            // a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
-            let access = &ch.args.access;
-            self.attribute_count += if access.notify || access.indicate { 3 } else { 2 };
+            self.increment_attributes(&ch.args.access);
 
             self.construct_characteristic_static(ch);
         }
