@@ -341,7 +341,7 @@ impl DHKey {
     /// Generates LE Secure Connections `MacKey` and `LTK`
     /// ([Vol 3] Part H, Section 2.2.7).
     #[inline]
-    pub fn f5(&self, n1: Nonce, n2: Nonce, a1: Addr, a2: Addr) -> (MacKey, LTK) {
+    pub fn f5(&self, n1: Nonce, n2: Nonce, a1: Address, a2: Address) -> (MacKey, LTK) {
         let n1 = n1.0.to_be_bytes();
         let n2 = n2.0.to_be_bytes();
         let half = |m: &mut AesCmac, counter: u8| {
@@ -349,8 +349,8 @@ impl DHKey {
                 .update(b"btle")
                 .update(n1)
                 .update(n2)
-                .update(a1.0)
-                .update(a2.0)
+                .update(a1.to_bytes())
+                .update(a2.to_bytes())
                 .update(256_u16.to_be_bytes())
                 .finalize_key()
         };

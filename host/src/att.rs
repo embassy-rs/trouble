@@ -152,6 +152,8 @@ pub enum AttReq<'d> {
     },
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
 pub enum AttRsp<'d> {
     ExchangeMtu {
         mtu: u16,
@@ -173,6 +175,11 @@ pub enum AttRsp<'d> {
     Write,
 }
 
+pub enum Att<'d> {
+    Req(AttReq<'d>),
+    Rsp(AttRsp<'d>),
+}
+
 impl codec::Type for AttRsp<'_> {
     fn size(&self) -> usize {
         AttRsp::size(self)
@@ -191,7 +198,8 @@ impl<'d> codec::Decode<'d> for AttRsp<'d> {
     }
 }
 
-#[derive(Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Debug)]
 pub struct FindByTypeValueIter<'d> {
     cursor: ReadCursor<'d>,
 }
@@ -211,7 +219,8 @@ impl FindByTypeValueIter<'_> {
     }
 }
 
-#[derive(Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Debug)]
 pub struct ReadByTypeIter<'d> {
     item_len: usize,
     cursor: ReadCursor<'d>,
@@ -285,10 +294,14 @@ impl<'d> AttRsp<'d> {
         Ok(())
     }
 
-    pub fn decode(packet: &'d [u8]) -> Result<AttRsp<'d>, codec::Error> {
-        let mut r = ReadCursor::new(packet);
-        let kind: u8 = r.read()?;
-        match kind {
+    pub fn decode(data: &'d [u8]) -> Result<AttRsp<'d>, codec::Error> {
+        let mut r = ReadCursor::new(data);
+        let opcode: u8 = r.read()?;
+        AttRsp::decode_with_opcode(opcode, r)
+    }
+
+    pub fn decode_with_opcode(opcode: u8, mut r: ReadCursor<'d>) -> Result<AttRsp<'d>, codec::Error> {
+        match opcode {
             ATT_FIND_BY_TYPE_VALUE_RSP => Ok(Self::FindByTypeValue {
                 it: FindByTypeValueIter { cursor: r },
             }),
@@ -338,8 +351,22 @@ impl codec::Encode for AttReq<'_> {
 }
 
 impl<'d> codec::Decode<'d> for AttReq<'d> {
-    fn decode(src: &'d [u8]) -> Result<Self, codec::Error> {
-        AttReq::decode(src)
+    fn decode(data: &'d [u8]) -> Result<AttReq<'d>, codec::Error> {
+        AttReq::decode(data)
+    }
+}
+
+impl<'d> Att<'d> {
+    pub fn decode(data: &'d [u8]) -> Result<Att<'d>, codec::Error> {
+        let mut r = ReadCursor::new(data);
+        let opcode: u8 = r.read()?;
+        if opcode % 2 == 0 {
+            let req = AttReq::decode_with_opcode(opcode, r)?;
+            Ok(Att::Req(req))
+        } else {
+            let rsp = AttRsp::decode_with_opcode(opcode, r)?;
+            Ok(Att::Rsp(rsp))
+        }
     }
 }
 
@@ -405,11 +432,15 @@ impl<'d> AttReq<'d> {
         }
         Ok(())
     }
-    pub fn decode(packet: &'d [u8]) -> Result<AttReq<'d>, codec::Error> {
-        let mut r = ReadCursor::new(packet);
-        let opcode: u8 = r.read()?;
-        let payload = r.remaining();
 
+    pub fn decode(data: &'d [u8]) -> Result<AttReq<'d>, codec::Error> {
+        let mut r = ReadCursor::new(data);
+        let opcode: u8 = r.read()?;
+        AttReq::decode_with_opcode(opcode, r)
+    }
+
+    pub fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<AttReq<'d>, codec::Error> {
+        let payload = r.remaining();
         match opcode {
             ATT_READ_BY_GROUP_TYPE_REQ => {
                 let start_handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
@@ -511,7 +542,10 @@ impl<'d> AttReq<'d> {
                 let offset = (payload[2] as u16) + ((payload[3] as u16) << 8);
                 Ok(Self::ReadBlob { handle, offset })
             }
-            _ => Err(codec::Error::InvalidValue),
+            code => {
+                warn!("[att] unknown opcode {:x}", code);
+                Err(codec::Error::InvalidValue)
+            }
         }
     }
 }
