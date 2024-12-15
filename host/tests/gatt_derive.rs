@@ -25,12 +25,12 @@ struct Server {
 
 #[gatt_service(uuid = "408813df-5dd4-1f87-ec11-cdb000100000")]
 struct CustomService {
-    #[descriptor(uuid = "2b20", read, value = "Read Only Descriptor", on_read = value_on_read)]
+    #[descriptor(uuid = "2b20", value = "Read Only Descriptor", read, on_read = value_on_read)]
     /// Battery Level
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, on_read = value_on_read, on_write = value_on_write, value = 42)]
-    #[descriptor(uuid = "2b21", read, write, value = "Writeable Descriptor requires capacity", capacity = 255, on_write = value_on_write)]
+    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", value = 42, read, write, notify, on_read = value_on_read, on_write = value_on_write)]
+    #[descriptor(uuid = "2b21", value = "Writeable Descriptor requires capacity", read, write, capacity = 255, on_write = value_on_write)]
     pub first: u8,
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, on_read = value_on_read, on_write = value_on_write, value = 123.321)]
+    #[characteristic(uuid = "408814df-5dd4-1f87-ec11-cdb001100000", value = 123.321, read, write, notify, on_read = value_on_read, on_write = value_on_write)]
     /// Order doesn't matter
     #[descriptor(uuid = "2b20", read, write, capacity = 100, on_read = value_on_read)] // empty descriptor
     pub second: f32,
@@ -38,8 +38,10 @@ struct CustomService {
     ///
     /// Line
     /// Comment
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, value = [0,1])]
+    #[characteristic(uuid = "408815df-5dd4-1f87-ec11-cdb001100000", value = [0,1], read, write, notify)]
     pub third: [u8; 2],
+    #[characteristic(uuid = "408816df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
+    pub fourth: heapless::Vec<u8, 3>,
 }
 
 static READ_FLAG: CriticalSectionMutex<RefCell<bool>> = CriticalSectionMutex::new(RefCell::new(false));

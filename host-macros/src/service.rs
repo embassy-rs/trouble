@@ -158,8 +158,8 @@ impl ServiceBuilder {
             .as_ref()
             .map(|callback| quote!(builder.set_write_callback(#callback);));
         let default_value = match characteristic.args.default_value {
-            Some(val) => quote!(#val),      // if set by user
-            None => quote!(#ty::default()), // or default otherwise
+            Some(val) => quote!(#val),        // if set by user
+            None => quote!(<#ty>::default()), // or default otherwise
         };
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
@@ -168,7 +168,8 @@ impl ServiceBuilder {
                 let store = #name_screaming.init(Default::default());
                 let mut val = <#ty>::default(); // constrain the type of the value here
                 val = #default_value; // update the temporary value with our new default
-                store.copy_from_slice(GattValue::to_gatt(&val)); // convert to bytes
+                let bytes = GattValue::to_gatt(&val);
+                store[..bytes.len()].copy_from_slice(bytes);
                 let mut builder = service
                     .add_characteristic(#uuid, &[#(#properties),*], store);
                 #read_callback
