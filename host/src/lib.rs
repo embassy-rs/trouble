@@ -299,6 +299,8 @@ pub struct HostResources<
 > {
     qos: Qos,
     rx_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }, CHANNELS>>,
+    #[cfg(feature = "gatt")]
+    gatt_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::GATT_PACKET_POOL_SIZE }, 1>>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
     events: MaybeUninit<[EventChannel<'static>; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
@@ -316,6 +318,7 @@ impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: 
         Self {
             qos,
             rx_pool: MaybeUninit::uninit(),
+            gatt_pool: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
             events: MaybeUninit::uninit(),
             sar: MaybeUninit::uninit(),
@@ -355,6 +358,13 @@ pub fn new<
         core::mem::transmute::<&'d dyn GlobalPacketPool<'d>, &'static dyn GlobalPacketPool<'static>>(rx_pool)
     };
 
+    #[cfg(feature = "gatt")]
+    let gatt_pool: &'d dyn GlobalPacketPool<'d> = &*resources.gatt_pool.write(PacketPool::new(PacketQos::None));
+    #[cfg(feature = "gatt")]
+    let gatt_pool = unsafe {
+        core::mem::transmute::<&'d dyn GlobalPacketPool<'d>, &'static dyn GlobalPacketPool<'static>>(gatt_pool)
+    };
+
     let connections = &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
     let connections = unsafe { transmute_slice(connections) };
     let events = &mut *resources.events.write([const { EventChannel::new() }; CONNS]);
@@ -370,6 +380,8 @@ pub fn new<
     let host = BleHost::new(
         controller,
         rx_pool,
+        #[cfg(feature = "gatt")]
+        gatt_pool,
         connections,
         events,
         channels,

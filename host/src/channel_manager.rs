@@ -552,14 +552,14 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        hci.send(&p_buf[..len]).await?;
+        hci.send(&p_buf[..len], true).await?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
 
         for chunk in chunks {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            hci.send(&p_buf[..len]).await?;
+            hci.send(&p_buf[..len], true).await?;
             grant.confirm(1);
         }
         Ok(())
@@ -595,7 +595,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        hci.try_send(&p_buf[..len])?;
+        hci.try_send(&p_buf[..len], true)?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
@@ -603,7 +603,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
 
         for (i, chunk) in chunks.enumerate() {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            hci.try_send(&p_buf[..len])?;
+            hci.try_send(&p_buf[..len], true)?;
             grant.confirm(1);
         }
         Ok(())

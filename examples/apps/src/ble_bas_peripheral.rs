@@ -111,7 +111,7 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
 }
 
 /// Run the Gatt Server.
-async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
+async fn gatt_task(server: &Server<'_, '_>) {
     loop {
         if let Err(e) = server.run().await {
             #[cfg(feature = "defmt")]
@@ -122,10 +122,7 @@ async fn gatt_task<C: Controller>(server: &Server<'_, '_, C>) {
 }
 
 /// Stream Events until the connection closes.
-async fn conn_task<C: Controller>(
-    server: &Server<'_, '_, C>,
-    conn: &Connection<'_>,
-) -> Result<(), BleHostError<C::Error>> {
+async fn conn_task(server: &Server<'_, '_>, conn: &Connection<'_>) -> Result<(), Error> {
     let level = server.battery_service.level;
     loop {
         match conn.next().await {
@@ -183,7 +180,7 @@ async fn advertise<'a, C: Controller>(
 }
 
 /// Example task to use the BLE notifier interface.
-async fn counter_task<C: Controller>(server: &Server<'_, '_, C>, conn: &Connection<'_>) {
+async fn counter_task(server: &Server<'_, '_>, conn: &Connection<'_>) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
     loop {

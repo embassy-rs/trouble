@@ -57,13 +57,13 @@ async fn gatt_client_server() {
                 &mut value
             ).build();
 
-        let server = GattServer::<common::Controller, NoopRawMutex, 10, 27>::new(stack, table);
+        let server = GattServer::<NoopRawMutex, 10, 27>::new(stack, table);
         select! {
             r = runner.run() => {
                 r
             }
             r = server.run() => {
-                r
+                r.map_err(BleHostError::BleHost)
             }
             r = async {
                 let mut adv_data = [0; 31];
@@ -81,7 +81,7 @@ async fn gatt_client_server() {
                 let mut done = false;
                 while !done {
                     println!("[peripheral] advertising");
-                    let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                    let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
