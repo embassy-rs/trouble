@@ -318,6 +318,7 @@ impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: 
         Self {
             qos,
             rx_pool: MaybeUninit::uninit(),
+            #[cfg(feature = "gatt")]
             gatt_pool: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
             events: MaybeUninit::uninit(),
