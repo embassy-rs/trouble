@@ -18,34 +18,36 @@ use crate::attribute_server::AttributeServer;
 use crate::connection::{Connection, ConnectionEvent};
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
+use crate::packet_pool::GlobalPacketPool;
+use crate::packet_pool::ATT_ID;
 use crate::pdu::Pdu;
 use crate::types::gatt_traits::GattValue;
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct GattServer<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize> {
-    stack: Stack<'reference, C>,
+pub struct GattServer<'reference, 'values, M: RawMutex, const MAX: usize, const ATT_MTU: usize> {
     server: AttributeServer<'values, M, MAX>,
     tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
     rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
     connections: &'reference ConnectionManager<'reference>,
+    pool: &'reference dyn GlobalPacketPool<'reference>,
 }
 
-impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2CAP_MTU: usize>
-    GattServer<'reference, 'values, C, M, MAX, L2CAP_MTU>
+impl<'reference, 'values, M: RawMutex, const MAX: usize, const ATT_MTU: usize>
+    GattServer<'reference, 'values, M, MAX, ATT_MTU>
 {
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
-    pub fn new(stack: Stack<'reference, C>, table: AttributeTable<'values, M, MAX>) -> Self {
-        stack.host.connections.set_default_att_mtu(L2CAP_MTU as u16 - 4);
+    pub fn new<C: Controller>(stack: Stack<'reference, C>, table: AttributeTable<'values, M, MAX>) -> Self {
+        stack.host.connections.set_default_att_mtu(ATT_MTU as u16);
         use crate::attribute_server::AttributeServer;
 
         Self {
-            stack,
             server: AttributeServer::new(table),
             rx: stack.host.att_server.receiver().into(),
             tx: stack.host.outbound.sender().into(),
             connections: &stack.host.connections,
+            pool: stack.host.gatt_pool,
         }
     }
 
@@ -53,13 +55,13 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
     ///
     /// If attributes are written or read, an event will be posted on the corresponding
     /// connection's event queue.
-    pub async fn run(&self) -> Result<(), BleHostError<C::Error>> {
+    pub async fn run(&self) -> Result<(), Error> {
         loop {
             let (handle, pdu) = self.rx.receive().await;
             if let Some(connection) = self.connections.get_connected_handle(handle) {
                 match AttReq::decode(pdu.as_ref()) {
                     Ok(att) => {
-                        let mut tx = [0; L2CAP_MTU];
+                        let mut tx = [0; ATT_MTU];
                         let mut w = WriteCursor::new(&mut tx);
                         let (mut header, mut data) = w.split(4)?;
 
@@ -83,9 +85,19 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
                                     _ => None,
                                 };
 
-                                let mut packet = pdu.packet;
-                                packet.as_mut()[..len].copy_from_slice(&tx[..len]);
-                                self.tx.send((handle, Pdu::new(packet, len))).await;
+                                warn!("[gatt] responding to handle {:?} {} bytes", handle, len);
+                                let mut first = true;
+                                for chunk in tx[..len].chunks(self.pool.mtu()) {
+                                    let mut p = self.pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+                                    p.as_mut()[..chunk.len()].copy_from_slice(chunk);
+                                    let pdu = if !first {
+                                        Pdu::new(p, chunk.len()).segment()
+                                    } else {
+                                        Pdu::new(p, chunk.len())
+                                    };
+                                    self.tx.send((handle, pdu)).await;
+                                    first = false;
+                                }
                                 if let Some(event) = event {
                                     connection
                                         .post_event(ConnectionEvent::Gatt {
@@ -121,7 +133,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
         characteristic: &Characteristic<T>,
         connection: &Connection<'_>,
         value: &T,
-    ) -> Result<(), BleHostError<C::Error>> {
+    ) -> Result<(), Error> {
         let conn = connection.handle();
         self.server.table.set(characteristic, value)?;
 
@@ -132,7 +144,7 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
             return Ok(());
         }
 
-        let mut tx = [0; L2CAP_MTU];
+        let mut tx = [0; ATT_MTU];
         let mut w = WriteCursor::new(&mut tx[..]);
         let (mut header, mut data) = w.split(4)?;
         data.write(ATT_HANDLE_VALUE_NTF)?;
@@ -142,7 +154,20 @@ impl<'reference, 'values, C: Controller, M: RawMutex, const MAX: usize, const L2
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let total = header.len() + data.len();
-        self.stack.host.acl(conn, 1).await?.send(&tx[..total]).await?;
+
+        let mut first = true;
+        for chunk in tx[..total].chunks(self.pool.mtu()) {
+            let mut p = self.pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+            p.as_mut()[..chunk.len()].copy_from_slice(chunk);
+            let pdu = if !first {
+                Pdu::new(p, chunk.len()).segment()
+            } else {
+                Pdu::new(p, chunk.len())
+            };
+
+            self.tx.send((conn, pdu)).await;
+            first = false;
+        }
         Ok(())
     }
 
@@ -246,7 +271,7 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         w.write(req)?;
 
         let mut grant = self.stack.host.acl(self.connection.handle(), 1).await?;
-        grant.send(w.finish()).await?;
+        grant.send(w.finish(), true).await?;
 
         let (h, pdu) = self.response_channel.receive().await;
 
@@ -273,7 +298,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
 
         let mut grant = stack.host.acl(connection.handle(), 1).await?;
 
-        grant.send(w.finish()).await?;
+        grant.send(w.finish(), true).await?;
 
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),

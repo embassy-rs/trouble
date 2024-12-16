@@ -71,7 +71,7 @@ async fn gatt_client_server() {
             name: &name,
             appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
         });
-        let server: Server<common::Controller> = Server::new_with_config(
+        let server: Server = Server::new_with_config(
             stack,
             gap,
         ).unwrap();
@@ -87,7 +87,7 @@ async fn gatt_client_server() {
                 r
             }
             r = server.run() => {
-                r
+                r.map_err(BleHostError::BleHost)
             }
             r = async {
                 let mut adv_data = [0; 31];
@@ -105,7 +105,7 @@ async fn gatt_client_server() {
                 let mut done = false;
                 while !done {
                     println!("[peripheral] advertising");
-                    let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                    let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;

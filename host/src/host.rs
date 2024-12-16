@@ -66,6 +66,8 @@ pub(crate) struct BleHost<'d, T> {
     #[cfg(feature = "gatt")]
     pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) rx_pool: &'d dyn GlobalPacketPool<'d>,
+    #[cfg(feature = "gatt")]
+    pub(crate) gatt_pool: &'d dyn GlobalPacketPool<'d>,
     pub(crate) outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_TX_QUEUE_SIZE }>,
 
     #[cfg(feature = "scan")]
@@ -191,6 +193,7 @@ where
     pub(crate) fn new(
         controller: T,
         rx_pool: &'d dyn GlobalPacketPool<'d>,
+        #[cfg(feature = "gatt")] gatt_pool: &'d dyn GlobalPacketPool<'d>,
         connections: &'d mut [ConnectionStorage],
         events: &'d mut [EventChannel<'d>],
         channels: &'d mut [ChannelStorage],
@@ -207,6 +210,8 @@ where
             reassembly: PacketReassembly::new(sar),
             channels: ChannelManager::new(rx_pool, channels, channels_rx),
             rx_pool,
+            #[cfg(feature = "gatt")]
+            gatt_pool,
             #[cfg(feature = "gatt")]
             att_server: Channel::new(),
             #[cfg(feature = "gatt")]
@@ -868,7 +873,7 @@ impl<'d, C: Controller> TxRunner<'d, C> {
             let (conn, pdu) = host.outbound.receive().await;
             match host.acl(conn, 1).await {
                 Ok(mut sender) => {
-                    if let Err(e) = sender.send(pdu.as_ref()).await {
+                    if let Err(e) = sender.send(pdu.as_ref(), pdu.first).await {
                         warn!("[host] error sending outbound pdu");
                         return Err(e);
                     }
@@ -889,13 +894,17 @@ pub struct AclSender<'a, 'd, T: Controller> {
 }
 
 impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
-    pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
+    pub(crate) fn try_send(&mut self, pdu: &[u8], first: bool) -> Result<(), BleHostError<T::Error>>
     where
         T: blocking::Controller,
     {
         let acl = AclPacket::new(
             self.handle,
-            AclPacketBoundary::FirstNonFlushable,
+            if first {
+                AclPacketBoundary::FirstNonFlushable
+            } else {
+                AclPacketBoundary::Continuing
+            },
             AclBroadcastFlag::PointToPoint,
             pdu,
         );
@@ -913,13 +922,18 @@ impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
         }
     }
 
-    pub(crate) async fn send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
+    pub(crate) async fn send(&mut self, pdu: &[u8], first: bool) -> Result<(), BleHostError<T::Error>> {
         let acl = AclPacket::new(
             self.handle,
-            AclPacketBoundary::FirstNonFlushable,
+            if first {
+                AclPacketBoundary::FirstNonFlushable
+            } else {
+                AclPacketBoundary::Continuing
+            },
             AclBroadcastFlag::PointToPoint,
             pdu,
         );
+        // info!("Sent ACL {:?}", acl);
         self.controller
             .write_acl_data(&acl)
             .await
@@ -954,7 +968,7 @@ impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
         w.write_hci(&header)?;
         w.write_hci(signal)?;
 
-        self.send(w.finish()).await?;
+        self.send(w.finish(), true).await?;
 
         Ok(())
     }
