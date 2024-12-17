@@ -54,7 +54,7 @@ use crate::{att, config, Address, BleHostError, Error, Stack};
 /// The host performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
 pub(crate) struct BleHost<'d, T> {
-    initialized: OnceLock<()>,
+    initialized: OnceLock<InitialState>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
     pub(crate) controller: T,
@@ -75,6 +75,11 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct InitialState {
+    acl_max: usize,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -793,7 +798,10 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
         info!("[host] filter accept list size: {}", ret);
 
         let ret = LeReadBufferSize::new().exec(&host.controller).await?;
-        info!("[host] setting txq to {}", ret.total_num_le_acl_data_packets as usize);
+        info!(
+            "[host] setting txq to {}, fragmenting at {}",
+            ret.total_num_le_acl_data_packets as usize, ret.le_acl_data_packet_length as usize
+        );
         host.connections
             .set_link_credits(ret.total_num_le_acl_data_packets as usize);
 
@@ -819,7 +827,9 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                 .await?;
         }
 
-        let _ = host.initialized.init(());
+        let _ = host.initialized.init(InitialState {
+            acl_max: ret.le_acl_data_packet_length as usize,
+        });
         info!("[host] initialized");
 
         loop {
@@ -869,18 +879,23 @@ impl<'d, C: Controller> TxRunner<'d, C> {
     /// Run the transmit loop for the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
         let host = self.stack.host;
+        let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.outbound.receive().await;
-            match host.acl(conn, 1).await {
-                Ok(mut sender) => {
-                    if let Err(e) = sender.send(pdu.as_ref(), pdu.first).await {
-                        warn!("[host] error sending outbound pdu");
+            let mut first = true;
+            for chunk in pdu.as_ref().chunks(params.acl_max) {
+                match host.acl(conn, 1).await {
+                    Ok(mut sender) => {
+                        if let Err(e) = sender.send(chunk, first).await {
+                            warn!("[host] error sending outbound pdu");
+                            return Err(e);
+                        }
+                        first = false;
+                    }
+                    Err(e) => {
+                        warn!("[host] error requesting sending outbound pdu");
                         return Err(e);
                     }
-                }
-                Err(e) => {
-                    warn!("[host] error requesting sending outbound pdu");
-                    return Err(e);
                 }
             }
         }
