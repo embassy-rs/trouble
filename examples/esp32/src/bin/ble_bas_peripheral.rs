@@ -27,9 +27,16 @@ async fn main(_s: Spawner) {
     )
     .unwrap();
 
-    let systimer =
-        esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).split::<esp_hal::timer::systimer::Target>();
-    esp_hal_embassy::init(systimer.alarm0);
+    #[cfg(not(feature = "esp32"))]
+    {
+        let systimer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER)
+            .split::<esp_hal::timer::systimer::Target>();
+        esp_hal_embassy::init(systimer.alarm0);
+    }
+    #[cfg(feature = "esp32")]
+    {
+        esp_hal_embassy::init(timg0.timer1);
+    }
 
     let bluetooth = peripherals.BT;
     let connector = BleConnector::new(&init, bluetooth);

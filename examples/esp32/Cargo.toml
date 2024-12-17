@@ -5,9 +5,8 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-embassy-executor    = { version = "0.6.0", features = ["task-arena-size-65536"] }
+embassy-executor    = { version = "0.6.0", features = ["task-arena-size-8192"] }
 esp-backtrace = { version = "0.14.2", features = [
-    "esp32c3",
     "exception-handler",
     "panic-handler",
     "println",
@@ -31,7 +30,7 @@ embassy-sync = "0.6"
 
 [features]
 default = ["esp32c3"]
-esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-wifi/esp32c2"]
+esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-wifi/esp32"]
 esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-wifi/esp32c3"]
 esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6", "esp-println/esp32c6", "esp-wifi/esp32c6"]
 esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-wifi/esp32h2"]
