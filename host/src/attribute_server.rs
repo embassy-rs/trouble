@@ -10,26 +10,51 @@ use crate::codec;
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
-
-#[derive(Debug, PartialEq)]
-pub enum WorkResult {
-    DidWork,
-    GotDisconnected,
-}
+use crate::Error;
 
 const MAX_NOTIFICATIONS: usize = 4;
-pub struct NotificationTable<const ENTRIES: usize> {
+pub(crate) struct NotificationTable<const ENTRIES: usize> {
     state: [(u16, ConnHandle); ENTRIES],
 }
 
-pub struct AttributeServer<'d, M: RawMutex, const MAX: usize> {
-    pub(crate) table: AttributeTable<'d, M, MAX>,
+/// A GATT server capable of processing the GATT protocol using the provided table of attributes.
+pub struct AttributeServer<'values, M: RawMutex, const MAX: usize> {
+    pub(crate) table: AttributeTable<'values, M, MAX>,
     pub(crate) notification: Mutex<M, RefCell<NotificationTable<MAX_NOTIFICATIONS>>>,
 }
 
-impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
+pub(crate) mod sealed {
+    use super::*;
+
+    pub trait DynamicAttributeServer {
+        fn process(&self, connection: &Connection, packet: &AttReq, rx: &mut [u8]) -> Result<Option<usize>, Error>;
+        fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool;
+        fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
+    }
+}
+
+/// Type erased attribute server
+pub trait DynamicAttributeServer: sealed::DynamicAttributeServer {}
+
+impl<'values, M: RawMutex, const MAX: usize> DynamicAttributeServer for AttributeServer<'values, M, MAX> {}
+impl<'values, M: RawMutex, const MAX: usize> sealed::DynamicAttributeServer for AttributeServer<'values, M, MAX> {
+    fn process(&self, connection: &Connection, packet: &AttReq, rx: &mut [u8]) -> Result<Option<usize>, Error> {
+        let res = AttributeServer::process(self, connection, packet, rx)?;
+        Ok(res)
+    }
+
+    fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool {
+        AttributeServer::should_notify(self, connection.handle(), cccd_handle)
+    }
+
+    fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error> {
+        self.table.set_raw(characteristic, input)
+    }
+}
+
+impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
     /// Create a new instance of the AttributeServer
-    pub fn new(table: AttributeTable<'d, M, MAX>) -> AttributeServer<'d, M, MAX> {
+    pub fn new(table: AttributeTable<'values, M, MAX>) -> AttributeServer<'values, M, MAX> {
         AttributeServer {
             table,
             notification: Mutex::new(RefCell::new(NotificationTable {
@@ -38,7 +63,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
         }
     }
 
-    pub(crate) fn should_notify(&self, conn: ConnHandle, cccd_handle: u16) -> bool {
+    fn should_notify(&self, conn: ConnHandle, cccd_handle: u16) -> bool {
         self.notification.lock(|n| {
             let n = n.borrow();
             for entry in n.state.iter() {
@@ -93,7 +118,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
                     body.write(att.handle)?;
                     handle = att.handle;
 
-                    err = att.read(connection, 0, body.write_buf());
+                    err = att.read(0, body.write_buf());
                     if let Ok(len) = err {
                         body.commit(len)?;
                     }
@@ -139,7 +164,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
                     body.write(att.handle)?;
                     body.write(att.last_handle_in_group)?;
 
-                    err = att.read(connection, 0, body.write_buf());
+                    err = att.read(0, body.write_buf());
                     if let Ok(len) = err {
                         body.commit(len)?;
                     }
@@ -168,7 +193,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    err = att.read(connection, 0, data.write_buf());
+                    err = att.read(0, data.write_buf());
                     if let Ok(len) = err {
                         data.commit(len)?;
                     }
@@ -191,12 +216,11 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
         handle: u16,
         data: &[u8],
     ) -> Result<usize, codec::Error> {
-        // TODO: Generate event
         self.table.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     // Write commands can't respond with an error.
-                    let _ = att.write(connection, 0, data);
+                    let _ = att.write(0, data);
                     break;
                 }
             }
@@ -215,7 +239,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    err = att.write(connection, 0, data);
+                    err = att.write(0, data);
                     if err.is_ok() {
                         if let AttributeData::Cccd {
                             notifications,
@@ -349,7 +373,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    err = att.write(connection, offset as usize, value);
+                    err = att.write(offset as usize, value);
                     w.append(value)?;
                     break;
                 }
@@ -383,7 +407,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
             let mut err = Err(AttErrorCode::AttributeNotFound);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    err = att.read(connection, offset as usize, w.write_buf());
+                    err = att.read(offset as usize, w.write_buf());
                     if let Ok(n) = err {
                         w.commit(n)?;
                     }
@@ -472,7 +496,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeServer<'d, M, MAX> {
     }
 
     /// Get a reference to the attribute table
-    pub fn table(&self) -> &AttributeTable<'d, M, MAX> {
+    pub fn table(&self) -> &AttributeTable<'values, M, MAX> {
         &self.table
     }
 }

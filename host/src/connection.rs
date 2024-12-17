@@ -1,4 +1,6 @@
 //! BLE connection.
+use crate::packet_pool::Packet;
+use crate::pdu::Pdu;
 use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -7,7 +9,7 @@ use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
 use crate::scan::ScanConfig;
-use crate::{BleHostError, Stack};
+use crate::{BleHostError, Error, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -32,7 +34,6 @@ pub struct ConnectParams {
 }
 
 /// An event
-#[derive(Clone)]
 pub enum ConnectionEvent<'d> {
     /// Connection disconnected.
     Disconnected {
@@ -40,13 +41,10 @@ pub enum ConnectionEvent<'d> {
         reason: Status,
     },
     /// GATT event.
+    #[cfg(feature = "gatt")]
     Gatt {
-        /// Connection that caused the event.
-        // TODO: Can probably be removed, but keeping around for lifetime
-        connection: Connection<'d>,
         /// The event that was returned,
-        #[cfg(feature = "gatt")]
-        event: crate::gatt::GattEvent,
+        data: crate::gatt::GattData<'d>,
     },
 }
 
@@ -92,8 +90,24 @@ impl<'d> Connection<'d> {
         self.manager.set_att_mtu(self.index, mtu);
     }
 
+    pub(crate) fn get_att_mtu(&self) -> u16 {
+        self.manager.get_att_mtu(self.index)
+    }
+
+    pub(crate) async fn send(&self, pdu: Pdu<'d>) {
+        self.manager.send(self.index, pdu).await
+    }
+
+    pub(crate) fn try_send(&self, pdu: Pdu<'d>) -> Result<(), Error> {
+        self.manager.try_send(self.index, pdu)
+    }
+
     pub(crate) async fn post_event(&self, event: ConnectionEvent<'d>) {
         self.manager.post_event(self.index, event).await
+    }
+
+    pub(crate) fn alloc_tx(&self) -> Result<Packet<'d>, Error> {
+        self.manager.alloc_tx()
     }
 
     /// Wait for next connection event.

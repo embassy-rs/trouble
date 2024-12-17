@@ -31,7 +31,7 @@ async fn gatt_client_server() {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
         let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new(PacketQos::None);
-        let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
+        let (_stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address)
             .build();
         let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
@@ -50,20 +50,17 @@ async fn gatt_client_server() {
         table.add_service(Service::new(0x1801));
 
         // Custom service
-        let value_handle = table.add_service(Service::new(SERVICE_UUID.clone()))
+        let _handle: Characteristic<u8> = table.add_service(Service::new(SERVICE_UUID.clone()))
             .add_characteristic(
                 VALUE_UUID.clone(),
                 &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 &mut value
             ).build();
 
-        let server = GattServer::<NoopRawMutex, 10>::new(stack, table);
+        let server = AttributeServer::<NoopRawMutex, 10>::new(table);
         select! {
             r = runner.run() => {
                 r
-            }
-            r = server.run() => {
-                r.map_err(BleHostError::BleHost)
             }
             r = async {
                 let mut adv_data = [0; 31];
@@ -94,21 +91,21 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            ConnectionEvent::Gatt { connection: _, event } => if let GattEvent::Write {
-                                    value_handle: handle
-                                } = event {
-                                let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
-                                assert_eq!(characteristic, value_handle);
-                                let value: u8 = server.server().table().get(&characteristic).unwrap();
-                                println!("[peripheral] write value: {}", value);
-                                assert_eq!(expected, value);
-                                expected = expected.wrapping_add(1);
-                                writes += 1;
-                                if writes == 2 {
-                                    println!("expected value written twice, test pass");
-                                    // NOTE: Ensure that adapter gets polled again
-                                    tokio::time::sleep(Duration::from_secs(2)).await;
-                                    done = true;
+                            ConnectionEvent::Gatt { data } => {
+                                if let Ok(Some(GattEvent::Write(event))) = data.process(&server).await {
+                                    let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
+                                    assert_eq!(characteristic.handle, event.handle());
+                                    let value: u8 = server.table().get(&characteristic).unwrap();
+                                    println!("[peripheral] write value: {}", value);
+                                    assert_eq!(expected, value);
+                                    expected = expected.wrapping_add(1);
+                                    writes += 1;
+                                    if writes == 2 {
+                                        println!("expected value written twice, test pass");
+                                        // NOTE: Ensure that adapter gets polled again
+                                        tokio::time::sleep(Duration::from_secs(2)).await;
+                                        done = true;
+                                    }
                                 }
                             }
                         }

@@ -1,3 +1,4 @@
+use core::ops::Deref;
 use embassy_futures::select::select;
 use embassy_time::Timer;
 use trouble_host::prelude::*;
@@ -25,19 +26,10 @@ struct Server {
 #[gatt_service(uuid = "180f")]
 struct BatteryService {
     /// Battery Level
-    #[descriptor(uuid = "2b20", read, value = "Battery Level", on_read = battery_level_on_read)]
+    #[descriptor(uuid = "2b20", read, value = "Battery Level")]
     #[descriptor(uuid = "2b21", read, value = [0x12, 0x34])]
-    #[characteristic(uuid = "2a19", read, write, notify, on_read = battery_level_on_read, on_write = battery_level_on_write, value = 10)]
+    #[characteristic(uuid = "2a19", read, notify, value = 10)]
     level: u8,
-}
-
-fn battery_level_on_read(_connection: &Connection) {
-    info!("[gatt] Read event on battery level characteristic");
-}
-
-fn battery_level_on_write(_connection: &Connection, data: &[u8]) -> Result<(), ()> {
-    info!("[gatt] Write event on battery level characteristic: {:?}", data);
-    Ok(())
 }
 
 /// Run the BLE stack.
@@ -52,20 +44,16 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources = Resources::new(PacketQos::None);
-    let (stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
+    let (_stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
         .build();
 
     info!("Starting advertising and GATT service");
-    let server = Server::new_with_config(
-        stack,
-        GapConfig::Peripheral(PeripheralConfig {
-            name: "TrouBLE",
-            appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
-        }),
-    )
+    let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+        name: "TrouBLE",
+        appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
+    }))
     .unwrap();
-    let ble_background_tasks = select(ble_task(runner), gatt_task(&server));
     let app_task = async {
         loop {
             match advertise("Trouble Example", &mut peripheral).await {
@@ -85,7 +73,7 @@ where
             }
         }
     };
-    select(ble_background_tasks, app_task).await;
+    select(ble_task(runner), app_task).await;
 }
 
 /// This is a background task that is required to run forever alongside any other BLE tasks.
@@ -113,19 +101,8 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
     }
 }
 
-/// Run the Gatt Server.
-async fn gatt_task(server: &Server<'_, '_>) {
-    loop {
-        if let Err(e) = server.run().await {
-            #[cfg(feature = "defmt")]
-            let e = defmt::Debug2Format(&e);
-            panic!("[gatt_task] error: {:?}", e);
-        }
-    }
-}
-
 /// Stream Events until the connection closes.
-async fn conn_task(server: &Server<'_, '_>, conn: &Connection<'_>) -> Result<(), Error> {
+async fn conn_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Error> {
     let level = server.battery_service.level;
     loop {
         match conn.next().await {
@@ -133,20 +110,33 @@ async fn conn_task(server: &Server<'_, '_>, conn: &Connection<'_>) -> Result<(),
                 info!("[gatt] disconnected: {:?}", reason);
                 break;
             }
-            ConnectionEvent::Gatt { event, .. } => match event {
-                GattEvent::Read { value_handle } => {
-                    if value_handle == level.handle {
-                        let value = server.get(&level);
-                        info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+            ConnectionEvent::Gatt { data } => {
+                // We can choose to handle event directly without an attribute table
+                // let req = data.request();
+                // ..
+                // data.reply(conn, Ok(AttRsp::Error { .. }))
+
+                // But to simplify things, process it in the GATT server that handles
+                // the protocol details
+                match data.process(server.deref()).await {
+                    // Server processing emits
+                    Ok(Some(GattEvent::Read(event))) => {
+                        if event.handle() == level.handle {
+                            let value = server.get(&level);
+                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                        }
+                    }
+                    Ok(Some(GattEvent::Write(event))) => {
+                        if event.handle() == level.handle {
+                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!("[gatt] error processing event: {:?}", e);
                     }
                 }
-                GattEvent::Write { value_handle } => {
-                    if value_handle == level.handle {
-                        let value = server.get(&level);
-                        info!("[gatt] Write Event to Level Characteristic: {:?}", value);
-                    }
-                }
-            },
+            }
         }
     }
     info!("[gatt] task finished");
@@ -183,13 +173,13 @@ async fn advertise<'a, C: Controller>(
 }
 
 /// Example task to use the BLE notifier interface.
-async fn counter_task(server: &Server<'_, '_>, conn: &Connection<'_>) {
+async fn counter_task(server: &Server<'_>, conn: &Connection<'_>) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
     loop {
         tick = tick.wrapping_add(1);
         info!("[adv] notifying connection of tick {}", tick);
-        if server.notify(&level, conn, &tick).await.is_err() {
+        if level.notify(server.deref(), conn, &tick).await.is_err() {
             info!("[adv] error notifying connection");
             break;
         };

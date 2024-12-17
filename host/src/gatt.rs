@@ -7,16 +7,16 @@ use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
-use embassy_sync::channel::{Channel, DynamicReceiver, DynamicSender};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
 
-use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
-use crate::attribute::{AttributeData, AttributeTable, Characteristic, CharacteristicProp, Uuid, CCCD};
-use crate::attribute_server::AttributeServer;
-use crate::connection::{Connection, ConnectionEvent};
-use crate::connection_manager::ConnectionManager;
+use crate::att::ATT_HANDLE_VALUE_NTF;
+use crate::att::{self, AttReq, AttRsp};
+use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
+use crate::attribute_server::DynamicAttributeServer;
+use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::GlobalPacketPool;
 use crate::packet_pool::ATT_ID;
@@ -25,150 +25,223 @@ use crate::types::gatt_traits::GattValue;
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
-/// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct GattServer<'reference, 'values, M: RawMutex, const MAX: usize> {
-    server: AttributeServer<'values, M, MAX>,
-    tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
-    rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
-    connections: &'reference ConnectionManager<'reference>,
-    pool: &'reference dyn GlobalPacketPool<'reference>,
+/// A GATT payload ready for processing.
+pub struct GattData<'d> {
+    pdu: Pdu<'d>,
+    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    connection: Connection<'d>,
 }
 
-impl<'reference, 'values, M: RawMutex, const MAX: usize> GattServer<'reference, 'values, M, MAX> {
-    /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
-    pub fn new<C: Controller>(stack: Stack<'reference, C>, table: AttributeTable<'values, M, MAX>) -> Self {
-        stack
-            .host
-            .connections
-            .set_default_att_mtu(stack.host.rx_pool.mtu() as u16 - 3);
-        use crate::attribute_server::AttributeServer;
-
+impl<'d> GattData<'d> {
+    pub(crate) fn new(pdu: Pdu<'d>, tx_pool: &'d dyn GlobalPacketPool<'d>, connection: Connection<'d>) -> Self {
         Self {
-            server: AttributeServer::new(table),
-            rx: stack.host.att_server.receiver().into(),
-            tx: stack.host.outbound.sender().into(),
-            connections: &stack.host.connections,
-            pool: stack.host.gatt_pool,
+            pdu,
+            tx_pool,
+            connection,
         }
-    }
-
-    /// Process GATT requests and update the attribute table accordingly.
-    ///
-    /// If attributes are written or read, an event will be posted on the corresponding
-    /// connection's event queue.
-    pub async fn run(&self) -> Result<(), Error> {
-        loop {
-            let (handle, pdu) = self.rx.receive().await;
-            if let Some(connection) = self.connections.get_connected_handle(handle) {
-                match AttReq::decode(pdu.as_ref()) {
-                    Ok(att) => {
-                        let mut tx = self.pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
-                        let mut w = WriteCursor::new(tx.as_mut());
-                        let (mut header, mut data) = w.split(4)?;
-
-                        match self.server.process(&connection, &att, data.write_buf()) {
-                            Ok(Some(written)) => {
-                                let mtu = self.connections.get_att_mtu(handle);
-                                data.commit(written)?;
-                                data.truncate(mtu as usize);
-                                header.write(written as u16)?;
-                                header.write(4_u16)?;
-                                let len = header.len() + data.len();
-
-                                let event = match att {
-                                    AttReq::Write { handle, data } => Some(GattEvent::Write { value_handle: handle }),
-
-                                    AttReq::Read { handle } => Some(GattEvent::Read { value_handle: handle }),
-
-                                    AttReq::ReadBlob { handle, offset } => {
-                                        Some(GattEvent::Read { value_handle: handle })
-                                    }
-                                    _ => None,
-                                };
-
-                                let pdu = Pdu::new(tx, len);
-                                self.tx.send((handle, pdu)).await;
-                                if let Some(event) = event {
-                                    connection
-                                        .post_event(ConnectionEvent::Gatt {
-                                            connection: connection.clone(),
-                                            event,
-                                        })
-                                        .await;
-                                }
-                            }
-                            Ok(None) => {
-                                debug!("No response sent");
-                            }
-                            Err(e) => {
-                                warn!("Error processing attribute: {:?}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Error decoding attribute request: {:?}", e);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Write a value to a characteristic, and notify a connection with the new value of the characteristic.
-    ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
-    ///
-    /// If the characteristic for the handle cannot be found, an error is returned.
-    pub async fn notify<T: GattValue>(
-        &self,
-        characteristic: &Characteristic<T>,
-        connection: &Connection<'_>,
-        value: &T,
-    ) -> Result<(), Error> {
-        let conn = connection.handle();
-        self.server.table.set(characteristic, value)?;
-
-        let cccd_handle = characteristic.cccd_handle.ok_or(Error::Other)?;
-
-        if !self.server.should_notify(conn, cccd_handle) {
-            // No reason to fail?
-            return Ok(());
-        }
-
-        let mut tx = self.pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
-        let mut w = WriteCursor::new(tx.as_mut());
-        let (mut header, mut data) = w.split(4)?;
-        data.write(ATT_HANDLE_VALUE_NTF)?;
-        data.write(characteristic.handle)?;
-        data.append(value.to_gatt())?;
-
-        header.write(data.len() as u16)?;
-        header.write(4_u16)?;
-        let total = header.len() + data.len();
-
-        let pdu = Pdu::new(tx, total);
-        self.tx.send((conn, pdu)).await;
-        Ok(())
-    }
-
-    /// Get reference to the underlying AttributeServer
-    pub fn server(&self) -> &AttributeServer<'values, M, MAX> {
-        &self.server
     }
 }
 
 /// An event returned while processing GATT requests.
-#[derive(Clone)]
-pub enum GattEvent {
+pub enum GattEvent<'d, 'server> {
     /// A characteristic was read.
-    Read {
-        /// Characteristic handle that was read.
-        value_handle: u16,
-    },
+    Read(ReadEvent<'d, 'server>),
     /// A characteristic was written.
-    Write {
-        /// Characteristic handle that was written.
-        value_handle: u16,
-    },
+    Write(WriteEvent<'d, 'server>),
+}
+
+/// An event returned while processing GATT requests.
+pub struct ReadEvent<'d, 'server> {
+    value_handle: u16,
+    connection: Connection<'d>,
+    server: &'server dyn DynamicAttributeServer,
+    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    pdu: Option<Pdu<'d>>,
+}
+
+impl<'d, 'server> ReadEvent<'d, 'server> {
+    /// Characteristic handle that was read
+    pub fn handle(&self) -> u16 {
+        self.value_handle
+    }
+
+    /// Process and respond to event.
+    pub fn try_reply(mut self) -> Result<(), Error> {
+        if let Some(pdu) = self.pdu.take() {
+            let att = unwrap!(AttReq::decode(pdu.as_ref()));
+            if let Some(pdu) = process(&self.connection, att, self.server, self.tx_pool)? {
+                self.connection.try_send(pdu)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Process and respond to event.
+    pub async fn reply(mut self) -> Result<(), Error> {
+        if let Some(pdu) = self.pdu.take() {
+            let att = unwrap!(AttReq::decode(pdu.as_ref()));
+            if let Some(pdu) = process(&self.connection, att, self.server, self.tx_pool)? {
+                self.connection.send(pdu).await;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'d, 'server> Drop for ReadEvent<'d, 'server> {
+    fn drop(&mut self) {
+        if let Some(pdu) = self.pdu.take() {
+            let att = unwrap!(AttReq::decode(pdu.as_ref()));
+            if let Ok(Some(pdu)) = process(&self.connection, att, self.server, self.tx_pool) {
+                let _ = self.connection.try_send(pdu);
+            }
+        }
+    }
+}
+
+/// An event returned while processing GATT requests.
+pub struct WriteEvent<'d, 'server> {
+    /// Characteristic handle that was written.
+    value_handle: u16,
+    pdu: Option<Pdu<'d>>,
+    connection: Connection<'d>,
+    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    server: &'server dyn DynamicAttributeServer,
+}
+
+impl<'d, 'server> WriteEvent<'d, 'server> {
+    /// Characteristic handle that was read
+    pub fn handle(&self) -> u16 {
+        self.value_handle
+    }
+
+    /// Characteristic data that was written
+    pub fn data(&self) -> &[u8] {
+        // Note: write event data is always at offset 3, right?
+        &self.pdu.as_ref().unwrap().as_ref()[3..]
+    }
+
+    /// Process and respond to event.
+    pub fn try_reply(mut self) -> Result<(), Error> {
+        if let Some(pdu) = self.pdu.take() {
+            let att = unwrap!(AttReq::decode(pdu.as_ref()));
+            if let Some(pdu) = process(&self.connection, att, self.server, self.tx_pool)? {
+                self.connection.try_send(pdu)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Process and respond to event.
+    pub async fn reply(mut self) -> Result<(), Error> {
+        if let Some(pdu) = self.pdu.take() {
+            let att = unwrap!(AttReq::decode(pdu.as_ref()));
+            if let Some(pdu) = process(&self.connection, att, self.server, self.tx_pool)? {
+                self.connection.send(pdu).await;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'d, 'server> Drop for WriteEvent<'d, 'server> {
+    fn drop(&mut self) {
+        if let Some(pdu) = self.pdu.take() {
+            let att = unwrap!(AttReq::decode(pdu.as_ref()));
+            if let Ok(Some(pdu)) = process(&self.connection, att, self.server, self.tx_pool) {
+                let _ = self.connection.try_send(pdu);
+            }
+        }
+    }
+}
+
+fn process<'d, 'server>(
+    conn: &Connection<'d>,
+    att: AttReq<'_>,
+    server: &'server dyn DynamicAttributeServer,
+    tx_pool: &'d dyn GlobalPacketPool<'d>,
+) -> Result<Option<Pdu<'d>>, Error> {
+    let mut tx = tx_pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+    let mut w = WriteCursor::new(tx.as_mut());
+    let (mut header, mut data) = w.split(4)?;
+    if let Some(written) = server.process(conn, &att, data.write_buf())? {
+        let mtu = conn.get_att_mtu();
+        data.commit(written)?;
+        data.truncate(mtu as usize);
+        header.write(written as u16)?;
+        header.write(4_u16)?;
+        let len = header.len() + data.len();
+        let pdu = Pdu::new(tx, len);
+
+        Ok(Some(pdu))
+    } else {
+        Ok(None)
+    }
+}
+
+impl<'d> GattData<'d> {
+    /// Get the raw request.
+    pub fn request(&self) -> AttReq<'_> {
+        // We know it has been checked, therefore this cannot fail
+        unwrap!(AttReq::decode(self.pdu.as_ref()))
+    }
+
+    /// Respond directly to request.
+    pub async fn reply(self, rsp: AttRsp<'_>) -> Result<(), Error> {
+        let mut tx = self.tx_pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+        let mut w = WriteCursor::new(tx.as_mut());
+        let (mut header, mut data) = w.split(4)?;
+        data.write(rsp)?;
+        let mtu = self.connection.get_att_mtu();
+        data.truncate(mtu as usize);
+        header.write(data.len() as u16)?;
+        header.write(4_u16)?;
+        let len = header.len() + data.len();
+        let pdu = Pdu::new(tx, len);
+        self.connection.send(pdu).await;
+        Ok(())
+    }
+
+    /// Handle the GATT data.
+    ///
+    /// May return an event that should be replied/processed. Uses the attribute server to
+    /// handle the protocol.
+    pub async fn process(self, server: &dyn DynamicAttributeServer) -> Result<Option<GattEvent<'d, '_>>, Error> {
+        // We know it has been checked, therefore this cannot fail
+        let att = unwrap!(AttReq::decode(self.pdu.as_ref()));
+        match att {
+            AttReq::Write { handle, data: _ } => Ok(Some(GattEvent::Write(WriteEvent {
+                value_handle: handle,
+                tx_pool: self.tx_pool,
+                pdu: Some(self.pdu),
+                connection: self.connection,
+                server,
+            }))),
+
+            AttReq::Read { handle } => Ok(Some(GattEvent::Read(ReadEvent {
+                value_handle: handle,
+                tx_pool: self.tx_pool,
+                pdu: Some(self.pdu),
+                connection: self.connection,
+                server,
+            }))),
+
+            AttReq::ReadBlob { handle, offset } => Ok(Some(GattEvent::Read(ReadEvent {
+                value_handle: handle,
+                tx_pool: self.tx_pool,
+                pdu: Some(self.pdu),
+                connection: self.connection,
+                server,
+            }))),
+            _ => {
+                // Process it now since the user will not
+                if let Some(pdu) = process(&self.connection, att, server, self.tx_pool)? {
+                    self.connection.send(pdu).await;
+                }
+                Ok(None)
+            }
+        }
+    }
 }
 
 /// Notification listener for GATT client.

@@ -72,6 +72,8 @@ pub mod prelude {
     pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
     pub use crate::attribute::*;
+    #[cfg(feature = "gatt")]
+    pub use crate::attribute_server::*;
     #[cfg(feature = "central")]
     pub use crate::central::*;
     pub use crate::connection::*;
@@ -300,7 +302,7 @@ pub struct HostResources<
     qos: Qos,
     rx_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }, CHANNELS>>,
     #[cfg(feature = "gatt")]
-    gatt_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::GATT_PACKET_POOL_SIZE }, 1>>,
+    tx_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }, 1>>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
     events: MaybeUninit<[EventChannel<'static>; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
@@ -319,7 +321,7 @@ impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: 
             qos,
             rx_pool: MaybeUninit::uninit(),
             #[cfg(feature = "gatt")]
-            gatt_pool: MaybeUninit::uninit(),
+            tx_pool: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
             events: MaybeUninit::uninit(),
             sar: MaybeUninit::uninit(),
@@ -360,10 +362,10 @@ pub fn new<
     };
 
     #[cfg(feature = "gatt")]
-    let gatt_pool: &'d dyn GlobalPacketPool<'d> = &*resources.gatt_pool.write(PacketPool::new(PacketQos::None));
+    let tx_pool: &'d dyn GlobalPacketPool<'d> = &*resources.tx_pool.write(PacketPool::new(PacketQos::None));
     #[cfg(feature = "gatt")]
-    let gatt_pool = unsafe {
-        core::mem::transmute::<&'d dyn GlobalPacketPool<'d>, &'static dyn GlobalPacketPool<'static>>(gatt_pool)
+    let tx_pool = unsafe {
+        core::mem::transmute::<&'d dyn GlobalPacketPool<'d>, &'static dyn GlobalPacketPool<'static>>(tx_pool)
     };
 
     let connections = &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
@@ -382,7 +384,7 @@ pub fn new<
         controller,
         rx_pool,
         #[cfg(feature = "gatt")]
-        gatt_pool,
+        tx_pool,
         connections,
         events,
         channels,

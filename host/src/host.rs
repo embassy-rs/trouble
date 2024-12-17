@@ -34,6 +34,7 @@ use futures::pin_mut;
 
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
+use crate::connection::ConnectionEvent;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
@@ -62,13 +63,10 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) reassembly: PacketReassembly<'d>,
     pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
-    pub(crate) att_server: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
-    #[cfg(feature = "gatt")]
     pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) rx_pool: &'d dyn GlobalPacketPool<'d>,
     #[cfg(feature = "gatt")]
-    pub(crate) gatt_pool: &'d dyn GlobalPacketPool<'d>,
-    pub(crate) outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_TX_QUEUE_SIZE }>,
+    pub(crate) tx_pool: &'d dyn GlobalPacketPool<'d>,
 
     #[cfg(feature = "scan")]
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
@@ -198,7 +196,7 @@ where
     pub(crate) fn new(
         controller: T,
         rx_pool: &'d dyn GlobalPacketPool<'d>,
-        #[cfg(feature = "gatt")] gatt_pool: &'d dyn GlobalPacketPool<'d>,
+        #[cfg(feature = "gatt")] tx_pool: &'d dyn GlobalPacketPool<'d>,
         connections: &'d mut [ConnectionStorage],
         events: &'d mut [EventChannel<'d>],
         channels: &'d mut [ChannelStorage],
@@ -211,14 +209,15 @@ where
             initialized: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             controller,
+            #[cfg(feature = "gatt")]
+            connections: ConnectionManager::new(connections, events, tx_pool),
+            #[cfg(not(feature = "gatt"))]
             connections: ConnectionManager::new(connections, events),
             reassembly: PacketReassembly::new(sar),
             channels: ChannelManager::new(rx_pool, channels, channels_rx),
             rx_pool,
             #[cfg(feature = "gatt")]
-            gatt_pool,
-            #[cfg(feature = "gatt")]
-            att_server: Channel::new(),
+            tx_pool,
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),
             #[cfg(feature = "scan")]
@@ -226,7 +225,6 @@ where
             advertise_state: AdvState::new(advertise_handles),
             advertise_command_state: CommandState::new(),
             connect_command_state: CommandState::new(),
-            outbound: Channel::new(),
         }
     }
 
@@ -298,7 +296,7 @@ where
         true
     }
 
-    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&'d self, acl: AclPacket<'_>) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let (header, mut packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
@@ -367,9 +365,7 @@ where
 
                     info!("[host] agreed att MTU of {}", mtu);
                     let len = w.len();
-                    if let Err(e) = self.outbound.try_send((acl.handle(), Pdu::new(packet, len))) {
-                        return Err(Error::OutOfMemory);
-                    }
+                    self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
                 } else if let Ok(att::Att::Rsp(att::AttRsp::ExchangeMtu { mtu })) = a {
                     info!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
@@ -377,11 +373,17 @@ where
                     #[cfg(feature = "gatt")]
                     match a {
                         Ok(att::Att::Req(_)) => {
-                            if let Err(e) = self
-                                .att_server
-                                .try_send((acl.handle(), Pdu::new(packet, header.length as usize)))
-                            {
-                                return Err(Error::OutOfMemory);
+                            if let Some(connection) = self.connections.get_connected_handle(acl.handle()) {
+                                self.connections.post_handle_event(
+                                    acl.handle(),
+                                    ConnectionEvent::Gatt {
+                                        data: crate::gatt::GattData::new(
+                                            Pdu::new(packet, header.length as usize),
+                                            self.tx_pool,
+                                            connection,
+                                        ),
+                                    },
+                                )?;
                             }
                         }
                         Ok(att::Att::Rsp(_)) => {
@@ -881,7 +883,7 @@ impl<'d, C: Controller> TxRunner<'d, C> {
         let host = self.stack.host;
         let params = host.initialized.get().await;
         loop {
-            let (conn, pdu) = host.outbound.receive().await;
+            let (conn, pdu) = host.connections.outbound().await;
             let mut first = true;
             for chunk in pdu.as_ref().chunks(params.acl_max) {
                 match host.acl(conn, 1).await {
