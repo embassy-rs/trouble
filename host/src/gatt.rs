@@ -26,7 +26,7 @@ use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct GattServer<'reference, 'values, M: RawMutex, const MAX: usize, const ATT_MTU: usize> {
+pub struct GattServer<'reference, 'values, M: RawMutex, const MAX: usize> {
     server: AttributeServer<'values, M, MAX>,
     tx: DynamicSender<'reference, (ConnHandle, Pdu<'reference>)>,
     rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
@@ -34,12 +34,13 @@ pub struct GattServer<'reference, 'values, M: RawMutex, const MAX: usize, const 
     pool: &'reference dyn GlobalPacketPool<'reference>,
 }
 
-impl<'reference, 'values, M: RawMutex, const MAX: usize, const ATT_MTU: usize>
-    GattServer<'reference, 'values, M, MAX, ATT_MTU>
-{
+impl<'reference, 'values, M: RawMutex, const MAX: usize> GattServer<'reference, 'values, M, MAX> {
     /// Creates a GATT server capable of processing the GATT protocol using the provided table of attributes.
     pub fn new<C: Controller>(stack: Stack<'reference, C>, table: AttributeTable<'values, M, MAX>) -> Self {
-        stack.host.connections.set_default_att_mtu(ATT_MTU as u16);
+        stack
+            .host
+            .connections
+            .set_default_att_mtu(stack.host.rx_pool.mtu() as u16 - 3);
         use crate::attribute_server::AttributeServer;
 
         Self {
@@ -61,8 +62,8 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const ATT_MTU: usize>
             if let Some(connection) = self.connections.get_connected_handle(handle) {
                 match AttReq::decode(pdu.as_ref()) {
                     Ok(att) => {
-                        let mut tx = [0; ATT_MTU];
-                        let mut w = WriteCursor::new(&mut tx);
+                        let mut tx = self.pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+                        let mut w = WriteCursor::new(tx.as_mut());
                         let (mut header, mut data) = w.split(4)?;
 
                         match self.server.process(&connection, &att, data.write_buf()) {
@@ -85,19 +86,8 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const ATT_MTU: usize>
                                     _ => None,
                                 };
 
-                                warn!("[gatt] responding to handle {:?} {} bytes", handle, len);
-                                let mut first = true;
-                                for chunk in tx[..len].chunks(self.pool.mtu()) {
-                                    let mut p = self.pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
-                                    p.as_mut()[..chunk.len()].copy_from_slice(chunk);
-                                    let pdu = if !first {
-                                        Pdu::new(p, chunk.len()).segment()
-                                    } else {
-                                        Pdu::new(p, chunk.len())
-                                    };
-                                    self.tx.send((handle, pdu)).await;
-                                    first = false;
-                                }
+                                let pdu = Pdu::new(tx, len);
+                                self.tx.send((handle, pdu)).await;
                                 if let Some(event) = event {
                                     connection
                                         .post_event(ConnectionEvent::Gatt {
@@ -144,8 +134,8 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const ATT_MTU: usize>
             return Ok(());
         }
 
-        let mut tx = [0; ATT_MTU];
-        let mut w = WriteCursor::new(&mut tx[..]);
+        let mut tx = self.pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+        let mut w = WriteCursor::new(tx.as_mut());
         let (mut header, mut data) = w.split(4)?;
         data.write(ATT_HANDLE_VALUE_NTF)?;
         data.write(characteristic.handle)?;
@@ -155,19 +145,8 @@ impl<'reference, 'values, M: RawMutex, const MAX: usize, const ATT_MTU: usize>
         header.write(4_u16)?;
         let total = header.len() + data.len();
 
-        let mut first = true;
-        for chunk in tx[..total].chunks(self.pool.mtu()) {
-            let mut p = self.pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
-            p.as_mut()[..chunk.len()].copy_from_slice(chunk);
-            let pdu = if !first {
-                Pdu::new(p, chunk.len()).segment()
-            } else {
-                Pdu::new(p, chunk.len())
-            };
-
-            self.tx.send((conn, pdu)).await;
-            first = false;
-        }
+        let pdu = Pdu::new(tx, total);
+        self.tx.send((conn, pdu)).await;
         Ok(())
     }
 

@@ -8,14 +8,10 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::{meta::ParseNestedMeta, parse_quote, spanned::Spanned, Expr, Result};
 
-/// MTU for a legacy BLE packet
-const LEGACY_BLE_MTU: usize = 27;
-
 #[derive(Default)]
 pub(crate) struct ServerArgs {
     mutex_type: Option<syn::Type>,
     attribute_table_size: Option<Expr>,
-    mtu: Option<Expr>,
 }
 
 impl ServerArgs {
@@ -28,18 +24,25 @@ impl ServerArgs {
             .as_str()
         {
             "mutex_type" => {
-                let buffer = meta.value().map_err(|_| Error::custom("mutex_type must be followed by `= [type]`. e.g. mutex_type = NoopRawMutex".to_string()))?;
+                let buffer = meta.value().map_err(|_| {
+                    Error::custom(
+                        "mutex_type must be followed by `= [type]`. e.g. mutex_type = NoopRawMutex".to_string(),
+                    )
+                })?;
                 self.mutex_type = Some(buffer.parse()?);
             }
             "attribute_table_size" => {
-                let buffer = meta.value().map_err(|_| Error::custom("attribute_table_size must be followed by `= [size]`. e.g. attribute_table_size = 32".to_string()))?;
+                let buffer = meta.value().map_err(|_| {
+                    Error::custom(
+                        "attribute_table_size must be followed by `= [size]`. e.g. attribute_table_size = 32"
+                            .to_string(),
+                    )
+                })?;
                 self.attribute_table_size = Some(buffer.parse()?);
             }
-            "mtu" => {
-                let buffer = meta.value().map_err(|_| Error::custom("mtu must be followed by `= [size]`. e.g. mtu = 27".to_string()))?;
-                self.mtu = Some(buffer.parse()?);
-            }
-            other => return Err(meta.error(format!("Unsupported server property: '{other}'.\nSupported properties are: mutex_type, attribute_table_size, mtu"))),
+            other => return Err(meta.error(format!(
+                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, attribute_table_size"
+            ))),
         }
         Ok(())
     }
@@ -63,12 +66,6 @@ impl ServerBuilder {
         let mutex_type = self.arguments.mutex_type.unwrap_or(syn::Type::Verbatim(quote!(
             embassy_sync::blocking_mutex::raw::NoopRawMutex
         )));
-        let mtu = if let Some(value) = self.arguments.mtu {
-            value
-        } else {
-            let tokens = quote!(#LEGACY_BLE_MTU);
-            parse_quote!(#tokens)
-        };
 
         let mut code_service_definition = TokenStream2::new();
         let mut code_service_init = TokenStream2::new();
@@ -112,7 +109,7 @@ impl ServerBuilder {
 
             #visibility struct #name<'reference, 'values>
             {
-                server: GattServer<'reference, 'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE, #mtu>,
+                server: GattServer<'reference, 'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>,
                 #code_service_definition
             }
 
@@ -177,7 +174,7 @@ impl ServerBuilder {
 
             impl<'reference, 'values> core::ops::Deref for #name<'reference, 'values>
             {
-                type Target = GattServer<'reference, 'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE, #mtu>;
+                type Target = GattServer<'reference, 'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>;
 
                 fn deref(&self) -> &Self::Target {
                     &self.server

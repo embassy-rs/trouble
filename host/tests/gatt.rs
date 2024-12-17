@@ -57,7 +57,7 @@ async fn gatt_client_server() {
                 &mut value
             ).build();
 
-        let server = GattServer::<NoopRawMutex, 10, 27>::new(stack, table);
+        let server = GattServer::<NoopRawMutex, 10>::new(stack, table);
         select! {
             r = runner.run() => {
                 r
