@@ -18,7 +18,7 @@ const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
-#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 10, mtu = 27)]
+#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 10)]
 struct Server {
     service: CustomService,
 }
@@ -86,7 +86,7 @@ async fn gatt_client_server() {
             name: &name,
             appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
         });
-        let server: Server<common::Controller> = Server::new_with_config(
+        let server: Server = Server::new_with_config(
             stack,
             gap,
         ).unwrap();
@@ -102,7 +102,7 @@ async fn gatt_client_server() {
                 r
             }
             r = server.run() => {
-                r
+                r.map_err(BleHostError::BleHost)
             }
             r = async {
                 let mut adv_data = [0; 31];
@@ -120,7 +120,7 @@ async fn gatt_client_server() {
                 let mut done = false;
                 while !done {
                     println!("[peripheral] advertising");
-                    let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                    let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;

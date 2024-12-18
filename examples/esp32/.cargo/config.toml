@@ -1,19 +1,29 @@
-[target.riscv32imc-unknown-none-elf]
+[alias]
+esp32 = "run --release --no-default-features --features=esp32 --target=xtensa-esp32-none-elf"
+esp32c2 = "run --release --no-default-features --features=esp32c2 --target=riscv32imc-unknown-none-elf"
+esp32c3 = "run --release --no-default-features --features=esp32c3 --target=riscv32imc-unknown-none-elf"
+esp32c6 = "run --release --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf"
+esp32h2 = "run --release --no-default-features --features=esp32h2 --target=riscv32imac-unknown-none-elf"
+esp32s3 = "run --release --no-default-features --features=esp32s3 --target=xtensa-esp32s3-none-elf"
+
+[target.'cfg(all(any(target_arch = "riscv32imc", target_arch = "riscv32imac", target_arch = "xtensa"), target_os = "none"))']
 runner = "espflash flash --monitor"
 
-
-[env]
-ESP_LOG = "info"
-
 [build]
+# Pick ONE of these compilation targets
+# target = "xtensa-esp32-none-elf"        # ESP32
+# target = "xtensa-esp32s3-none-elf"      # ESP32-S3
+target = "riscv32imc-unknown-none-elf"  # ESP32-C2 and ESP32-C3
+# target = "riscv32imac-unknown-none-elf" # ESP32-C6 and ESP32-H2
+
 rustflags = [
   # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
   # NOTE: May negatively impact performance of produced code
-  "-C",
-  "force-frame-pointers",
+  "-C", "force-frame-pointers",
 ]
 
-target = "riscv32imc-unknown-none-elf"
-
 [unstable]
-build-std = ["core"]
+build-std = ["alloc", "core"]
+
+[env]
+ESP_LOG = "info"

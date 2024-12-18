@@ -2,17 +2,12 @@ use crate::packet_pool::Packet;
 
 pub(crate) struct Pdu<'d> {
     pub packet: Packet<'d>,
-    pub offset: usize,
     pub len: usize,
 }
 
 impl<'d> Pdu<'d> {
     pub(crate) fn new(packet: Packet<'d>, len: usize) -> Self {
-        Self { packet, len, offset: 0 }
-    }
-
-    pub(crate) fn with_offset(self, offset: usize) -> Self {
-        Self { offset, ..self }
+        Self { packet, len }
     }
 }
 
