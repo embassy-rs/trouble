@@ -41,10 +41,12 @@ pub enum ConnectionEvent<'d> {
         reason: Status,
     },
     /// GATT event.
-    #[cfg(feature = "gatt")]
     Gatt {
         /// The event that was returned,
+        #[cfg(feature = "gatt")]
         data: crate::gatt::GattData<'d>,
+        #[cfg(not(feature = "gatt"))]
+        connection: Connection<'d>,
     },
 }
 
@@ -106,6 +108,7 @@ impl<'d> Connection<'d> {
         self.manager.post_event(self.index, event).await
     }
 
+    #[cfg(feature = "gatt")]
     pub(crate) fn alloc_tx(&self) -> Result<Packet<'d>, Error> {
         self.manager.alloc_tx()
     }
