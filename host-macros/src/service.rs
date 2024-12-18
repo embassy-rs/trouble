@@ -265,19 +265,13 @@ impl ServiceBuilder {
                         Some(callback) => quote!(Some(#callback)),
                         None => quote!(None),
                     };
-                    let writeable = access.write || access.write_without_response;
                     let default_value = match &args.default_value {
                         Some(val) => quote!(#val), // if set by user
                         None => quote!(""),
                     };
                     let capacity = match &args.capacity {
                         Some(cap) => quote!(#cap),
-                        None => {
-                            if writeable {
-                                panic!("'capacity' must be specified for writeable descriptors");
-                            }
-                            quote!(#default_value.len() as u8)
-                        },
+                        None => quote!(#default_value.len() as u8)
                     };
 
                     self.attribute_count += 1; // descriptors should always only be one attribute.
@@ -288,9 +282,8 @@ impl ServiceBuilder {
                             const CAPACITY: u8 = #capacity;
                             static #name_screaming: static_cell::StaticCell<[u8; CAPACITY as usize]> = static_cell::StaticCell::new();
                             let store = #name_screaming.init([0; CAPACITY as usize]);
-                            if !value.is_empty() {
-                                store[..value.len()].copy_from_slice(value.as_bytes());
-                            }
+                            let value = GattValue::to_gatt(&value);
+                            store[..value.len()].copy_from_slice(value);
                             builder.add_descriptor(
                                 #uuid,
                                 &[#(#properties),*],

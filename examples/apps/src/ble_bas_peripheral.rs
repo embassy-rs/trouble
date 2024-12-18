@@ -26,7 +26,7 @@ struct Server {
 struct BatteryService {
     /// Battery Level
     #[descriptor(uuid = "2b20", read, value = "Battery Level", on_read = battery_level_on_read)]
-    #[descriptor(uuid = "2b21", read, value = "Other Descriptor")]
+    #[descriptor(uuid = "2b21", read, value = [0x12, 0x34])]
     #[characteristic(uuid = "2a19", read, write, notify, on_read = battery_level_on_read, on_write = battery_level_on_write, value = 10)]
     level: u8,
 }
