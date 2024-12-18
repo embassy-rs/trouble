@@ -12,7 +12,6 @@ use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
 use syn::Field;
-use syn::Ident;
 use syn::LitStr;
 
 #[derive(Debug)]
@@ -53,12 +52,6 @@ pub(crate) struct AccessArgs {
     /// If true, the characteristic can send indications.
     #[darling(default)]
     pub indicate: bool,
-    /// Optional callback to be triggered on a read event
-    #[darling(default)]
-    pub on_read: Option<Ident>,
-    /// Optional callback to be triggered on a write event
-    #[darling(default)]
-    pub on_write: Option<Ident>,
 }
 
 /// Descriptor attribute arguments.
@@ -117,8 +110,6 @@ impl CharacteristicArgs {
         let mut write: Option<bool> = None;
         let mut notify: Option<bool> = None;
         let mut indicate: Option<bool> = None;
-        let mut on_read: Option<Ident> = None;
-        let mut on_write: Option<Ident> = None;
         let mut default_value: Option<syn::Expr> = None;
         let mut write_without_response: Option<bool> = None;
         attribute.parse_nested_meta(|meta| {
@@ -135,8 +126,6 @@ impl CharacteristicArgs {
                 "write" => check_multi(&mut write, "write", &meta, true)?,
                 "notify" => check_multi(&mut notify, "notify", &meta, true)?,
                 "indicate" => check_multi(&mut indicate, "indicate", &meta, true)?,
-                "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
-                "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
                 "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "value" => {
                     let value = meta
@@ -149,7 +138,7 @@ impl CharacteristicArgs {
                 other => return Err(
                     meta.error(
                         format!(
-                            "Unsupported characteristic property: '{other}'.\nSupported properties are:\nuuid, read, write, write_without_response, notify, indicate, value\non_read, on_write"
+                            "Unsupported characteristic property: '{other}'.\nSupported properties are:\nuuid, read, write, write_without_response, notify, indicate, value"
                         ))),
             };
             Ok(())
@@ -165,8 +154,6 @@ impl CharacteristicArgs {
                 notify: notify.unwrap_or_default(),
                 write: write.unwrap_or_default(),
                 read: read.unwrap_or_default(),
-                on_write,
-                on_read,
             },
         })
     }
@@ -177,8 +164,6 @@ impl DescriptorArgs {
         let mut uuid: Option<Uuid> = None;
         let mut read: Option<bool> = None;
         // let mut write: Option<bool> = None;
-        let mut on_read: Option<Ident> = None;
-        // let mut on_write: Option<Ident> = None;
         // let mut capacity: Option<syn::Expr> = None;
         let mut default_value: Option<syn::Expr> = None;
         // let mut write_without_response: Option<bool> = None;
@@ -200,8 +185,6 @@ impl DescriptorArgs {
                 }
                 "read" => check_multi(&mut read, "read", &meta, true)?,
                 // "write" => check_multi(&mut write, "write", &meta, true)?,
-                "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
-                // "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
                 // "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "value" => {
                     let value = meta.value().map_err(|_| {
@@ -216,7 +199,7 @@ impl DescriptorArgs {
                 "default_value" => return Err(meta.error("use 'value' for default value")),
                 other => {
                     return Err(meta.error(format!(
-                    // "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, value,\ncapacity, on_read, on_write"
+                    // "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, value, capacity"
                     "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, value, on_read"
                 )));
                 }
@@ -233,9 +216,7 @@ impl DescriptorArgs {
                 notify: false,   // not possible for descriptor
                 read: read.unwrap_or_default(),
                 write_without_response: false,
-                on_write: None,
                 write: false,
-                on_read,
             },
         })
     }

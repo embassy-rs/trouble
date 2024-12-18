@@ -25,19 +25,10 @@ struct Server {
 #[gatt_service(uuid = "180f")]
 struct BatteryService {
     /// Battery Level
-    #[descriptor(uuid = "2b20", read, value = "Battery Level", on_read = battery_level_on_read)]
+    #[descriptor(uuid = "2b20", read, value = "Battery Level")]
     #[descriptor(uuid = "2b21", read, value = [0x12, 0x34])]
-    #[characteristic(uuid = "2a19", read, write, notify, on_read = battery_level_on_read, on_write = battery_level_on_write, value = 10)]
+    #[characteristic(uuid = "2a19", read, write, notify, value = 10)]
     level: u8,
-}
-
-fn battery_level_on_read(_connection: &Connection) {
-    info!("[gatt] Read event on battery level characteristic");
-}
-
-fn battery_level_on_write(_connection: &Connection, data: &[u8]) -> Result<(), ()> {
-    info!("[gatt] Write event on battery level characteristic: {:?}", data);
-    Ok(())
 }
 
 /// Run the BLE stack.
