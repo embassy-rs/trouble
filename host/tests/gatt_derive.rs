@@ -109,16 +109,21 @@ async fn gatt_client_server() {
                                 break;
                             }
                             ConnectionEvent::Gatt { data } => if let Ok(Some(GattEvent::Write(event))) = data.process(server.deref()).await {
-                                let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
-                                let value: u8 = server.table().get(&characteristic).unwrap();
-                                assert_eq!(expected, value);
-                                expected = expected.wrapping_add(2);
-                                writes += 1;
-                                if writes == 2 {
-                                    println!("expected value written twice, test pass");
-                                    // NOTE: Ensure that adapter gets polled again
-                                    tokio::time::sleep(Duration::from_secs(2)).await;
-                                    done = true;
+                                if writes == 0 {
+                                    event.reply(Err(AttErrorCode::ValueNotAllowed)).await.unwrap();
+                                    writes += 1;
+                                } else {
+                                    let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
+                                    let value: u8 = server.table().get(&characteristic).unwrap();
+                                    assert_eq!(expected, value);
+                                    expected = expected.wrapping_add(2);
+                                    writes += 1;
+                                    if writes == 2 {
+                                        println!("expected value written twice, test pass");
+                                        // NOTE: Ensure that adapter gets polled again
+                                        tokio::time::sleep(Duration::from_secs(2)).await;
+                                        done = true;
+                                    }
                                 }
                             }
                         }

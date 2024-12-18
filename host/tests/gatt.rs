@@ -95,6 +95,8 @@ async fn gatt_client_server() {
                                 if let Ok(Some(GattEvent::Write(event))) = data.process(&server).await {
                                     let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
                                     assert_eq!(characteristic.handle, event.handle());
+                                    event.reply(Ok(())).await.unwrap();
+
                                     let value: u8 = server.table().get(&characteristic).unwrap();
                                     println!("[peripheral] write value: {}", value);
                                     assert_eq!(expected, value);

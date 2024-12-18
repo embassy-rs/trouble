@@ -3,6 +3,7 @@ use core::cell::RefCell;
 use core::future::Future;
 use core::marker::PhantomData;
 
+use att::AttErrorCode;
 use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
@@ -66,36 +67,44 @@ impl<'d, 'server> ReadEvent<'d, 'server> {
     }
 
     /// Process and respond to event.
-    pub fn try_reply(mut self) -> Result<(), Error> {
-        if let Some(pdu) = self.pdu.take() {
-            let att = unwrap!(AttReq::decode(pdu.as_ref()));
-            if let Some(pdu) = process(&self.connection, att, self.server, self.tx_pool)? {
-                self.connection.try_send(pdu)?;
-            }
-        }
-        Ok(())
+    pub fn try_reply(mut self, result: Result<(), AttErrorCode>) -> Result<(), Error> {
+        let handle = self.handle();
+        try_reply(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        )
     }
 
     /// Process and respond to event.
-    pub async fn reply(mut self) -> Result<(), Error> {
-        if let Some(pdu) = self.pdu.take() {
-            let att = unwrap!(AttReq::decode(pdu.as_ref()));
-            if let Some(pdu) = process(&self.connection, att, self.server, self.tx_pool)? {
-                self.connection.send(pdu).await;
-            }
-        }
-        Ok(())
+    pub async fn reply(mut self, result: Result<(), AttErrorCode>) -> Result<(), Error> {
+        let handle = self.handle();
+        reply(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        )
+        .await
     }
 }
 
 impl Drop for ReadEvent<'_, '_> {
     fn drop(&mut self) {
-        if let Some(pdu) = self.pdu.take() {
-            let att = unwrap!(AttReq::decode(pdu.as_ref()));
-            if let Ok(Some(pdu)) = process(&self.connection, att, self.server, self.tx_pool) {
-                let _ = self.connection.try_send(pdu);
-            }
-        }
+        let handle = self.handle();
+        let _ = try_reply(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        );
     }
 }
 
@@ -122,37 +131,99 @@ impl<'d, 'server> WriteEvent<'d, 'server> {
     }
 
     /// Process and respond to event.
-    pub fn try_reply(mut self) -> Result<(), Error> {
-        if let Some(pdu) = self.pdu.take() {
-            let att = unwrap!(AttReq::decode(pdu.as_ref()));
-            if let Some(pdu) = process(&self.connection, att, self.server, self.tx_pool)? {
-                self.connection.try_send(pdu)?;
-            }
-        }
-        Ok(())
+    pub fn try_reply(mut self, result: Result<(), Error>) -> Result<(), Error> {
+        let handle = self.handle();
+        try_reply(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        )
     }
 
     /// Process and respond to event.
-    pub async fn reply(mut self) -> Result<(), Error> {
-        if let Some(pdu) = self.pdu.take() {
-            let att = unwrap!(AttReq::decode(pdu.as_ref()));
-            if let Some(pdu) = process(&self.connection, att, self.server, self.tx_pool)? {
-                self.connection.send(pdu).await;
-            }
-        }
-        Ok(())
+    pub async fn reply(mut self, result: Result<(), AttErrorCode>) -> Result<(), Error> {
+        let handle = self.handle();
+        reply(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        )
+        .await
     }
 }
 
 impl Drop for WriteEvent<'_, '_> {
     fn drop(&mut self) {
-        if let Some(pdu) = self.pdu.take() {
-            let att = unwrap!(AttReq::decode(pdu.as_ref()));
-            if let Ok(Some(pdu)) = process(&self.connection, att, self.server, self.tx_pool) {
-                let _ = self.connection.try_send(pdu);
+        let handle = self.handle();
+        let _ = try_reply(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        );
+    }
+}
+
+async fn reply<'d>(
+    pdu: &mut Option<Pdu<'d>>,
+    handle: u16,
+    connection: &Connection<'d>,
+    server: &dyn DynamicAttributeServer,
+    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    result: Result<(), AttErrorCode>,
+) -> Result<(), Error> {
+    if let Some(pdu) = pdu.take() {
+        match result {
+            Ok(_) => {
+                let att = unwrap!(AttReq::decode(pdu.as_ref()));
+                if let Some(pdu) = process(&connection, att, server, tx_pool)? {
+                    connection.send(pdu).await;
+                }
+            }
+            Err(code) => {
+                let request = pdu.as_ref()[0];
+                let rsp = AttRsp::Error { request, handle, code };
+                let pdu = respond(&connection, server, tx_pool, rsp)?;
+                connection.send(pdu).await;
             }
         }
     }
+    Ok(())
+}
+
+fn try_reply<'d>(
+    pdu: &mut Option<Pdu<'d>>,
+    handle: u16,
+    connection: &Connection<'d>,
+    server: &dyn DynamicAttributeServer,
+    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    result: Result<(), AttErrorCode>,
+) -> Result<(), Error> {
+    if let Some(pdu) = pdu.take() {
+        match result {
+            Ok(_) => {
+                let att = unwrap!(AttReq::decode(pdu.as_ref()));
+                if let Some(pdu) = process(&connection, att, server, tx_pool)? {
+                    connection.try_send(pdu)?;
+                }
+            }
+            Err(code) => {
+                let request = pdu.as_ref()[0];
+                let rsp = AttRsp::Error { request, handle, code };
+                let pdu = respond(&connection, server, tx_pool, rsp)?;
+                connection.try_send(pdu)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn process<'d>(
@@ -177,6 +248,25 @@ fn process<'d>(
     } else {
         Ok(None)
     }
+}
+
+fn respond<'d>(
+    conn: &Connection<'d>,
+    server: &dyn DynamicAttributeServer,
+    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    rsp: AttRsp<'_>,
+) -> Result<Pdu<'d>, Error> {
+    let mut tx = tx_pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+    let mut w = WriteCursor::new(tx.as_mut());
+    let (mut header, mut data) = w.split(4)?;
+    data.write(rsp)?;
+
+    let mtu = conn.get_att_mtu();
+    data.truncate(mtu as usize);
+    header.write(data.len() as u16)?;
+    header.write(4_u16)?;
+    let len = header.len() + data.len();
+    Ok(Pdu::new(tx, len))
 }
 
 impl<'d> GattData<'d> {
