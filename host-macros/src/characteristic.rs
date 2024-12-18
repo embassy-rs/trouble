@@ -176,67 +176,66 @@ impl DescriptorArgs {
     pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
         let mut uuid: Option<Uuid> = None;
         let mut read: Option<bool> = None;
-        let mut write: Option<bool> = None;
+        // let mut write: Option<bool> = None;
         let mut on_read: Option<Ident> = None;
-        let mut on_write: Option<Ident> = None;
-        let mut capacity: Option<syn::Expr> = None;
+        // let mut on_write: Option<Ident> = None;
+        // let mut capacity: Option<syn::Expr> = None;
         let mut default_value: Option<syn::Expr> = None;
-        let mut write_without_response: Option<bool> = None;
+        // let mut write_without_response: Option<bool> = None;
         attribute.parse_nested_meta(|meta| {
-            match meta.path.get_ident().ok_or(meta.error("no ident"))?.to_string().as_str() {
+            match meta
+                .path
+                .get_ident()
+                .ok_or(meta.error("no ident"))?
+                .to_string()
+                .as_str()
+            {
                 "uuid" => {
                     let parser = meta
-                    .value()
-                    .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
+                        .value()
+                        .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
                     let uuid_string: LitStr = parser.parse()?;
                     let value = Uuid::from_string(uuid_string.value().as_str())?;
                     check_multi(&mut uuid, "uuid", &meta, value)?
-                },
+                }
                 "read" => check_multi(&mut read, "read", &meta, true)?,
-                "write" => check_multi(&mut write, "write", &meta, true)?,
+                // "write" => check_multi(&mut write, "write", &meta, true)?,
                 "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
-                "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
-                "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
+                // "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
+                // "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "value" => {
-                    let value = meta
-                        .value()
-                        .map_err(|_| meta.error("'value' must be followed by '= [data]'.  i.e. value = \"42\""))?;
+                    let value = meta.value().map_err(|_| {
+                        meta.error("'value' must be followed by '= [data]'.  i.e. value = \"Hello World\"")
+                    })?;
                     check_multi(&mut default_value, "value", &meta, value.parse()?)?
                 }
-                "capacity" => {
-                    let value = meta.value().map_err(|_| meta.error("'capacity' must be followed by '= [data]'.  i.e. value = 100"))?;
-                    check_multi(&mut capacity, "capacity", &meta, value.parse()?)?
-                    }
+                // "capacity" => {
+                //     let value = meta.value().map_err(|_| meta.error("'capacity' must be followed by '= [data]'.  i.e. value = 100"))?;
+                //     check_multi(&mut capacity, "capacity", &meta, value.parse()?)?
+                //     }
                 "default_value" => return Err(meta.error("use 'value' for default value")),
-                other => return Err(
-                    meta.error(
-                        format!(
-                            "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, value,\ncapacity, on_read, on_write"
-                        ))),
+                other => {
+                    return Err(meta.error(format!(
+                    // "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, value,\ncapacity, on_read, on_write"
+                    "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, value, on_read"
+                )));
+                }
             };
             Ok(())
         })?;
-        let write = write.unwrap_or_default();
-        let write_without_response = write_without_response.unwrap_or_default();
-        if (write || write_without_response) && capacity.is_none() {
-            return Err(syn::Error::new(
-                attribute.meta.span(),
-                "'capacity' must be specified for a writeable descriptor",
-            ));
-        }
 
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Descriptor must have a UUID"))?,
             default_value,
-            capacity,
+            capacity: None,
             access: AccessArgs {
                 indicate: false, // not possible for descriptor
                 notify: false,   // not possible for descriptor
                 read: read.unwrap_or_default(),
-                write_without_response,
-                on_write,
+                write_without_response: false,
+                on_write: None,
+                write: false,
                 on_read,
-                write,
             },
         })
     }
