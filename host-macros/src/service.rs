@@ -194,15 +194,16 @@ impl ServiceBuilder {
         characteristics: Vec<Characteristic>,
     ) -> Self {
         // Processing specific to non-characteristic fields
+        let mut doc_strings: Vec<String> = Vec::new();
         for field in &fields {
             let ident = field.ident.as_ref().expect("All fields should have names");
             let ty = &field.ty;
             let vis = &field.vis;
             self.code_struct_init.extend(quote_spanned! {field.span() =>
                 #vis #ident: #ty::default(),
-            })
+            });
+            doc_strings.push(String::new()); // not supporting docstrings here yet
         }
-        let mut doc_strings = Vec::new();
         // Process characteristic fields
         for ch in characteristics {
             let char_name = format_ident!("{}", ch.name);
@@ -222,6 +223,7 @@ impl ServiceBuilder {
 
             self.construct_characteristic_static(ch);
         }
+        assert_eq!(fields.len(), doc_strings.len());
         // Processing common to all fields
         for (field, doc_string) in fields.iter().zip(doc_strings) {
             let docs: TokenStream2 = doc_string
