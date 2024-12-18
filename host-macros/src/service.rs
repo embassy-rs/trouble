@@ -149,6 +149,14 @@ impl ServiceBuilder {
         let access = &characteristic.args.access;
         let properties = set_access_properties(access);
         let uuid = characteristic.args.uuid;
+        let read_callback = access
+            .on_read
+            .as_ref()
+            .map(|callback| quote!(builder.set_read_callback(#callback);));
+        let write_callback = access
+            .on_write
+            .as_ref()
+            .map(|callback| quote!(builder.set_write_callback(#callback);));
         let default_value = match characteristic.args.default_value {
             Some(val) => quote!(#val),        // if set by user
             None => quote!(<#ty>::default()), // or default otherwise
@@ -164,6 +172,8 @@ impl ServiceBuilder {
                 store[..bytes.len()].copy_from_slice(bytes);
                 let mut builder = service
                     .add_characteristic(#uuid, &[#(#properties),*], store);
+                #read_callback
+                #write_callback
 
                 #descriptors
 
@@ -249,6 +259,14 @@ impl ServiceBuilder {
                     let access = &args.access;
                     let properties = set_access_properties(access);
                     let uuid = args.uuid;
+                    let read_callback = match &access.on_read {
+                        Some(callback) => quote!(Some(#callback)),
+                        None => quote!(None),
+                    };
+                    let write_callback = match &access.on_write {
+                        Some(callback) => quote!(Some(#callback)),
+                        None => quote!(None),
+                    };
                     let default_value = match &args.default_value {
                         Some(val) => quote!(#val), // if set by user
                         None => quote!(""),
@@ -272,8 +290,8 @@ impl ServiceBuilder {
                                 #uuid,
                                 &[#(#properties),*],
                                 store,
-                                None,
-                                None,
+                                #read_callback,
+                                #write_callback,
                             );
                         };
                     }
