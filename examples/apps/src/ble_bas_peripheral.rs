@@ -1,4 +1,3 @@
-use core::ops::Deref;
 use embassy_futures::select::select;
 use embassy_time::Timer;
 use trouble_host::prelude::*;
