@@ -18,7 +18,7 @@ const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
-#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 10)]
+#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 22)]
 struct Server {
     service: CustomService,
 }
@@ -29,7 +29,7 @@ struct CustomService {
     /// Battery Level
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", value = 42, read, write, notify, on_read = value_on_read, on_write = value_on_write)]
     #[descriptor(uuid = "2b21", value = [0x01,0x02,0x03], read)]
-    pub first: u8,
+    pub value: u8,
     #[characteristic(uuid = "408814df-5dd4-1f87-ec11-cdb001100000", value = 123.321, read, write, notify, on_read = value_on_read, on_write = value_on_write)]
     /// Order doesn't matter
     #[descriptor(uuid = "2b20", read, value = 42u16.to_le_bytes(), on_read = value_on_read)] // empty descriptor
