@@ -75,7 +75,7 @@ impl<'d, 'server> ReadEvent<'d, 'server> {
             &self.connection,
             self.server,
             self.tx_pool,
-            Ok(()),
+            result,
         )
     }
 
@@ -88,7 +88,7 @@ impl<'d, 'server> ReadEvent<'d, 'server> {
             &self.connection,
             self.server,
             self.tx_pool,
-            Ok(()),
+            result,
         )
         .await
     }
@@ -131,7 +131,7 @@ impl<'d, 'server> WriteEvent<'d, 'server> {
     }
 
     /// Process and respond to event.
-    pub fn try_reply(mut self, result: Result<(), Error>) -> Result<(), Error> {
+    pub fn try_reply(mut self, result: Result<(), AttErrorCode>) -> Result<(), Error> {
         let handle = self.handle();
         try_reply(
             &mut self.pdu,
@@ -139,7 +139,7 @@ impl<'d, 'server> WriteEvent<'d, 'server> {
             &self.connection,
             self.server,
             self.tx_pool,
-            Ok(()),
+            result,
         )
     }
 
@@ -152,7 +152,7 @@ impl<'d, 'server> WriteEvent<'d, 'server> {
             &self.connection,
             self.server,
             self.tx_pool,
-            Ok(()),
+            result,
         )
         .await
     }
@@ -191,7 +191,7 @@ async fn reply<'d>(
             Err(code) => {
                 let request = pdu.as_ref()[0];
                 let rsp = AttRsp::Error { request, handle, code };
-                let pdu = respond(&connection, server, tx_pool, rsp)?;
+                let pdu = respond(&connection, tx_pool, rsp)?;
                 connection.send(pdu).await;
             }
         }
@@ -218,7 +218,7 @@ fn try_reply<'d>(
             Err(code) => {
                 let request = pdu.as_ref()[0];
                 let rsp = AttRsp::Error { request, handle, code };
-                let pdu = respond(&connection, server, tx_pool, rsp)?;
+                let pdu = respond(&connection, tx_pool, rsp)?;
                 connection.try_send(pdu)?;
             }
         }
@@ -252,7 +252,6 @@ fn process<'d>(
 
 fn respond<'d>(
     conn: &Connection<'d>,
-    server: &dyn DynamicAttributeServer,
     tx_pool: &'d dyn GlobalPacketPool<'d>,
     rsp: AttRsp<'_>,
 ) -> Result<Pdu<'d>, Error> {
@@ -278,16 +277,7 @@ impl<'d> GattData<'d> {
 
     /// Respond directly to request.
     pub async fn reply(self, rsp: AttRsp<'_>) -> Result<(), Error> {
-        let mut tx = self.tx_pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
-        let mut w = WriteCursor::new(tx.as_mut());
-        let (mut header, mut data) = w.split(4)?;
-        data.write(rsp)?;
-        let mtu = self.connection.get_att_mtu();
-        data.truncate(mtu as usize);
-        header.write(data.len() as u16)?;
-        header.write(4_u16)?;
-        let len = header.len() + data.len();
-        let pdu = Pdu::new(tx, len);
+        let pdu = respond(&self.connection, self.tx_pool, rsp)?;
         self.connection.send(pdu).await;
         Ok(())
     }

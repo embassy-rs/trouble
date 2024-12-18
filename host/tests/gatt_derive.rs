@@ -120,15 +120,17 @@ async fn gatt_client_server() {
                                     writes += 1;
                                     if writes == 2 {
                                         println!("expected value written twice, test pass");
-                                        // NOTE: Ensure that adapter gets polled again
-                                        tokio::time::sleep(Duration::from_secs(2)).await;
+
                                         done = true;
                                     }
                                 }
                             }
                         }
                     }
+                    // NOTE: Ensure that adapter gets polled again
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                 }
+                println!("[peripheral] done");
                 Ok(())
             } => {
                 r
