@@ -184,14 +184,14 @@ async fn reply<'d>(
         match result {
             Ok(_) => {
                 let att = unwrap!(AttReq::decode(pdu.as_ref()));
-                if let Some(pdu) = process(&connection, att, server, tx_pool)? {
+                if let Some(pdu) = process(connection, att, server, tx_pool)? {
                     connection.send(pdu).await;
                 }
             }
             Err(code) => {
                 let request = pdu.as_ref()[0];
                 let rsp = AttRsp::Error { request, handle, code };
-                let pdu = respond(&connection, tx_pool, rsp)?;
+                let pdu = respond(connection, tx_pool, rsp)?;
                 connection.send(pdu).await;
             }
         }
@@ -211,14 +211,14 @@ fn try_reply<'d>(
         match result {
             Ok(_) => {
                 let att = unwrap!(AttReq::decode(pdu.as_ref()));
-                if let Some(pdu) = process(&connection, att, server, tx_pool)? {
+                if let Some(pdu) = process(connection, att, server, tx_pool)? {
                     connection.try_send(pdu)?;
                 }
             }
             Err(code) => {
                 let request = pdu.as_ref()[0];
                 let rsp = AttRsp::Error { request, handle, code };
-                let pdu = respond(&connection, tx_pool, rsp)?;
+                let pdu = respond(connection, tx_pool, rsp)?;
                 connection.try_send(pdu)?;
             }
         }
