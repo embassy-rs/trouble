@@ -8,9 +8,8 @@ use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::connection::{Connection, ConnectionEvent};
-use crate::packet_pool::GlobalPacketPool;
-use crate::packet_pool::Packet;
-use crate::packet_pool::ATT_ID;
+#[cfg(feature = "gatt")]
+use crate::packet_pool::{GlobalPacketPool, Packet, ATT_ID};
 use crate::pdu::Pdu;
 use crate::{config, Error};
 
@@ -106,9 +105,7 @@ impl<'d> ConnectionManager<'d> {
         self.with_mut(|state| {
             for (index, entry) in state.connections.iter().enumerate() {
                 if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
-                    return self.events[index as usize]
-                        .try_send(event)
-                        .map_err(|_| Error::OutOfMemory);
+                    return self.events[index].try_send(event).map_err(|_| Error::OutOfMemory);
                 }
             }
             Err(Error::NotFound)

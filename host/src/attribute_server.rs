@@ -36,8 +36,8 @@ pub(crate) mod sealed {
 /// Type erased attribute server
 pub trait DynamicAttributeServer: sealed::DynamicAttributeServer {}
 
-impl<'values, M: RawMutex, const MAX: usize> DynamicAttributeServer for AttributeServer<'values, M, MAX> {}
-impl<'values, M: RawMutex, const MAX: usize> sealed::DynamicAttributeServer for AttributeServer<'values, M, MAX> {
+impl<M: RawMutex, const MAX: usize> DynamicAttributeServer for AttributeServer<'_, M, MAX> {}
+impl<M: RawMutex, const MAX: usize> sealed::DynamicAttributeServer for AttributeServer<'_, M, MAX> {
     fn process(&self, connection: &Connection, packet: &AttReq, rx: &mut [u8]) -> Result<Option<usize>, Error> {
         let res = AttributeServer::process(self, connection, packet, rx)?;
         Ok(res)

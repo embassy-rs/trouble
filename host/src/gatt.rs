@@ -88,7 +88,7 @@ impl<'d, 'server> ReadEvent<'d, 'server> {
     }
 }
 
-impl<'d, 'server> Drop for ReadEvent<'d, 'server> {
+impl Drop for ReadEvent<'_, '_> {
     fn drop(&mut self) {
         if let Some(pdu) = self.pdu.take() {
             let att = unwrap!(AttReq::decode(pdu.as_ref()));
@@ -144,7 +144,7 @@ impl<'d, 'server> WriteEvent<'d, 'server> {
     }
 }
 
-impl<'d, 'server> Drop for WriteEvent<'d, 'server> {
+impl Drop for WriteEvent<'_, '_> {
     fn drop(&mut self) {
         if let Some(pdu) = self.pdu.take() {
             let att = unwrap!(AttReq::decode(pdu.as_ref()));
@@ -155,10 +155,10 @@ impl<'d, 'server> Drop for WriteEvent<'d, 'server> {
     }
 }
 
-fn process<'d, 'server>(
+fn process<'d>(
     conn: &Connection<'d>,
     att: AttReq<'_>,
-    server: &'server dyn DynamicAttributeServer,
+    server: &dyn DynamicAttributeServer,
     tx_pool: &'d dyn GlobalPacketPool<'d>,
 ) -> Result<Option<Pdu<'d>>, Error> {
     let mut tx = tx_pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;

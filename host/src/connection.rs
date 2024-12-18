@@ -1,5 +1,4 @@
 //! BLE connection.
-use crate::packet_pool::Packet;
 use crate::pdu::Pdu;
 use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::cmd::status::ReadRssi;
@@ -42,10 +41,11 @@ pub enum ConnectionEvent<'d> {
     },
     /// GATT event.
     Gatt {
-        /// The event that was returned,
+        /// The event that was returned
         #[cfg(feature = "gatt")]
         data: crate::gatt::GattData<'d>,
         #[cfg(not(feature = "gatt"))]
+        /// Connection handle for the event
         connection: Connection<'d>,
     },
 }
@@ -109,7 +109,7 @@ impl<'d> Connection<'d> {
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) fn alloc_tx(&self) -> Result<Packet<'d>, Error> {
+    pub(crate) fn alloc_tx(&self) -> Result<crate::packet_pool::Packet<'d>, Error> {
         self.manager.alloc_tx()
     }
 

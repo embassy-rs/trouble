@@ -26,14 +26,15 @@ use bt_hci::param::{
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select4, Either3, Either4};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::channel::Channel;
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
+#[cfg(feature = "gatt")]
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use futures::pin_mut;
 
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
+#[cfg(feature = "gatt")]
 use crate::connection::ConnectionEvent;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
 use crate::cursor::WriteCursor;
