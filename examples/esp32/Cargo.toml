@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-embassy-executor    = { version = "0.6.0", features = ["task-arena-size-8192"] }
+embassy-executor    = { version = "0.6.0", features = ["task-arena-size-32768"] }
 esp-backtrace = { version = "0.14.2", features = [
     "exception-handler",
     "panic-handler",
