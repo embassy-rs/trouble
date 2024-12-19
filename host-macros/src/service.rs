@@ -17,13 +17,11 @@ use syn::{Meta, Token};
 #[derive(Debug)]
 pub(crate) struct ServiceArgs {
     pub uuid: Uuid,
-    pub on_read: Option<syn::Ident>,
 }
 
 impl syn::parse::Parse for ServiceArgs {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
         let mut uuid = None;
-        let mut on_read = None;
 
         while !input.is_empty() {
             let meta = input.parse()?;
@@ -38,10 +36,9 @@ impl syn::parse::Parse for ServiceArgs {
                         .as_str()
                     {
                         "uuid" => uuid = Some(Uuid::from_meta(&meta)?),
-                        "on_read" => on_read = Some(syn::Ident::from_meta(&meta)?),
                         other => {
                             return Err(Error::unknown_field(&format!(
-                                "Unsupported service property: '{other}'.\nSupported properties are uuid, on_read"
+                                "Unsupported service property: '{other}'.\nSupported properties are uuid"
                             ))
                             .with_span(&name_value.span())
                             .into())
@@ -57,7 +54,6 @@ impl syn::parse::Parse for ServiceArgs {
             uuid: uuid.ok_or(Error::custom(
                 "Service must have a UUID (i.e. `#[gatt_service(uuid = '1234')]`)",
             ))?,
-            on_read,
         })
     }
 }
@@ -107,11 +103,6 @@ impl ServiceBuilder {
         let code_build_chars = self.code_build_chars;
         let uuid = self.args.uuid;
         let attribute_count = self.attribute_count;
-        let read_callback = self
-            .args
-            .on_read
-            .map(|callback| quote!(service.set_read_callback(#callback);));
-
         quote! {
             #visibility struct #struct_name {
                 #fields
@@ -127,7 +118,6 @@ impl ServiceBuilder {
                     M: embassy_sync::blocking_mutex::raw::RawMutex,
                 {
                     let mut service = table.add_service(Service::new(#uuid));
-                    #read_callback
                     #code_build_chars
 
                     Self {
@@ -149,14 +139,6 @@ impl ServiceBuilder {
         let access = &characteristic.args.access;
         let properties = set_access_properties(access);
         let uuid = characteristic.args.uuid;
-        let read_callback = access
-            .on_read
-            .as_ref()
-            .map(|callback| quote!(builder.set_read_callback(#callback);));
-        let write_callback = access
-            .on_write
-            .as_ref()
-            .map(|callback| quote!(builder.set_write_callback(#callback);));
         let default_value = match characteristic.args.default_value {
             Some(val) => quote!(#val),        // if set by user
             None => quote!(<#ty>::default()), // or default otherwise
@@ -172,9 +154,6 @@ impl ServiceBuilder {
                 store[..bytes.len()].copy_from_slice(bytes);
                 let mut builder = service
                     .add_characteristic(#uuid, &[#(#properties),*], store);
-                #read_callback
-                #write_callback
-
                 #descriptors
 
                 builder.build()
@@ -259,14 +238,6 @@ impl ServiceBuilder {
                     let access = &args.access;
                     let properties = set_access_properties(access);
                     let uuid = args.uuid;
-                    let read_callback = match &access.on_read {
-                        Some(callback) => quote!(Some(#callback)),
-                        None => quote!(None),
-                    };
-                    let write_callback = match &access.on_write {
-                        Some(callback) => quote!(Some(#callback)),
-                        None => quote!(None),
-                    };
                     let default_value = match &args.default_value {
                         Some(val) => quote!(#val), // if set by user
                         None => quote!(""),
@@ -290,8 +261,6 @@ impl ServiceBuilder {
                                 #uuid,
                                 &[#(#properties),*],
                                 store,
-                                #read_callback,
-                                #write_callback,
                             );
                         };
                     }

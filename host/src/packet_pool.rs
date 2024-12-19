@@ -7,7 +7,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use crate::types::l2cap::{L2CAP_CID_ATT, L2CAP_CID_DYN_START};
 
 // Generic client ID used by ATT PDU
-pub(crate) const ATT_ID: AllocId = AllocId(0);
+pub(crate) const GENERIC_ID: AllocId = AllocId(0);
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -21,7 +21,7 @@ impl AllocId {
 
     pub(crate) fn from_channel(cid: u16) -> AllocId {
         match cid {
-            L2CAP_CID_ATT => ATT_ID,
+            L2CAP_CID_ATT => GENERIC_ID,
             cid if cid >= L2CAP_CID_DYN_START => Self::dynamic((cid - L2CAP_CID_DYN_START) as usize),
             cid => {
                 panic!("unexpected channel id {}", cid);
@@ -196,7 +196,7 @@ impl<M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> Packet
     }
 }
 
-pub(crate) trait GlobalPacketPool<'d> {
+pub(crate) trait DynamicPacketPool<'d> {
     fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>>;
     fn free(&self, id: AllocId, r: PacketRef);
     fn available(&self, id: AllocId) -> usize;
@@ -204,7 +204,7 @@ pub(crate) trait GlobalPacketPool<'d> {
     fn mtu(&self) -> usize;
 }
 
-impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> GlobalPacketPool<'d>
+impl<'d, M: RawMutex, const MTU: usize, const N: usize, const CLIENTS: usize> DynamicPacketPool<'d>
     for PacketPool<M, MTU, N, CLIENTS>
 {
     fn alloc(&'d self, id: AllocId) -> Option<Packet<'d>> {
@@ -236,7 +236,7 @@ pub(crate) struct PacketRef {
 pub(crate) struct Packet<'d> {
     client: AllocId,
     p_ref: Option<PacketRef>,
-    pool: &'d dyn GlobalPacketPool<'d>,
+    pool: &'d dyn DynamicPacketPool<'d>,
 }
 
 impl Packet<'_> {

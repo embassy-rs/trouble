@@ -355,17 +355,17 @@ pub fn new<
     // - Internal lifetimes are elided (made 'static) to simplify API usage
     // - This _should_ be OK, because there are no references held to the resources
     //   when the stack is shut down.
-    use crate::packet_pool::GlobalPacketPool;
-    let rx_pool: &'d dyn GlobalPacketPool<'d> = &*resources.rx_pool.write(PacketPool::new(resources.qos));
+    use crate::packet_pool::DynamicPacketPool;
+    let rx_pool: &'d dyn DynamicPacketPool<'d> = &*resources.rx_pool.write(PacketPool::new(resources.qos));
     let rx_pool = unsafe {
-        core::mem::transmute::<&'d dyn GlobalPacketPool<'d>, &'static dyn GlobalPacketPool<'static>>(rx_pool)
+        core::mem::transmute::<&'d dyn DynamicPacketPool<'d>, &'static dyn DynamicPacketPool<'static>>(rx_pool)
     };
 
     #[cfg(feature = "gatt")]
-    let tx_pool: &'d dyn GlobalPacketPool<'d> = &*resources.tx_pool.write(PacketPool::new(PacketQos::None));
+    let tx_pool: &'d dyn DynamicPacketPool<'d> = &*resources.tx_pool.write(PacketPool::new(PacketQos::None));
     #[cfg(feature = "gatt")]
     let tx_pool = unsafe {
-        core::mem::transmute::<&'d dyn GlobalPacketPool<'d>, &'static dyn GlobalPacketPool<'static>>(tx_pool)
+        core::mem::transmute::<&'d dyn DynamicPacketPool<'d>, &'static dyn DynamicPacketPool<'static>>(tx_pool)
     };
 
     let connections = &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);

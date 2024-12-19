@@ -19,8 +19,8 @@ use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, 
 use crate::attribute_server::DynamicAttributeServer;
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::packet_pool::GlobalPacketPool;
-use crate::packet_pool::ATT_ID;
+use crate::packet_pool::DynamicPacketPool;
+use crate::packet_pool::GENERIC_ID;
 use crate::pdu::Pdu;
 use crate::types::gatt_traits::GattValue;
 use crate::types::l2cap::L2capHeader;
@@ -29,12 +29,12 @@ use crate::{config, BleHostError, Error, Stack};
 /// A GATT payload ready for processing.
 pub struct GattData<'d> {
     pdu: Pdu<'d>,
-    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
     connection: Connection<'d>,
 }
 
 impl<'d> GattData<'d> {
-    pub(crate) fn new(pdu: Pdu<'d>, tx_pool: &'d dyn GlobalPacketPool<'d>, connection: Connection<'d>) -> Self {
+    pub(crate) fn new(pdu: Pdu<'d>, tx_pool: &'d dyn DynamicPacketPool<'d>, connection: Connection<'d>) -> Self {
         Self {
             pdu,
             tx_pool,
@@ -56,7 +56,7 @@ pub struct ReadEvent<'d, 'server> {
     value_handle: u16,
     connection: Connection<'d>,
     server: &'server dyn DynamicAttributeServer,
-    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
     pdu: Option<Pdu<'d>>,
 }
 
@@ -114,7 +114,7 @@ pub struct WriteEvent<'d, 'server> {
     value_handle: u16,
     pdu: Option<Pdu<'d>>,
     connection: Connection<'d>,
-    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
     server: &'server dyn DynamicAttributeServer,
 }
 
@@ -177,7 +177,7 @@ async fn reply<'d>(
     handle: u16,
     connection: &Connection<'d>,
     server: &dyn DynamicAttributeServer,
-    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
     result: Result<(), AttErrorCode>,
 ) -> Result<(), Error> {
     if let Some(pdu) = pdu.take() {
@@ -204,7 +204,7 @@ fn try_reply<'d>(
     handle: u16,
     connection: &Connection<'d>,
     server: &dyn DynamicAttributeServer,
-    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
     result: Result<(), AttErrorCode>,
 ) -> Result<(), Error> {
     if let Some(pdu) = pdu.take() {
@@ -230,9 +230,9 @@ fn process<'d>(
     conn: &Connection<'d>,
     att: AttReq<'_>,
     server: &dyn DynamicAttributeServer,
-    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
 ) -> Result<Option<Pdu<'d>>, Error> {
-    let mut tx = tx_pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+    let mut tx = tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)?;
     let mut w = WriteCursor::new(tx.as_mut());
     let (mut header, mut data) = w.split(4)?;
     if let Some(written) = server.process(conn, &att, data.write_buf())? {
@@ -252,10 +252,10 @@ fn process<'d>(
 
 fn respond<'d>(
     conn: &Connection<'d>,
-    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
     rsp: AttRsp<'_>,
 ) -> Result<Pdu<'d>, Error> {
-    let mut tx = tx_pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)?;
+    let mut tx = tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)?;
     let mut w = WriteCursor::new(tx.as_mut());
     let (mut header, mut data) = w.split(4)?;
     data.write(rsp)?;

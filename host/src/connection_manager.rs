@@ -9,7 +9,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::connection::{Connection, ConnectionEvent};
 #[cfg(feature = "gatt")]
-use crate::packet_pool::{GlobalPacketPool, Packet, ATT_ID};
+use crate::packet_pool::{DynamicPacketPool, Packet, GENERIC_ID};
 use crate::pdu::Pdu;
 use crate::{config, Error};
 
@@ -47,14 +47,14 @@ pub(crate) struct ConnectionManager<'d> {
     events: &'d mut [EventChannel<'d>],
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
-    tx_pool: &'d dyn GlobalPacketPool<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
 }
 
 impl<'d> ConnectionManager<'d> {
     pub(crate) fn new(
         connections: &'d mut [ConnectionStorage],
         events: &'d mut [EventChannel<'d>],
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn GlobalPacketPool<'d>,
+        #[cfg(feature = "gatt")] tx_pool: &'d dyn DynamicPacketPool<'d>,
     ) -> Self {
         Self {
             state: RefCell::new(State {
@@ -422,7 +422,7 @@ impl<'d> ConnectionManager<'d> {
 
     #[cfg(feature = "gatt")]
     pub(crate) fn alloc_tx(&self) -> Result<Packet<'d>, Error> {
-        self.tx_pool.alloc(ATT_ID).ok_or(Error::OutOfMemory)
+        self.tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)
     }
 
     pub(crate) fn try_send(&self, index: u8, pdu: Pdu<'d>) -> Result<(), Error> {

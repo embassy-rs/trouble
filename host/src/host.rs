@@ -39,7 +39,7 @@ use crate::connection::ConnectionEvent;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
-use crate::packet_pool::{AllocId, GlobalPacketPool};
+use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
 #[cfg(feature = "scan")]
 use crate::scan::ScanReport;
@@ -65,9 +65,9 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
     pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
-    pub(crate) rx_pool: &'d dyn GlobalPacketPool<'d>,
+    pub(crate) rx_pool: &'d dyn DynamicPacketPool<'d>,
     #[cfg(feature = "gatt")]
-    pub(crate) tx_pool: &'d dyn GlobalPacketPool<'d>,
+    pub(crate) tx_pool: &'d dyn DynamicPacketPool<'d>,
 
     #[cfg(feature = "scan")]
     pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
@@ -196,8 +196,8 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
-        rx_pool: &'d dyn GlobalPacketPool<'d>,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn GlobalPacketPool<'d>,
+        rx_pool: &'d dyn DynamicPacketPool<'d>,
+        #[cfg(feature = "gatt")] tx_pool: &'d dyn DynamicPacketPool<'d>,
         connections: &'d mut [ConnectionStorage],
         events: &'d mut [EventChannel<'d>],
         channels: &'d mut [ChannelStorage],
