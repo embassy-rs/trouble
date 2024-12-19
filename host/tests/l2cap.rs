@@ -49,7 +49,7 @@ async fn l2cap_connection_oriented_channels() {
 
                 loop {
                     println!("[peripheral] advertising");
-                    let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                    let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;

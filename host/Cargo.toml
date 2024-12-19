@@ -45,6 +45,7 @@ tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] }
 rand = "0.8.5"
+heapless = "0.8.0"
 
 [features]
 defmt = ["dep:defmt", "embassy-time/defmt", "bt-hci/defmt"]
@@ -94,6 +95,17 @@ l2cap-rx-packet-pool-size-64 = []
 l2cap-rx-packet-pool-size-128 = []
 l2cap-rx-packet-pool-size-256 = []
 l2cap-rx-packet-pool-size-512 = []
+
+gatt-packet-pool-size-1 = []
+gatt-packet-pool-size-2 = []
+gatt-packet-pool-size-4 = []
+gatt-packet-pool-size-8 = [] # Default
+gatt-packet-pool-size-16 = []
+gatt-packet-pool-size-32 = []
+gatt-packet-pool-size-64 = []
+gatt-packet-pool-size-128 = []
+gatt-packet-pool-size-256 = []
+gatt-packet-pool-size-512 = []
 
 gatt-client-notification-max-subscribers-1 = [] # Default
 gatt-client-notification-max-subscribers-2 = []

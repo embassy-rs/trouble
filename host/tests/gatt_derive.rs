@@ -18,15 +18,30 @@ const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
-#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 10, mtu = 27)]
+#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 22)]
 struct Server {
     service: CustomService,
 }
 
 #[gatt_service(uuid = "408813df-5dd4-1f87-ec11-cdb000100000")]
 struct CustomService {
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", read, write, notify, on_read = value_on_read, on_write = value_on_write)]
-    value: u8,
+    #[descriptor(uuid = "2b20", value = "Read Only Descriptor", read, on_read = value_on_read)]
+    /// Battery Level
+    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", value = 42, read, write, notify, on_read = value_on_read, on_write = value_on_write)]
+    #[descriptor(uuid = "2b21", value = [0x01,0x02,0x03], read)]
+    pub value: u8,
+    #[characteristic(uuid = "408814df-5dd4-1f87-ec11-cdb001100000", value = 123.321, read, write, notify, on_read = value_on_read, on_write = value_on_write)]
+    /// Order doesn't matter
+    #[descriptor(uuid = "2b20", read, value = 42u16.to_le_bytes(), on_read = value_on_read)] // empty descriptor
+    pub second: f32,
+    /// Multi
+    ///
+    /// Line
+    /// Comment
+    #[characteristic(uuid = "408815df-5dd4-1f87-ec11-cdb001100000", value = [0,1], read, write, notify)]
+    pub third: [u8; 2],
+    #[characteristic(uuid = "408816df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
+    pub fourth: heapless::Vec<u8, 3>,
 }
 
 static READ_FLAG: CriticalSectionMutex<RefCell<bool>> = CriticalSectionMutex::new(RefCell::new(false));
@@ -71,7 +86,7 @@ async fn gatt_client_server() {
             name: &name,
             appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
         });
-        let server: Server<common::Controller> = Server::new_with_config(
+        let server: Server = Server::new_with_config(
             stack,
             gap,
         ).unwrap();
@@ -87,7 +102,7 @@ async fn gatt_client_server() {
                 r
             }
             r = server.run() => {
-                r
+                r.map_err(BleHostError::BleHost)
             }
             r = async {
                 let mut adv_data = [0; 31];
@@ -105,7 +120,7 @@ async fn gatt_client_server() {
                 let mut done = false;
                 while !done {
                     println!("[peripheral] advertising");
-                    let mut acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
+                    let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;

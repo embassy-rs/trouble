@@ -68,6 +68,7 @@ impl Primitive for i64 {}
 impl Primitive for f32 {}
 impl Primitive for f64 {}
 impl Primitive for BluetoothUuid16 {} // ok as this is just a NewType(u16)
+impl Primitive for &'_ str {}
 
 impl<T: Primitive> FixedGattValue for T {
     const SIZE: usize = mem::size_of::<Self>();
