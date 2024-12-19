@@ -1,8 +1,6 @@
-use std::cell::RefCell;
 use std::time::Duration;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use tokio::select;
 use trouble_host::prelude::*;
 
@@ -25,14 +23,14 @@ struct Server {
 
 #[gatt_service(uuid = "408813df-5dd4-1f87-ec11-cdb000100000")]
 struct CustomService {
-    #[descriptor(uuid = "2b20", value = "Read Only Descriptor", read, on_read = value_on_read)]
+    #[descriptor(uuid = "2b20", value = "Read Only Descriptor", read)]
     /// Battery Level
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", value = 42, read, write, notify, on_read = value_on_read, on_write = value_on_write)]
+    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", value = 42, read, write, notify)]
     #[descriptor(uuid = "2b21", value = [0x01,0x02,0x03], read)]
     pub value: u8,
-    #[characteristic(uuid = "408814df-5dd4-1f87-ec11-cdb001100000", value = 123.321, read, write, notify, on_read = value_on_read, on_write = value_on_write)]
+    #[characteristic(uuid = "408814df-5dd4-1f87-ec11-cdb001100000", value = 123.321, read, write, notify)]
     /// Order doesn't matter
-    #[descriptor(uuid = "2b20", read, value = 42u16.to_le_bytes(), on_read = value_on_read)] // empty descriptor
+    #[descriptor(uuid = "2b20", read, value = 42u16.to_le_bytes())] // empty descriptor
     pub second: f32,
     /// Multi
     ///
@@ -42,25 +40,6 @@ struct CustomService {
     pub third: [u8; 2],
     #[characteristic(uuid = "408816df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
     pub fourth: heapless::Vec<u8, 3>,
-}
-
-static READ_FLAG: CriticalSectionMutex<RefCell<bool>> = CriticalSectionMutex::new(RefCell::new(false));
-static WRITE_FLAG: CriticalSectionMutex<RefCell<u8>> = CriticalSectionMutex::new(RefCell::new(0));
-
-fn value_on_read(_: &Connection) {
-    READ_FLAG.lock(|cell| cell.replace(true));
-}
-
-fn value_on_write(_: &Connection, _: &[u8]) -> Result<(), ()> {
-    WRITE_FLAG.lock(|cell| {
-        let old = cell.replace_with(|&mut old| old.wrapping_add(1));
-        if old == 0 {
-            // Return an error on the first write to test accept / reject functionality
-            Err(())
-        } else {
-            Ok(())
-        }
-    })
 }
 
 #[tokio::test]
@@ -79,7 +58,7 @@ async fn gatt_client_server() {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
         let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new(PacketQos::None);
-        let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
+        let (_, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address)
             .build();
         let gap = GapConfig::Peripheral(PeripheralConfig {
@@ -87,7 +66,6 @@ async fn gatt_client_server() {
             appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
         });
         let server: Server = Server::new_with_config(
-            stack,
             gap,
         ).unwrap();
 
@@ -100,9 +78,6 @@ async fn gatt_client_server() {
         select! {
             r = runner.run() => {
                 r
-            }
-            r = server.run() => {
-                r.map_err(BleHostError::BleHost)
             }
             r = async {
                 let mut adv_data = [0; 31];
@@ -133,24 +108,29 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            ConnectionEvent::Gatt { event, .. } => if let GattEvent::Write {
-                                    value_handle: handle
-                                } = event {
-                                let characteristic = server.server().table().find_characteristic_by_value_handle(handle).unwrap();
-                                let value: u8 = server.server().table().get(&characteristic).unwrap();
-                                assert_eq!(expected, value);
-                                expected = expected.wrapping_add(2);
-                                writes += 1;
-                                if writes == 2 {
-                                    println!("expected value written twice, test pass");
-                                    // NOTE: Ensure that adapter gets polled again
-                                    tokio::time::sleep(Duration::from_secs(2)).await;
-                                    done = true;
+                            ConnectionEvent::Gatt { data } => if let Ok(Some(GattEvent::Write(event))) = data.process(&server).await {
+                                if writes == 0 {
+                                    event.reply(Err(AttErrorCode::ValueNotAllowed)).await.unwrap();
+                                    writes += 1;
+                                } else {
+                                    let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
+                                    let value: u8 = server.table().get(&characteristic).unwrap();
+                                    assert_eq!(expected, value);
+                                    expected = expected.wrapping_add(2);
+                                    writes += 1;
+                                    if writes == 2 {
+                                        println!("expected value written twice, test pass");
+
+                                        done = true;
+                                    }
                                 }
                             }
                         }
                     }
+                    // NOTE: Ensure that adapter gets polled again
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                 }
+                println!("[peripheral] done");
                 Ok(())
             } => {
                 r
@@ -250,12 +230,6 @@ async fn gatt_client_server() {
                 panic!();
             }
             _ => {
-                assert!(READ_FLAG.lock(|cell| cell.take()), "Read callback failed to trigger!");
-                let actual_write_count = WRITE_FLAG.lock(|cell| cell.take());
-                assert_eq!(
-                    actual_write_count, 2,
-                    "Write callback didn't trigger the expected number of times"
-                );
                 println!("Test completed successfully");
             }
         },

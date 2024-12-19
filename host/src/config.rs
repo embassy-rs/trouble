@@ -61,7 +61,7 @@ pub const L2CAP_RX_QUEUE_SIZE: usize = raw::L2CAP_RX_QUEUE_SIZE;
 
 /// L2CAP RX packet pool size
 ///
-/// This is the rx packet pool size of every l2cap channel. There has to be at least
+/// This is the rx packet pool size of all l2cap channels. There has to be at least
 /// 1 packet that can be allocated, but the pool is shared among different channels.
 ///
 /// If the rx queue size is adjusted, consider adjusting the rx packet pool size as well,
@@ -70,16 +70,19 @@ pub const L2CAP_RX_QUEUE_SIZE: usize = raw::L2CAP_RX_QUEUE_SIZE;
 /// Ensuring fair access to the pool is done configuring the QoS policy when creating
 /// the host resources.
 ///
-/// Default: 1.
+/// Default: 8.
 pub const L2CAP_RX_PACKET_POOL_SIZE: usize = raw::L2CAP_RX_PACKET_POOL_SIZE;
 
-/// GATT packet pool size.
+/// L2CAP TX packet pool size
+///
+/// This is the tx packet pool size of every l2cap channel. There has to be at least
+/// 1 packet that can be allocated, but the pool is shared among different channels.
+///
+/// If the tx queue size is adjusted, consider adjusting the tx packet pool size as well.
 ///
 /// Default: 8.
-pub const GATT_PACKET_POOL_SIZE: usize = raw::GATT_PACKET_POOL_SIZE;
+pub const L2CAP_TX_PACKET_POOL_SIZE: usize = raw::L2CAP_TX_PACKET_POOL_SIZE;
 
-/// GATT notification max subscribers
-///
 /// Default: 1.
 pub const GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS: usize = raw::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
 
