@@ -9,13 +9,14 @@ use bt_hci::param::ConnHandle;
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
 
 use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
-use crate::attribute_server::DynamicAttributeServer;
+use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::{DynamicPacketPool, GENERIC_ID};
@@ -284,7 +285,10 @@ impl<'d> GattData<'d> {
     ///
     /// May return an event that should be replied/processed. Uses the attribute server to
     /// handle the protocol.
-    pub async fn process(self, server: &dyn DynamicAttributeServer) -> Result<Option<GattEvent<'d, '_>>, Error> {
+    pub async fn process<'m, 'server, M: RawMutex, const MAX: usize>(
+        self,
+        server: &'m AttributeServer<'server, M, MAX>,
+    ) -> Result<Option<GattEvent<'d, 'm>>, Error> {
         // We know it has been checked, therefore this cannot fail
         let att = unwrap!(AttReq::decode(self.pdu.as_ref()));
         match att {

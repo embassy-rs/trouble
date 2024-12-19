@@ -174,10 +174,6 @@ impl ServerBuilder {
                 #visibility fn set<T: trouble_host::types::gatt_traits::GattValue>(&self, characteristic: &Characteristic<T>, input: &T) -> Result<(), Error> {
                     self.server.table().set(characteristic, input)
                 }
-
-                #visibility fn deref(&self) -> &AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE> {
-                    &self.server
-                }
             }
 
             impl<'values> core::ops::Deref for #name<'values>

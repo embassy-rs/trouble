@@ -108,7 +108,7 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            ConnectionEvent::Gatt { data } => if let Ok(Some(GattEvent::Write(event))) = data.process(server.deref()).await {
+                            ConnectionEvent::Gatt { data } => if let Ok(Some(GattEvent::Write(event))) = data.process(&server).await {
                                 if writes == 0 {
                                     event.reply(Err(AttErrorCode::ValueNotAllowed)).await.unwrap();
                                     writes += 1;

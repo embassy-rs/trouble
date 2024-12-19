@@ -9,8 +9,9 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
 use crate::att::AttErrorCode;
+use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::{Connection, DynamicAttributeServer};
+use crate::prelude::Connection;
 use crate::types::gatt_traits::GattValue;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
@@ -587,14 +588,14 @@ impl<T: GattValue> Characteristic<T> {
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
     /// If the characteristic does not support notifications, an error is returned.
-    pub async fn notify(
+    pub async fn notify<M: RawMutex, const MAX: usize>(
         &self,
-        server: &dyn DynamicAttributeServer,
+        server: &AttributeServer<'_, M, MAX>,
         connection: &Connection<'_>,
         value: &T,
     ) -> Result<(), Error> {
         let value = value.to_gatt();
-        server.set(self.handle, value)?;
+        server.table().set_raw(self.handle, value)?;
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
 

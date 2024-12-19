@@ -43,7 +43,7 @@ impl<M: RawMutex, const MAX: usize> sealed::DynamicAttributeServer for Attribute
     }
 
     fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool {
-        AttributeServer::should_notify(self, connection.handle(), cccd_handle)
+        AttributeServer::should_notify(self, connection, cccd_handle)
     }
 
     fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error> {
@@ -62,11 +62,11 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         }
     }
 
-    fn should_notify(&self, conn: ConnHandle, cccd_handle: u16) -> bool {
+    pub(crate) fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool {
         self.notification.lock(|n| {
             let n = n.borrow();
             for entry in n.state.iter() {
-                if entry.0 == cccd_handle && entry.1 == conn {
+                if entry.0 == cccd_handle && entry.1 == connection.handle() {
                     return true;
                 }
             }

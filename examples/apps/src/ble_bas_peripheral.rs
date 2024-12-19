@@ -117,7 +117,7 @@ async fn conn_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Err
 
                 // But to simplify things, process it in the GATT server that handles
                 // the protocol details
-                match data.process(server.deref()).await {
+                match data.process(server).await {
                     // Server processing emits
                     Ok(Some(GattEvent::Read(event))) => {
                         if event.handle() == level.handle {
@@ -178,7 +178,7 @@ async fn counter_task(server: &Server<'_>, conn: &Connection<'_>) {
     loop {
         tick = tick.wrapping_add(1);
         info!("[adv] notifying connection of tick {}", tick);
-        if level.notify(server.deref(), conn, &tick).await.is_err() {
+        if level.notify(server, conn, &tick).await.is_err() {
             info!("[adv] error notifying connection");
             break;
         };
