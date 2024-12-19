@@ -182,6 +182,7 @@ async fn reply<'d>(
     if let Some(pdu) = pdu.take() {
         match result {
             Ok(_) => {
+                // We know it has been checked, therefore this cannot fail
                 let att = unwrap!(AttReq::decode(pdu.as_ref()));
                 if let Some(pdu) = process(connection, att, server, tx_pool)? {
                     connection.send(pdu).await;
@@ -209,6 +210,7 @@ fn try_reply<'d>(
     if let Some(pdu) = pdu.take() {
         match result {
             Ok(_) => {
+                // We know it has been checked, therefore this cannot fail
                 let att = unwrap!(AttReq::decode(pdu.as_ref()));
                 if let Some(pdu) = process(connection, att, server, tx_pool)? {
                     connection.try_send(pdu)?;
@@ -289,8 +291,7 @@ impl<'d> GattData<'d> {
         self,
         server: &'m AttributeServer<'server, M, MAX>,
     ) -> Result<Option<GattEvent<'d, 'm>>, Error> {
-        // We know it has been checked, therefore this cannot fail
-        let att = unwrap!(AttReq::decode(self.pdu.as_ref()));
+        let att = self.request();
         match att {
             AttReq::Write { handle, data: _ } => Ok(Some(GattEvent::Write(WriteEvent {
                 value_handle: handle,
