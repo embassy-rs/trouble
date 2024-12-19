@@ -13,14 +13,12 @@ use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
 
-use crate::att::ATT_HANDLE_VALUE_NTF;
-use crate::att::{self, AttReq, AttRsp};
+use crate::att::{self, AttReq, AttRsp, ATT_HANDLE_VALUE_NTF};
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
 use crate::attribute_server::DynamicAttributeServer;
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::packet_pool::DynamicPacketPool;
-use crate::packet_pool::GENERIC_ID;
+use crate::packet_pool::{DynamicPacketPool, GENERIC_ID};
 use crate::pdu::Pdu;
 use crate::types::gatt_traits::GattValue;
 use crate::types::l2cap::L2capHeader;

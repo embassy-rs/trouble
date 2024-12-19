@@ -6,11 +6,10 @@ use embassy_sync::blocking_mutex::Mutex;
 
 use crate::att::{self, AttErrorCode, AttReq};
 use crate::attribute::{AttributeData, AttributeTable};
-use crate::codec;
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
-use crate::Error;
+use crate::{codec, Error};
 
 const MAX_NOTIFICATIONS: usize = 4;
 pub(crate) struct NotificationTable<const ENTRIES: usize> {

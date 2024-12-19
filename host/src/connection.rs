@@ -1,5 +1,4 @@
 //! BLE connection.
-use crate::pdu::Pdu;
 use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -7,6 +6,7 @@ use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
+use crate::pdu::Pdu;
 use crate::scan::ScanConfig;
 use crate::{BleHostError, Error, Stack};
 

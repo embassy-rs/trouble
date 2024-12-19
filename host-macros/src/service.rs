@@ -4,8 +4,6 @@
 //! The struct definition is used to define the characteristics of the service, and the ServiceBuilder is used to
 //! generate the code required to create the service.
 
-use crate::characteristic::{AccessArgs, Characteristic};
-use crate::uuid::Uuid;
 use darling::{Error, FromMeta};
 use inflector::cases::screamingsnakecase::to_screaming_snake_case;
 use proc_macro2::TokenStream as TokenStream2;
@@ -13,6 +11,9 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::parse::Result;
 use syn::spanned::Spanned;
 use syn::{Meta, Token};
+
+use crate::characteristic::{AccessArgs, Characteristic};
+use crate::uuid::Uuid;
 
 #[derive(Debug)]
 pub(crate) struct ServiceArgs {

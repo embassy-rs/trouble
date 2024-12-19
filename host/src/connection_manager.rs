@@ -659,9 +659,9 @@ impl Drop for PacketGrant<'_, '_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{prelude::PacketPool, PacketQos};
-
     use super::*;
+    use crate::prelude::PacketPool;
+    use crate::PacketQos;
     extern crate std;
     use std::boxed::Box;
 

@@ -4,16 +4,14 @@
 //! The characteristic attribute is used to define a characteristic in a service.
 //! A characteristic is a data value that can be accessed from a connected client.
 
-use crate::uuid::Uuid;
-use darling::Error;
-use darling::FromMeta;
+use darling::{Error, FromMeta};
 use proc_macro2::Span;
 use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
-use syn::Field;
-use syn::Ident;
-use syn::LitStr;
+use syn::{Field, Ident, LitStr};
+
+use crate::uuid::Uuid;
 
 #[derive(Debug)]
 pub(crate) struct Characteristic {
