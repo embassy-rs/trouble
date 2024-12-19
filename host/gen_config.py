@@ -39,7 +39,7 @@ feature("connection_event_queue_size", default=2, min=1, max=64, pow2=True)
 feature("l2cap_rx_queue_size", default=8, min=1, max=64, pow2=True)
 feature("l2cap_tx_queue_size", default=8, min=1, max=64, pow2=True)
 feature("l2cap_rx_packet_pool_size", default=8, min=1, max=512, pow2=True)
-feature("gatt_packet_pool_size", default=8, min=1, max=512, pow2=True)
+feature("l2cap_tx_packet_pool_size", default=8, min=1, max=512, pow2=True)
 feature("gatt_client_notification_max_subscribers", default=1, min=1, max=512, pow2=True)
 feature("gatt_client_notification_queue_size", default=1, min=1, max=512, pow2=True)
 

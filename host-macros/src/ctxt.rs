@@ -2,11 +2,12 @@
 //!
 //! https://github.com/serde-rs/serde/blob/master/serde_derive/src/internals/ctxt.rs
 
-use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::thread;
+
+use proc_macro2::TokenStream;
+use quote::{quote, ToTokens};
 
 /// A type to collect errors together and format them.
 ///

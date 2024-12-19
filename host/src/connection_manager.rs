@@ -8,6 +8,9 @@ use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::connection::{Connection, ConnectionEvent};
+#[cfg(feature = "gatt")]
+use crate::packet_pool::{DynamicPacketPool, Packet, GENERIC_ID};
+use crate::pdu::Pdu;
 use crate::{config, Error};
 
 struct State<'d> {
@@ -42,10 +45,17 @@ pub(crate) type EventChannel<'d> = Channel<NoopRawMutex, ConnectionEvent<'d>, { 
 pub(crate) struct ConnectionManager<'d> {
     state: RefCell<State<'d>>,
     events: &'d mut [EventChannel<'d>],
+    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_TX_QUEUE_SIZE }>,
+    #[cfg(feature = "gatt")]
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
 }
 
 impl<'d> ConnectionManager<'d> {
-    pub(crate) fn new(connections: &'d mut [ConnectionStorage], events: &'d mut [EventChannel<'d>]) -> Self {
+    pub(crate) fn new(
+        connections: &'d mut [ConnectionStorage],
+        events: &'d mut [EventChannel<'d>],
+        #[cfg(feature = "gatt")] tx_pool: &'d dyn DynamicPacketPool<'d>,
+    ) -> Self {
         Self {
             state: RefCell::new(State {
                 connections,
@@ -56,6 +66,9 @@ impl<'d> ConnectionManager<'d> {
                 default_att_mtu: 23,
             }),
             events,
+            outbound: Channel::new(),
+            #[cfg(feature = "gatt")]
+            tx_pool,
         }
     }
 
@@ -86,6 +99,17 @@ impl<'d> ConnectionManager<'d> {
 
     pub(crate) async fn post_event(&self, index: u8, event: ConnectionEvent<'d>) {
         self.events[index as usize].send(event).await
+    }
+
+    pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEvent<'d>) -> Result<(), Error> {
+        self.with_mut(|state| {
+            for (index, entry) in state.connections.iter().enumerate() {
+                if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+                    return self.events[index].try_send(event).map_err(|_| Error::OutOfMemory);
+                }
+            }
+            Err(Error::NotFound)
+        })
     }
 
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
@@ -387,7 +411,34 @@ impl<'d> ConnectionManager<'d> {
         Poll::Ready(Err(Error::NotFound))
     }
 
-    pub(crate) fn get_att_mtu(&self, conn: ConnHandle) -> u16 {
+    pub(crate) fn get_att_mtu(&self, index: u8) -> u16 {
+        self.with_mut(|state| state.connections[index as usize].att_mtu)
+    }
+
+    pub(crate) async fn send(&self, index: u8, pdu: Pdu<'d>) {
+        let handle = self.with_mut(|state| state.connections[index as usize].handle.unwrap());
+        self.outbound.send((handle, pdu)).await
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn alloc_tx(&self) -> Result<Packet<'d>, Error> {
+        self.tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)
+    }
+
+    pub(crate) fn try_send(&self, index: u8, pdu: Pdu<'d>) -> Result<(), Error> {
+        let handle = self.with_mut(|state| state.connections[index as usize].handle.unwrap());
+        self.outbound.try_send((handle, pdu)).map_err(|_| Error::OutOfMemory)
+    }
+
+    pub(crate) fn try_outbound(&self, handle: ConnHandle, pdu: Pdu<'d>) -> Result<(), Error> {
+        self.outbound.try_send((handle, pdu)).map_err(|_| Error::OutOfMemory)
+    }
+
+    pub(crate) async fn outbound(&self) -> (ConnHandle, Pdu<'d>) {
+        self.outbound.receive().await
+    }
+
+    pub(crate) fn get_att_mtu_handle(&self, conn: ConnHandle) -> u16 {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match storage.state {
@@ -609,6 +660,8 @@ impl Drop for PacketGrant<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prelude::PacketPool;
+    use crate::PacketQos;
     extern crate std;
     use std::boxed::Box;
 
@@ -620,7 +673,8 @@ mod tests {
     fn setup() -> &'static ConnectionManager<'static> {
         let storage = Box::leak(Box::new([ConnectionStorage::DISCONNECTED; 3]));
         let events = Box::leak(Box::new([const { EventChannel::new() }; 3]));
-        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..]);
+        let pool = Box::leak(Box::new(PacketPool::<NoopRawMutex, 27, 8, 1>::new(PacketQos::None)));
+        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], pool);
         Box::leak(Box::new(mgr))
     }
 

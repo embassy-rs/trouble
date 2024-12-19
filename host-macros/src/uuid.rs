@@ -3,6 +3,7 @@
 //! The UUIDs will then be converted to trouble-host UUIDs in the generated code.
 
 use core::str::FromStr;
+
 use darling::FromMeta;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
