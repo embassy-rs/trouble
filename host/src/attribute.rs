@@ -359,11 +359,11 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         }
     }
 
-    pub(crate) fn set_raw(&self, characteristic: u16, input: &[u8]) -> Result<(), Error> {
+    pub(crate) fn set_raw(&self, attribute: u16, input: &[u8]) -> Result<(), Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
-                if att.handle == characteristic {
-                    if let AttributeData::Data { props, value } = &mut att.data {
+                if att.handle == attribute {
+                    if let AttributeData::Data { props: _, value } = &mut att.data {
                         if value.len() == input.len() {
                             value.copy_from_slice(input);
                             return Ok(());
@@ -586,7 +586,7 @@ impl<T: GattValue> Characteristic<T> {
     ///
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
-    /// If the characteristic for the handle cannot be found, an error is returned.
+    /// If the characteristic does not support notifications, an error is returned.
     pub async fn notify(
         &self,
         server: &dyn DynamicAttributeServer,
@@ -596,7 +596,7 @@ impl<T: GattValue> Characteristic<T> {
         let value = value.to_gatt();
         server.set(self.handle, value)?;
 
-        let cccd_handle = self.cccd_handle.ok_or(Error::Other)?;
+        let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
 
         if !server.should_notify(connection, cccd_handle) {
             // No reason to fail?
