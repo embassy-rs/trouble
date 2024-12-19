@@ -28,6 +28,7 @@ defmt = [
     "embedded-io/defmt-03",
     "embedded-hal/defmt-03"
 ]
+esp = []
 log = [
     "dep:log",
     "trouble-host/log",
