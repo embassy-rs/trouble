@@ -11,12 +11,12 @@ mod server;
 mod service;
 mod uuid;
 
-use characteristic::{Characteristic, CharacteristicArgs};
+use characteristic::{Characteristic, CharacteristicArgs, DescriptorArgs};
 use ctxt::Ctxt;
 use proc_macro::TokenStream;
 use server::{ServerArgs, ServerBuilder};
 use service::{ServiceArgs, ServiceBuilder};
-use syn::parse_macro_input;
+use syn::{parse_macro_input, spanned::Spanned, Error};
 
 /// Gatt Service attribute macro.
 ///
@@ -57,19 +57,26 @@ pub fn gatt_server(args: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust no_run
 /// use trouble_host::prelude::*;
-/// use trouble_host_macro::gatt_service;
+///
+/// const DESCRIPTOR_VALUE: &str = "Can be specified from a const";
 ///
 /// #[gatt_service(uuid = "7e701cf1-b1df-42a1-bb5f-6a1028c793b0", on_read = service_on_read)]
 /// struct HeartRateService {
-///    #[characteristic(uuid = "0x2A37", read, notify, value = 3.14, on_read = rate_on_read)]
+///    /// Docstrings can be
+///    /// Multiple lines
+///    #[descriptor(uuid = "2a20", read, write, notify, capacity = 100)]
+///    #[descriptor(uuid = "2a21", read, notify, value = "Demo description")]
+///    #[characteristic(uuid = "2a37", read, notify, value = 3.14, on_read = rate_on_read)]
 ///    rate: f32,
-///    #[characteristic(uuid = "0x2A38", read)]
+///    #[descriptor(uuid = "2a21", read, write, notify, value = DESCRIPTOR_VALUE, capacity = DESCRIPTOR_VALUE.len() as u8)]
+///    #[characteristic(uuid = "2a28", read, write, notify, value = 42.0)]
+///    /// Can be in any order
 ///    location: f32,
-///    #[characteristic(uuid = "0x2A39", write, on_write = control_on_write)]
+///    #[characteristic(uuid = "2a39", write, on_write = control_on_write)]
 ///    control: u8,
-///    #[characteristic(uuid = "0x2A63", read, notify)]
+///    #[characteristic(uuid = "2a63", read, notify)]
 ///    energy_expended: u16,
 /// }
 ///
@@ -82,7 +89,7 @@ pub fn gatt_server(args: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 ///
 /// fn control_on_write(connection: &Connection, data: &[u8] -> Result<(), ()> {
-///     info!("Write event on control attribute from {:?} with data {:?}", connectioni, data);
+///     info!("Write event on control attribute from {:?} with data {:?}", connection, data);
 ///     let control = u8::from_gatt(data).unwrap();
 ///     match control {
 ///         0 => info!("Control setting 0 selected"),
@@ -127,7 +134,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
         let desc = err.to_string();
         ctxt.error_spanned_by(
             err.into_compile_error(),
-            format!("Parsing characteristics was unsuccessful: {}", desc),
+            format!("Parsing characteristics was unsuccessful:\n{}", desc),
         );
         return ctxt.check().unwrap_err().into();
     }
@@ -144,6 +151,28 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Check if a field has a characteristic attribute and parse it.
+///
+/// If so also check if that field has descriptors and/or docstrings.
+///
+/// # Example
+///
+/// ```rust
+/// use trouble_host::prelude::*;
+///
+/// #[gatt_service(uuid = "180f")]
+/// struct BatteryService {
+///    /// Docstrings can be
+///    /// Multiple lines
+///    #[characteristic(uuid = "2a19", read, write, notify, value = 99, on_read = battery_level_on_read)]
+///    #[descriptor(uuid = "2a20", read, write, notify, on_read = battery_level_on_read)]
+///    #[descriptor(uuid = "2a20", read, write, notify, value = "Demo description")]
+///    level: u8,
+///    #[descriptor(uuid = "2a21", read, write, notify, value = VAL)]
+///    #[characteristic(uuid = "2a22", read, write, notify, value = 42.0)]
+///    /// Can be in any order
+///    rate_of_discharge: f32,
+///}
+/// ```
 fn check_for_characteristic(
     field: &syn::Field,
     err: &mut Option<syn::Error>,
@@ -151,18 +180,76 @@ fn check_for_characteristic(
 ) -> bool {
     const RETAIN: bool = true;
     const REMOVE: bool = false;
-    let Some(attr) = field.attrs.iter().find(|attr| {
-        attr.path().segments.len() == 1 && attr.path().segments.first().unwrap().ident == "characteristic"
-    }) else {
+
+    let Some(attr) = field.attrs.iter().find(|attr| attr.path().is_ident("characteristic")) else {
         return RETAIN; // If the field does not have a characteristic attribute, retain it.
     };
-    let args = match CharacteristicArgs::parse(attr) {
+    let mut descriptors = Vec::new();
+    let mut doc_string = String::new();
+    let mut characteristic_checked = false;
+    for attr in &field.attrs {
+        if let Some(ident) = attr.path().get_ident() {
+            match ident.to_string().as_str() {
+                "doc" => {
+                    if let Ok(meta_name_value) = attr.meta.require_name_value() {
+                        if let syn::Expr::Lit(value) = &meta_name_value.value {
+                            if let Some(text) = &value.lit.span().source_text() {
+                                let text: Vec<&str> = text.split("///").collect();
+                                if let Some(text) = text.get(1) {
+                                    if !doc_string.is_empty() {
+                                        doc_string.push('\n');
+                                    }
+                                    doc_string.push_str(text);
+                                }
+                            }
+                        }
+                    }
+                }
+                "descriptor" => match DescriptorArgs::parse(attr) {
+                    Ok(args) => descriptors.push(args),
+                    Err(e) => {
+                        *err = Some(e);
+                        return REMOVE; // If there was an error parsing the descriptor, remove the field.
+                    }
+                },
+                "characteristic" => {
+                    // make sure we only have one characteristic meta tag
+                    if characteristic_checked {
+                        *err = Some(Error::new(
+                            attr.path().span(),
+                            "only one characteristic tag should be applied per field",
+                        ));
+                        return REMOVE; // If there was an error parsing the descriptor, remove the field.
+                    } else {
+                        characteristic_checked = true;
+                    }
+                }
+                "descriptors" => {
+                    *err = Some(Error::new(
+                        attr.path().span(),
+                        "specify a descriptor like: #[descriptor(uuid = \"1234\", value = \"Hello World\", read, write, notify)]\nCan be specified multiple times.",
+                    ));
+                    return REMOVE; // If there was an error parsing the descriptor, remove the field.
+                }
+                _ => {
+                    *err = Some(Error::new(
+                        attr.path().span(),
+                        "only doc (///), descriptor and characteristic tags are supported.",
+                    ));
+                    return REMOVE; // If there was an error parsing the descriptor, remove the field.
+                }
+            }
+        }
+    }
+    let mut args = match CharacteristicArgs::parse(attr) {
         Ok(args) => args,
         Err(e) => {
             *err = Some(e);
             return REMOVE; // If there was an error parsing the characteristic, remove the field.
         }
     };
+    args.doc_string = doc_string;
+    args.descriptors = descriptors;
     characteristics.push(Characteristic::new(field, args));
     REMOVE // Successfully parsed, remove the field from the fields vec.
 }
