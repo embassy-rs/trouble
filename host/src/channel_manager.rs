@@ -12,7 +12,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 use crate::cursor::WriteCursor;
 use crate::host::{AclSender, BleHost};
 use crate::l2cap::L2capChannel;
-use crate::packet_pool::{AllocId, GlobalPacketPool, Packet};
+use crate::packet_pool::{AllocId, DynamicPacketPool, Packet};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
@@ -32,7 +32,7 @@ struct State<'d> {
 
 /// Channel manager for L2CAP channels used directly by clients.
 pub struct ChannelManager<'d, const RXQ: usize> {
-    pool: &'d dyn GlobalPacketPool<'d>,
+    pool: &'d dyn DynamicPacketPool<'d>,
     state: RefCell<State<'d>>,
     inbound: &'d mut [PacketChannel<'d, RXQ>],
 }
@@ -96,7 +96,7 @@ impl State<'_> {
 
 impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
     pub fn new(
-        pool: &'d dyn GlobalPacketPool<'d>,
+        pool: &'d dyn DynamicPacketPool<'d>,
         channels: &'d mut [ChannelStorage],
         inbound: &'d mut [PacketChannel<'d, RXQ>],
     ) -> Self {

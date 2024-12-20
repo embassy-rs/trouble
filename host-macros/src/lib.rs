@@ -16,7 +16,8 @@ use ctxt::Ctxt;
 use proc_macro::TokenStream;
 use server::{ServerArgs, ServerBuilder};
 use service::{ServiceArgs, ServiceBuilder};
-use syn::{parse_macro_input, spanned::Spanned, Error};
+use syn::spanned::Spanned;
+use syn::{parse_macro_input, Error};
 
 /// Gatt Service attribute macro.
 ///

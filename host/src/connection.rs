@@ -6,8 +6,9 @@ use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
+use crate::pdu::Pdu;
 use crate::scan::ScanConfig;
-use crate::{BleHostError, Stack};
+use crate::{BleHostError, Error, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -32,7 +33,6 @@ pub struct ConnectParams {
 }
 
 /// An event
-#[derive(Clone)]
 pub enum ConnectionEvent<'d> {
     /// Connection disconnected.
     Disconnected {
@@ -41,12 +41,12 @@ pub enum ConnectionEvent<'d> {
     },
     /// GATT event.
     Gatt {
-        /// Connection that caused the event.
-        // TODO: Can probably be removed, but keeping around for lifetime
-        connection: Connection<'d>,
-        /// The event that was returned,
+        /// The event that was returned
         #[cfg(feature = "gatt")]
-        event: crate::gatt::GattEvent,
+        data: crate::gatt::GattData<'d>,
+        #[cfg(not(feature = "gatt"))]
+        /// Connection handle for the event
+        connection: Connection<'d>,
     },
 }
 
@@ -92,8 +92,25 @@ impl<'d> Connection<'d> {
         self.manager.set_att_mtu(self.index, mtu);
     }
 
+    pub(crate) fn get_att_mtu(&self) -> u16 {
+        self.manager.get_att_mtu(self.index)
+    }
+
+    pub(crate) async fn send(&self, pdu: Pdu<'d>) {
+        self.manager.send(self.index, pdu).await
+    }
+
+    pub(crate) fn try_send(&self, pdu: Pdu<'d>) -> Result<(), Error> {
+        self.manager.try_send(self.index, pdu)
+    }
+
     pub(crate) async fn post_event(&self, event: ConnectionEvent<'d>) {
         self.manager.post_event(self.index, event).await
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn alloc_tx(&self) -> Result<crate::packet_pool::Packet<'d>, Error> {
+        self.manager.alloc_tx()
     }
 
     /// Wait for next connection event.
