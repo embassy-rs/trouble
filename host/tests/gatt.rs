@@ -39,8 +39,9 @@ async fn gatt_client_server() {
         let id = b"Trouble";
         let appearance = [0x80, 0x07];
         // Random starting value to 'prove' the incremented value is correct
-        let mut value: [u8; 1] = [rand::prelude::random(); 1];
-        let mut expected = value[0].wrapping_add(1);
+        let value: u8 = rand::prelude::random();
+        let mut storage: [u8; 1] = [0; 1];
+        let mut expected = value.wrapping_add(1);
         let mut svc = table.add_service(Service::new(0x1800));
         let _ = svc.add_characteristic_ro(0x2a00, id);
         let _ = svc.add_characteristic_ro(0x2a01, &appearance);
@@ -54,7 +55,8 @@ async fn gatt_client_server() {
             .add_characteristic(
                 VALUE_UUID.clone(),
                 &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
-                &mut value
+                value,
+                &mut storage[..]
             ).build();
 
         let server = AttributeServer::<NoopRawMutex, 10>::new(table);

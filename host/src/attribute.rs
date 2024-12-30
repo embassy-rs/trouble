@@ -77,6 +77,8 @@ pub(crate) enum AttributeData<'d> {
     },
     Data {
         props: CharacteristicProps,
+        variable_len: bool,
+        len: u16,
         value: &'d mut [u8],
     },
     Declaration {
@@ -93,14 +95,14 @@ pub(crate) enum AttributeData<'d> {
 impl AttributeData<'_> {
     pub(crate) fn readable(&self) -> bool {
         match self {
-            Self::Data { props, value } => props.0 & (CharacteristicProp::Read as u8) != 0,
+            Self::Data { props, .. } => props.0 & (CharacteristicProp::Read as u8) != 0,
             _ => true,
         }
     }
 
     pub(crate) fn writable(&self) -> bool {
         match self {
-            Self::Data { props, value } => {
+            Self::Data { props, .. } => {
                 props.0
                     & (CharacteristicProp::Write as u8
                         | CharacteristicProp::WriteWithoutResponse as u8
@@ -130,7 +132,13 @@ impl AttributeData<'_> {
                 }
                 Ok(len)
             }
-            Self::Data { props, value } => {
+            Self::Data {
+                props,
+                value,
+                variable_len,
+                len,
+            } => {
+                let value = &value[..*len as usize];
                 if offset > value.len() {
                     return Ok(0);
                 }
@@ -201,13 +209,19 @@ impl AttributeData<'_> {
         let writable = self.writable();
 
         match self {
-            Self::Data { value, props } => {
+            Self::Data {
+                value,
+                props,
+                variable_len,
+                len,
+            } => {
                 if !writable {
                     return Err(AttErrorCode::WriteNotPermitted);
                 }
 
                 if offset + data.len() <= value.len() {
                     value[offset..offset + data.len()].copy_from_slice(data);
+                    *len = (offset + data.len()) as u16;
                     Ok(())
                 } else {
                     Err(AttErrorCode::InvalidOffset)
@@ -364,9 +378,19 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == attribute {
-                    if let AttributeData::Data { props: _, value } = &mut att.data {
+                    if let AttributeData::Data {
+                        props: _,
+                        value,
+                        variable_len,
+                        len,
+                    } = &mut att.data
+                    {
                         if value.len() == input.len() {
                             value.copy_from_slice(input);
+                            return Ok(());
+                        } else if *variable_len && input.len() <= value.len() {
+                            value[..input.len()].copy_from_slice(input);
+                            *len = input.len() as u16;
                             return Ok(());
                         } else {
                             return Err(Error::InvalidValue);
@@ -399,7 +423,14 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == characteristic.handle {
-                    if let AttributeData::Data { props, value } = &mut att.data {
+                    if let AttributeData::Data {
+                        props,
+                        value,
+                        variable_len,
+                        len,
+                    } = &mut att.data
+                    {
+                        let value = if *variable_len { &value[..*len as usize] } else { &value };
                         let v = <T as GattValue>::from_gatt(value).map_err(|_| Error::InvalidValue)?;
                         return Ok(v);
                     }
@@ -529,10 +560,24 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         &mut self,
         uuid: U,
         props: &[CharacteristicProp],
-        storage: &'d mut [u8],
+        value: T,
+        store: &'d mut [u8],
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = props.into();
-        self.add_characteristic_internal(uuid.into(), props, AttributeData::Data { props, value: storage })
+        let bytes = value.to_gatt();
+        store[..bytes.len()].copy_from_slice(bytes);
+        let variable_len = T::MAX_SIZE != T::MIN_SIZE;
+        let len = bytes.len() as u16;
+        self.add_characteristic_internal(
+            uuid.into(),
+            props,
+            AttributeData::Data {
+                props,
+                value: store,
+                variable_len,
+                len,
+            },
+        )
     }
 
     /// Add a characteristic to this service with a refererence to an immutable storage buffer.
@@ -653,7 +698,17 @@ impl<'d, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 
         data: &'d mut [u8],
     ) -> DescriptorHandle {
         let props = props.into();
-        self.add_descriptor_internal(uuid.into(), props, AttributeData::Data { props, value: data })
+        let len = data.len() as u16;
+        self.add_descriptor_internal(
+            uuid.into(),
+            props,
+            AttributeData::Data {
+                props,
+                value: data,
+                variable_len: false,
+                len,
+            },
+        )
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
