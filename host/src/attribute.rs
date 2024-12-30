@@ -430,7 +430,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                         len,
                     } = &mut att.data
                     {
-                        let value = if *variable_len { &value[..*len as usize] } else { &value };
+                        let value = if *variable_len { &value[..*len as usize] } else { value };
                         let v = <T as GattValue>::from_gatt(value).map_err(|_| Error::InvalidValue)?;
                         return Ok(v);
                     }
