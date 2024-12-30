@@ -664,6 +664,25 @@ impl<T: GattValue> Characteristic<T> {
         connection.send(pdu).await;
         Ok(())
     }
+
+    /// Set the value of the characteristic in the provided attribute server.
+    pub fn set<M: RawMutex, const MAX: usize>(
+        &self,
+        server: &AttributeServer<'_, M, MAX>,
+        value: &T,
+    ) -> Result<(), Error> {
+        let value = value.to_gatt();
+        server.table().set_raw(self.handle, value)?;
+        Ok(())
+    }
+
+    /// Read the value of the characteristic.
+    ///
+    /// If the characteristic for the handle cannot be found, an error is returned.
+    ///
+    pub fn get<M: RawMutex, const MAX: usize>(&self, server: &AttributeServer<'_, M, MAX>) -> Result<T, Error> {
+        server.table().get(self)
+    }
 }
 
 /// Builder for characteristics.
