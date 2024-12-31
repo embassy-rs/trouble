@@ -21,7 +21,7 @@ use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::packet_pool::{DynamicPacketPool, GENERIC_ID};
 use crate::pdu::Pdu;
-use crate::types::gatt_traits::GattValue;
+use crate::types::gatt_traits::{FromGattError, GattValue};
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
@@ -123,10 +123,15 @@ impl<'d, 'server> WriteEvent<'d, 'server> {
         self.value_handle
     }
 
-    /// Characteristic data that was written
+    /// Raw data to be written
     pub fn data(&self) -> &[u8] {
         // Note: write event data is always at offset 3, right?
         &self.pdu.as_ref().unwrap().as_ref()[3..]
+    }
+
+    /// Characteristic data to be written
+    pub fn value<T: GattValue>(&self, _c: &Characteristic<T>) -> Result<T, FromGattError> {
+        T::from_gatt(self.data())
     }
 
     /// Process and respond to event.

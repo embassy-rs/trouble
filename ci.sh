@@ -3,7 +3,9 @@
 set -eo pipefail
 
 if ! command -v cargo-batch &> /dev/null; then
-    cargo install --git https://github.com/embassy-rs/cargo-batch cargo --bin cargo-batch --locked
+    mkdir -p $HOME/.cargo/bin
+    curl -L https://github.com/embassy-rs/cargo-batch/releases/download/batch-0.5.0/cargo-batch > $HOME/.cargo/bin/cargo-batch
+    chmod +x $HOME/.cargo/bin/cargo-batch
 fi
 
 export RUSTFLAGS=-Dwarnings
