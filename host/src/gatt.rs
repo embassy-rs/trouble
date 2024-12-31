@@ -40,241 +40,7 @@ impl<'d> GattData<'d> {
             connection,
         }
     }
-}
 
-/// An event returned while processing GATT requests.
-pub enum GattEvent<'d, 'server> {
-    /// A characteristic was read.
-    Read(ReadEvent<'d, 'server>),
-    /// A characteristic was written.
-    Write(WriteEvent<'d, 'server>),
-}
-
-/// An event returned while processing GATT requests.
-pub struct ReadEvent<'d, 'server> {
-    value_handle: u16,
-    connection: Connection<'d>,
-    server: &'server dyn DynamicAttributeServer,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-    pdu: Option<Pdu<'d>>,
-}
-
-impl<'d, 'server> ReadEvent<'d, 'server> {
-    /// Characteristic handle that was read
-    pub fn handle(&self) -> u16 {
-        self.value_handle
-    }
-
-    /// Process and respond to event.
-    pub fn try_reply(mut self, result: Result<(), AttErrorCode>) -> Result<(), Error> {
-        let handle = self.handle();
-        try_reply(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            result,
-        )
-    }
-
-    /// Process and respond to event.
-    pub async fn reply(mut self, result: Result<(), AttErrorCode>) -> Result<(), Error> {
-        let handle = self.handle();
-        reply(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            result,
-        )
-        .await
-    }
-}
-
-impl Drop for ReadEvent<'_, '_> {
-    fn drop(&mut self) {
-        let handle = self.handle();
-        let _ = try_reply(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            Ok(()),
-        );
-    }
-}
-
-/// An event returned while processing GATT requests.
-pub struct WriteEvent<'d, 'server> {
-    /// Characteristic handle that was written.
-    value_handle: u16,
-    pdu: Option<Pdu<'d>>,
-    connection: Connection<'d>,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-    server: &'server dyn DynamicAttributeServer,
-}
-
-impl<'d, 'server> WriteEvent<'d, 'server> {
-    /// Characteristic handle that was read
-    pub fn handle(&self) -> u16 {
-        self.value_handle
-    }
-
-    /// Raw data to be written
-    pub fn data(&self) -> &[u8] {
-        // Note: write event data is always at offset 3, right?
-        &self.pdu.as_ref().unwrap().as_ref()[3..]
-    }
-
-    /// Characteristic data to be written
-    pub fn value<T: GattValue>(&self, _c: &Characteristic<T>) -> Result<T, FromGattError> {
-        T::from_gatt(self.data())
-    }
-
-    /// Process and respond to event.
-    pub fn try_reply(mut self, result: Result<(), AttErrorCode>) -> Result<(), Error> {
-        let handle = self.handle();
-        try_reply(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            result,
-        )
-    }
-
-    /// Process and respond to event.
-    pub async fn reply(mut self, result: Result<(), AttErrorCode>) -> Result<(), Error> {
-        let handle = self.handle();
-        reply(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            result,
-        )
-        .await
-    }
-}
-
-impl Drop for WriteEvent<'_, '_> {
-    fn drop(&mut self) {
-        let handle = self.handle();
-        let _ = try_reply(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            Ok(()),
-        );
-    }
-}
-
-async fn reply<'d>(
-    pdu: &mut Option<Pdu<'d>>,
-    handle: u16,
-    connection: &Connection<'d>,
-    server: &dyn DynamicAttributeServer,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-    result: Result<(), AttErrorCode>,
-) -> Result<(), Error> {
-    if let Some(pdu) = pdu.take() {
-        match result {
-            Ok(_) => {
-                // We know it has been checked, therefore this cannot fail
-                let att = unwrap!(AttReq::decode(pdu.as_ref()));
-                if let Some(pdu) = process(connection, att, server, tx_pool)? {
-                    connection.send(pdu).await;
-                }
-            }
-            Err(code) => {
-                let request = pdu.as_ref()[0];
-                let rsp = AttRsp::Error { request, handle, code };
-                let pdu = respond(connection, tx_pool, rsp)?;
-                connection.send(pdu).await;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn try_reply<'d>(
-    pdu: &mut Option<Pdu<'d>>,
-    handle: u16,
-    connection: &Connection<'d>,
-    server: &dyn DynamicAttributeServer,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-    result: Result<(), AttErrorCode>,
-) -> Result<(), Error> {
-    if let Some(pdu) = pdu.take() {
-        match result {
-            Ok(_) => {
-                // We know it has been checked, therefore this cannot fail
-                let att = unwrap!(AttReq::decode(pdu.as_ref()));
-                if let Some(pdu) = process(connection, att, server, tx_pool)? {
-                    connection.try_send(pdu)?;
-                }
-            }
-            Err(code) => {
-                let request = pdu.as_ref()[0];
-                let rsp = AttRsp::Error { request, handle, code };
-                let pdu = respond(connection, tx_pool, rsp)?;
-                connection.try_send(pdu)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn process<'d>(
-    conn: &Connection<'d>,
-    att: AttReq<'_>,
-    server: &dyn DynamicAttributeServer,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-) -> Result<Option<Pdu<'d>>, Error> {
-    let mut tx = tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)?;
-    let mut w = WriteCursor::new(tx.as_mut());
-    let (mut header, mut data) = w.split(4)?;
-    if let Some(written) = server.process(conn, &att, data.write_buf())? {
-        let mtu = conn.get_att_mtu();
-        data.commit(written)?;
-        data.truncate(mtu as usize);
-        header.write(written as u16)?;
-        header.write(4_u16)?;
-        let len = header.len() + data.len();
-        let pdu = Pdu::new(tx, len);
-
-        Ok(Some(pdu))
-    } else {
-        Ok(None)
-    }
-}
-
-fn respond<'d>(
-    conn: &Connection<'d>,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-    rsp: AttRsp<'_>,
-) -> Result<Pdu<'d>, Error> {
-    let mut tx = tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)?;
-    let mut w = WriteCursor::new(tx.as_mut());
-    let (mut header, mut data) = w.split(4)?;
-    data.write(rsp)?;
-
-    let mtu = conn.get_att_mtu();
-    data.truncate(mtu as usize);
-    header.write(data.len() as u16)?;
-    header.write(4_u16)?;
-    let len = header.len() + data.len();
-    Ok(Pdu::new(tx, len))
-}
-
-impl<'d> GattData<'d> {
     /// Get the raw request.
     pub fn request(&self) -> AttReq<'_> {
         // We know it has been checked, therefore this cannot fail
@@ -323,11 +89,261 @@ impl<'d> GattData<'d> {
             }))),
             _ => {
                 // Process it now since the user will not
-                if let Some(pdu) = process(&self.connection, att, server, self.tx_pool)? {
-                    self.connection.send(pdu).await;
-                }
+                let reply = process_accept(self.pdu, &self.connection, server, self.tx_pool)?;
+                reply.send().await;
                 Ok(None)
             }
+        }
+    }
+}
+
+/// An event returned while processing GATT requests.
+pub enum GattEvent<'d, 'server> {
+    /// A characteristic was read.
+    Read(ReadEvent<'d, 'server>),
+    /// A characteristic was written.
+    Write(WriteEvent<'d, 'server>),
+}
+
+/// An event returned while processing GATT requests.
+pub struct ReadEvent<'d, 'server> {
+    value_handle: u16,
+    connection: Connection<'d>,
+    server: &'server dyn DynamicAttributeServer,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
+    pdu: Option<Pdu<'d>>,
+}
+
+impl<'d> ReadEvent<'d, '_> {
+    /// Characteristic handle that was read
+    pub fn handle(&self) -> u16 {
+        self.value_handle
+    }
+
+    /// Accept the event, making it processed by the server.
+    ///
+    /// Automatically called if drop() is invoked.
+    pub fn accept(mut self) -> Result<Reply<'d>, Error> {
+        let handle = self.handle();
+        process(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        )
+    }
+
+    /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'d>, Error> {
+        let handle = self.handle();
+        process(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Err(err),
+        )
+    }
+}
+
+impl Drop for ReadEvent<'_, '_> {
+    fn drop(&mut self) {
+        let handle = self.handle();
+        let _ = process(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        );
+    }
+}
+
+/// An event returned while processing GATT requests.
+pub struct WriteEvent<'d, 'server> {
+    /// Characteristic handle that was written.
+    value_handle: u16,
+    pdu: Option<Pdu<'d>>,
+    connection: Connection<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
+    server: &'server dyn DynamicAttributeServer,
+}
+
+impl<'d> WriteEvent<'d, '_> {
+    /// Characteristic handle that was read
+    pub fn handle(&self) -> u16 {
+        self.value_handle
+    }
+
+    /// Raw data to be written
+    pub fn data(&self) -> &[u8] {
+        // Note: write event data is always at offset 3, right?
+        &self.pdu.as_ref().unwrap().as_ref()[3..]
+    }
+
+    /// Characteristic data to be written
+    pub fn value<T: GattValue>(&self, _c: &Characteristic<T>) -> Result<T, FromGattError> {
+        T::from_gatt(self.data())
+    }
+
+    /// Accept the event, making it processed by the server.
+    ///
+    /// Automatically called if drop() is invoked.
+    pub fn accept(mut self) -> Result<Reply<'d>, Error> {
+        let handle = self.handle();
+        process(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        )
+    }
+
+    /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'d>, Error> {
+        let handle = self.handle();
+        process(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Err(err),
+        )
+    }
+}
+
+impl Drop for WriteEvent<'_, '_> {
+    fn drop(&mut self) {
+        let handle = self.handle();
+        let _ = process(
+            &mut self.pdu,
+            handle,
+            &self.connection,
+            self.server,
+            self.tx_pool,
+            Ok(()),
+        );
+    }
+}
+
+fn process<'d>(
+    pdu: &mut Option<Pdu<'d>>,
+    handle: u16,
+    connection: &Connection<'d>,
+    server: &dyn DynamicAttributeServer,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
+    result: Result<(), AttErrorCode>,
+) -> Result<Reply<'d>, Error> {
+    if let Some(pdu) = pdu.take() {
+        match result {
+            Ok(_) => process_accept(pdu, connection, server, tx_pool),
+            Err(code) => process_reject(pdu, handle, connection, tx_pool, code),
+        }
+    } else {
+        Ok(Reply::new(connection.clone(), None))
+    }
+}
+
+fn process_accept<'d>(
+    pdu: Pdu<'d>,
+    connection: &Connection<'d>,
+    server: &dyn DynamicAttributeServer,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
+) -> Result<Reply<'d>, Error> {
+    let att = unwrap!(AttReq::decode(pdu.as_ref()));
+    let mut tx = tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)?;
+    let mut w = WriteCursor::new(tx.as_mut());
+    let (mut header, mut data) = w.split(4)?;
+    if let Some(written) = server.process(connection, &att, data.write_buf())? {
+        let mtu = connection.get_att_mtu();
+        data.commit(written)?;
+        data.truncate(mtu as usize);
+        header.write(written as u16)?;
+        header.write(4_u16)?;
+        let len = header.len() + data.len();
+        let pdu = Pdu::new(tx, len);
+        Ok(Reply::new(connection.clone(), Some(pdu)))
+    } else {
+        Ok(Reply::new(connection.clone(), None))
+    }
+}
+
+fn process_reject<'d>(
+    pdu: Pdu<'d>,
+    handle: u16,
+    connection: &Connection<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
+    code: AttErrorCode,
+) -> Result<Reply<'d>, Error> {
+    // We know it has been checked, therefore this cannot fail
+    let request = pdu.as_ref()[0];
+    let rsp = AttRsp::Error { request, handle, code };
+    let pdu = respond(connection, tx_pool, rsp)?;
+    Ok(Reply::new(connection.clone(), Some(pdu)))
+}
+
+fn respond<'d>(
+    conn: &Connection<'d>,
+    tx_pool: &'d dyn DynamicPacketPool<'d>,
+    rsp: AttRsp<'_>,
+) -> Result<Pdu<'d>, Error> {
+    let mut tx = tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)?;
+    let mut w = WriteCursor::new(tx.as_mut());
+    let (mut header, mut data) = w.split(4)?;
+    data.write(rsp)?;
+
+    let mtu = conn.get_att_mtu();
+    data.truncate(mtu as usize);
+    header.write(data.len() as u16)?;
+    header.write(4_u16)?;
+    let len = header.len() + data.len();
+    Ok(Pdu::new(tx, len))
+}
+
+/// A reply to a gatt request.
+///
+/// The reply may be sent immediately or queued for sending later. To guarantee delivery of a reply
+/// in case of a full outbound queue, the async send() should be used rather than relying on the Drop implementation.
+pub struct Reply<'d> {
+    connection: Connection<'d>,
+    pdu: Option<Pdu<'d>>,
+}
+
+impl<'d> Reply<'d> {
+    fn new(connection: Connection<'d>, pdu: Option<Pdu<'d>>) -> Self {
+        Self { connection, pdu }
+    }
+
+    /// Send the reply.
+    ///
+    /// May fail if the outbound queue is full.
+    pub fn try_send(mut self) -> Result<(), Error> {
+        if let Some(pdu) = self.pdu.take() {
+            self.connection.try_send(pdu)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Send the reply.
+    pub async fn send(mut self) {
+        if let Some(pdu) = self.pdu.take() {
+            self.connection.send(pdu).await
+        }
+    }
+}
+
+impl Drop for Reply<'_> {
+    fn drop(&mut self) {
+        if let Some(pdu) = self.pdu.take() {
+            let _ = self.connection.try_send(pdu);
         }
     }
 }

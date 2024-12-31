@@ -110,7 +110,7 @@ async fn gatt_client_server() {
                             }
                             ConnectionEvent::Gatt { data } => if let Ok(Some(GattEvent::Write(event))) = data.process(&server).await {
                                 if writes == 0 {
-                                    event.reply(Err(AttErrorCode::ValueNotAllowed)).await.unwrap();
+                                    event.reject(AttErrorCode::ValueNotAllowed).unwrap().send().await;
                                     writes += 1;
                                 } else {
                                     let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
