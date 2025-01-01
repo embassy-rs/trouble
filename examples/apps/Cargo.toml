@@ -18,6 +18,8 @@ embedded-io = "0.6"
 
 defmt = { version = "0.3", optional = true }
 log = { version = "0.4", optional = true }
+# Required for Nordic Uart Service
+heapless = "0.8.0"
 
 
 [features]
