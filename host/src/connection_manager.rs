@@ -102,14 +102,15 @@ impl<'d> ConnectionManager<'d> {
     }
 
     pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEvent<'d>) -> Result<(), Error> {
-        self.with_mut(|state| {
+        let index = self.with_mut(|state| {
             for (index, entry) in state.connections.iter().enumerate() {
                 if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
-                    return self.events[index].try_send(event).map_err(|_| Error::OutOfMemory);
+                    return Ok(index);
                 }
             }
             Err(Error::NotFound)
-        })
+        })?;
+        self.events[index].try_send(event).map_err(|_| Error::OutOfMemory)
     }
 
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
