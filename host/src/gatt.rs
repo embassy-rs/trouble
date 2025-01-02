@@ -72,6 +72,14 @@ impl<'d> GattData<'d> {
                 server,
             }))),
 
+            AttReq::WriteCmd { handle, data: _ } => Ok(Some(GattEvent::Write(WriteEvent {
+                value_handle: handle,
+                tx_pool: self.tx_pool,
+                pdu: Some(self.pdu),
+                connection: self.connection,
+                server,
+            }))),
+
             AttReq::Read { handle } => Ok(Some(GattEvent::Read(ReadEvent {
                 value_handle: handle,
                 tx_pool: self.tx_pool,

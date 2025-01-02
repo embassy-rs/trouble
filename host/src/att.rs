@@ -175,6 +175,8 @@ pub enum AttRsp<'d> {
     Write,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
 pub enum Att<'d> {
     Req(AttReq<'d>),
     Rsp(AttRsp<'d>),
