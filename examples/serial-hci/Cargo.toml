@@ -12,7 +12,7 @@ rand_core = { version = "0.6.4", features = ["std"] }
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embedded-io-async = { version = "0.6.1" }
 embassy-sync = { version = "0.6.0", features = ["log"] }
-embassy-time = { version = "0.3", features = ["log", "std", "generic-queue-8"] }
+embassy-time = { version = "0.4", features = ["log", "std", "generic-queue-8"] }
 critical-section = { version = "1.1", features = ["std"] }
 embassy-futures = { version = "0.1" }
 nix = "0.26.2"
@@ -20,5 +20,5 @@ static_cell = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
 
-bt-hci = { version = "0.1.1", default-features = false, features = ["log"] }
+bt-hci = { version = "0.2", default-features = false, features = ["log"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
