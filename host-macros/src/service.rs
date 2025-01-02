@@ -238,7 +238,7 @@ impl ServiceBuilder {
                         format_ident!("DESC_{index}_{}", to_screaming_snake_case(characteristic.name.as_str()));
                     let access = &args.access;
                     let properties = set_access_properties(access);
-                    let uuid = args.uuid;
+                    let uuid = &args.uuid;
                     let default_value = match &args.default_value {
                         Some(val) => quote!(#val), // if set by user
                         None => quote!(""),
