@@ -147,14 +147,12 @@ impl ServiceBuilder {
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let #char_name = {
-                static #name_screaming: static_cell::StaticCell<[u8; size_of::<#ty>()]> = static_cell::StaticCell::new();
-                let store = #name_screaming.init(Default::default());
+                static #name_screaming: static_cell::StaticCell<[u8; <#ty as GattValue>::MAX_SIZE]> = static_cell::StaticCell::new();
                 let mut val = <#ty>::default(); // constrain the type of the value here
                 val = #default_value; // update the temporary value with our new default
-                let bytes = GattValue::to_gatt(&val);
-                store[..bytes.len()].copy_from_slice(bytes);
+                let store = #name_screaming.init(Default::default());
                 let mut builder = service
-                    .add_characteristic(#uuid, &[#(#properties),*], store);
+                    .add_characteristic(#uuid, &[#(#properties),*], val, store);
                 #descriptors
 
                 builder.build()
