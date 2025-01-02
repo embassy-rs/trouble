@@ -375,16 +375,14 @@ where
                     match a {
                         Ok(att::Att::Req(_)) => {
                             if let Some(connection) = self.connections.get_connected_handle(acl.handle()) {
-                                self.connections.post_handle_event(
-                                    acl.handle(),
-                                    ConnectionEvent::Gatt {
-                                        data: crate::gatt::GattData::new(
-                                            Pdu::new(packet, header.length as usize),
-                                            self.tx_pool,
-                                            connection,
-                                        ),
-                                    },
-                                )?;
+                                let event = ConnectionEvent::Gatt {
+                                    data: crate::gatt::GattData::new(
+                                        Pdu::new(packet, header.length as usize),
+                                        self.tx_pool,
+                                        connection,
+                                    ),
+                                };
+                                self.connections.post_handle_event(acl.handle(), event)?;
                             }
                         }
                         Ok(att::Att::Rsp(_)) => {
