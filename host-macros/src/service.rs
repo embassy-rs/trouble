@@ -150,7 +150,7 @@ impl ServiceBuilder {
                 static #name_screaming: static_cell::StaticCell<[u8; <#ty as GattValue>::MAX_SIZE]> = static_cell::StaticCell::new();
                 let mut val = <#ty>::default(); // constrain the type of the value here
                 val = #default_value; // update the temporary value with our new default
-                let store = #name_screaming.init(Default::default());
+                let store = #name_screaming.init([0; <#ty as GattValue>::MAX_SIZE]);
                 let mut builder = service
                     .add_characteristic(#uuid, &[#(#properties),*], val, store);
                 #descriptors
