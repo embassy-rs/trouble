@@ -22,6 +22,7 @@ use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::{PacketPool, Qos};
+use crate::security_manager::SecurityManagerError;
 
 mod fmt;
 
@@ -35,10 +36,12 @@ mod codec;
 mod command;
 pub mod config;
 mod connection_manager;
+mod crypto;
 mod cursor;
 pub mod packet_pool;
 mod pdu;
 pub mod peripheral;
+mod security_manager;
 pub mod types;
 
 pub use packet_pool::Qos as PacketQos;
@@ -118,6 +121,14 @@ impl Address {
             addr: BdAddr::new(val),
         }
     }
+
+    /// To bytes
+    pub fn to_bytes(&self) -> [u8; 7] {
+        let mut bytes = [0; 7];
+        bytes[0] = self.kind.into_inner();
+        bytes[1..].copy_from_slice(&self.addr.into_inner());
+        bytes
+    }
 }
 
 /// Errors returned by the host.
@@ -140,6 +151,8 @@ pub enum Error {
     HciDecode(FromHciBytesError),
     /// Error from the Attribute Protocol.
     Att(AttErrorCode),
+    /// Error from the security manager
+    Security(SecurityManagerError),
     /// Insufficient space in the buffer.
     InsufficientSpace,
     /// Invalid value.
