@@ -40,7 +40,7 @@ struct CustomService {
     pub third: [u8; 2],
     #[characteristic(uuid = "408816df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
     pub fourth: heapless::Vec<u8, 3>,
-    #[characteristic(uuid = "408816df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
+    #[characteristic(uuid = "408817df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
     pub fifth: heapless::Vec<u8, 33>,
 }
 
