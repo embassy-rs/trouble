@@ -48,6 +48,7 @@ See `examples` for example applications for different BLE controllers.
 * `apache-nimble` which uses the controller from the [NimBLE stack](https://github.com/apache/mynewt-nimble) through high-level bindings from the [`apache-nimble`](https://github.com/benbrittain/apache-nimble-sys) crate.
 * `esp32` which uses the BLE controller in the [esp-hal](https://github.com/esp-rs/esp-hal).
 * `rp-pico-w` which uses the BLE controller in the [Raspberry Pi Pico W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-w).
+* `rp-pico-2-w` which uses the BLE controller in the [Raspberry Pi Pico 2 W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-2-w).
 
 Since a lot of the examples demo the same BLE functionality, they only contain basic wiring specific to the BLE controller, and share the 'business logic' within the `examples/apps` folder.
 
