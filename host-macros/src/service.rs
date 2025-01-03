@@ -17,12 +17,12 @@ use crate::uuid::Uuid;
 
 #[derive(Debug)]
 pub(crate) struct ServiceArgs {
-    pub uuid: Uuid,
+    pub uuid: TokenStream2,
 }
 
 impl syn::parse::Parse for ServiceArgs {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let mut uuid = None;
+        let mut uuid: Option<_> = None;
 
         while !input.is_empty() {
             let meta = input.parse()?;
@@ -36,7 +36,21 @@ impl syn::parse::Parse for ServiceArgs {
                         .to_string()
                         .as_str()
                     {
-                        "uuid" => uuid = Some(Uuid::from_meta(&meta)?),
+                        "uuid" => {
+                            // Parse the UUID
+                            if let Ok(uuid_string) = Uuid::from_meta(&meta) {
+                                uuid = Some(quote::quote! {#uuid_string});
+                            } else {
+                                let expr = &name_value.value;
+                                let span = expr.span(); // span will highlight if the value does not impl Into<Uuid>
+                                uuid = Some(quote::quote_spanned! { span =>
+                                    {
+                                        let uuid: Uuid = #expr.into();
+                                        uuid
+                                    }
+                                });
+                            };
+                        }
                         other => {
                             return Err(Error::unknown_field(&format!(
                                 "Unsupported service property: '{other}'.\nSupported properties are uuid"

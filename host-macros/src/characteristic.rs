@@ -9,7 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
-use syn::{Field, Ident, LitStr};
+use syn::{Field, LitStr};
 
 use crate::uuid::Uuid;
 
@@ -164,8 +164,6 @@ impl DescriptorArgs {
         let mut uuid: Option<_> = None;
         let mut read: Option<bool> = None;
         // let mut write: Option<bool> = None;
-        let mut on_read: Option<Ident> = None;
-        // let mut on_write: Option<Ident> = None;
         // let mut capacity: Option<syn::Expr> = None;
         let mut default_value: Option<syn::Expr> = None;
         // let mut write_without_response: Option<bool> = None;
@@ -180,8 +178,6 @@ impl DescriptorArgs {
                 "uuid" => check_multi(&mut uuid, "uuid", &meta, parse_uuid(&meta)?)?,
                 "read" => check_multi(&mut read, "read", &meta, true)?,
                 // "write" => check_multi(&mut write, "write", &meta, true)?,
-                "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
-                // "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
                 // "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "value" => {
                     let value = meta.value().map_err(|_| {
@@ -196,9 +192,8 @@ impl DescriptorArgs {
                 "default_value" => return Err(meta.error("use 'value' for default value")),
                 other => {
                     return Err(meta.error(format!(
-                    // "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, value,\ncapacity, on_read, on_write"
-                    "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, value, on_read"
-                )));
+                        "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, value"
+                    )));
                 }
             };
             Ok(())
