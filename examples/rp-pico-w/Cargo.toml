@@ -1,5 +1,5 @@
 [package]
-name = "trouble-rp-examples"
+name = "trouble-rp23-examples"
 version = "0.1.0"
 edition = "2021"
 resolver = "2"

@@ -9,11 +9,11 @@ categories = ["embedded", "hardware-support", "no-std"]
 resolver = "2"
 
 [dependencies]
-bt-hci = { version = "0.1.2", features = ["embassy-time", "uuid"] }
+bt-hci = { version = "0.2.0", features = ["embassy-time", "uuid"] }
 embedded-io-async = { version = "0.6" }
 embedded-io = { version = "0.6" }
 embassy-sync = "0.6"
-embassy-time = "0.3"
+embassy-time = "0.4"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.8"

@@ -28,6 +28,7 @@ cargo batch \
     --- build --release --manifest-path examples/esp32/Cargo.toml --target riscv32imc-unknown-none-elf \
     --- build --release --manifest-path examples/serial-hci/Cargo.toml \
     --- build --release --manifest-path examples/rp-pico-w//Cargo.toml --target thumbv6m-none-eabi --features skip-cyw43-firmware
+    --- build --release --manifest-path examples/rp-pico-2-w//Cargo.toml --target thumbv8m.main-none-eabihf --features skip-cyw43-firmware
 #    --- build --release --manifest-path examples/apache-nimble/Cargo.toml --target thumbv7em-none-eabihf
 
 cargo fmt --check --manifest-path ./host/Cargo.toml
