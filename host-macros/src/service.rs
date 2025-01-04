@@ -33,28 +33,28 @@ fn parse_arg_uuid(value: &Expr) -> Result<TokenStream2> {
                     )
                     .with_span(&lit.span())
                 })?;
-                return Ok(quote::quote! {#uuid_string});
+                Ok(quote::quote! {#uuid_string})
             } else if let syn::Lit::Int(lit_int) = &lit.lit {
                 let uuid_string = Uuid::Uuid16(lit_int.base10_parse::<u16>().map_err(|_| {
                     Error::custom("Invalid 16bit UUID literal.  Expect i.e. \"0x180f\"").with_span(&lit.span())
                 })?);
-                return Ok(quote::quote! {#uuid_string});
+                Ok(quote::quote! {#uuid_string})
             } else {
-                return Err(Error::custom(
+                Err(Error::custom(
                     "Invalid UUID literal.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
                 )
                 .with_span(&lit.span())
-                .into());
+                .into())
             }
         }
         other => {
             let span = other.span(); // span will highlight if the value does not impl Into<Uuid>
-            return Ok(quote::quote_spanned! { span =>
+            Ok(quote::quote_spanned! { span =>
                 {
                     let uuid: Uuid = #other.into();
                     uuid
                 }
-            });
+            })
         }
     }
 }
