@@ -22,7 +22,7 @@ struct Server {
 }
 
 /// Battery service
-#[gatt_service(uuid = "180f")]
+#[gatt_service(uuid = service::BATTERY)]
 struct BatteryService {
     /// Battery Level
     #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]

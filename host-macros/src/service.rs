@@ -10,7 +10,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
 use syn::parse::Result;
 use syn::spanned::Spanned;
-use syn::{Meta, Token};
+use syn::{Expr, Meta, Token};
 
 use crate::characteristic::{AccessArgs, Characteristic};
 use crate::uuid::Uuid;
@@ -18,6 +18,48 @@ use crate::uuid::Uuid;
 #[derive(Debug)]
 pub(crate) struct ServiceArgs {
     pub uuid: TokenStream2,
+}
+
+/// Parse the UUID argument of the service attribute.
+///
+/// The UUID can be specified as a string literal, an integer literal, or an expression that impl Into<Uuid>.
+fn parse_arg_uuid(value: &Expr) -> Result<TokenStream2> {
+    match value {
+        Expr::Lit(lit) => {
+            if let syn::Lit::Str(lit_str) = &lit.lit {
+                let uuid_string = Uuid::from_string(&lit_str.value()).map_err(|_| {
+                    Error::custom(
+                        "Invalid UUID string.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
+                    )
+                    .with_span(&lit.span())
+                })?;
+                return Ok(quote::quote! {#uuid_string});
+            } else if let syn::Lit::Int(lit_int) = &lit.lit {
+                let uuid_string = Uuid::Uuid16(lit_int.base10_parse::<u16>().map_err(|_| {
+                    Error::custom(
+                        "Invalid UUID literal.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
+                    )
+                    .with_span(&lit.span())
+                })?);
+                return Ok(quote::quote! {#uuid_string});
+            } else {
+                return Err(Error::custom(
+                    "Invalid UUID literal.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
+                )
+                .with_span(&lit.span())
+                .into());
+            }
+        }
+        other => {
+            let span = other.span(); // span will highlight if the value does not impl Into<Uuid>
+            return Ok(quote::quote_spanned! { span =>
+                {
+                    let uuid: Uuid = #other.into();
+                    uuid
+                }
+            });
+        }
+    }
 }
 
 impl syn::parse::Parse for ServiceArgs {
@@ -37,23 +79,16 @@ impl syn::parse::Parse for ServiceArgs {
                         .as_str()
                     {
                         "uuid" => {
-                            // Parse the UUID
-                            if let Ok(uuid_string) = Uuid::from_meta(&meta) {
-                                uuid = Some(quote::quote! {#uuid_string});
-                            } else {
-                                let expr = &name_value.value;
-                                let span = expr.span(); // span will highlight if the value does not impl Into<Uuid>
-                                uuid = Some(quote::quote_spanned! { span =>
-                                    {
-                                        let uuid: Uuid = #expr.into();
-                                        uuid
-                                    }
-                                });
-                            };
+                            if uuid.is_some() {
+                                return Err(Error::custom("UUID cannot be specified more than once")
+                                    .with_span(&name_value.span())
+                                    .into());
+                            }
+                            uuid = Some(parse_arg_uuid(&name_value.value)?);
                         }
                         other => {
                             return Err(Error::unknown_field(&format!(
-                                "Unsupported service property: '{other}'.\nSupported properties are uuid"
+                                "Unsupported service property: '{other}'.\nSupported properties are: uuid"
                             ))
                             .with_span(&name_value.span())
                             .into())
@@ -67,7 +102,7 @@ impl syn::parse::Parse for ServiceArgs {
 
         Ok(Self {
             uuid: uuid.ok_or(Error::custom(
-                "Service must have a UUID (i.e. `#[gatt_service(uuid = '1234')]`)",
+                "Service must have a UUID (i.e. `#[gatt_service(uuid = '1234')]` or `#[gatt_service(uuid = service::BATTERY)]`)",
             ))?,
         })
     }
