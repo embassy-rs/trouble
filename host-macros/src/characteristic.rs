@@ -14,7 +14,7 @@ use syn::{Field, LitStr};
 use crate::uuid::Uuid;
 
 #[derive(Debug)]
-pub(crate) struct Characteristic {
+pub struct Characteristic {
     pub name: String,
     pub ty: syn::Type,
     pub args: CharacteristicArgs,
@@ -35,7 +35,7 @@ impl Characteristic {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct AccessArgs {
+pub struct AccessArgs {
     /// If true, the characteristic can be written.
     pub read: bool,
     /// If true, the characteristic can be written.
@@ -52,7 +52,7 @@ pub(crate) struct AccessArgs {
 ///
 /// Descriptors are optional and can be used to add additional metadata to the characteristic.
 #[derive(Debug)]
-pub(crate) struct DescriptorArgs {
+pub struct DescriptorArgs {
     /// The UUID of the descriptor.
     pub uuid: TokenStream,
     /// The initial value of the descriptor (&str).
@@ -65,7 +65,7 @@ pub(crate) struct DescriptorArgs {
 
 /// Characteristic attribute arguments
 #[derive(Debug)]
-pub(crate) struct CharacteristicArgs {
+pub struct CharacteristicArgs {
     /// The UUID of the characteristic.
     pub uuid: TokenStream,
     /// Starting value for this characteristic.
@@ -90,12 +90,16 @@ fn check_multi<T>(arg: &mut Option<T>, name: &str, meta: &ParseNestedMeta<'_>, v
 }
 
 pub fn parse_uuid(meta: &ParseNestedMeta<'_>) -> Result<TokenStream> {
-    let parser = meta
-        .value()
-        .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
+    let parser = meta.value().map_err(|_| {
+        meta.error(
+            "uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
+        )
+    })?;
     if let Ok(uuid_string) = parser.parse::<LitStr>() {
         // Check if it's a valid UUID from a string before running the code
-        let uuid = Uuid::from_string(uuid_string.value().as_str()).map_err(|_| meta.error("Invalid UUID string"))?;
+        let uuid = Uuid::from_string(uuid_string.value().as_str()).map_err(|_| {
+            meta.error("Invalid UUID string.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"")
+        })?;
         Ok(quote::quote! { #uuid })
     } else {
         let expr: syn::Expr = parser.parse()?;
