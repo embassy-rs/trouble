@@ -1,4 +1,5 @@
-use embassy_futures::select::select;
+use bt_hci::{cmd::status::ReadRssi, controller::ControllerCmdSync};
+use embassy_futures::select::{select, select3};
 use embassy_time::Timer;
 use trouble_host::prelude::*;
 
@@ -34,7 +35,7 @@ struct BatteryService {
 /// Run the BLE stack.
 pub async fn run<C>(controller: C)
 where
-    C: Controller,
+    C: Controller + ControllerCmdSync<ReadRssi>, // Additional trait required for the RSSI task
 {
     // Using a fixed seed means the "random" address will be the same every time the program runs,
     // which can be useful for testing. If truly random addresses are required, a different,
@@ -43,7 +44,7 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources = Resources::new(PacketQos::None);
-    let (_stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
+    let (stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
         .build();
 
@@ -60,9 +61,10 @@ where
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let connection_task = conn_task(&server, &conn);
                     let counter_task = counter_task(&server, &conn);
+                    let rssi_task = report_rssi(&conn, stack);
                     // run until any task ends (usually because the connection has been closed),
                     // then return to advertising state.
-                    select(connection_task, counter_task).await;
+                    select3(connection_task, counter_task, rssi_task).await;
                 }
                 Err(e) => {
                     #[cfg(feature = "defmt")]
@@ -181,6 +183,21 @@ async fn counter_task(server: &Server<'_>, conn: &Connection<'_>) {
         if level.notify(server, conn, &tick).await.is_err() {
             info!("[adv] error notifying connection");
             break;
+        };
+        Timer::after_secs(2).await;
+    }
+}
+
+/// Example task to report the RSSI (Received Signal Strength Indicator) of the connection.
+async fn report_rssi<C: Controller + ControllerCmdSync<ReadRssi>>(conn: &Connection<'_>, stack: Stack<'_, C>) {
+    loop {
+        match conn.rssi(stack.clone()).await {
+            Ok(rssi) => info!("[gatt] RSSI: {:?}", rssi),
+            Err(e) => {
+                #[cfg(feature = "defmt")]
+                let e = defmt::Debug2Format(&e);
+                panic!("[adv] error: {:?}", e);
+            }
         };
         Timer::after_secs(2).await;
     }
