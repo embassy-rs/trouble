@@ -36,10 +36,7 @@ fn parse_arg_uuid(value: &Expr) -> Result<TokenStream2> {
                 return Ok(quote::quote! {#uuid_string});
             } else if let syn::Lit::Int(lit_int) = &lit.lit {
                 let uuid_string = Uuid::Uuid16(lit_int.base10_parse::<u16>().map_err(|_| {
-                    Error::custom(
-                        "Invalid UUID literal.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
-                    )
-                    .with_span(&lit.span())
+                    Error::custom("Invalid 16bit UUID literal.  Expect i.e. \"0x180f\"").with_span(&lit.span())
                 })?);
                 return Ok(quote::quote! {#uuid_string});
             } else {
