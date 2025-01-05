@@ -63,45 +63,22 @@ pub fn gatt_server(args: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// const DESCRIPTOR_VALUE: &str = "Can be specified from a const";
 ///
-/// #[gatt_service(uuid = "7e701cf1-b1df-42a1-bb5f-6a1028c793b0", on_read = service_on_read)]
+/// #[gatt_service(uuid = "7e701cf1-b1df-42a1-bb5f-6a1028c793b0")]
 /// struct HeartRateService {
 ///    /// Docstrings can be
 ///    /// Multiple lines
-///    #[descriptor(uuid = "2a20", read, write, notify, capacity = 100)]
-///    #[descriptor(uuid = "2a21", read, notify, value = "Demo description")]
-///    #[characteristic(uuid = "2a37", read, notify, value = 3.14, on_read = rate_on_read)]
+///    #[descriptor(uuid = "2a21", read, value = [0x00,0x01,0x02,0x03])]
+///    #[characteristic(uuid = characteristic::HEART_RATE_MEASUREMENT, read, notify, value = 3.14)]
 ///    rate: f32,
-///    #[descriptor(uuid = "2a21", read, write, notify, value = DESCRIPTOR_VALUE, capacity = DESCRIPTOR_VALUE.len() as u8)]
+///    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, read, value = DESCRIPTOR_VALUE)]
 ///    #[characteristic(uuid = "2a28", read, write, notify, value = 42.0)]
 ///    /// Can be in any order
 ///    location: f32,
-///    #[characteristic(uuid = "2a39", write, on_write = control_on_write)]
+///    #[characteristic(uuid = "2a39", write)]
 ///    control: u8,
 ///    #[characteristic(uuid = "2a63", read, notify)]
 ///    energy_expended: u16,
 /// }
-///
-/// fn service_on_read(connection: &Connection) {
-///     info!("Read callback triggered for {:?}", connection);
-/// }
-///
-/// fn rate_on_read(connection: &Connection) {
-///     info!("Heart rate read on {:?}", connection);
-/// }
-///
-/// fn control_on_write(connection: &Connection, data: &[u8] -> Result<(), ()> {
-///     info!("Write event on control attribute from {:?} with data {:?}", connection, data);
-///     let control = u8::from_gatt(data).unwrap();
-///     match control {
-///         0 => info!("Control setting 0 selected"),
-///         1 => info!("Control setting 1 selected"),
-///         _ => {
-///             warn!("Unsupported control setting! Rejecting write request.");
-///             return Err(())
-///         }
-///     }
-///     Ok(())
-/// })
 /// ```
 #[proc_macro_attribute]
 pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
@@ -164,11 +141,11 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
 /// struct BatteryService {
 ///    /// Docstrings can be
 ///    /// Multiple lines
-///    #[characteristic(uuid = "2a19", read, write, notify, value = 99, on_read = battery_level_on_read)]
-///    #[descriptor(uuid = "2a20", read, write, notify, on_read = battery_level_on_read)]
-///    #[descriptor(uuid = "2a20", read, write, notify, value = "Demo description")]
+///    #[characteristic(uuid = "2a19", read, write, notify, value = 99)]
+///    #[descriptor(uuid = "2a20", read, value = [0x00,0x01,0x02,0x03])]
+///    #[descriptor(uuid = "2a20", read, value = "Demo description")]
 ///    level: u8,
-///    #[descriptor(uuid = "2a21", read, write, notify, value = VAL)]
+///    #[descriptor(uuid = "2a21", read, value = VAL)]
 ///    #[characteristic(uuid = "2a22", read, write, notify, value = 42.0)]
 ///    /// Can be in any order
 ///    rate_of_discharge: f32,
