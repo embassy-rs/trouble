@@ -5,16 +5,16 @@
 //! A characteristic is a data value that can be accessed from a connected client.
 
 use darling::{Error, FromMeta};
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream};
 use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
-use syn::{Field, Ident, LitStr};
+use syn::{Field, LitStr};
 
 use crate::uuid::Uuid;
 
 #[derive(Debug)]
-pub(crate) struct Characteristic {
+pub struct Characteristic {
     pub name: String,
     pub ty: syn::Type,
     pub args: CharacteristicArgs,
@@ -34,60 +34,48 @@ impl Characteristic {
     }
 }
 
-#[derive(Debug, FromMeta, Default)]
-pub(crate) struct AccessArgs {
+#[derive(Debug, Default)]
+pub struct AccessArgs {
     /// If true, the characteristic can be written.
-    #[darling(default)]
     pub read: bool,
     /// If true, the characteristic can be written.
-    #[darling(default)]
     pub write: bool,
     /// If true, the characteristic can be written without a response.
-    #[darling(default)]
     pub write_without_response: bool,
     /// If true, the characteristic can send notifications.
-    #[darling(default)]
     pub notify: bool,
     /// If true, the characteristic can send indications.
-    #[darling(default)]
     pub indicate: bool,
 }
 
 /// Descriptor attribute arguments.
 ///
 /// Descriptors are optional and can be used to add additional metadata to the characteristic.
-#[derive(Debug, FromMeta)]
-pub(crate) struct DescriptorArgs {
+#[derive(Debug)]
+pub struct DescriptorArgs {
     /// The UUID of the descriptor.
-    pub uuid: Uuid,
+    pub uuid: TokenStream,
     /// The initial value of the descriptor (&str).
     /// This is optional and can be used to set the initial value of the descriptor.
-    #[darling(default)]
     pub default_value: Option<syn::Expr>,
-    #[darling(default)]
     /// Capacity for writing new descriptors (u8)
     pub capacity: Option<syn::Expr>,
-    #[darling(default)]
     pub access: AccessArgs,
 }
 
 /// Characteristic attribute arguments
-#[derive(Debug, FromMeta)]
-pub(crate) struct CharacteristicArgs {
+#[derive(Debug)]
+pub struct CharacteristicArgs {
     /// The UUID of the characteristic.
-    pub uuid: Uuid,
+    pub uuid: TokenStream,
     /// Starting value for this characteristic.
-    #[darling(default)]
     pub default_value: Option<syn::Expr>,
     /// Descriptors for the characteristic.
     /// Descriptors are optional and can be used to add additional metadata to the characteristic.
     /// Parsed in super::check_for_characteristic.
-    #[darling(default, multiple)]
     pub descriptors: Vec<DescriptorArgs>,
     /// Any '///' comments on each field, parsed in super::check_for_characteristic.
-    #[darling(default)]
     pub doc_string: String,
-    #[darling(default)]
     pub access: AccessArgs,
 }
 
@@ -101,10 +89,34 @@ fn check_multi<T>(arg: &mut Option<T>, name: &str, meta: &ParseNestedMeta<'_>, v
     }
 }
 
+pub fn parse_uuid(meta: &ParseNestedMeta<'_>) -> Result<TokenStream> {
+    let parser = meta.value().map_err(|_| {
+        meta.error(
+            "uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
+        )
+    })?;
+    if let Ok(uuid_string) = parser.parse::<LitStr>() {
+        // Check if it's a valid UUID from a string before running the code
+        let uuid = Uuid::from_string(uuid_string.value().as_str()).map_err(|_| {
+            meta.error("Invalid UUID string.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"")
+        })?;
+        Ok(quote::quote! { #uuid })
+    } else {
+        let expr: syn::Expr = parser.parse()?;
+        let span = expr.span(); // span will highlight if the value does not impl Into<Uuid>
+        Ok(quote::quote_spanned! { span =>
+            {
+                let uuid: Uuid = #expr.into();
+                uuid
+            }
+        })
+    }
+}
+
 impl CharacteristicArgs {
     /// Parse the arguments of a characteristic attribute
     pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
-        let mut uuid: Option<Uuid> = None;
+        let mut uuid: Option<_> = None;
         let mut read: Option<bool> = None;
         let mut write: Option<bool> = None;
         let mut notify: Option<bool> = None;
@@ -113,14 +125,7 @@ impl CharacteristicArgs {
         let mut write_without_response: Option<bool> = None;
         attribute.parse_nested_meta(|meta| {
             match meta.path.get_ident().ok_or(meta.error("no ident"))?.to_string().as_str() {
-                "uuid" => {
-                    let parser = meta
-                    .value()
-                    .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
-                    let uuid_string: LitStr = parser.parse()?;
-                    let value = Uuid::from_string(uuid_string.value().as_str())?;
-                    check_multi(&mut uuid, "uuid", &meta, value)?
-                },
+                "uuid" => check_multi(&mut uuid, "uuid", &meta, parse_uuid(&meta)?)?,
                 "read" => check_multi(&mut read, "read", &meta, true)?,
                 "write" => check_multi(&mut write, "write", &meta, true)?,
                 "notify" => check_multi(&mut notify, "notify", &meta, true)?,
@@ -160,11 +165,9 @@ impl CharacteristicArgs {
 
 impl DescriptorArgs {
     pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
-        let mut uuid: Option<Uuid> = None;
+        let mut uuid: Option<_> = None;
         let mut read: Option<bool> = None;
         // let mut write: Option<bool> = None;
-        let mut on_read: Option<Ident> = None;
-        // let mut on_write: Option<Ident> = None;
         // let mut capacity: Option<syn::Expr> = None;
         let mut default_value: Option<syn::Expr> = None;
         // let mut write_without_response: Option<bool> = None;
@@ -176,18 +179,9 @@ impl DescriptorArgs {
                 .to_string()
                 .as_str()
             {
-                "uuid" => {
-                    let parser = meta
-                        .value()
-                        .map_err(|_| meta.error("uuid must be followed by '= [data]'.  i.e. uuid = \"2a37\""))?;
-                    let uuid_string: LitStr = parser.parse()?;
-                    let value = Uuid::from_string(uuid_string.value().as_str())?;
-                    check_multi(&mut uuid, "uuid", &meta, value)?
-                }
+                "uuid" => check_multi(&mut uuid, "uuid", &meta, parse_uuid(&meta)?)?,
                 "read" => check_multi(&mut read, "read", &meta, true)?,
                 // "write" => check_multi(&mut write, "write", &meta, true)?,
-                "on_read" => check_multi(&mut on_read, "on_read", &meta, meta.value()?.parse()?)?,
-                // "on_write" => check_multi(&mut on_write, "on_write", &meta, meta.value()?.parse()?)?,
                 // "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
                 "value" => {
                     let value = meta.value().map_err(|_| {
@@ -202,9 +196,8 @@ impl DescriptorArgs {
                 "default_value" => return Err(meta.error("use 'value' for default value")),
                 other => {
                     return Err(meta.error(format!(
-                    // "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, write, write_without_response, value,\ncapacity, on_read, on_write"
-                    "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, value, on_read"
-                )));
+                        "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, value"
+                    )));
                 }
             };
             Ok(())

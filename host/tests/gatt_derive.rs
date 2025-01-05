@@ -16,15 +16,15 @@ const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
-#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 25)]
+#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 31)] // gatt_server args are optional
 struct Server {
     service: CustomService,
+    bas: BatteryService,
 }
 
 #[gatt_service(uuid = "408813df-5dd4-1f87-ec11-cdb000100000")]
 struct CustomService {
     #[descriptor(uuid = "2b20", value = "Read Only Descriptor", read)]
-    /// Battery Level
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", value = 42, read, write, notify)]
     #[descriptor(uuid = "2b21", value = [0x01,0x02,0x03], read)]
     pub value: u8,
@@ -42,6 +42,15 @@ struct CustomService {
     pub fourth: heapless::Vec<u8, 3>,
     #[characteristic(uuid = "408817df-5dd4-1f87-ec11-cdb001100000", read, write, notify)]
     pub fifth: heapless::Vec<u8, 33>,
+}
+
+#[gatt_service(uuid = service::BATTERY)]
+struct BatteryService {
+    /// Battery Level
+    #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]
+    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, read, value = "Battery Level")]
+    #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
+    level: u8,
 }
 
 #[tokio::test]

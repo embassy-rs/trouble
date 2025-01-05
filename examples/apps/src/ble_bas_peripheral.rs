@@ -22,14 +22,16 @@ struct Server {
     battery_service: BatteryService,
 }
 
-// Battery service
-#[gatt_service(uuid = "180f")]
+/// Battery service
+#[gatt_service(uuid = service::BATTERY)]
 struct BatteryService {
     /// Battery Level
-    #[descriptor(uuid = "2b20", read, value = "Battery Level")]
-    #[descriptor(uuid = "2b21", read, value = [0x12, 0x34])]
-    #[characteristic(uuid = "2a19", read, notify, value = 10)]
+    #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]
+    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, read, value = "Battery Level")]
+    #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
     level: u8,
+    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", write, read, notify)]
+    status: bool,
 }
 
 /// Run the BLE stack.
