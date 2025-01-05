@@ -297,7 +297,7 @@ impl ServiceBuilder {
                     quote_spanned! {characteristic.span=>
                         {
                             let value = #default_value;
-                            const CAPACITY: u8 = #capacity;
+                            const CAPACITY: u8 = if (#capacity) < 16 { 16 } else { #capacity }; // minimum capacity is 16 bytes
                             static #name_screaming: static_cell::StaticCell<[u8; CAPACITY as usize]> = static_cell::StaticCell::new();
                             let store = #name_screaming.init([0; CAPACITY as usize]);
                             let value = GattValue::to_gatt(&value);
