@@ -13,16 +13,6 @@
 //!
 //! Environment variables take precedence over Cargo features. If two Cargo features are enabled for the same setting
 //! with different values, compilation fails.
-//!
-//! ## Compatibility warning
-//!
-//! Changing ANY of these configuration settings changes the on-disk format of the database. If you change
-//! them, you won't be able to read databases written with a different configuration.
-//!
-//! Currently, mounting doesn't check the on-disk database uses the same configuration. Mounting a database
-//! with a different configuration might succeed and then cause fun errors later, perhaps very rarely.
-//! Always remember to format your flash device every time you change them.
-
 mod raw {
     #![allow(unused)]
     include!(concat!(env!("OUT_DIR"), "/config.rs"));
