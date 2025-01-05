@@ -16,7 +16,7 @@ const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
-#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 25)] // gatt_server args are optional
+#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 31)] // gatt_server args are optional
 struct Server {
     service: CustomService,
     bas: BatteryService,
