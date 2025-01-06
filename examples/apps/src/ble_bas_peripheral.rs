@@ -1,5 +1,5 @@
 use bt_hci::{cmd::status::ReadRssi, controller::ControllerCmdSync};
-use embassy_futures::select::{select, select3};
+use embassy_futures::select::select;
 use embassy_time::Timer;
 use trouble_host::prelude::*;
 
@@ -62,11 +62,10 @@ where
                 Ok(conn) => {
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let connection_task = conn_task(&server, &conn);
-                    let counter_task = counter_task(&server, &conn);
-                    let rssi_task = report_rssi(&conn, stack);
+                    let counter_task = counter_task(&server, &conn, stack);
                     // run until any task ends (usually because the connection has been closed),
                     // then return to advertising state.
-                    select3(connection_task, counter_task, rssi_task).await;
+                    select(connection_task, counter_task).await;
                 }
                 Err(e) => {
                     #[cfg(feature = "defmt")]
@@ -105,6 +104,9 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
 }
 
 /// Stream Events until the connection closes.
+///
+/// This function will handle the GATT events and process them.
+/// This is how we interact with read and write requests.
 async fn conn_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Error> {
     let level = server.battery_service.level;
     loop {
@@ -176,7 +178,10 @@ async fn advertise<'a, C: Controller>(
 }
 
 /// Example task to use the BLE notifier interface.
-async fn counter_task(server: &Server<'_>, conn: &Connection<'_>) {
+/// This task will notify the connected central of a counter value every 2 seconds.
+/// It will also read the RSSI value every 2 seconds.
+/// and will stop when the connection is closed by the central or an error occurs.
+async fn counter_task<C: Controller>(server: &Server<'_>, conn: &Connection<'_>, stack: Stack<'_, C>) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
     loop {
@@ -186,19 +191,11 @@ async fn counter_task(server: &Server<'_>, conn: &Connection<'_>) {
             info!("[adv] error notifying connection");
             break;
         };
-        Timer::after_secs(2).await;
-    }
-}
-
-/// Example task to report the RSSI (Received Signal Strength Indicator) of the connection.
-async fn report_rssi<C: Controller + ControllerCmdSync<ReadRssi>>(conn: &Connection<'_>, stack: Stack<'_, C>) {
-    loop {
-        match conn.rssi(stack.clone()).await {
+        match conn.rssi(stack).await {
             Ok(rssi) => info!("[gatt] RSSI: {:?}", rssi),
             Err(e) => {
-                #[cfg(feature = "defmt")]
-                let e = defmt::Debug2Format(&e);
-                panic!("[adv] error: {:?}", e);
+                info!("[gatt] error getting RSSI: {:?}", e);
+                break;
             }
         };
         Timer::after_secs(2).await;
