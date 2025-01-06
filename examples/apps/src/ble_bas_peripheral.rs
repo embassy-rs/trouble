@@ -37,7 +37,7 @@ struct BatteryService {
 /// Run the BLE stack.
 pub async fn run<C>(controller: C)
 where
-    C: Controller + ControllerCmdSync<ReadRssi>, // Additional trait required for the RSSI task
+    C: Controller,
 {
     // Using a fixed seed means the "random" address will be the same every time the program runs,
     // which can be useful for testing. If truly random addresses are required, a different,
@@ -191,12 +191,12 @@ async fn counter_task<C: Controller>(server: &Server<'_>, conn: &Connection<'_>,
             info!("[adv] error notifying connection");
             break;
         };
-        match conn.rssi(stack).await {
-            Ok(rssi) => info!("[gatt] RSSI: {:?}", rssi),
-            Err(e) => {
-                info!("[gatt] error getting RSSI: {:?}", e);
-                break;
-            }
+        // read RSSI (Received Signal Strength Indicator) of the connection.
+        if let Ok(rssi) = conn.rssi(stack).await {
+            info!("[gatt] RSSI: {:?}", rssi);
+        } else {
+            info!("[gatt] error getting RSSI");
+            break;
         };
         Timer::after_secs(2).await;
     }
