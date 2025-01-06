@@ -1,4 +1,3 @@
-use bt_hci::{cmd::status::ReadRssi, controller::ControllerCmdSync};
 use embassy_futures::select::select;
 use embassy_time::Timer;
 use trouble_host::prelude::*;
