@@ -15,6 +15,7 @@ use crate::prelude::Connection;
 use crate::types::gatt_traits::GattValue;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
+use heapless::Vec;
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
@@ -294,17 +295,12 @@ pub struct AttributeTable<'d, M: RawMutex, const MAX: usize> {
 }
 
 pub(crate) struct InnerTable<'d, const MAX: usize> {
-    attributes: [Option<Attribute<'d>>; MAX],
-    len: usize,
+    attributes: Vec<Attribute<'d>, MAX>,
 }
 
 impl<'d, const MAX: usize> InnerTable<'d, MAX> {
     fn push(&mut self, attribute: Attribute<'d>) {
-        if self.len == MAX {
-            panic!("no space for more attributes")
-        }
-        self.attributes[self.len].replace(attribute);
-        self.len += 1;
+        self.attributes.push(attribute).unwrap();
     }
 }
 
@@ -319,10 +315,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     pub fn new() -> Self {
         Self {
             handle: 1,
-            inner: Mutex::new(RefCell::new(InnerTable {
-                len: 0,
-                attributes: [Attribute::EMPTY; MAX],
-            })),
+            inner: Mutex::new(RefCell::new(InnerTable { attributes: Vec::new() })),
         }
     }
 
@@ -336,11 +329,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     pub(crate) fn iterate<F: FnMut(AttributeIterator<'_, 'd>) -> R, R>(&self, mut f: F) -> R {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
-            let len = table.len;
             let it = AttributeIterator {
                 attributes: &mut table.attributes[..],
                 pos: 0,
-                len,
             };
             f(it)
         })
@@ -359,7 +350,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
     /// Add a service to the attribute table (group of characteristics)
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
-        let len = self.inner.lock(|i| i.borrow().len);
+        let len = self.inner.lock(|i| i.borrow().attributes.len());
         let handle = self.handle;
         self.push(Attribute {
             uuid: PRIMARY_SERVICE.into(),
@@ -607,8 +598,8 @@ impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
     fn drop(&mut self) {
         let last_handle = self.table.handle + 1;
         self.table.with_inner(|inner| {
-            for item in inner.attributes[self.start..inner.len].iter_mut() {
-                item.as_mut().unwrap().last_handle_in_group = last_handle;
+            for item in inner.attributes[self.start..].iter_mut() {
+                item.last_handle_in_group = last_handle;
             }
         });
 
@@ -751,18 +742,17 @@ pub struct DescriptorHandle {
 
 /// Iterator over attributes.
 pub struct AttributeIterator<'a, 'd> {
-    attributes: &'a mut [Option<Attribute<'d>>],
+    attributes: &'a mut [Attribute<'d>],
     pos: usize,
-    len: usize,
 }
 
 impl<'d> AttributeIterator<'_, 'd> {
     /// Return next attribute in iterator.
     pub fn next<'m>(&'m mut self) -> Option<&'m mut Attribute<'d>> {
-        if self.pos < self.len {
-            let i = self.attributes[self.pos].as_mut();
+        if self.pos < self.attributes.len() {
+            let i = &mut self.attributes[self.pos];
             self.pos += 1;
-            i
+            Some(i)
         } else {
             None
         }
