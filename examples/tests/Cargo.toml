@@ -1,0 +1,36 @@
+[package]
+name = "trouble-example-tests"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+trouble-host = { path = "../../host", features = ["derive", "log"] }
+bt-hci = { version = "0.1.1" }
+serde = { version = "1", features = ["derive"] }
+futures = "0.3"
+serde_json = "1"
+log = "0.4"
+tokio = { version = "1", default-features = false, features = [
+  "time",
+  "rt-multi-thread",
+  "macros",
+] }
+reqwest = "0.12"
+embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
+embedded-io-async = { version = "0.6.1" }
+embedded-io = { version = "0.6.1" }
+embassy-sync = { version = "0.6" }
+tokio-serial = "5.4"
+critical-section = { version = "1", features = ["std"] }
+probe-rs = "0.25.0"
+rand = "0.8.5"
+heapless = "0.8.0"
+anyhow = "1"
+object = "0.32.2"
+defmt-decoder = { version = "0.3.9", features = ["unstable"] }
+bytes = "1.5.0"
+backtrace = "0.3.69"
+pretty_env_logger = "0.5.0"
+pin-project-lite = "0.2.13"
+chrono = { version = "0.4.31", features = ["serde"] }

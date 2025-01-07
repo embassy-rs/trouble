@@ -2,24 +2,18 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
-/// How many outgoing L2CAP buffers per link
-const L2CAP_TXQ: u8 = 20;
-
-/// How many incoming L2CAP buffers per link
-const L2CAP_RXQ: u8 = 20;
-
 /// Size of L2CAP packets
 #[cfg(not(feature = "esp"))]
-const L2CAP_MTU: usize = 128;
+pub const L2CAP_MTU: usize = 128;
 #[cfg(feature = "esp")]
 // Some esp chips only accept an MTU >= 1017
-const L2CAP_MTU: usize = 1017;
+pub const L2CAP_MTU: usize = 1017;
 
 /// Max number of connections
-const CONNECTIONS_MAX: usize = 1;
+pub const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
-const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
+pub const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
 type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
@@ -29,6 +23,7 @@ where
 {
     let mut resources = Resources::new(PacketQos::None);
 
+    // Hardcoded peripheral address
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 

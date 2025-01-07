@@ -34,6 +34,7 @@ impl<'d, C: Controller> Central<'d, C> {
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
             + ControllerCmdAsync<LeCreateConn>,
     {
+        info!("CENTRAL CONNECT START");
         if config.scan_config.filter_accept_list.is_empty() {
             return Err(Error::InvalidValue.into());
         }
@@ -42,10 +43,13 @@ impl<'d, C: Controller> Central<'d, C> {
         let _drop = crate::host::OnDrop::new(|| {
             host.connect_command_state.cancel(true);
         });
+        info!("CENTRAL STATE REQUEST WAIT");
         host.connect_command_state.request().await;
 
+        info!("SET ACCEPT FILTER");
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
+        info!("Instructing to CREATE CONNECTION");
         host.async_command(LeCreateConn::new(
             config.scan_config.interval.into(),
             config.scan_config.window.into(),
