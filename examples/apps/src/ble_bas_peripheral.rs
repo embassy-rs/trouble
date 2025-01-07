@@ -45,7 +45,7 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources = Resources::new(PacketQos::None);
-    let (_stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
+    let (stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
         .build();
 
@@ -61,7 +61,7 @@ where
                 Ok(conn) => {
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let connection_task = conn_task(&server, &conn);
-                    let counter_task = counter_task(&server, &conn);
+                    let counter_task = counter_task(&server, &conn, stack);
                     // run until any task ends (usually because the connection has been closed),
                     // then return to advertising state.
                     select(connection_task, counter_task).await;
@@ -103,6 +103,9 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
 }
 
 /// Stream Events until the connection closes.
+///
+/// This function will handle the GATT events and process them.
+/// This is how we interact with read and write requests.
 async fn conn_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Error> {
     let level = server.battery_service.level;
     loop {
@@ -174,7 +177,10 @@ async fn advertise<'a, C: Controller>(
 }
 
 /// Example task to use the BLE notifier interface.
-async fn counter_task(server: &Server<'_>, conn: &Connection<'_>) {
+/// This task will notify the connected central of a counter value every 2 seconds.
+/// It will also read the RSSI value every 2 seconds.
+/// and will stop when the connection is closed by the central or an error occurs.
+async fn counter_task<C: Controller>(server: &Server<'_>, conn: &Connection<'_>, stack: Stack<'_, C>) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
     loop {
@@ -182,6 +188,13 @@ async fn counter_task(server: &Server<'_>, conn: &Connection<'_>) {
         info!("[adv] notifying connection of tick {}", tick);
         if level.notify(server, conn, &tick).await.is_err() {
             info!("[adv] error notifying connection");
+            break;
+        };
+        // read RSSI (Received Signal Strength Indicator) of the connection.
+        if let Ok(rssi) = conn.rssi(stack).await {
+            info!("[gatt] RSSI: {:?}", rssi);
+        } else {
+            info!("[gatt] error getting RSSI");
             break;
         };
         Timer::after_secs(2).await;

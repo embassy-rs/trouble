@@ -12,6 +12,7 @@
 use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
+use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
 use bt_hci::FromHciBytesError;
@@ -244,6 +245,7 @@ pub trait Controller:
     + ControllerCmdSync<LeReadFilterAcceptListSize>
     + ControllerCmdSync<SetControllerToHostFlowControl>
     + ControllerCmdSync<Reset>
+    + ControllerCmdSync<ReadRssi>
     + ControllerCmdSync<LeCreateConnCancel>
     + ControllerCmdAsync<LeCreateConn>
     + ControllerCmdSync<LeClearFilterAcceptList>
@@ -274,6 +276,7 @@ impl<
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
+            + ControllerCmdSync<ReadRssi>
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdAsync<LeCreateConn>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
