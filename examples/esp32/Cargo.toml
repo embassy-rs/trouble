@@ -15,18 +15,12 @@ esp-hal = { version = "0.22.0" }
 esp-hal-embassy = { version = "0.5.0" }
 esp-alloc = { version = "0.5.0" }
 esp-println = { version = "0.12.0", features = ["log"] }
-log = { version = "0.4.21" }
-embedded-io = "0.6.1"
 esp-wifi = { version = "0.11.0", features = [
     "ble",
 ] }
-heapless = { version = "0.8.0", default-features = false }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["esp", "log"] }
 bt-hci = { version = "0.1.2" }
-embassy-futures = "0.1.1"
 embassy-time = { version = "0.3", features = ["generic-queue-8"] }
-static_cell = "2"
-embassy-sync = "0.6"
 
 [features]
 default = ["esp32c3"]

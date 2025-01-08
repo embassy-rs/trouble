@@ -1309,19 +1309,13 @@ version = "0.1.0"
 dependencies = [
  "bt-hci",
  "embassy-executor",
- "embassy-futures",
- "embassy-sync 0.6.1",
  "embassy-time",
- "embedded-io",
  "esp-alloc",
  "esp-backtrace",
  "esp-hal",
  "esp-hal-embassy",
  "esp-println",
  "esp-wifi",
- "heapless",
- "log",
- "static_cell",
  "trouble-example-apps",
 ]
 
