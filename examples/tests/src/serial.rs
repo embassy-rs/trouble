@@ -11,6 +11,21 @@ pub type Controller = ExternalController<
     10,
 >;
 
+pub fn find_controllers() -> Vec<String> {
+    let folder = "/dev/serial/by-id";
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+
+        let file_name = path.file_name().unwrap().to_string_lossy();
+        if file_name.starts_with("usb-ZEPHYR_Zephyr_HCI_UART_sample") {
+            paths.push(path.to_string_lossy().to_string());
+        }
+    }
+    paths
+}
+
 pub async fn create_controller(
     port: &str,
 ) -> ExternalController<

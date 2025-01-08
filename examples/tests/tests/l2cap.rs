@@ -7,7 +7,8 @@ use trouble_host::prelude::*;
 #[tokio::test(flavor = "multi_thread")]
 async fn l2cap_peripheral_nrf52() {
     let _ = pretty_env_logger::try_init();
-    let central = std::env::var("TEST_ADAPTER_ONE").unwrap();
+    let adapters = serial::find_controllers();
+    let central = adapters[0].clone();
     let config = std::env::var("PROBE_CONFIG").unwrap();
     let config = serde_json::from_str(&config).unwrap();
     let elf = std::fs::read("./thumbv7em-none-eabihf/release/ble_l2cap_peripheral").unwrap();

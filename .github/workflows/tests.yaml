@@ -29,8 +29,6 @@ jobs:
             -f "state=pending" -f "description=Running integration tests" -f "context=integration-tests"
       - name: Test
         env:
-          TEST_ADAPTER_ONE: /dev/ttyACM0
-          TEST_ADAPTER_TWO: /dev/ttyACM1
           RUST_LOG: trace
         run: |
           cd host
@@ -79,7 +77,6 @@ jobs:
           CARGO_TARGET_DIR=../tests cargo build --release --bins
       - name: Test
         env:
-          TEST_ADAPTER_ONE: /dev/ttyACM0
           PROBE_CONFIG: ${{ secrets.PROBE_CONFIG }}
           RUST_LOG: info
         run: |
