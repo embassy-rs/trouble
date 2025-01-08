@@ -21,12 +21,14 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], example: &str) {
     let adapters = serial::find_controllers();
     let central = adapters[0].clone();
     let config = std::env::var("PROBE_CONFIG").unwrap();
+    info!("Using probe config {}", config);
     let config = serde_json::from_str(&config).unwrap();
 
     let elf = std::fs::read(elf).unwrap();
 
     let selector = probe::init(config);
     let target = selector.select(labels).expect("no suitable probe found");
+    info!("Found target {:?}", target);
 
     let (cancel_tx, cancel_rx) = oneshot::channel();
 
