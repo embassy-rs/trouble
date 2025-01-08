@@ -12,6 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout
+        id: checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr checkout "${{ github.event.inputs.prNr }}"
       - name: Add dependencies
         run: |
           sudo apt-get install --no-install-recommends libudev-dev
