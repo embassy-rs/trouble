@@ -114,6 +114,7 @@ jobs:
           RUST_LOG: info
         run: |
           cd examples/tests
+          find .
           cargo test -- --nocapture
       - name: Update failed status
         if: failure()
