@@ -70,7 +70,7 @@ async fn main(spawner: Spawner) {
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
 
-    let mut sdc_mem = sdc::Mem::<12848>::new();
+    let mut sdc_mem = sdc::Mem::<1000>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     ble_l2cap_peripheral::run(sdc).await;
