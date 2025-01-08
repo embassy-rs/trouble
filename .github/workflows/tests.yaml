@@ -8,6 +8,42 @@ on:
         required: true
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout
+        id: checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr checkout "${{ github.event.inputs.prNr }}"
+      - name: Add dependencies
+        run: |
+          sudo apt-get install --no-install-recommends libudev-dev
+      - name: Set up cargo cache
+        uses: actions/cache@v3
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target_ci/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: CI
+        run: |
+          ./ci.sh
+
+      - name: Upload test binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-tests
+          path: tests
+
   integration-tests:
     runs-on: self-hosted
     steps:
@@ -54,6 +90,7 @@ jobs:
 
   example-tests:
     runs-on: self-hosted
+    needs: [build]
     steps:
       - uses: actions/checkout@v4
       - name: Checkout
@@ -71,18 +108,19 @@ jobs:
           gh api --method POST -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
             -f "state=pending" -f "description=Running example tests" -f "context=example-tests"
-      - name: Download test binaries
-        uses: actions/download-artifact@v4
+
+      - uses: actions/download-artifact@v4
         with:
           name: example-tests
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: examples/tests/bins
+
       - name: Test
         env:
           PROBE_CONFIG: ${{ secrets.PROBE_CONFIG }}
           RUST_LOG: info
         run: |
           cd examples/tests
+          find .
           cargo test -- --nocapture
       - name: Update failed status
         if: failure()
