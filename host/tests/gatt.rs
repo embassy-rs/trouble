@@ -19,8 +19,9 @@ const VALUE_UUID: Uuid = Uuid::new_long([
 #[tokio::test]
 async fn gatt_client_server() {
     let _ = env_logger::try_init();
-    let peripheral = std::env::var("TEST_ADAPTER_ONE").unwrap();
-    let central = std::env::var("TEST_ADAPTER_TWO").unwrap();
+    let adapters = common::find_controllers();
+    let peripheral = adapters[0].clone();
+    let central = adapters[1].clone();
 
     let peripheral_address: Address = Address::random([0xff, 0x9f, 0x1a, 0x05, 0xe4, 0xff]);
 

@@ -10,7 +10,6 @@ resolver = "2"
 
 [dependencies]
 bt-hci = { version = "0.1.2", features = ["embassy-time", "uuid"] }
-embedded-io-async = { version = "0.6" }
 embedded-io = { version = "0.6" }
 embassy-sync = "0.6"
 embassy-time = "0.3"
@@ -33,7 +32,6 @@ tokio = { version = "1", default-features = false, features = [
   "macros",
 ] }
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
-embedded-io-async = { version = "0.6.1" }
 embedded-io = { version = "0.6.1" }
 tokio-serial = "5.4"
 env_logger = "0.11"
