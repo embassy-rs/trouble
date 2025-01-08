@@ -106,7 +106,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: example-tests
-          path: examples/tests
+          path: examples/tests/bins
 
       - name: Test
         env:
