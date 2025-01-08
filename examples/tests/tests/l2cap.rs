@@ -7,16 +7,26 @@ use trouble_host::prelude::*;
 #[tokio::test(flavor = "multi_thread")]
 async fn l2cap_peripheral_nrf52() {
     let _ = pretty_env_logger::try_init();
+    run_l2cap_peripheral_test(&[("target", "nrf52"), ("board", "microbit")], "nrf-sdc").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn l2cap_peripheral_esp32() {
+    let _ = pretty_env_logger::try_init();
+    run_l2cap_peripheral_test(&[("target", "esp32"), ("board", "esp-rust-board")], "esp32").await;
+}
+
+async fn run_test(labels: &[(&str, &str)], example: &str) {
+    let elf = format!("bins/{example}/ble_l2cap_peripheral");
     let adapters = serial::find_controllers();
     let central = adapters[0].clone();
     let config = std::env::var("PROBE_CONFIG").unwrap();
     let config = serde_json::from_str(&config).unwrap();
-    let elf = std::fs::read("bins/nrf-sdc/ble_l2cap_peripheral").unwrap();
+
+    let elf = std::fs::read(elf).unwrap();
 
     let selector = probe::init(config);
-    let target = selector
-        .select(&[("target", "nrf52"), ("board", "microbit")])
-        .expect("no suitable probe found");
+    let target = selector.select(labels).expect("no suitable probe found");
 
     let (cancel_tx, cancel_rx) = oneshot::channel();
 
