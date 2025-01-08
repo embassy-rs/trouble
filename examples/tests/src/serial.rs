@@ -2,7 +2,6 @@ use bt_hci::controller::ExternalController;
 use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_io_adapters::tokio_1::FromTokio;
-use std::path::PathBuf;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
@@ -12,7 +11,7 @@ pub type Controller = ExternalController<
     10,
 >;
 
-pub fn find_controllers() -> Vec<PathBuf> {
+pub fn find_controllers() -> Vec<String> {
     let folder = "/dev/serial/by-id";
     let mut paths = Vec::new();
     for entry in std::fs::read_dir(folder).unwrap() {
@@ -21,20 +20,18 @@ pub fn find_controllers() -> Vec<PathBuf> {
 
         let file_name = path.file_name().unwrap().to_string_lossy();
         if file_name.starts_with("usb-ZEPHYR_Zephyr_HCI_UART_sample") {
-            paths.push(path.to_path_buf());
+            paths.push(path.to_string_lossy().to_string());
         }
     }
     paths
 }
 
-#[allow(unused)]
-pub(crate) async fn create_controller(
-    port: &PathBuf,
+pub async fn create_controller(
+    port: &str,
 ) -> ExternalController<
     SerialTransport<NoopRawMutex, FromTokio<ReadHalf<SerialStream>>, FromTokio<WriteHalf<SerialStream>>>,
     10,
 > {
-    let port = port.to_string_lossy();
     let baudrate = 1000000;
     let mut port = SerialStream::open(
         &tokio_serial::new(port, baudrate)

@@ -26,11 +26,9 @@ jobs:
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
-            -f "state=pending" -f "description=Running tests" -f "context=tests"
+            -f "state=pending" -f "description=Running integration tests" -f "context=integration-tests"
       - name: Test
         env:
-          TEST_ADAPTER_ONE: /dev/ttyACM0
-          TEST_ADAPTER_TWO: /dev/ttyACM1
           RUST_LOG: trace
         run: |
           cd host
@@ -43,7 +41,7 @@ jobs:
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
-            -f "state=failure" -f "description=The build failed" -f "context=tests"
+            -f "state=failure" -f "description=The integration tests failed" -f "context=integration-tests"
       - name: Update success status
         if: success()
         env:
@@ -52,4 +50,53 @@ jobs:
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
-            -f "state=success" -f "description=The build succeeded!" -f "context=tests"
+            -f "state=success" -f "description=The integration tests succeeded!" -f "context=integration-tests"
+
+  example-tests:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout
+        id: checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr checkout "${{ github.event.inputs.prNr }}"
+          echo "commit=$(git rev-parse --verify HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Set pending
+        env:
+          COMMIT: ${{ steps.checkout.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -f "state=pending" -f "description=Running example tests" -f "context=example-tests"
+      - name: Build
+        run: |
+          cd examples/nrf-sdc
+          CARGO_TARGET_DIR=../tests cargo build --release --bins
+      - name: Test
+        env:
+          PROBE_CONFIG: ${{ secrets.PROBE_CONFIG }}
+          RUST_LOG: info
+        run: |
+          cd examples/tests
+          cargo test -- --nocapture
+      - name: Update failed status
+        if: failure()
+        env:
+          COMMIT: ${{ steps.checkout.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -f "state=failure" -f "description=The example tests failed" -f "context=example-tests"
+      - name: Update success status
+        if: success()
+        env:
+          COMMIT: ${{ steps.checkout.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -f "state=success" -f "description=The example tests succeeded!" -f "context=example-tests"

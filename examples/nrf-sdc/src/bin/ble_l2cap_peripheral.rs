@@ -32,7 +32,7 @@ const L2CAP_TXQ: u8 = 20;
 const L2CAP_RXQ: u8 = 20;
 
 /// Size of L2CAP packets
-const L2CAP_MTU: usize = 27;
+const L2CAP_MTU: usize = ble_l2cap_peripheral::L2CAP_MTU;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
@@ -70,7 +70,7 @@ async fn main(spawner: Spawner) {
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
 
-    let mut sdc_mem = sdc::Mem::<6224>::new();
+    let mut sdc_mem = sdc::Mem::<12848>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     ble_l2cap_peripheral::run(sdc).await;
