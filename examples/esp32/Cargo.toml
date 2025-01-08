@@ -45,7 +45,7 @@ lto = 'thin'
 opt-level = 3
 overflow-checks = false
 
-#[patch.crates-io]
+[patch.crates-io]
 #esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev = "2c14e595dbc853b23a085a48aff7105eaef71652" }
 #esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal.git", rev = "2c14e595dbc853b23a085a48aff7105eaef71652" }
 #esp-wifi = { git = "https://github.com/esp-rs/esp-hal.git", rev = "2c14e595dbc853b23a085a48aff7105eaef71652" }
@@ -56,5 +56,5 @@ overflow-checks = false
 #embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
 #embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
 #embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
-#embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
-#embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
