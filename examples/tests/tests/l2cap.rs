@@ -16,7 +16,7 @@ async fn l2cap_peripheral_esp32() {
     run_l2cap_peripheral_test(&[("target", "esp32"), ("board", "esp-rust-board")], "esp32").await;
 }
 
-async fn run_test(labels: &[(&str, &str)], example: &str) {
+async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], example: &str) {
     let elf = format!("bins/{example}/ble_l2cap_peripheral");
     let adapters = serial::find_controllers();
     let central = adapters[0].clone();
