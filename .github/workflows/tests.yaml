@@ -71,10 +71,12 @@ jobs:
           gh api --method POST -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
             -f "state=pending" -f "description=Running example tests" -f "context=example-tests"
-      - name: Build
-        run: |
-          cd examples/nrf-sdc
-          CARGO_TARGET_DIR=../tests cargo build --release --bins
+      - name: Download test binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: example-tests
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Test
         env:
           PROBE_CONFIG: ${{ secrets.PROBE_CONFIG }}
