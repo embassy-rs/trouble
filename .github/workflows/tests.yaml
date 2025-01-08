@@ -116,12 +116,11 @@ jobs:
 
       - name: Test
         env:
-          PROBE_CONFIG: ${{ secrets.PROBE_CONFIG }}
           RUST_LOG: info
         run: |
           cd examples/tests
           find .
-          cargo test -- --nocapture
+          PROBE_CONFIG=$(cat ../../.ci/config.json) cargo test -- --nocapture
       - name: Update failed status
         if: failure()
         env:

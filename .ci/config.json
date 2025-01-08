@@ -1,0 +1,20 @@
+{
+  "targets": [
+    {
+      "chip": "nRF52833_xxAA",
+      "probe": "0d28:0204:9904360258994e450055901000000046000000009796990b",
+      "labels": {
+        "target": "nrf52",
+        "board": "microbit"
+      }
+    },
+    {
+      "chip": "esp32c3",
+      "probe": "303a:1001:60:55:F9:BF:A9:44",
+      "labels": {
+        "target": "esp32",
+	"board": "esp-rust-board"
+      }
+    }
+  ]
+}
