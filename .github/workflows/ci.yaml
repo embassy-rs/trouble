@@ -32,9 +32,3 @@ jobs:
       - name: CI
         run: |
           ./ci.sh
-
-      - name: Upload test binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: example-tests
-          path: tests
