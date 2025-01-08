@@ -11,7 +11,7 @@ async fn l2cap_peripheral_nrf52() {
     let central = adapters[0].clone();
     let config = std::env::var("PROBE_CONFIG").unwrap();
     let config = serde_json::from_str(&config).unwrap();
-    let elf = std::fs::read("./thumbv7em-none-eabihf/release/ble_l2cap_peripheral").unwrap();
+    let elf = std::fs::read("./nrf-sdc/ble_l2cap_peripheral").unwrap();
 
     let selector = probe::init(config);
     let target = selector
