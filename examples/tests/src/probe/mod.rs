@@ -32,6 +32,7 @@ pub struct ProbeSelector {
     targets: Vec<(AtomicBool, TargetConfig)>,
 }
 
+#[derive(Debug)]
 pub struct Target<'d> {
     config: TargetConfig,
     taken: &'d AtomicBool,
@@ -74,16 +75,16 @@ impl<'d> Target<'d> {
     pub fn flash(self, elf: Vec<u8>) -> Result<TargetRunner<'d>, anyhow::Error> {
         let probe = self.config.probe.clone();
         let p: DebugProbeSelector = probe.try_into()?;
-        info!("Debug probe selector created");
+        log::info!("Debug probe selector created");
         let t = probe_rs::config::get_target_by_name(&self.config.chip)?;
-        info!("Target created");
+        log::info!("Target created");
 
         let lister = Lister::new();
-        info!("Opening probe");
+        log::info!("Opening probe");
         let probe = lister.open(p)?;
 
         let perms = Permissions::new().allow_erase_all();
-        info!("Attaching probe");
+        log::info!("Attaching probe");
         let mut session = probe.attach(t, perms)?;
         let opts = run::Options { do_flash: true };
         let mut flasher = run::Flasher::new(elf, opts);
