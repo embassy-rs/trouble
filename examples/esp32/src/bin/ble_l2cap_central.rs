@@ -3,8 +3,7 @@
 
 use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
-use esp_hal::prelude::*;
-use esp_hal::timer::timg::TimerGroup;
+use esp_hal::{clock::CpuClock, timer::timg::TimerGroup};
 use esp_wifi::ble::controller::BleConnector;
 use trouble_example_apps::ble_l2cap_central;
 use {esp_alloc as _, esp_backtrace as _};
@@ -29,8 +28,7 @@ async fn main(_s: Spawner) {
 
     #[cfg(not(feature = "esp32"))]
     {
-        let systimer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER)
-            .split::<esp_hal::timer::systimer::Target>();
+        let systimer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER);
         esp_hal_embassy::init(systimer.alarm0);
     }
     #[cfg(feature = "esp32")]

@@ -10,23 +10,16 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 cortex-m-rt = "0.7.0"
 cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
 apache-nimble = { version = "0.1.0", features = ["port-layer-embassy", "nrf52840", "controller"] }
-embassy-time = { version = "0.3.0", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-time = { version = "0.4.0", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-sync = "0.6.0"
 embassy-futures = "0.1.0"
-embassy-executor = { version = "0.6.0", features = ["defmt", "integrated-timers", "executor-thread", "arch-cortex-m"] }
-embassy-nrf = { version = "0.2.0", features = ["defmt", "nfc-pins-as-gpio", "time-driver-rtc1", "nrf52840"] }
+embassy-executor = { version = "0.7.0", features = ["defmt", "executor-thread", "arch-cortex-m"] }
+embassy-nrf = { version = "0.3.0", features = ["defmt", "nfc-pins-as-gpio", "time-driver-rtc1", "nrf52840"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 static_cell = "1.0.0"
 
 [patch.crates-io]
 apache-nimble = { git = "https://github.com/benbrittain/apache-nimble-sys.git", branch = "master" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
-embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
-#embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev= "d6a8dce6eef22564160bf25b20528b8b78ec63b8" }
 
 [profile.dev]
 debug = 2
@@ -35,4 +28,3 @@ debug = 2
 debug = 2
 lto = true
 # opt-level = "z"
-
