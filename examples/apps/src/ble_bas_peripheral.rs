@@ -60,11 +60,11 @@ where
             match advertise("Trouble Example", &mut peripheral).await {
                 Ok(conn) => {
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
-                    let connection_task = conn_task(&server, &conn);
-                    let custom_task = custom_task(&server, &conn, stack);
+                    let a = gatt_events_task(&server, &conn);
+                    let b = custom_task(&server, &conn, stack);
                     // run until any task ends (usually because the connection has been closed),
                     // then return to advertising state.
-                    select(connection_task, custom_task).await;
+                    select(a, b).await;
                 }
                 Err(e) => {
                     #[cfg(feature = "defmt")]
@@ -106,12 +106,12 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
 ///
 /// This function will handle the GATT events and process them.
 /// This is how we interact with read and write requests.
-async fn conn_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Error> {
+async fn gatt_events_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Error> {
     let level = server.battery_service.level;
     loop {
         match conn.next().await {
             ConnectionEvent::Disconnected { reason } => {
-                info!("[conn_task] disconnected: {:?}", reason);
+                info!("[gatt] disconnected: {:?}", reason);
                 break;
             }
             ConnectionEvent::Gatt { data } => {
@@ -127,23 +127,23 @@ async fn conn_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Err
                     Ok(Some(GattEvent::Read(event))) => {
                         if event.handle() == level.handle {
                             let value = server.get(&level);
-                            info!("[conn_task] Read Event to Level Characteristic: {:?}", value);
+                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                         }
                     }
                     Ok(Some(GattEvent::Write(event))) => {
                         if event.handle() == level.handle {
-                            info!("[conn_task] Write Event to Level Characteristic: {:?}", event.data());
+                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                         }
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        warn!("[conn_task] error processing event: {:?}", e);
+                        warn!("[gatt] error processing event: {:?}", e);
                     }
                 }
             }
         }
     }
-    info!("[conn_task] finished");
+    info!("[gatt] task finished");
     Ok(())
 }
 
