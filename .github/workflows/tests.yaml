@@ -66,6 +66,7 @@ jobs:
       - name: Test
         env:
           RUST_LOG: trace
+          RUST_TEST_THREADS: 1
         run: |
           cd host
           cargo test --features log --test '*' -- --nocapture
@@ -117,6 +118,7 @@ jobs:
       - name: Test
         env:
           RUST_LOG: info
+          RUST_TEST_THREADS: 1
         run: |
           cd examples/tests
           find .
