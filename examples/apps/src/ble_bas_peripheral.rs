@@ -38,9 +38,13 @@ pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
-    // Using a fixed seed means the "random" address will be the same every time the program runs,
-    // which can be useful for testing. If truly random addresses are required, a different,
-    // dynamically generated seed should be used.
+    // Using a fixed "random" address can be useful for testing. In real scenarios, one would
+    // use e.g. the MAC 6-byte array as the address (how to get that varies by the platform).
+    //
+    // tbd. How about providing the address from the caller (i.e hardware specific code)? That way,
+    //      the code to provide a chip-specific MAC could be shown. Furthermore, could the selection
+    //      of fake-vs-real address be a feature ('fixed-address-testing').
+    //
     let address = Address::random([0x41, 0x5A, 0xE3, 0x1E, 0x83, 0xE7]);
     info!("Our address = {:?}", address);
 
@@ -55,6 +59,12 @@ where
         appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
     }))
     .unwrap();
+
+    // Below could use 'join' in the same way as 'ble_bas_central' and 'ble_l2cap_peripheral' do?
+    // i.e. 'ble_task(runner)' comes first, the 'app_task' doesn't need to be named....
+    // Are 'join' and 'select' interchangeable, in this way???
+    // Benefit: 'join' use looks cooler, clearer.
+
     let app_task = async {
         loop {
             match advertise("Trouble Example", &mut peripheral).await {
@@ -92,6 +102,7 @@ where
 ///
 /// spawner.must_spawn(ble_task(runner));
 /// ```
+// Uncertain, what the '.must_spawn()' does; is this a common Embassy pattern?
 async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
     loop {
         if let Err(e) = runner.run().await {
@@ -102,6 +113,9 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
     }
 }
 
+// Consistency with the 'panic!' and 'info!' tags, perhaps?
+// 'conn_task' or 'conn' instead of 'gatt'? Likely remains from previous task naming? Compare to 'ble_task', above.
+
 /// Stream Events until the connection closes.
 ///
 /// This function will handle the GATT events and process them.
@@ -111,7 +125,7 @@ async fn conn_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Err
     loop {
         match conn.next().await {
             ConnectionEvent::Disconnected { reason } => {
-                info!("[gatt] disconnected: {:?}", reason);
+                info!("[conn_task] disconnected: {:?}", reason);
                 break;
             }
             ConnectionEvent::Gatt { data } => {
@@ -123,27 +137,26 @@ async fn conn_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Err
                 // But to simplify things, process it in the GATT server that handles
                 // the protocol details
                 match data.process(server).await {
-                    // Server processing emits
                     Ok(Some(GattEvent::Read(event))) => {
                         if event.handle() == level.handle {
                             let value = server.get(&level);
-                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                            info!("[conn_task] Read of Level Characteristic: {:?}", value);
                         }
                     }
                     Ok(Some(GattEvent::Write(event))) => {
                         if event.handle() == level.handle {
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                            info!("[conn_task] Write to Level Characteristic: {:?}", event.data());
                         }
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        warn!("[gatt] error processing event: {:?}", e);
+                        warn!("[conn_task] error processing event: {:?}", e);
                     }
                 }
             }
         }
     }
-    info!("[gatt] task finished");
+    info!("[conn_task] finished");
     Ok(())
 }
 
@@ -156,7 +169,7 @@ async fn advertise<'a, C: Controller>(
     AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),     // Q: what is this???  Connected to us being 'bas'; what would I place there for a custom service?
             AdStructure::CompleteLocalName(name.as_bytes()),
         ],
         &mut advertiser_data[..],

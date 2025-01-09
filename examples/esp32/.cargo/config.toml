@@ -16,14 +16,31 @@ runner = "espflash flash --monitor"
 target = "riscv32imc-unknown-none-elf"  # ESP32-C2 and ESP32-C3
 # target = "riscv32imac-unknown-none-elf" # ESP32-C6 and ESP32-H2
 
+  # ^-- I find the above section a bit.. difficult to understand (without documentation) and would propose removing
+  #   it. There seem to be two mechanisms for selecting the target: the alias ('cargo esp32{..}') and this '[build]'
+  #   section that requires modifying the file. I'd like to see target selection not need editing.
+  #
+  #   Personally, I use:
+  #     <<
+  #       $ cargo build --release --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf --bin ble_l2cap_peripheral
+  #     <<
+
 rustflags = [
   # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
   # NOTE: May negatively impact performance of produced code
   "-C", "force-frame-pointers",
+  "-C", "link-args=-Tlinkall.x",
+  #"-C", "link-arg-bins=-Tlinkall.x",   # as in 'build.rs'?
 ]
 
-[unstable]
-build-std = ["alloc", "core"]
+# This is not really needed, is it? It only affects 'nightly', and has something to do with "compiling the std library". |1|
+# Does not seem very applicable. Anyways, I'm only building on 'stable', so please inform if there's a need for having
+# it around. Otherwise, ..remove..?   (note: only place in the repo with such a section, so must (have been) ESP32 specific)
+#
+#   |1| -> https://doc.rust-lang.org/cargo/reference/unstable.html#build-std
+#
+#[unstable]
+#build-std = ["alloc", "core"]
 
 [env]
 ESP_LOG = "info"

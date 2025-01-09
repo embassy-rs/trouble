@@ -86,3 +86,15 @@ where
     })
     .await;
 }
+
+// General Q:
+//  What is the purpose of L2CAP in the examples?  I get that there is a 'bas' example, but what
+//  would be the case where a user of 'TrouBLE' wants to deal with the (did I get it right?) lower
+//  level of abstraction?
+//
+//  What may make this problematic is the layout having both 'ble' and 'l2cap' alongside each other,
+//  as siblings. When one likely is a higher abstraction; 'bas' using 'l2cap' underneath (just
+//  assuming; please correct me or point to a learning resource?).
+
+// "transfers data between the upper layers of the host (GAP, GATT, application) and the lower layer protocol stack. "
+//      source: TI https://software-dl.ti.com/lprf/sdg-latest/html/ble-stack-3.x/l2cap.html

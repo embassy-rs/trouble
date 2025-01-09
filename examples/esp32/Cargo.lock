@@ -240,8 +240,7 @@ dependencies = [
 [[package]]
 name = "embassy-time"
 version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "158080d48f824fad101d7b2fae2d83ac39e3f7a6fa01811034f7ab8ffc6e7309"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=d6a8dce6eef22564160bf25b20528b8b78ec63b8#d6a8dce6eef22564160bf25b20528b8b78ec63b8"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -258,8 +257,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-driver"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e0c214077aaa9206958b16411c157961fb7990d4ea628120a78d1a5a28aed24"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=d6a8dce6eef22564160bf25b20528b8b78ec63b8#d6a8dce6eef22564160bf25b20528b8b78ec63b8"
 dependencies = [
  "document-features",
 ]
@@ -267,8 +265,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-queue-driver"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1177859559ebf42cd24ae7ba8fe6ee707489b01d0bf471f8827b7b12dcb0bc0"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=d6a8dce6eef22564160bf25b20528b8b78ec63b8#d6a8dce6eef22564160bf25b20528b8b78ec63b8"
 
 [[package]]
 name = "embassy-usb-driver"
@@ -1324,12 +1321,10 @@ name = "trouble-example-apps"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
- "embassy-executor",
  "embassy-futures",
  "embassy-sync 0.6.1",
  "embassy-time",
  "embedded-hal 1.0.0",
- "embedded-hal-async",
  "embedded-io",
  "log",
  "static_cell",
@@ -1345,7 +1340,6 @@ dependencies = [
  "embassy-sync 0.6.1",
  "embassy-time",
  "embedded-io",
- "embedded-io-async",
  "futures",
  "heapless",
  "log",
