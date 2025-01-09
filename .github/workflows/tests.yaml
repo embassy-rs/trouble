@@ -90,7 +90,7 @@ jobs:
 
   example-tests:
     runs-on: self-hosted
-    needs: [build]
+    needs: [build, integration-tests]
     steps:
       - uses: actions/checkout@v4
       - name: Checkout
