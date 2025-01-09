@@ -1,3 +1,4 @@
+use probe_rs::flashing::Format;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::oneshot;
@@ -7,24 +8,46 @@ use trouble_host::prelude::*;
 #[tokio::test(flavor = "multi_thread")]
 async fn l2cap_peripheral_nrf52() {
     let _ = pretty_env_logger::try_init();
+    let fw = std::fs::read("bins/nrf-sdc/ble_l2cap_peripheral").unwrap();
+    let firmware = probe::Firmware {
+        data: fw,
+        format: Format::Elf,
+    };
+    run_l2cap_peripheral_test(&[("target", "nrf52"), ("board", "microbit")], firmware).await;
+}
+
+/*
+#[tokio::test(flavor = "multi_thread")]
+async fn l2cap_peripheral_esp32() {
+    let _ = pretty_env_logger::try_init();
+    let fw = std::fs::read("bins/esp32/ble_l2cap_peripheral").unwrap();
+    let firmware = probe::Firmware {
+        data: fw,
+        format: Format::Idf(Default::default()),
+    };
+    run_l2cap_peripheral_test(&[("target", "esp32"), ("board", "esp-rust-board")], firmware).await;
+}
+*/
+
+async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: probe::Firmware) {
     let adapters = serial::find_controllers();
     let central = adapters[0].clone();
     let config = std::env::var("PROBE_CONFIG").unwrap();
+    log::info!("Using probe config {}", config);
     let config = serde_json::from_str(&config).unwrap();
-    let elf = std::fs::read("bins/nrf-sdc/ble_l2cap_peripheral").unwrap();
 
     let selector = probe::init(config);
-    let target = selector
-        .select(&[("target", "nrf52"), ("board", "microbit")])
-        .expect("no suitable probe found");
+    let target = selector.select(labels).expect("no suitable probe found");
+    log::info!("Found target {:?}", target);
 
     let (cancel_tx, cancel_rx) = oneshot::channel();
 
     // Flash the binary to the target
-    let runner = target.flash(elf).unwrap();
+    let runner = target.flash(firmware).unwrap();
 
     // Spawn a runner for the target
     let peripheral = tokio::task::spawn(async move { runner.run(cancel_rx).await });
+    //let peripheral = tokio::task::spawn(async move {});
 
     // Run the central in the test using the serial adapter to verify
     let peripheral_address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
