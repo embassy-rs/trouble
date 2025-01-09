@@ -1,3 +1,4 @@
+use probe_rs::flashing::Format;
 use probe_rs::probe::list::Lister;
 use probe_rs::probe::DebugProbeSelector;
 use probe_rs::{Permissions, Session};
@@ -38,6 +39,11 @@ pub struct Target<'d> {
     taken: &'d AtomicBool,
 }
 
+pub struct Firmware {
+    pub data: Vec<u8>,
+    pub format: Format,
+}
+
 impl ProbeSelector {
     fn new(config: ProbeConfig) -> Self {
         let mut targets = Vec::new();
@@ -72,7 +78,7 @@ impl ProbeSelector {
 }
 
 impl<'d> Target<'d> {
-    pub fn flash(self, elf: Vec<u8>) -> Result<TargetRunner<'d>, anyhow::Error> {
+    pub fn flash(self, fw: Firmware) -> Result<TargetRunner<'d>, anyhow::Error> {
         let probe = self.config.probe.clone();
         let p: DebugProbeSelector = probe.try_into()?;
         log::info!("Debug probe selector created");
@@ -86,8 +92,7 @@ impl<'d> Target<'d> {
         let perms = Permissions::new().allow_erase_all();
         log::info!("Attaching probe");
         let mut session = probe.attach(t, perms)?;
-        let opts = run::Options { do_flash: true };
-        let mut flasher = run::Flasher::new(elf, opts);
+        let mut flasher = run::Flasher::new(fw);
         flasher.flash(&mut session)?;
         Ok(TargetRunner {
             _target: self,
@@ -117,12 +122,15 @@ impl<'d> TargetRunner<'d> {
         })
         .await
         .unwrap();
-        result
-
-        //let mut res = String::new();
-        //for entry in entries {
-        //    writeln!(&mut res, "{} - {}", entry.level, entry.message).unwrap();
-        //}
-        //(ok, res.into_bytes())
+        match result {
+            Ok(halted) => {
+                if halted {
+                    Err(anyhow::anyhow!("Firmware stopped"))
+                } else {
+                    Ok(())
+                }
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }
