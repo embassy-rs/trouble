@@ -1,47 +1,39 @@
 use std::collections::BTreeMap;
-use std::convert::TryInto;
 use std::fmt::Write;
 use std::io::Cursor;
 use std::time::Duration;
 
+use super::Firmware;
 use anyhow::{anyhow, bail};
 use defmt_decoder::{DecodeError, Location, StreamDecoder, Table};
-use log::{info, warn};
-use object::read::{File as ElfFile, Object as _, ObjectSection as _};
+use log::info;
+use object::read::{File as ElfFile, Object as _};
 use object::ObjectSymbol;
-use probe_rs::config::MemoryRegion;
 use probe_rs::debug::{DebugInfo, DebugRegisters};
 use probe_rs::flashing::{DownloadOptions, Format};
 use probe_rs::rtt::{Rtt, ScanRegion};
-use probe_rs::{Core, MemoryInterface, RegisterId, Session};
+use probe_rs::{Core, MemoryInterface, Session};
 use tokio::sync::oneshot;
-
-// pub const LR: RegisterId = RegisterId(14);
-pub const PC: RegisterId = RegisterId(15);
-pub const SP: RegisterId = RegisterId(13);
-pub const XPSR: RegisterId = RegisterId(16);
 
 const THUMB_BIT: u32 = 1;
 const TIMEOUT: Duration = Duration::from_secs(1);
 
 const POLL_SLEEP_MILLIS: u64 = 100;
 
-pub struct Options {
-    pub do_flash: bool,
-}
-
 pub(crate) struct Flasher {
-    elf_bytes: Vec<u8>,
-    opts: Options,
+    firmware: Firmware,
 }
 
 pub(crate) struct Runner {
+    elf: Option<ElfRunner>,
+}
+
+struct ElfRunner {
     rtt: Rtt,
+    di: DebugInfo,
     defmt_table: Box<Table>,
     defmt_locs: BTreeMap<u64, Location>,
     defmt_stream: Box<dyn StreamDecoder>,
-
-    di: DebugInfo,
 }
 
 unsafe fn fuck_it<'a, 'b, T>(wtf: &'a T) -> &'b T {
@@ -49,8 +41,8 @@ unsafe fn fuck_it<'a, 'b, T>(wtf: &'a T) -> &'b T {
 }
 
 impl Flasher {
-    pub fn new(elf_bytes: Vec<u8>, opts: Options) -> Self {
-        Self { elf_bytes, opts }
+    pub fn new(firmware: Firmware) -> Self {
+        Self { firmware }
     }
 
     pub fn flash(&mut self, sess: &mut Session) -> anyhow::Result<()> {
@@ -62,147 +54,54 @@ impl Flasher {
             }
         }
 
-        if !self.opts.do_flash {
-            log::info!("skipped flashing");
-        } else {
-            sess.core(0)?.reset_and_halt(TIMEOUT)?;
+        sess.core(0)?.reset_and_halt(TIMEOUT)?;
 
-            log::info!("flashing program...");
-            let mut dopts = DownloadOptions::new();
-            dopts.keep_unwritten_bytes = true;
-            dopts.verify = true;
+        log::info!("flashing program...");
+        let mut dopts = DownloadOptions::new();
+        dopts.keep_unwritten_bytes = true;
+        dopts.verify = true;
 
-            let mut loader = sess.target().flash_loader();
-            let instruction_set = sess.core(0)?.instruction_set().ok();
-            loader.load_image(sess, &mut Cursor::new(&self.elf_bytes), Format::Elf, instruction_set)?;
-            loader.commit(sess, dopts)?;
+        let mut loader = sess.target().flash_loader();
+        let instruction_set = sess.core(0)?.instruction_set().ok();
+        loader.load_image(
+            sess,
+            &mut Cursor::new(&self.firmware.data),
+            self.firmware.format.clone(),
+            instruction_set,
+        )?;
+        loader.commit(sess, dopts)?;
 
-            //flashing::download_file_with_options(sess, &opts.elf, Format::Elf, dopts)?;
-            log::info!("flashing done!");
-        }
+        //flashing::download_file_with_options(sess, &opts.elf, Format::Elf, dopts)?;
+        log::info!("flashing done!");
 
         Ok(())
     }
 
     pub(crate) fn start(&mut self, sess: &mut Session) -> anyhow::Result<Runner> {
-        let mut run_from_ram = None;
+        if self.firmware.format == Format::Elf {
+            let elf_bytes = &self.firmware.data[..];
+            let elf = ElfFile::parse(elf_bytes)?;
+            let di = DebugInfo::from_raw(elf_bytes)?;
 
-        let elf = ElfFile::parse(&self.elf_bytes[..])?;
-        let di = DebugInfo::from_raw(&self.elf_bytes[..])?;
-
-        let table = Box::new(defmt_decoder::Table::parse(&self.elf_bytes[..])?.unwrap());
-        let locs = table.get_locations(&self.elf_bytes[..])?;
-        if !table.is_empty() && locs.is_empty() {
-            log::warn!("insufficient DWARF info; compile your program with `debug = 2` to enable location info");
-        }
-
-        // sections used in cortex-m-rt
-        // NOTE we won't load `.uninit` so it is not included here
-        // NOTE we don't load `.bss` because the app (cortex-m-rt) will zero it
-        let candidates = [".vector_table", ".text", ".rodata", ".data"];
-
-        let mut vector_table = None;
-        for sect in elf.sections() {
-            if let Ok(name) = sect.name() {
-                let size = sect.size();
-                // skip empty sections
-                if candidates.contains(&name) && size != 0 {
-                    let start = sect.address();
-                    if size % 4 != 0 || start % 4 != 0 {
-                        // we could support unaligned sections but let's not do that now
-                        bail!("section `{}` is not 4-byte aligned", name);
-                    }
-
-                    let start = start.try_into()?;
-                    let data = sect
-                        .data()?
-                        .chunks_exact(4)
-                        .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
-                        .collect::<Vec<_>>();
-
-                    if name == ".vector_table" {
-                        vector_table = Some(VectorTable {
-                            location: start,
-                            // Initial stack pointer
-                            initial_sp: data[0],
-                            reset: data[1],
-                            hard_fault: data[3],
-                        });
-                    }
-                }
-            }
-        }
-
-        let vector_table = vector_table.ok_or_else(|| anyhow!("`.vector_table` section is missing"))?;
-        log::debug!("vector table: {:x?}", vector_table);
-
-        for r in &sess.target().memory_map {
-            match r {
-                MemoryRegion::Ram(r) => {
-                    if r.range.contains(&(vector_table.location as u64)) {
-                        run_from_ram = Some(true);
-                    }
-                }
-                MemoryRegion::Generic(r) => {
-                    if r.range.contains(&(vector_table.location as u64)) {
-                        run_from_ram = Some(true);
-                    }
-                }
-                MemoryRegion::Nvm(r) => {
-                    if r.range.contains(&(vector_table.location as u64)) {
-                        run_from_ram = Some(false);
-                    }
-                }
-            }
-        }
-
-        let run_from_ram = run_from_ram.unwrap();
-        info!("run_from_ram: {:?}", run_from_ram);
-
-        let (rtt_addr, main_addr) = get_rtt_main_from(&elf)?;
-        let rtt_addr = rtt_addr.ok_or_else(|| anyhow!("RTT is missing"))?;
-
-        {
-            let mut core = sess.core(0)?;
-
-            if run_from_ram {
-                // On STM32H7 due to RAM ECC (I think?) it's possible that the
-                // last written word doesn't "stick" on reset because it's "half written"
-                // https://www.st.com/resource/en/application_note/dm00623136-error-correction-code-ecc-management-for-internal-memories-protection-on-stm32h7-series-stmicroelectronics.pdf
-                //
-                // Do one dummy write to ensure the last word sticks.
-                let data = core.read_word_32(vector_table.location as _)?;
-                core.write_word_32(vector_table.location as _, data)?;
+            let table = Box::new(defmt_decoder::Table::parse(elf_bytes)?.unwrap());
+            let locs = table.get_locations(elf_bytes)?;
+            if !table.is_empty() && locs.is_empty() {
+                log::warn!("insufficient DWARF info; compile your program with `debug = 2` to enable location info");
             }
 
-            core.reset_and_halt(TIMEOUT)?;
+            let (rtt_addr, main_addr) = get_rtt_main_from(&elf)?;
+            let rtt_addr = rtt_addr.ok_or_else(|| anyhow!("RTT is missing"))?;
 
-            log::debug!("starting device");
-            if core.available_breakpoint_units()? == 0 {
-                bail!("RTT not supported on device without HW breakpoints");
-            }
+            {
+                let mut core = sess.core(0)?;
 
-            if run_from_ram {
-                core.write_core_reg(PC, vector_table.reset)?;
-                core.write_core_reg(SP, vector_table.initial_sp)?;
+                core.reset_and_halt(TIMEOUT)?;
 
-                // Write VTOR
-                // NOTE this DOES NOT play nice with the softdevice.
-                core.write_word_32(0xE000ED08, vector_table.location)?;
-                let got_vtor = core.read_word_32(0xE000ED08)?;
-                if got_vtor != vector_table.location {
-                    panic!(
-                        "failed to set VTOR! got {:08x} want {:08x}",
-                        got_vtor, vector_table.location
-                    )
+                log::debug!("starting device");
+                if core.available_breakpoint_units()? == 0 {
+                    bail!("RTT not supported on device without HW breakpoints");
                 }
 
-                // Hacks to get the softdevice to think we're doing a cold boot here.
-                //core.write_32(0x2000_005c, &[0]).unwrap();
-                //core.write_32(0x2000_0000, &[0x1000, vector_table.location]).unwrap();
-            }
-
-            if !run_from_ram {
                 // Corrupt the rtt control block so that it's setup fresh again
                 // Only do this when running from flash, because when running from RAM the
                 // "fake-flashing to RAM" is what initializes it.
@@ -214,36 +113,36 @@ impl Flasher {
                 core.run()?;
                 core.wait_for_core_halted(Duration::from_secs(5))?;
                 core.clear_hw_breakpoint(main_addr as _)?;
+
+                const OFFSET: u32 = 44;
+                const FLAG: u32 = 2; // BLOCK_IF_FULL
+                core.write_word_32((rtt_addr + OFFSET) as _, FLAG)?;
+
+                core.run()?;
             }
 
-            const OFFSET: u32 = 44;
-            const FLAG: u32 = 2; // BLOCK_IF_FULL
-            core.write_word_32((rtt_addr + OFFSET) as _, FLAG)?;
+            let rtt = setup_logging_channel(rtt_addr as u64, sess)?;
+            let defmt_stream = unsafe { fuck_it(&table) }.new_stream_decoder();
 
-            if run_from_ram {
-                core.write_8((vector_table.hard_fault & !THUMB_BIT) as _, &[0x00, 0xbe])?;
-            } else {
-                core.set_hw_breakpoint((vector_table.hard_fault & !THUMB_BIT) as _)?;
-            }
-
+            Ok(Runner {
+                elf: Some(ElfRunner {
+                    defmt_table: table,
+                    defmt_locs: locs,
+                    rtt,
+                    defmt_stream,
+                    di,
+                }),
+            })
+        } else {
+            let mut core = sess.core(0)?;
+            core.reset_and_halt(TIMEOUT)?;
             core.run()?;
+            Ok(Runner { elf: None })
         }
-
-        let rtt = setup_logging_channel(rtt_addr as u64, sess)?;
-
-        let defmt_stream = unsafe { fuck_it(&table) }.new_stream_decoder();
-
-        Ok(Runner {
-            defmt_table: table,
-            defmt_locs: locs,
-            rtt,
-            defmt_stream,
-            di,
-        })
     }
 }
 
-impl Runner {
+impl ElfRunner {
     fn poll(&mut self, sess: &mut Session) -> anyhow::Result<()> {
         let current_dir = std::env::current_dir()?;
 
@@ -312,39 +211,6 @@ impl Runner {
                     true => log::warn!("failed to decode defmt data"),
                 },
             }
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn run(&mut self, sess: &mut Session, mut cancel: oneshot::Receiver<()>) -> anyhow::Result<()> {
-        let mut was_halted = false;
-
-        loop {
-            match cancel.try_recv() {
-                Ok(_) | Err(oneshot::error::TryRecvError::Closed) => {
-                    warn!("Cancelled");
-                    return Ok(());
-                }
-                _ => {}
-            }
-
-            self.poll(sess)?;
-
-            let mut core = sess.core(0)?;
-            let is_halted = core.core_halted()?;
-
-            if is_halted && was_halted {
-                break;
-            }
-            was_halted = is_halted;
-        }
-
-        let mut core = sess.core(0)?;
-
-        let is_hardfault = self.dump_state(&mut core, false)?;
-        if is_hardfault {
-            bail!("Firmware crashed");
         }
 
         Ok(())
@@ -429,65 +295,45 @@ impl Runner {
 
         Ok(())
     }
+}
 
-    fn dump_state(&mut self, core: &mut Core, force: bool) -> anyhow::Result<bool> {
-        core.halt(TIMEOUT)?;
+impl Runner {
+    fn poll(&mut self, sess: &mut Session) -> anyhow::Result<()> {
+        if let Some(elf) = self.elf.as_mut() {
+            return elf.poll(sess);
+        }
+        Ok(())
+    }
 
-        // determine if the target is handling an interupt
-        let xpsr: u32 = core.read_core_reg(XPSR)?;
-        let exception_number = xpsr & 0xff;
-        match exception_number {
-            0 => {
-                //info!("No exception!");
-                if force {
-                    self.traceback(core)?;
+    pub(crate) fn run(&mut self, sess: &mut Session, mut cancel: oneshot::Receiver<()>) -> anyhow::Result<bool> {
+        let mut was_halted = false;
+
+        loop {
+            match cancel.try_recv() {
+                Ok(_) | Err(oneshot::error::TryRecvError::Closed) => {
+                    break;
                 }
-                Ok(false)
+                _ => {}
             }
-            3 => {
-                self.traceback(core)?;
-                info!("Hard Fault!");
 
-                // Get reason for hard fault
-                let hfsr = core.read_word_32(0xE000_ED2C)?;
+            self.poll(sess)?;
 
-                if hfsr & (1 << 30) != 0 {
-                    info!("-> configurable priority exception has been escalated to hard fault!");
+            let mut core = sess.core(0)?;
+            let is_halted = core.core_halted()?;
 
-                    // read cfsr
-                    let cfsr = core.read_word_32(0xE000_ED28)?;
-
-                    let ufsr = (cfsr >> 16) & 0xffff;
-                    let bfsr = (cfsr >> 8) & 0xff;
-                    let mmfsr = (cfsr) & 0xff;
-
-                    if ufsr != 0 {
-                        info!("\tUsage Fault     - UFSR: {:#06x}", ufsr);
-                    }
-
-                    if bfsr != 0 {
-                        info!("\tBus Fault       - BFSR: {:#04x}", bfsr);
-
-                        if bfsr & (1 << 7) != 0 {
-                            // Read address from BFAR
-                            let bfar = core.read_word_32(0xE000_ED38)?;
-                            info!("\t Location       - BFAR: {:#010x}", bfar);
-                        }
-                    }
-
-                    if mmfsr != 0 {
-                        info!("\tMemManage Fault - BFSR: {:04x}", bfsr);
-                    }
-                }
-                Ok(true)
+            if is_halted && was_halted {
+                break;
             }
-            // Ignore other exceptions for now
-            _ => {
-                self.traceback(core)?;
-                info!("Exception {}", exception_number);
-                Ok(false)
+            was_halted = is_halted;
+        }
+        if was_halted {
+            let mut core = sess.core(0)?;
+            if let Some(elf) = self.elf.as_mut() {
+                elf.traceback(&mut core)?;
             }
         }
+
+        Ok(was_halted)
     }
 }
 
@@ -560,16 +406,4 @@ fn get_rtt_main_from(elf: &ElfFile) -> anyhow::Result<(Option<u32>, u32)> {
     }
 
     Ok((rtt, main.ok_or_else(|| anyhow!("`main` symbol not found"))?))
-}
-
-/// The contents of the vector table
-#[derive(Debug)]
-struct VectorTable {
-    location: u32,
-    // entry 0
-    initial_sp: u32,
-    // entry 1: Reset handler
-    reset: u32,
-    // entry 3: HardFault handler
-    hard_fault: u32,
 }
