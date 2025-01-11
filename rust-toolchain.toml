@@ -4,6 +4,7 @@
 channel = "1.83"
 components = [ "rust-src", "rustfmt", "llvm-tools-preview" ]
 targets = [
+    "thumbv8m.main-none-eabihf",
     "thumbv7em-none-eabi",
     "thumbv7em-none-eabihf",
     "thumbv6m-none-eabi",
