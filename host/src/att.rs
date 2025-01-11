@@ -1,5 +1,5 @@
-use num_enum::TryFromPrimitive;
-use thiserror::Error;
+use core::fmt::Display;
+use core::mem;
 
 use crate::codec;
 use crate::cursor::{ReadCursor, WriteCursor};
@@ -36,66 +36,104 @@ pub(crate) const ATT_HANDLE_VALUE_NTF: u8 = 0x1b;
 /// This enum type describes the `ATT_ERROR_RSP` PDU from the Bluetooth Core Specification
 /// Version 6.0 | Vol 3, Part F (page 1491)
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, PartialEq, Clone, Copy, TryFromPrimitive, Error)]
-#[repr(u8)]
-pub enum AttErrorCode {
-    /// The attribute handle given was not valid on this server.
-    #[error("Attempted to use an `Handle` that isn't valid on this server.")]
-    InvalidHandle = 0x01,
-    /// The attribute cannot be read.
-    #[error("Attribute isn't readable.")]
-    ReadNotPermitted = 0x02,
-    /// The attribute cannot be written.
-    #[error("Attribute isn't writable.")]
-    WriteNotPermitted = 0x03,
-    /// The attribute PDU was invalid.
-    #[error("Attribute PDU is invalid.")]
-    InvalidPdu = 0x04,
-    /// The attribute requires authentication before it can be read or written.
-    #[error("Authentication needed before attribute can be read/written.")]
-    InsufficientAuthentication = 0x05,
-    /// ATT Server does not support the request reveived from the client.
-    #[error("Server doesn't support this operation.")]
-    RequestNotSupported = 0x06,
-    /// Offset specified was past the end of the attribute.
-    #[error("Offset was past the end of the attribute.")]
-    InvalidOffset = 0x07,
-    /// The attribute requires authorisation before it can be read or written.
-    #[error("Authorization needed before attribute can be read/written.")]
-    InsufficientAuthorization = 0x08,
-    /// Too many prepare writes have been queued.
-    #[error("Too many 'prepare write' requests have been queued.")]
-    PrepareQueueFull = 0x09,
-    /// No attribute found within the given attribute handle range.
-    #[error("No attribute found within the specified attribute handle range.")]
-    AttributeNotFound = 0x0A,
-    /// The attribute cannot be read using the ATT_READ_BLOB_REQ PDU.
-    #[error("Attribute can't be read using *Read Key Blob* request.")]
-    AttributeNotLong = 0x0B,
-    /// The Encryption Key Size used for encrypting this link is too short.
-    #[error("The encryption key in use is too weak to access an attribute.")]
-    InsufficientEncryptionKeySize = 0x0C,
-    /// The attribute value length is invalid for the operation.
-    #[error("Attribute value has an incorrect length for the operation.")]
-    InvalidAttributeValueLength = 0x0D,
-    /// The attribute request that was requested had encountered an error that was unlikely, and therefore could not be completed as requested.
-    #[error("Request has encountered an 'unlikely' error and could not be completed.")]
-    UnlikelyError = 0x0E,
-    /// The attribute requires encryption before it can be read or written.
-    #[error("Attribute cannot be read/written without an encrypted connection.")]
-    InsufficientEncryption = 0x0F,
-    /// The attribute type is not a supported grouping attribute as defined by a higher layer specification.
-    #[error("Attribute type is an invalid grouping attribute according to a higher-layer spec.")]
-    UnsupportedGroupType = 0x10,
-    /// Insufficient Resources to complete the request.
-    #[error("Server didn't have enough resources to complete a request.")]
-    InsufficientResources = 0x11,
-    /// The server requests the client to rediscover the database.
-    #[error("The server requests the client to rediscover the database.")]
-    DatabaseOutOfSync = 0x12,
-    /// The attribute parameter value was not allowed.
-    #[error("The attribute parameter value was not allowed.")]
-    ValueNotAllowed = 0x13,
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct AttErrorCode {
+    value: u8,
+}
+
+impl AttErrorCode {
+    /// Attempted to use a handle that isn't valid on this server
+    pub const INVALID_HANDLE: Self = Self { value: 0x01 };
+    /// The attribute cannot be read
+    pub const READ_NOT_PERMITTED: Self = Self { value: 0x02 };
+    /// The attribute cannot be written
+    pub const WRITE_NOT_PERMITTED: Self = Self { value: 0x03 };
+    /// The attribute PDU was invalid
+    pub const INVALID_PDU: Self = Self { value: 0x04 };
+    /// The attribute requires authentication before it can be read or written
+    pub const INSUFFICIENT_AUTHENTICATION: Self = Self { value: 0x05 };
+    /// ATT Server does not support the request received from the client
+    pub const REQUEST_NOT_SUPPORTED: Self = Self { value: 0x06 };
+    /// Offset specified was past the end of the attribute
+    pub const INVALID_OFFSET: Self = Self { value: 0x07 };
+    /// The attribute requires authorisation before it can be read or written
+    pub const INSUFFICIENT_AUTHORISATION: Self = Self { value: 0x08 };
+    /// Too many prepare writes have been queued
+    pub const PREPARE_QUEUE_FULL: Self = Self { value: 0x09 };
+    /// No attribute found within the given attribute handle range
+    pub const ATTRIBUTE_NOT_FOUND: Self = Self { value: 0x0a };
+    /// The attribute cannot be read using the ATT_READ_BLOB_REQ PDU
+    pub const ATTRIBUTE_NOT_LONG: Self = Self { value: 0x0b };
+    /// The Encryption Key Size used for encrypting this link is too short
+    pub const INSUFFICIENT_ENCRYPTION_KEY_SIZE: Self = Self { value: 0x0c };
+    /// The attribute value length is invalid for the operation
+    pub const INVALID_ATTRIBUTE_VALUE_LENGTH: Self = Self { value: 0x0d };
+    /// The attribute request that was requested had encountered an error that was unlikely, and therefore could not be completed as requested
+    pub const UNLIKELY_ERROR: Self = Self { value: 0x0e };
+    /// The attribute requires encryption before it can be read or written
+    pub const INSUFFICIENT_ENCRYPTION: Self = Self { value: 0x0f };
+    /// The attribute type is not a supported grouping attribute as defined by a higher layer specification
+    pub const UNSUPPORTED_GROUP_TYPE: Self = Self { value: 0x10 };
+    /// Insufficient Resources to complete the request
+    pub const INSUFFICIENT_RESOURCES: Self = Self { value: 0x11 };
+    /// The server requests the client to rediscover the database
+    pub const DATABASE_OUT_OF_SYNC: Self = Self { value: 0x12 };
+    /// The attribute parameter value was not allowed
+    pub const VALUE_NOT_ALLOWED: Self = Self { value: 0x13 };
+}
+
+impl Display for AttErrorCode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            &Self::INVALID_HANDLE => {
+                f.write_str("invalid handle: Attempted to use a handle that isn't valid on this server")
+            }
+            &Self::READ_NOT_PERMITTED => f.write_str("read not permitted: the attribute cannot be read"),
+            &Self::WRITE_NOT_PERMITTED => f.write_str("write not permitted: the attribute cannot be written"),
+            &Self::INVALID_PDU => f.write_str("invalid pdu: the attribute PDU was invalid"),
+            &Self::INSUFFICIENT_AUTHENTICATION => f.write_str(
+                "insufficient authentication: the attribute requires authentication before it can be written",
+            ),
+            &Self::REQUEST_NOT_SUPPORTED => {
+                f.write_str("request not supported: ATT server does not support the request received from the client")
+            }
+            &Self::INVALID_OFFSET => f.write_str("Offset specified was past the end of the attribute"),
+            &Self::INSUFFICIENT_AUTHORISATION => f.write_str(
+                "insufficient authorisation: the attribute requires authorisation before it can be read or written",
+            ),
+            &Self::PREPARE_QUEUE_FULL => f.write_str("prepare queue full: too many prepare writes have been queued"),
+            &Self::ATTRIBUTE_NOT_FOUND => f.write_str("attribute not found: no attribute found within the given attribute handle range"),
+            &Self::ATTRIBUTE_NOT_LONG => f.write_str("The attribute cannot be read using the ATT_READ_BLOB_REQ PDU"),
+            &Self::INSUFFICIENT_ENCRYPTION_KEY_SIZE => f.write_str("insufficient encryption key size: the encryption key size used for encrypting this link is too short"),
+            &Self::INVALID_ATTRIBUTE_VALUE_LENGTH => f.write_str("invalid attribute value length: the attribute value length is invalid for the operation"),
+            &Self::UNLIKELY_ERROR => f.write_str("unlikely error: the attribute request encountered an error that was unlikely, and therefore could not be completed"),
+            &Self::INSUFFICIENT_ENCRYPTION => f.write_str("insufficient encryption: the attribute requires encryption before it can be read or written"),
+            &Self::UNSUPPORTED_GROUP_TYPE => f.write_str("unsupported group type: the attribute type is not a supported grouping attribute as defined by a higher layer specification"),
+            &Self::INSUFFICIENT_RESOURCES => f.write_str("insufficient resources: insufficient resources to complete the request"),
+            &Self::DATABASE_OUT_OF_SYNC => f.write_str("the server requests the client to rediscover the database"),
+            &Self::VALUE_NOT_ALLOWED => f.write_str("value not allowed: the attribute parameter value was not allowed"),
+            other => write!(f, "unknown error code {}: check the most recent bluetooth spec and the documentation of the device which produced the error code", other), 
+        }
+    }
+}
+
+impl codec::Encode for AttErrorCode {
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+        dest[0] = self.value;
+        Ok(())
+    }
+}
+
+impl codec::Decode<'_> for AttErrorCode {
+    fn decode(src: &[u8]) -> Result<Self, codec::Error> {
+        Ok(Self { value: src[0] })
+    }
+}
+
+impl codec::Type for AttErrorCode {
+    fn size(&self) -> usize {
+        mem::size_of::<u8>()
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -274,7 +312,7 @@ impl<'d> AttRsp<'d> {
                 w.write(ATT_ERROR_RSP)?;
                 w.write(*request)?;
                 w.write(*handle)?;
-                w.write(*code as u8)?;
+                w.write(*code)?;
             }
             Self::ReadByType { it } => {
                 w.write(ATT_READ_BY_TYPE_RSP)?;
@@ -312,10 +350,9 @@ impl<'d> AttRsp<'d> {
                 Ok(Self::ExchangeMtu { mtu })
             }
             ATT_ERROR_RSP => {
-                let request: u8 = r.read()?;
-                let handle: u16 = r.read()?;
-                let code: u8 = r.read()?;
-                let code: AttErrorCode = code.try_into().map_err(|_| codec::Error::InvalidValue)?;
+                let request = r.read()?;
+                let handle = r.read()?;
+                let code = r.read()?;
                 Ok(Self::Error { request, handle, code })
             }
             ATT_READ_RSP => Ok(Self::Read { data: r.remaining() }),
@@ -336,7 +373,7 @@ impl<'d> AttRsp<'d> {
 
 impl From<codec::Error> for AttErrorCode {
     fn from(e: codec::Error) -> Self {
-        AttErrorCode::InvalidPdu
+        AttErrorCode::INVALID_PDU
     }
 }
 

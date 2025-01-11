@@ -496,7 +496,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             let res = AttRsp::decode(pdu.as_ref())?;
             match res {
                 AttRsp::Error { request, handle, code } => {
-                    if code == att::AttErrorCode::AttributeNotFound {
+                    if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND {
                         break;
                     }
                     return Err(Error::Att(code).into());
