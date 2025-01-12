@@ -4,7 +4,7 @@ use trouble_host::prelude::*;
 
 /// Size of L2CAP packets
 #[cfg(not(feature = "esp"))]
-pub const L2CAP_MTU: usize = 128;
+pub const L2CAP_MTU: usize = 251;
 #[cfg(feature = "esp")]
 // Some esp chips only accept an MTU >= 1017
 pub const L2CAP_MTU: usize = 1017;
