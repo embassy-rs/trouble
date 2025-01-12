@@ -2,8 +2,12 @@ use embassy_futures::{join::join, select::select};
 use embassy_time::Timer;
 use trouble_host::prelude::*;
 
-/// Size of L2CAP packets (ATT MTU is this - 4)
-const L2CAP_MTU: usize = 251;
+/// Size of L2CAP packets
+#[cfg(not(feature = "esp"))]
+pub const L2CAP_MTU: usize = 128;
+#[cfg(feature = "esp")]
+// Some esp chips only accept an MTU >= 1017
+pub const L2CAP_MTU: usize = 1017;
 
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
