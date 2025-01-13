@@ -211,9 +211,9 @@ where
             metrics: RefCell::new(HostMetrics::default()),
             controller,
             #[cfg(feature = "gatt")]
-            connections: ConnectionManager::new(connections, events, tx_pool),
+            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4, tx_pool),
             #[cfg(not(feature = "gatt"))]
-            connections: ConnectionManager::new(connections, events),
+            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4),
             reassembly: PacketReassembly::new(sar),
             channels: ChannelManager::new(rx_pool, channels, channels_rx),
             rx_pool,
