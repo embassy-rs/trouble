@@ -400,9 +400,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
     /// an error is returned
-    pub fn set<T: ToGatt>(&self, characteristic: &Characteristic<T>, input: &T) -> Result<(), Error> {
+    pub fn set<T: AttrHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
         let gatt_value = input.to_gatt();
-        self.set_raw(characteristic.handle, gatt_value)
+        self.set_raw(attribute_handle.handle(), gatt_value)
     }
 
     /// Read the value of the characteristic and pass the value to the provided closure.
@@ -410,10 +410,10 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<T: FromGatt>(&self, characteristic: &Characteristic<T>) -> Result<T, Error> {
+    pub fn get<T: AttrHandle<Value = V>, V: FromGatt>(&self, attribute_handle: &T) -> Result<T::Value, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
-                if att.handle == characteristic.handle {
+                if att.handle == attribute_handle.handle() {
                     if let AttributeData::Data {
                         props,
                         value,
@@ -422,7 +422,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                     } = &mut att.data
                     {
                         let value = if *variable_len { &value[..*len as usize] } else { value };
-                        let v = T::from_gatt(value).map_err(|_| Error::InvalidValue)?;
+                        let v = T::Value::from_gatt(value).map_err(|_| Error::InvalidValue)?;
                         return Ok(v);
                     }
                 }
@@ -468,6 +468,19 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             }
             Err(Error::NotFound)
         })
+    }
+}
+
+pub trait AttrHandle {
+    type Value: ToGatt;
+    fn handle(&self) -> u16;
+}
+
+impl<T: ToGatt> AttrHandle for Characteristic<T> {
+    type Value = T;
+
+    fn handle(&self) -> u16 {
+        self.handle
     }
 }
 
