@@ -35,6 +35,7 @@ pub(crate) const ATT_HANDLE_VALUE_NTF: u8 = 0x1b;
 ///
 /// This enum type describes the `ATT_ERROR_RSP` PDU from the Bluetooth Core Specification
 /// Version 6.0 | Vol 3, Part F (page 1491)
+/// See also: Core Specification Supplement, Part B: Common Profile and Service Error Codes
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct AttErrorCode {
@@ -46,7 +47,7 @@ impl AttErrorCode {
     pub const INVALID_HANDLE: Self = Self { value: 0x01 };
     /// The attribute cannot be read
     pub const READ_NOT_PERMITTED: Self = Self { value: 0x02 };
-    /// The attribute cannot be written
+    /// The attribute cannot be written due to permissions
     pub const WRITE_NOT_PERMITTED: Self = Self { value: 0x03 };
     /// The attribute PDU was invalid
     pub const INVALID_PDU: Self = Self { value: 0x04 };
@@ -80,6 +81,16 @@ impl AttErrorCode {
     pub const DATABASE_OUT_OF_SYNC: Self = Self { value: 0x12 };
     /// The attribute parameter value was not allowed
     pub const VALUE_NOT_ALLOWED: Self = Self { value: 0x13 };
+
+    /// Common profile and service error codes
+    /// The write request could not be fulfilled for reasons other than permissions
+    pub const WRITE_REQUEST_REJECTED: Self = Self { value: 0xFC };
+    /// The client characteristic configuration descriptor (CCCD) is not configured according to the requirements of the profile or service
+    pub const CCCD_IMPROPERLY_CONFIGURED: Self = Self { value: 0xFD };
+    /// The profile or service request could not be serviced because an operation that has been previousl triggered is still in progress
+    pub const PROCEDURE_ALREADY_IN_PROGRESS: Self = Self { value: 0xFE };
+    /// The attribute value is out of range as defined by a profile or service specification
+    pub const OUT_OF_RANGE: Self = Self { value: 0xFF };
 }
 
 impl Display for AttErrorCode {
@@ -89,7 +100,7 @@ impl Display for AttErrorCode {
                 f.write_str("invalid handle: Attempted to use a handle that isn't valid on this server")
             }
             &Self::READ_NOT_PERMITTED => f.write_str("read not permitted: the attribute cannot be read"),
-            &Self::WRITE_NOT_PERMITTED => f.write_str("write not permitted: the attribute cannot be written"),
+            &Self::WRITE_NOT_PERMITTED => f.write_str("write not permitted: the attribute cannot be written due to permissions"),
             &Self::INVALID_PDU => f.write_str("invalid pdu: the attribute PDU was invalid"),
             &Self::INSUFFICIENT_AUTHENTICATION => f.write_str(
                 "insufficient authentication: the attribute requires authentication before it can be written",
@@ -112,7 +123,15 @@ impl Display for AttErrorCode {
             &Self::INSUFFICIENT_RESOURCES => f.write_str("insufficient resources: insufficient resources to complete the request"),
             &Self::DATABASE_OUT_OF_SYNC => f.write_str("the server requests the client to rediscover the database"),
             &Self::VALUE_NOT_ALLOWED => f.write_str("value not allowed: the attribute parameter value was not allowed"),
-            other => write!(f, "unknown error code {}: check the most recent bluetooth spec and the documentation of the device which produced the error code", other), 
+
+            &Self{value: 0x80..=0x9F} => write!(f, "application error code {}: check the application documentation of the device which produced this error code", self.value),
+
+            &Self::WRITE_REQUEST_REJECTED => f.write_str("write request rejected: the write request could not be fulfilled for reasons other than permissions"),
+            &Self::CCCD_IMPROPERLY_CONFIGURED => f.write_str("CCCD improperly configured: the client characteristic configuration descriptor (CCCD) is not configured according to the requirements of the profile or service"),
+            &Self::PROCEDURE_ALREADY_IN_PROGRESS => f.write_str("procedure already in progress: the profile or service request could not be serviced because an operation that has been previousl triggered is still in progress"),
+            &Self::OUT_OF_RANGE => f.write_str("out of range: the attribute value is out of range as defined by a profile or service specification"),
+
+            other => write!(f, "unknown error code {}: check the most recent bluetooth spec", other), 
         }
     }
 }
