@@ -400,7 +400,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
     /// an error is returned
-    pub fn set<T: AttrHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
+    pub fn set<T: AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
         let gatt_value = input.to_gatt();
         self.set_raw(attribute_handle.handle(), gatt_value)
     }
@@ -410,7 +410,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<T: AttrHandle<Value = V>, V: FromGatt>(&self, attribute_handle: &T) -> Result<T::Value, Error> {
+    pub fn get<T: AttributeHandle<Value = V>, V: FromGatt>(&self, attribute_handle: &T) -> Result<T::Value, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == attribute_handle.handle() {
@@ -471,12 +471,16 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 }
 
-pub trait AttrHandle {
+/// A type which holds a handle to an attribute in the attribute table
+pub trait AttributeHandle {
+    /// The data type which the attribute contains
     type Value: ToGatt;
+
+    /// Returns the attribute handle
     fn handle(&self) -> u16;
 }
 
-impl<T: ToGatt> AttrHandle for Characteristic<T> {
+impl<T: ToGatt> AttributeHandle for Characteristic<T> {
     type Value = T;
 
     fn handle(&self) -> u16 {
