@@ -253,7 +253,7 @@ impl AttributeData<'_> {
         Ok(Self::Declaration {
             props: CharacteristicProps(r.read()?),
             handle: r.read()?,
-            uuid: Uuid::from_slice(r.remaining()),
+            uuid: Uuid::try_from(r.remaining())?,
         })
     }
 }

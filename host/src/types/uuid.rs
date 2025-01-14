@@ -1,4 +1,5 @@
 //! UUID types.
+
 use bt_hci::uuid::BluetoothUuid16;
 
 use crate::codec::{Decode, Encode, Error, Type};
@@ -28,20 +29,6 @@ impl Uuid {
     /// Create a new 128-bit UUID.
     pub const fn new_long(val: [u8; 16]) -> Self {
         Self::Uuid128(val)
-    }
-
-    /// Create a UUID from a slice, either 2 or 16 bytes long.
-    pub fn from_slice(val: &[u8]) -> Self {
-        if val.len() == 2 {
-            Self::Uuid16([val[0], val[1]])
-        } else if val.len() == 16 {
-            Self::Uuid128([
-                val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7], val[8], val[9], val[10], val[11],
-                val[12], val[13], val[14], val[15],
-            ])
-        } else {
-            panic!("unexpected input");
-        }
     }
 
     /// Copy the UUID bytes into a slice.
@@ -90,15 +77,19 @@ impl From<u16> for Uuid {
     }
 }
 
-impl From<&[u8]> for Uuid {
-    fn from(data: &[u8]) -> Self {
-        match data.len() {
-            2 => Uuid::Uuid16(data.try_into().unwrap()),
+impl TryFrom<&[u8]> for Uuid {
+    type Error = crate::Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        match value.len() {
+            // Slice length has already been verified, so unwrap can be used
+            2 => Ok(Uuid::Uuid16(value.try_into().unwrap())),
             16 => {
-                let bytes: [u8; 16] = data.try_into().unwrap();
-                Uuid::Uuid128(bytes)
+                let mut bytes = [0; 16];
+                bytes.copy_from_slice(value);
+                Ok(Uuid::Uuid128(bytes))
             }
-            _ => panic!(),
+            _ => Err(crate::Error::InvalidValue),
         }
     }
 }
