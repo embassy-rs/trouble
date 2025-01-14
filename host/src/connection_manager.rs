@@ -54,6 +54,7 @@ impl<'d> ConnectionManager<'d> {
     pub(crate) fn new(
         connections: &'d mut [ConnectionStorage],
         events: &'d mut [EventChannel<'d>],
+        default_att_mtu: u16,
         #[cfg(feature = "gatt")] tx_pool: &'d dyn DynamicPacketPool<'d>,
     ) -> Self {
         Self {
@@ -63,7 +64,7 @@ impl<'d> ConnectionManager<'d> {
                 peripheral_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
                 default_link_credits: 0,
-                default_att_mtu: 23,
+                default_att_mtu,
             }),
             events,
             outbound: Channel::new(),
@@ -675,7 +676,7 @@ mod tests {
         let storage = Box::leak(Box::new([ConnectionStorage::DISCONNECTED; 3]));
         let events = Box::leak(Box::new([const { EventChannel::new() }; 3]));
         let pool = Box::leak(Box::new(PacketPool::<NoopRawMutex, 27, 8, 1>::new(PacketQos::None)));
-        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], pool);
+        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool);
         Box::leak(Box::new(mgr))
     }
 

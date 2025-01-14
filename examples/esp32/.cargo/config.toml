@@ -10,20 +10,11 @@ esp32s3 = "run --release --no-default-features --features=esp32s3 --target=xtens
 runner = "espflash flash --monitor"
 
 [build]
-# Pick ONE of these compilation targets
-# target = "xtensa-esp32-none-elf"        # ESP32
-# target = "xtensa-esp32s3-none-elf"      # ESP32-S3
-target = "riscv32imc-unknown-none-elf"  # ESP32-C2 and ESP32-C3
-# target = "riscv32imac-unknown-none-elf" # ESP32-C6 and ESP32-H2
-
 rustflags = [
   # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
   # NOTE: May negatively impact performance of produced code
   "-C", "force-frame-pointers",
 ]
-
-[unstable]
-build-std = ["alloc", "core"]
 
 [env]
 ESP_LOG = "info"

@@ -128,6 +128,11 @@ impl<'d> Connection<'d> {
         self.manager.handle(self.index)
     }
 
+    /// Expose the att_mtu.
+    pub fn att_mtu(&self) -> u16 {
+        self.get_att_mtu()
+    }
+
     /// The connection role for this connection.
     pub fn role(&self) -> LeConnRole {
         self.manager.role(self.index)

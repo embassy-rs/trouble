@@ -54,14 +54,14 @@ impl<'a> Attribute<'a> {
 
     pub(crate) fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         if !self.data.readable() {
-            return Err(AttErrorCode::ReadNotPermitted);
+            return Err(AttErrorCode::READ_NOT_PERMITTED);
         }
         self.data.read(offset, data)
     }
 
     pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         if !self.data.writable() {
-            return Err(AttErrorCode::WriteNotPermitted);
+            return Err(AttErrorCode::WRITE_NOT_PERMITTED);
         }
 
         self.data.write(offset, data)
@@ -120,7 +120,7 @@ impl AttributeData<'_> {
 
     fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
         if !self.readable() {
-            return Err(AttErrorCode::ReadNotPermitted);
+            return Err(AttErrorCode::READ_NOT_PERMITTED);
         }
         match self {
             Self::ReadOnlyData { props, value } => {
@@ -165,10 +165,10 @@ impl AttributeData<'_> {
                 indications,
             } => {
                 if offset > 0 {
-                    return Err(AttErrorCode::InvalidOffset);
+                    return Err(AttErrorCode::INVALID_OFFSET);
                 }
                 if data.len() < 2 {
-                    return Err(AttErrorCode::UnlikelyError);
+                    return Err(AttErrorCode::UNLIKELY_ERROR);
                 }
                 let mut v = 0;
                 if *notifications {
@@ -217,7 +217,7 @@ impl AttributeData<'_> {
                 len,
             } => {
                 if !writable {
-                    return Err(AttErrorCode::WriteNotPermitted);
+                    return Err(AttErrorCode::WRITE_NOT_PERMITTED);
                 }
 
                 if offset + data.len() <= value.len() {
@@ -225,7 +225,7 @@ impl AttributeData<'_> {
                     *len = (offset + data.len()) as u16;
                     Ok(())
                 } else {
-                    Err(AttErrorCode::InvalidOffset)
+                    Err(AttErrorCode::INVALID_OFFSET)
                 }
             }
             Self::Cccd {
@@ -233,18 +233,18 @@ impl AttributeData<'_> {
                 indications,
             } => {
                 if offset > 0 {
-                    return Err(AttErrorCode::InvalidOffset);
+                    return Err(AttErrorCode::INVALID_OFFSET);
                 }
 
                 if data.is_empty() {
-                    return Err(AttErrorCode::UnlikelyError);
+                    return Err(AttErrorCode::UNLIKELY_ERROR);
                 }
 
                 *notifications = data[0] & 0x01 != 0;
                 *indications = data[0] & 0x02 != 0;
                 Ok(())
             }
-            _ => Err(AttErrorCode::WriteNotPermitted),
+            _ => Err(AttErrorCode::WRITE_NOT_PERMITTED),
         }
     }
 

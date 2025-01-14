@@ -6,6 +6,7 @@
                                                      ;; "examples/esp32/Cargo.toml"
                                                      ;; "examples/nrf-sdc/Cargo.toml"
                                                      ;; "examples/rp-pico-w/Cargo.toml"
+                                                     ;; "examples/rp-pico-2-w/Cargo.toml"
                                                      ;; "examples/serial-hci/Cargo.toml"
                                                      ;; "examples/apache-nimble/Cargo.toml"
                                                      ])))

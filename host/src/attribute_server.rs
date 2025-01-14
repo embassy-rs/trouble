@@ -110,7 +110,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
 
         let (mut header, mut body) = data.split(2)?;
         let err = self.table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::AttributeNotFound);
+            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 //trace!("Check attribute {:?} {}", att.uuid, att.handle);
                 if &att.uuid == attribute_type && att.handle >= start && att.handle <= end {
@@ -153,7 +153,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
 
         let (mut header, mut body) = data.split(2)?;
         let err = self.table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::AttributeNotFound);
+            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 //            trace!("Check attribute {:x} {}", att.uuid, att.handle);
                 if &att.uuid == group_type && att.handle >= start && att.handle <= end {
@@ -189,7 +189,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         data.write(att::ATT_READ_RSP)?;
 
         let err = self.table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::AttributeNotFound);
+            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     err = att.read(0, data.write_buf());
@@ -235,7 +235,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         data: &[u8],
     ) -> Result<usize, codec::Error> {
         let err = self.table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::AttributeNotFound);
+            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     err = att.write(0, data);
@@ -300,7 +300,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
                 w,
                 att::ATT_FIND_BY_TYPE_VALUE_REQ,
                 start,
-                AttErrorCode::AttributeNotFound,
+                AttErrorCode::ATTRIBUTE_NOT_FOUND,
             )?)
         }
     }
@@ -336,7 +336,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
                 w,
                 att::ATT_FIND_INFORMATION_REQ,
                 start,
-                AttErrorCode::AttributeNotFound,
+                AttErrorCode::ATTRIBUTE_NOT_FOUND,
             )?)
         }
     }
@@ -351,7 +351,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         w.write(att::ATT_ERROR_RSP)?;
         w.write(opcode)?;
         w.write(handle)?;
-        w.write(code as u8)?;
+        w.write(code)?;
         Ok(w.len())
     }
 
@@ -369,7 +369,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         w.write(offset)?;
 
         let err = self.table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::AttributeNotFound);
+            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     err = att.write(offset as usize, value);
@@ -403,7 +403,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         w.write(att::ATT_READ_BLOB_RSP)?;
 
         let err = self.table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::AttributeNotFound);
+            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     err = att.read(offset as usize, w.write_buf());
@@ -433,7 +433,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
             w,
             att::ATT_READ_MULTIPLE_REQ,
             u16::from_le_bytes([handles[0], handles[1]]),
-            AttErrorCode::AttributeNotFound,
+            AttErrorCode::ATTRIBUTE_NOT_FOUND,
         )
     }
 
