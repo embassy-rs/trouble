@@ -178,3 +178,19 @@ impl ToGatt for &'static str {
         self.as_bytes()
     }
 }
+
+impl ToGatt for crate::types::uuid::Uuid {
+    const MIN_SIZE: usize = 2;
+    const MAX_SIZE: usize = 16;
+
+    fn to_gatt(&self) -> &[u8] {
+        self.as_raw()
+    }
+}
+
+impl FromGatt for crate::types::uuid::Uuid {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        Self::try_from(data).map_err(|_| FromGattError::InvalidLength)
+    }
+}
+
