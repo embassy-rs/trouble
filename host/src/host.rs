@@ -28,7 +28,7 @@ use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
-#[cfg(feature = "gatt")]
+#[cfg(any(feature = "gatt", feature = "scan"))]
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use futures::pin_mut;
 

@@ -18,6 +18,7 @@ fi
 cargo batch \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features peripheral \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features central \
+    --- build --release --manifest-path host/Cargo.toml --no-default-features --features central,scan \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features central,peripheral \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features central,peripheral,defmt \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral \
