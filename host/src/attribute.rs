@@ -476,7 +476,7 @@ pub trait AttributeHandle {
     /// The data type which the attribute contains
     type Value: ToGatt;
 
-    /// Returns the attribute handle
+    /// Returns the attribute's handle
     fn handle(&self) -> u16;
 }
 
