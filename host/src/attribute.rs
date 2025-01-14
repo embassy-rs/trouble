@@ -359,7 +359,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             data: AttributeData::Service { uuid: service.uuid },
         });
         ServiceBuilder {
-            handle: AttributeHandle { handle },
+            handle,
             start: len,
             table: self,
         }
@@ -484,22 +484,9 @@ impl<T: ToGatt> AttrHandle for Characteristic<T> {
     }
 }
 
-/// Handle to an attribute in the attribute table.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct AttributeHandle {
-    pub(crate) handle: u16,
-}
-
-impl From<u16> for AttributeHandle {
-    fn from(handle: u16) -> Self {
-        Self { handle }
-    }
-}
-
 /// Builder for constructing GATT service definitions.
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
-    handle: AttributeHandle,
+    handle: u16,
     start: usize,
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
@@ -602,7 +589,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 
     /// Finish construction of the service and return a handle.
-    pub fn build(self) -> AttributeHandle {
+    pub fn build(self) -> u16 {
         self.handle
     }
 }
