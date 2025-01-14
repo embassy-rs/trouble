@@ -153,7 +153,7 @@ impl ServiceBuilder {
         quote! {
             #visibility struct #struct_name {
                 #fields
-                handle: trouble_host::attribute::AttributeHandle,
+                handle: u16,
             }
 
             #[allow(unused)]
