@@ -87,6 +87,8 @@ pub mod prelude {
     pub use crate::packet_pool::{PacketPool, Qos as PacketQos};
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
+    #[cfg(feature = "scan")]
+    pub use crate::scan::Scanner;
     #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]

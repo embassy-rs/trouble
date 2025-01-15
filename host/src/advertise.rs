@@ -475,6 +475,9 @@ pub struct AdStructureIter<'d> {
 impl<'d> AdStructureIter<'d> {
     fn read(&mut self) -> Result<AdStructure<'d>, codec::Error> {
         let len: u8 = self.cursor.read()?;
+        if len < 2 {
+            return Err(codec::Error::InvalidValue);
+        }
         let code: u8 = self.cursor.read()?;
         let data = self.cursor.slice(len as usize - 1)?;
         match code {
