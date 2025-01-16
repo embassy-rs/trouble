@@ -18,18 +18,19 @@ async fn ble_l2cap_peripheral_nrf52() {
         .await;
 }
 
-/*
-#[tokio::test(flavor = "multi_thread")]
-async fn l2cap_peripheral_esp32() {
+#[tokio::test]
+async fn ble_l2cap_peripheral_esp32c3() {
     let _ = pretty_env_logger::try_init();
     let fw = std::fs::read("bins/esp32/ble_l2cap_peripheral").unwrap();
-    let firmware = probe::Firmware {
-        data: fw,
-        format: Format::Idf(Default::default()),
-    };
-    run_l2cap_peripheral_test(&[("target", "esp32"), ("board", "esp-rust-board")], firmware).await;
+    let firmware = probe::Firmware { data: fw };
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(run_l2cap_peripheral_test(
+            &[("target", "esp32"), ("board", "esp-rust-board")],
+            firmware,
+        ))
+        .await;
 }
-*/
 
 async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: probe::Firmware) {
     let ctx = TestContext::new();
