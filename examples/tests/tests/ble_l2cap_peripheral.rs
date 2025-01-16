@@ -1,19 +1,21 @@
-use probe_rs::flashing::Format;
+use futures::future::select;
 use std::time::Duration;
 use tokio::select;
-use tokio::sync::oneshot;
-use trouble_example_tests::{probe, serial};
+use trouble_example_tests::{probe, serial, TestContext};
 use trouble_host::prelude::*;
 
-#[tokio::test(flavor = "multi_thread")]
-async fn l2cap_peripheral_nrf52() {
+#[tokio::test]
+async fn ble_l2cap_peripheral_nrf52() {
     let _ = pretty_env_logger::try_init();
     let fw = std::fs::read("bins/nrf-sdc/ble_l2cap_peripheral").unwrap();
-    let firmware = probe::Firmware {
-        data: fw,
-        format: Format::Elf,
-    };
-    run_l2cap_peripheral_test(&[("target", "nrf52"), ("board", "microbit")], firmware).await;
+    let firmware = probe::Firmware { data: fw };
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(run_l2cap_peripheral_test(
+            &[("target", "nrf52"), ("board", "microbit")],
+            firmware,
+        ))
+        .await;
 }
 
 /*
@@ -30,28 +32,20 @@ async fn l2cap_peripheral_esp32() {
 */
 
 async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: probe::Firmware) {
-    let adapters = serial::find_controllers();
-    let central = adapters[0].clone();
-    let config = std::env::var("PROBE_CONFIG").unwrap();
-    log::info!("Using probe config {}", config);
-    let config = serde_json::from_str(&config).unwrap();
+    let ctx = TestContext::new();
+    let central = ctx.serial_adapters[0].clone();
 
-    let selector = probe::init(config);
-    let target = selector.select(labels).expect("no suitable probe found");
-    log::info!("Found target {:?}", target);
-
-    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let dut = ctx.find_dut(labels).unwrap();
 
     // Flash the binary to the target
-    let runner = target.flash(firmware).unwrap();
+    let token = dut.token();
 
     // Spawn a runner for the target
-    let peripheral = tokio::task::spawn(async move { runner.run(cancel_rx).await });
-    //let peripheral = tokio::task::spawn(async move {});
+    let peripheral = tokio::task::spawn_local(dut.run(firmware));
 
     // Run the central in the test using the serial adapter to verify
     let peripheral_address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
-    let central_fut = async {
+    let central = tokio::task::spawn_local(async move {
         let controller_central = serial::create_controller(&central).await;
         let mut resources: HostResources<serial::Controller, 2, 4, 27> = HostResources::new(PacketQos::None);
         let (stack, _peripheral, mut central, mut runner) =
@@ -89,7 +83,7 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: probe::Fir
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }
                     log::info!("[central] data received");
-                    cancel_tx.send(()).unwrap();
+                    token.cancel();
                     break;
                 }
                 Ok(())
@@ -97,30 +91,13 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: probe::Fir
                 r
             }
         }
-    };
+    });
 
-    match tokio::time::timeout(Duration::from_secs(30), async { tokio::join!(central_fut, peripheral) }).await {
-        Ok(result) => match result {
-            (Err(e1), Err(e2)) => {
-                println!("Central error: {:?}", e1);
-                println!("Peripheral error: {:?}", e2);
-                panic!();
-            }
-            (Err(e), _) => {
-                println!("Central error: {:?}", e);
-                panic!();
-            }
-            (_, Err(e)) => {
-                println!("Peripheral error: {:?}", e);
-                panic!();
-            }
-            _ => {
-                println!("Test completed successfully");
-            }
-        },
-        Err(e) => {
-            println!("Test timed out: {:?}", e);
-            panic!();
-        }
-    }
+    tokio::time::timeout(Duration::from_secs(60), select(peripheral, central))
+        .await
+        .map_err(|_| {
+            println!("Test timed out");
+            assert!(false);
+        })
+        .unwrap();
 }
