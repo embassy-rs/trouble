@@ -7,6 +7,7 @@
 #![no_std]
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![allow(clippy::needless_lifetimes)]
 #![warn(missing_docs)]
 
 use core::mem::MaybeUninit;

@@ -6,12 +6,12 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 embassy-executor    = { version = "0.7.0", features = ["task-arena-size-32768"] }
-esp-backtrace = { version = "0.14.2", features = [ "exception-handler", "panic-handler", "println" ] }
-esp-hal = { version = "0.22.0", features = [ "unstable" ] }
-esp-hal-embassy = { version = "0.5.0" }
-esp-alloc = { version = "0.5.0" }
-esp-println = { version = "0.12.0", features = ["log"] }
-esp-wifi = { version = "0.11.0", features = [ "ble" ] }
+esp-backtrace = { version = "0.15", features = [ "exception-handler", "panic-handler", "println" ] }
+esp-hal = { version = "0.23.0", features = [ "unstable" ] }
+esp-hal-embassy = { version = "0.6.0" }
+esp-alloc = { version = "0.6.0" }
+esp-println = { version = "0.13.0", features = ["log"] }
+esp-wifi = { version = "0.12.0", features = [ "ble" ] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
 bt-hci = { version = "0.2" }
 embassy-futures = "0.1.1"
@@ -53,11 +53,3 @@ incremental = false
 lto = 'thin'
 opt-level = 3
 overflow-checks = false
-
-[patch.crates-io]
-esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-wifi = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-println = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-backtrace = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-alloc = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
