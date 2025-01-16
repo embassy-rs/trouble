@@ -5,9 +5,9 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_time::Duration;
 
+use crate::central::ScanConfig;
 use crate::connection_manager::ConnectionManager;
 use crate::pdu::Pdu;
-use crate::scan::ScanConfig;
 use crate::{BleHostError, Error, Stack};
 
 /// Connection configuration.

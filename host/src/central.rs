@@ -1,6 +1,5 @@
 //! Functionality for the BLE central role.
 use crate::connection::{ConnectConfig, Connection};
-use crate::scan::PhySet;
 use crate::{BleHostError, Error, Stack};
 use bt_hci::cmd::le::{LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn};
 use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
@@ -8,6 +7,7 @@ use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use embassy_futures::select::{select, Either};
+use embassy_time::Duration;
 
 /// A type implementing the BLE central role.
 pub struct Central<'d, C: Controller> {
@@ -159,4 +159,54 @@ pub(crate) fn create_phy_params<P: Copy>(phy: P, phys: PhySet) -> PhyParams<P> {
         },
     };
     phy_params
+}
+
+/// Scanner configuration.
+pub struct ScanConfig<'d> {
+    /// Active scanning.
+    pub active: bool,
+    /// List of addresses to accept.
+    pub filter_accept_list: &'d [(AddrKind, &'d BdAddr)],
+    /// PHYs to scan on.
+    pub phys: PhySet,
+    /// Scan interval.
+    pub interval: Duration,
+    /// Scan window.
+    pub window: Duration,
+    /// Scan timeout.
+    pub timeout: Duration,
+}
+
+impl Default for ScanConfig<'_> {
+    fn default() -> Self {
+        Self {
+            active: true,
+            filter_accept_list: &[],
+            phys: PhySet::M1,
+            interval: Duration::from_secs(1),
+            window: Duration::from_secs(1),
+            timeout: Duration::from_secs(0),
+        }
+    }
+}
+
+/// PHYs to scan on.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Eq, PartialEq, Copy, Clone)]
+#[repr(u8)]
+pub enum PhySet {
+    /// 1Mbps phy
+    M1 = 1,
+    /// 2Mbps phy
+    M2 = 2,
+    /// 1Mbps + 2Mbps phys
+    M1M2 = 3,
+    /// Coded phy (125kbps, S=8)
+    Coded = 4,
+    /// 1Mbps and Coded phys
+    M1Coded = 5,
+    /// 2Mbps and Coded phys
+    M2Coded = 6,
+    /// 1Mbps, 2Mbps and Coded phys
+    M1M2Coded = 7,
 }

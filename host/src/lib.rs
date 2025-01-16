@@ -49,6 +49,7 @@ pub mod connection;
 #[cfg(feature = "gatt")]
 pub mod gap;
 pub mod l2cap;
+#[cfg(feature = "scan")]
 pub mod scan;
 
 #[cfg(test)]
@@ -88,8 +89,6 @@ pub mod prelude {
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
     #[cfg(feature = "scan")]
-    pub use crate::scan::Scanner;
-    #[cfg(feature = "peripheral")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{FixedGattValue, GattValue};
@@ -249,6 +248,8 @@ pub trait Controller:
     + ControllerCmdSync<Reset>
     + ControllerCmdSync<ReadRssi>
     + ControllerCmdSync<LeCreateConnCancel>
+    + ControllerCmdSync<LeSetScanEnable>
+    + ControllerCmdSync<LeSetExtScanEnable>
     + ControllerCmdAsync<LeCreateConn>
     + ControllerCmdSync<LeClearFilterAcceptList>
     + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -279,6 +280,8 @@ impl<
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<ReadRssi>
+            + ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdAsync<LeCreateConn>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>

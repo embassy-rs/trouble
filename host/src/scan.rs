@@ -1,4 +1,5 @@
 //! Scan config.
+use crate::central::ScanConfig;
 use crate::command::CommandState;
 use crate::host::ScanState;
 use crate::BleHostError;
@@ -8,67 +9,16 @@ use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable,
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
-use bt_hci::param::{AddrKind, BdAddr, FilterDuplicates, LeAdvReport, LeExtAdvReport, ScanningPhy};
+use bt_hci::param::{AddrKind, FilterDuplicates, LeAdvReport, LeExtAdvReport, ScanningPhy};
 use bt_hci::FromHciBytes;
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::pipe::DynamicWriter;
 use embassy_sync::pipe::{DynamicReader, Pipe};
 use embassy_time::with_deadline;
-use embassy_time::Duration;
 use embassy_time::Instant;
 
 use crate::Central;
-
-/// Scanner configuration.
-pub struct ScanConfig<'d> {
-    /// Active scanning.
-    pub active: bool,
-    /// List of addresses to accept.
-    pub filter_accept_list: &'d [(AddrKind, &'d BdAddr)],
-    /// PHYs to scan on.
-    pub phys: PhySet,
-    /// Scan interval.
-    pub interval: Duration,
-    /// Scan window.
-    pub window: Duration,
-    /// Scan timeout.
-    pub timeout: Duration,
-}
-
-impl Default for ScanConfig<'_> {
-    fn default() -> Self {
-        Self {
-            active: true,
-            filter_accept_list: &[],
-            phys: PhySet::M1,
-            interval: Duration::from_secs(1),
-            window: Duration::from_secs(1),
-            timeout: Duration::from_secs(0),
-        }
-    }
-}
-
-/// PHYs to scan on.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Eq, PartialEq, Copy, Clone)]
-#[repr(u8)]
-pub enum PhySet {
-    /// 1Mbps phy
-    M1 = 1,
-    /// 2Mbps phy
-    M2 = 2,
-    /// 1Mbps + 2Mbps phys
-    M1M2 = 3,
-    /// Coded phy (125kbps, S=8)
-    Coded = 4,
-    /// 1Mbps and Coded phys
-    M1Coded = 5,
-    /// 2Mbps and Coded phys
-    M2Coded = 6,
-    /// 1Mbps, 2Mbps and Coded phys
-    M1M2Coded = 7,
-}
 
 /// A scanner that wraps a central to provide additional functionality
 /// around BLE scanning.
