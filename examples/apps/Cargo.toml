@@ -12,7 +12,6 @@ embassy-futures = "0.1.1"
 embassy-sync = { version = "0.6" }
 embassy-time = "0.4"
 embedded-hal = "1.0"
-embedded-hal-async = "1.0"
 static_cell = "2"
 embedded-io = "0.6"
 
