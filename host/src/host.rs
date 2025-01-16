@@ -11,7 +11,7 @@ use bt_hci::cmd::controller_baseband::{
 };
 use bt_hci::cmd::le::{
     LeConnUpdate, LeCreateConnCancel, LeReadBufferSize, LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask,
-    LeSetExtAdvEnable, LeSetRandomAddr,
+    LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr, LeSetScanEnable,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -20,15 +20,16 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
-    AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, LeConnRole, LeEventMask, Status,
+    AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates, LeConnRole,
+    LeEventMask, Status,
 };
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select3, select4, Either3, Either4};
+use embassy_futures::select::{select3, Either3};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
-#[cfg(any(feature = "gatt", feature = "scan"))]
+#[cfg(feature = "gatt")]
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use futures::pin_mut;
 
@@ -41,8 +42,6 @@ use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::{AllocId, DynamicPacketPool};
 use crate::pdu::Pdu;
-#[cfg(feature = "scan")]
-use crate::scan::ScanReport;
 use crate::types::l2cap::{
     L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL,
 };
@@ -69,11 +68,12 @@ pub(crate) struct BleHost<'d, T> {
     #[cfg(feature = "gatt")]
     pub(crate) tx_pool: &'d dyn DynamicPacketPool<'d>,
 
-    #[cfg(feature = "scan")]
-    pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
+    pub(crate) scan_command_state: CommandState<bool>,
+    #[cfg(feature = "scan")]
+    pub(crate) scan_state: ScanState,
 }
 
 #[derive(Clone, Copy)]
@@ -174,6 +174,34 @@ impl<'d> AdvState<'d> {
     }
 }
 
+pub(crate) struct ScanState {
+    writer: RefCell<Option<embassy_sync::pipe::DynamicWriter<'static>>>,
+}
+
+impl ScanState {
+    pub(crate) fn new() -> Self {
+        Self {
+            writer: RefCell::new(None),
+        }
+    }
+
+    pub(crate) fn reset(&self, writer: embassy_sync::pipe::DynamicWriter<'static>) {
+        self.writer.borrow_mut().replace(writer);
+    }
+
+    pub(crate) fn try_push(&self, _n_reports: u8, data: &[u8]) -> Result<(), ()> {
+        let mut writer = self.writer.borrow_mut();
+        if let Some(writer) = writer.as_mut() {
+            writer.try_write(data).map_err(|_| ())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn stop(&self) {
+        let _ = self.writer.borrow_mut().take();
+    }
+}
+
 /// Host metrics
 #[derive(Default, Clone)]
 pub struct HostMetrics {
@@ -222,9 +250,10 @@ where
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),
             #[cfg(feature = "scan")]
-            scanner: Channel::new(),
+            scan_state: ScanState::new(),
             advertise_state: AdvState::new(advertise_handles),
             advertise_command_state: CommandState::new(),
+            scan_command_state: CommandState::new(),
             connect_command_state: CommandState::new(),
         }
     }
@@ -514,6 +543,8 @@ impl<'d, C: Controller> Runner<'d, C> {
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
+            + ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetExtScanEnable>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
@@ -536,6 +567,8 @@ impl<'d, C: Controller> Runner<'d, C> {
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+            + ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeReadBufferSize>,
@@ -671,22 +704,54 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             }
                             LeEvent::LeScanTimeout(_) => {
                                 #[cfg(feature = "scan")]
-                                let _ = host.scanner.try_send(None);
+                                host.scan_state.stop();
                             }
                             LeEvent::LeAdvertisingSetTerminated(set) => {
                                 host.advertise_state.terminate(set.adv_handle);
                             }
                             LeEvent::LeExtendedAdvertisingReport(data) => {
                                 #[cfg(feature = "scan")]
-                                let _ = host
-                                    .scanner
-                                    .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
+                                {
+                                    let mut bytes = &data.reports.bytes[..];
+                                    let mut n = 0;
+                                    while n < data.reports.num_reports {
+                                        match bt_hci::param::LeExtAdvReport::from_hci_bytes(bytes) {
+                                            Ok((_, remaining)) => {
+                                                n += 1;
+                                                bytes = remaining;
+                                            }
+                                            Err(_) => {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    let consumed = data.reports.bytes.len() - bytes.len();
+                                    if let Err(_) = host.scan_state.try_push(n, &data.reports.bytes[..consumed]) {
+                                        warn!("[host] scan buffer overflow");
+                                    }
+                                }
                             }
                             LeEvent::LeAdvertisingReport(data) => {
                                 #[cfg(feature = "scan")]
-                                let _ = host
-                                    .scanner
-                                    .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
+                                {
+                                    let mut bytes = &data.reports.bytes[..];
+                                    let mut n = 0;
+                                    while n < data.reports.num_reports {
+                                        match bt_hci::param::LeAdvReport::from_hci_bytes(bytes) {
+                                            Ok((_, remaining)) => {
+                                                n += 1;
+                                                bytes = remaining;
+                                            }
+                                            Err(_) => {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    let consumed = data.reports.bytes.len() - bytes.len();
+                                    if let Err(_) = host.scan_state.try_push(n, &data.reports.bytes[..consumed]) {
+                                        warn!("[host] scan buffer overflow");
+                                    }
+                                }
                             }
                             _ => {
                                 warn!("Unknown LE event!");
@@ -762,6 +827,8 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             + ControllerCmdSync<LeCreateConnCancel>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetExtScanEnable>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>,
     {
@@ -834,43 +901,64 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
         info!("[host] initialized");
 
         loop {
-            match select4(
+            match select3(
                 poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
                 poll_fn(|cx| host.channels.poll_disconnecting(Some(cx))),
-                poll_fn(|cx| host.connect_command_state.poll_cancelled(cx)),
-                poll_fn(|cx| host.advertise_command_state.poll_cancelled(cx)),
+                select3(
+                    poll_fn(|cx| host.connect_command_state.poll_cancelled(cx)),
+                    poll_fn(|cx| host.advertise_command_state.poll_cancelled(cx)),
+                    poll_fn(|cx| host.scan_command_state.poll_cancelled(cx)),
+                ),
             )
             .await
             {
-                Either4::First(request) => {
+                Either3::First(request) => {
                     trace!("[host] poll disconnecting links");
                     host.command(Disconnect::new(request.handle(), request.reason()))
                         .await?;
                     request.confirm();
                 }
-                Either4::Second(request) => {
+                Either3::Second(request) => {
                     trace!("[host] poll disconnecting channels");
                     let mut grant = host.acl(request.handle(), 1).await?;
                     request.send(&mut grant).await?;
                     request.confirm();
                 }
-                Either4::Third(_) => {
-                    trace!("[host] cancel connection create");
-                    // trace!("[host] cancelling create connection");
-                    if host.command(LeCreateConnCancel::new()).await.is_err() {
-                        // Signal to ensure no one is stuck
-                        host.connect_command_state.canceled();
+                Either3::Third(states) => match states {
+                    Either3::First(_) => {
+                        trace!("[host] cancel connection create");
+                        // trace!("[host] cancelling create connection");
+                        if host.command(LeCreateConnCancel::new()).await.is_err() {
+                            // Signal to ensure no one is stuck
+                            host.connect_command_state.canceled();
+                        }
                     }
-                }
-                Either4::Fourth(ext) => {
-                    trace!("[host] disabling advertising");
-                    if ext {
-                        host.command(LeSetExtAdvEnable::new(false, &[])).await?
-                    } else {
-                        host.command(LeSetAdvEnable::new(false)).await?
+                    Either3::Second(ext) => {
+                        trace!("[host] disabling advertising");
+                        if ext {
+                            host.command(LeSetExtAdvEnable::new(false, &[])).await?
+                        } else {
+                            host.command(LeSetAdvEnable::new(false)).await?
+                        }
+                        host.advertise_command_state.canceled();
                     }
-                    host.advertise_command_state.canceled();
-                }
+                    Either3::Third(ext) => {
+                        trace!("[host] disabling scanning");
+                        if ext {
+                            // TODO: A bit opinionated but not more than before
+                            host.command(LeSetExtScanEnable::new(
+                                false,
+                                FilterDuplicates::Disabled,
+                                bt_hci::param::Duration::from_secs(0),
+                                bt_hci::param::Duration::from_secs(0),
+                            ))
+                            .await?;
+                        } else {
+                            host.command(LeSetScanEnable::new(false, false)).await?;
+                        }
+                        host.scan_command_state.canceled();
+                    }
+                },
             }
         }
     }
