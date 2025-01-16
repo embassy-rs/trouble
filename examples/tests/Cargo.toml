@@ -15,22 +15,22 @@ tokio = { version = "1", default-features = false, features = [
   "time",
   "rt-multi-thread",
   "macros",
+  "process"
 ] }
+pretty_env_logger = "0.5.0"
 reqwest = "0.12"
+hilbench-agent = "0.1.0"
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embedded-io-async = { version = "0.6.1" }
 embedded-io = { version = "0.6.1" }
-embassy-sync = { version = "0.6" }
-tokio-serial = "5.4"
 critical-section = { version = "1", features = ["std"] }
-probe-rs = "0.25.0"
+embassy-sync = "0.6"
+tokio-serial = "5.4"
+tokio-util = "0.7"
 rand = "0.8.5"
 heapless = "0.8.0"
 anyhow = "1"
-object = "0.32.2"
-defmt-decoder = { version = "0.3.9", features = ["unstable"] }
-bytes = "1.5.0"
-backtrace = "0.3.69"
-pretty_env_logger = "0.5.0"
-pin-project-lite = "0.2.13"
-chrono = { version = "0.4.31", features = ["serde"] }
+tempfile = "3.15"
+
+[patch.crates-io]
+hilbench-agent = { git = "https://github.com/lulf/hilbench.git", rev = "700693cec2f813967f6717341296828d4c2971ae" }
