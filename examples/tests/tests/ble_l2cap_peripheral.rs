@@ -98,5 +98,6 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
             println!("Test timed out");
             assert!(false);
         })
+        .unwrap()
         .unwrap();
 }
