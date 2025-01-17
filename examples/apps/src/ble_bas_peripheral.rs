@@ -2,13 +2,6 @@ use embassy_futures::{join::join, select::select};
 use embassy_time::Timer;
 use trouble_host::prelude::*;
 
-/// Size of L2CAP packets
-#[cfg(not(feature = "esp"))]
-pub const L2CAP_MTU: usize = 251;
-#[cfg(feature = "esp")]
-// Some esp chips only accept an MTU >= 1017
-pub const L2CAP_MTU: usize = 1017;
-
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
@@ -16,8 +9,6 @@ const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
 const MAX_ATTRIBUTES: usize = 10;
-
-type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
 
 // GATT Server definition
 #[gatt_server]
@@ -38,16 +29,17 @@ struct BatteryService {
 }
 
 /// Run the BLE stack.
-pub async fn run<C>(controller: C)
+pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where
     C: Controller,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
-    let address = Address::random([0x41, 0x5A, 0xE3, 0x1E, 0x83, 0xE7]);
+    let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources = Resources::new(PacketQos::None);
+    let mut resources: HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
+        HostResources::new(PacketQos::None);
     let (stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
         .build();

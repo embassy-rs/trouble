@@ -8,6 +8,9 @@ use esp_wifi::ble::controller::BleConnector;
 use trouble_example_apps::ble_l2cap_central;
 use {esp_alloc as _, esp_backtrace as _};
 
+#[path = "../consts.rs"]
+mod consts;
+
 #[esp_hal_embassy::main]
 async fn main(_s: Spawner) {
     esp_println::logger::init_logger_from_env();
@@ -40,5 +43,5 @@ async fn main(_s: Spawner) {
     let connector = BleConnector::new(&init, bluetooth);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
-    ble_l2cap_central::run(controller).await;
+    ble_l2cap_central::run::<_, { consts::L2CAP_MTU }>(controller).await;
 }
