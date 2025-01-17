@@ -30,6 +30,8 @@ pub(crate) const ATT_READ_MULTIPLE_RSP: u8 = 0x21;
 pub(crate) const ATT_READ_BLOB_REQ: u8 = 0x0c;
 pub(crate) const ATT_READ_BLOB_RSP: u8 = 0x0d;
 pub(crate) const ATT_HANDLE_VALUE_NTF: u8 = 0x1b;
+pub(crate) const ATT_HANDLE_VALUE_IND: u8 = 0x1d;
+pub(crate) const ATT_HANDLE_VALUE_CMF: u8 = 0x1e;
 
 /// Attribute Error Code
 ///
@@ -207,6 +209,7 @@ pub enum AttReq<'d> {
         handle: u16,
         offset: u16,
     },
+    ConfirmIndication,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -230,6 +233,14 @@ pub enum AttRsp<'d> {
         data: &'d [u8],
     },
     Write,
+    Notify {
+        handle: u16,
+        data: &'d [u8],
+    },
+    Indicate {
+        handle: u16,
+        data: &'d [u8],
+    },
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -264,6 +275,7 @@ pub struct FindByTypeValueIter<'d> {
 }
 
 impl FindByTypeValueIter<'_> {
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Result<(u16, u16), crate::Error>> {
         if self.cursor.available() >= 4 {
             let res = (|| {
@@ -286,6 +298,7 @@ pub struct ReadByTypeIter<'d> {
 }
 
 impl<'d> ReadByTypeIter<'d> {
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Result<(u16, &'d [u8]), crate::Error>> {
         if self.cursor.available() >= self.item_len {
             let res = (|| {
@@ -309,6 +322,8 @@ impl<'d> AttRsp<'d> {
             Self::Read { data } => data.len(),
             Self::ReadByType { it } => it.cursor.len(),
             Self::Write => 0,
+            Self::Notify { data, .. } => 2 + data.len(),
+            Self::Indicate { data, .. } => 2 + data.len(),
         }
     }
 
@@ -349,6 +364,16 @@ impl<'d> AttRsp<'d> {
             Self::Write => {
                 w.write(ATT_WRITE_RSP)?;
             }
+            Self::Notify { handle, data } => {
+                w.write(ATT_HANDLE_VALUE_NTF)?;
+                w.write(*handle)?;
+                w.append(data)?;
+            }
+            Self::Indicate { handle, data } => {
+                w.write(ATT_HANDLE_VALUE_IND)?;
+                w.write(*handle)?;
+                w.append(data)?;
+            }
         }
         Ok(())
     }
@@ -385,6 +410,20 @@ impl<'d> AttRsp<'d> {
                 })
             }
             ATT_WRITE_RSP => Ok(Self::Write),
+            ATT_HANDLE_VALUE_NTF => {
+                let handle = r.read()?;
+                Ok(Self::Notify {
+                    handle,
+                    data: r.remaining(),
+                })
+            }
+            ATT_HANDLE_VALUE_IND => {
+                let handle = r.read()?;
+                Ok(Self::Indicate {
+                    handle,
+                    data: r.remaining(),
+                })
+            }
             _ => Err(codec::Error::InvalidValue),
         }
     }
@@ -485,6 +524,9 @@ impl<'d> AttReq<'d> {
                 w.write(ATT_WRITE_REQ)?;
                 w.write(*handle)?;
                 w.append(data)?;
+            }
+            Self::ConfirmIndication => {
+                w.write(ATT_HANDLE_VALUE_CMF)?;
             }
             _ => unimplemented!(),
         }
@@ -600,6 +642,7 @@ impl<'d> AttReq<'d> {
                 let offset = (payload[2] as u16) + ((payload[3] as u16) << 8);
                 Ok(Self::ReadBlob { handle, offset })
             }
+            ATT_HANDLE_VALUE_CMF => Ok(Self::ConfirmIndication),
             code => {
                 warn!("[att] unknown opcode {:x}", code);
                 Err(codec::Error::InvalidValue)

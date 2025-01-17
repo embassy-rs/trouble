@@ -48,6 +48,15 @@ impl<'stack> GattData<'stack> {
         Ok(())
     }
 
+    /// Send an unsolicited reply without having a request
+    ///
+    /// Useful for sending notifications and indications
+    pub async fn reply_unsolicited(connection: &Connection<'_>, rsp: AttRsp<'_>) -> Result<(), Error> {
+        let pdu = respond(connection, rsp)?;
+        connection.send(pdu).await;
+        Ok(())
+    }
+
     /// Handle the GATT data.
     ///
     /// May return an event that should be replied/processed. Uses the attribute server to
