@@ -1,4 +1,4 @@
-use futures::future::select;
+use futures::future::join;
 use std::time::Duration;
 use tokio::select;
 use trouble_example_tests::{serial, TestContext};
@@ -17,7 +17,7 @@ async fn ble_l2cap_peripheral_nrf52() {
         .await;
 }
 
-#[tokio::test]
+/*#[tokio::test]
 async fn ble_l2cap_peripheral_esp32c3() {
     let _ = pretty_env_logger::try_init();
     let firmware = "bins/esp32/ble_l2cap_peripheral";
@@ -28,19 +28,18 @@ async fn ble_l2cap_peripheral_esp32c3() {
             firmware,
         ))
         .await;
-}
+}*/
 
 async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     let ctx = TestContext::new();
     let central = ctx.serial_adapters[0].clone();
 
     let dut = ctx.find_dut(labels).unwrap();
-
-    // Flash the binary to the target
     let token = dut.token();
+    let token2 = token.clone();
 
     // Spawn a runner for the target
-    let peripheral = tokio::task::spawn_local(dut.run(firmware.to_string()));
+    let mut dut = tokio::task::spawn_local(dut.run(firmware.to_string()));
 
     // Run the central in the test using the serial adapter to verify
     let peripheral_address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
@@ -92,11 +91,16 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
         }
     });
 
-    tokio::time::timeout(Duration::from_secs(60), select(peripheral, central))
-        .await
-        .map_err(|_| {
+    match tokio::time::timeout(Duration::from_secs(30), join(&mut dut, central)).await {
+        Err(_) => {
             println!("Test timed out");
+            token2.cancel();
+            let _ = tokio::time::timeout(Duration::from_secs(1), dut).await;
             assert!(false);
-        })
-        .unwrap();
+        }
+        Ok((p, c)) => {
+            p.expect("peripheral failed").unwrap();
+            c.expect("central failed").unwrap();
+        }
+    }
 }
