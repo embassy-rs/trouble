@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::process::Stdio;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
@@ -33,18 +32,12 @@ impl<'d> DeviceUnderTest<'d> {
         self.token.clone()
     }
 
-    pub async fn run(self, fw: Firmware) -> Result<FirmwareLogs, anyhow::Error> {
-        let mut temp = tempfile::NamedTempFile::new()?;
-        temp.write_all(&fw.data)?;
-        let path = temp.path().to_str().unwrap().to_string();
-        drop(temp);
+    pub async fn run(self, firmware: String) -> Result<FirmwareLogs, anyhow::Error> {
         let mut flasher = Command::new("probe-rs")
-            .env("RUST_LOG", "info")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .arg("run")
-            .arg("--elf")
-            .arg(&path)
+            .arg(&firmware)
             .arg("--chip")
             .arg(&self.target.config().chip)
             .arg("--probe")
@@ -52,24 +45,39 @@ impl<'d> DeviceUnderTest<'d> {
             .spawn()
             .unwrap();
 
-        let stderr = flasher.stderr.as_mut().unwrap();
-        let mut stderr_reader = BufReader::new(stderr);
+        let stdout = flasher.stdout.take().unwrap();
+        let stderr = flasher.stderr.take().unwrap();
+        let mut stdout_reader = BufReader::new(stdout).lines();
+        let mut stderr_reader = BufReader::new(stderr).lines();
 
         let mut lines: Vec<String> = Vec::new();
         select! {
+            r = flasher.wait() => {
+                log::warn!("flasher exited unexpectedly: {:?}", r);
+            }
             _ = self.token.cancelled() => {
                 flasher.kill().await.unwrap();
             }
             _ = async {
                 loop {
-                    let mut line = String::new();
-                    stderr_reader.read_line(&mut line).await.unwrap();
-                    lines.push(line);
+                    select! {
+                        r = stdout_reader.next_line() => {
+                            if let Ok(Some(r)) = r {
+                                lines.push(r);
+                            }
+                        }
+                        r = stderr_reader.next_line() => {
+                            if let Ok(Some(r)) = r {
+                                lines.push(r);
+                            }
+                        }
+                    }
                 }
             } => {
 
             }
         }
+        log::info!("waiting for process exit");
         flasher.wait().await.unwrap();
         Ok(FirmwareLogs { lines })
     }

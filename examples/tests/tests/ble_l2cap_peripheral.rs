@@ -1,14 +1,13 @@
 use futures::future::select;
 use std::time::Duration;
 use tokio::select;
-use trouble_example_tests::{probe, serial, TestContext};
+use trouble_example_tests::{serial, TestContext};
 use trouble_host::prelude::*;
 
 #[tokio::test]
 async fn ble_l2cap_peripheral_nrf52() {
     let _ = pretty_env_logger::try_init();
-    let fw = std::fs::read("bins/nrf-sdc/ble_l2cap_peripheral").unwrap();
-    let firmware = probe::Firmware { data: fw };
+    let firmware = "bins/nrf-sdc/ble_l2cap_peripheral";
     let local = tokio::task::LocalSet::new();
     local
         .run_until(run_l2cap_peripheral_test(
@@ -21,8 +20,7 @@ async fn ble_l2cap_peripheral_nrf52() {
 #[tokio::test]
 async fn ble_l2cap_peripheral_esp32c3() {
     let _ = pretty_env_logger::try_init();
-    let fw = std::fs::read("bins/esp32/ble_l2cap_peripheral").unwrap();
-    let firmware = probe::Firmware { data: fw };
+    let firmware = "bins/esp32/ble_l2cap_peripheral";
     let local = tokio::task::LocalSet::new();
     local
         .run_until(run_l2cap_peripheral_test(
@@ -32,7 +30,7 @@ async fn ble_l2cap_peripheral_esp32c3() {
         .await;
 }
 
-async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: probe::Firmware) {
+async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     let ctx = TestContext::new();
     let central = ctx.serial_adapters[0].clone();
 
@@ -42,7 +40,7 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: probe::Fir
     let token = dut.token();
 
     // Spawn a runner for the target
-    let peripheral = tokio::task::spawn_local(dut.run(firmware));
+    let peripheral = tokio::task::spawn_local(dut.run(firmware.to_string()));
 
     // Run the central in the test using the serial adapter to verify
     let peripheral_address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
