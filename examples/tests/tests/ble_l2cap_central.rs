@@ -1,4 +1,4 @@
-use futures::future::select;
+use futures::future::join;
 use std::time::Duration;
 use tokio::select;
 use trouble_example_tests::{serial, TestContext};
@@ -107,11 +107,15 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
         }
     });
 
-    tokio::time::timeout(Duration::from_secs(60), select(central, peripheral))
+    tokio::time::timeout(Duration::from_secs(60), join(peripheral, central))
         .await
         .map_err(|_| {
             println!("Test timed out");
             assert!(false);
+        })
+        .map(|(p, c)| {
+            p.expect("peripheral failed").unwrap();
+            c.expect("central failed").unwrap();
         })
         .unwrap();
 }
