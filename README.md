@@ -6,6 +6,7 @@ TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, wit
 
 ## What is a Host?
 
+
 A BLE Host is one side of the Host Controller Interface (HCI). The BLE specification defines the software of a BLE implementation in terms of a `controller` (lower layer) and a `host` (upper layer).
 
 These communicate via a standardized protocol, that may run over different transports such as as UART, USB or a custom in-memory IPC implementation.
