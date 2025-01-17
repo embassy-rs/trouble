@@ -33,17 +33,28 @@ impl<'d> DeviceUnderTest<'d> {
     }
 
     pub async fn run(self, firmware: String) -> Result<FirmwareLogs, anyhow::Error> {
-        let mut flasher = Command::new("probe-rs")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .arg("run")
-            .arg(&firmware)
-            .arg("--chip")
-            .arg(&self.target.config().chip)
-            .arg("--probe")
-            .arg(&self.target.config().probe)
-            .spawn()
-            .unwrap();
+        let mut flasher = if self.target.config().chip.starts_with("esp32") {
+            Command::new("espflash")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .arg("flash")
+                .arg(&firmware)
+                .arg("--monitor")
+                .spawn()
+                .unwrap()
+        } else {
+            Command::new("probe-rs")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .arg("run")
+                .arg(&firmware)
+                .arg("--chip")
+                .arg(&self.target.config().chip)
+                .arg("--probe")
+                .arg(&self.target.config().probe)
+                .spawn()
+                .unwrap()
+        };
 
         let stdout = flasher.stdout.take().unwrap();
         let stderr = flasher.stderr.take().unwrap();
