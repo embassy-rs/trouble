@@ -53,10 +53,10 @@ impl<'d> DeviceUnderTest<'d> {
         let mut lines: Vec<String> = Vec::new();
         select! {
             r = flasher.wait() => {
-                log::warn!("flasher exited unexpectedly: {:?}", r);
                 for line in lines {
                     log::warn!("{}", line);
                 }
+                return Err(anyhow::anyhow!("flasher exited unexpectedly: {:?}", r));
             }
             _ = self.token.cancelled() => {
                 flasher.kill().await.unwrap();
