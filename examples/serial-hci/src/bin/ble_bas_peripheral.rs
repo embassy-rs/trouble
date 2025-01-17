@@ -51,5 +51,5 @@ async fn main() {
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
 
-    ble_bas_peripheral::run(controller).await;
+    ble_bas_peripheral::run::<_, 128>(controller).await;
 }

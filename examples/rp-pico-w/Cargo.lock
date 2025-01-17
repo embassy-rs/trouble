@@ -2414,7 +2414,6 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-hal 1.0.0",
- "embedded-hal-async",
  "embedded-io",
  "static_cell",
  "trouble-host",

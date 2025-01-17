@@ -2,27 +2,26 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
-/// Size of L2CAP packets
-#[cfg(not(feature = "esp"))]
-const L2CAP_MTU: usize = 128;
-#[cfg(feature = "esp")]
-// Some esp chips only accept an MTU >= 1017
-const L2CAP_MTU: usize = 1017;
-
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-type Resources<C> = HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU>;
-
-pub async fn run<C>(controller: C)
+pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where
     C: Controller,
 {
-    let mut resources = Resources::new(PacketQos::None);
-    let (stack, _, mut central, mut runner) = trouble_host::new(controller, &mut resources).build();
+    // Using a fixed "random" address can be useful for testing. In real scenarios, one would
+    // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
+    let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
+    info!("Our address = {:?}", address);
+
+    let mut resources: HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
+        HostResources::new(PacketQos::None);
+    let (stack, _, mut central, mut runner) = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .build();
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
     // Currently it matches the address used by the peripheral examples
