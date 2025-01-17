@@ -54,6 +54,9 @@ impl<'d> DeviceUnderTest<'d> {
         select! {
             r = flasher.wait() => {
                 log::warn!("flasher exited unexpectedly: {:?}", r);
+                for line in lines {
+                    log::warn!("{}", line);
+                }
             }
             _ = self.token.cancelled() => {
                 flasher.kill().await.unwrap();
