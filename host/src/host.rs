@@ -495,29 +495,29 @@ where
 }
 
 /// Runs the host with the given controller.
-pub struct Runner<'d, C: Controller> {
-    rx: RxRunner<'d, C>,
-    control: ControlRunner<'d, C>,
-    tx: TxRunner<'d, C>,
+pub struct Runner<'stack, 'resources, C: Controller> {
+    rx: RxRunner<'stack, 'resources, C>,
+    control: ControlRunner<'stack, 'resources, C>,
+    tx: TxRunner<'stack, 'resources, C>,
 }
 
 /// The receiver part of the host runner.
-pub struct RxRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+pub struct RxRunner<'stack, 'resources, C: Controller> {
+    stack: &'stack Stack<'resources, C>,
 }
 
 /// The control part of the host runner.
-pub struct ControlRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+pub struct ControlRunner<'stack, 'resources, C: Controller> {
+    stack: &'stack Stack<'resources, C>,
 }
 
 /// The transmit part of the host runner.
-pub struct TxRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+pub struct TxRunner<'stack, 'resources, C: Controller> {
+    stack: &'stack Stack<'resources, C>,
 }
 
-impl<'d, C: Controller> Runner<'d, C> {
-    pub(crate) fn new(stack: Stack<'d, C>) -> Self {
+impl<'stack, 'resources, C: Controller> Runner<'stack, 'resources, C> {
+    pub(crate) fn new(stack: &'stack Stack<'resources, C>) -> Self {
         Self {
             rx: RxRunner { stack },
             control: ControlRunner { stack },
@@ -526,7 +526,13 @@ impl<'d, C: Controller> Runner<'d, C> {
     }
 
     /// Split the runner into separate independent async tasks
-    pub fn split(self) -> (RxRunner<'d, C>, ControlRunner<'d, C>, TxRunner<'d, C>) {
+    pub fn split(
+        self,
+    ) -> (
+        RxRunner<'stack, 'resources, C>,
+        ControlRunner<'stack, 'resources, C>,
+        TxRunner<'stack, 'resources, C>,
+    ) {
         (self.rx, self.control, self.tx)
     }
 
@@ -594,7 +600,7 @@ impl<'d, C: Controller> Runner<'d, C> {
     }
 }
 
-impl<'d, C: Controller> RxRunner<'d, C> {
+impl<'stack, 'resources, C: Controller> RxRunner<'stack, 'resources, C> {
     /// Run the receive loop that polls the controller for events.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
@@ -811,7 +817,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
     }
 }
 
-impl<'d, C: Controller> ControlRunner<'d, C> {
+impl<'stack, 'resources, C: Controller> ControlRunner<'stack, 'resources, C> {
     /// Run the control loop for the host
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
@@ -964,7 +970,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
     }
 }
 
-impl<'d, C: Controller> TxRunner<'d, C> {
+impl<'stack, 'resources, C: Controller> TxRunner<'stack, 'resources, C> {
     /// Run the transmit loop for the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
         let host = self.stack.host;
@@ -991,10 +997,10 @@ impl<'d, C: Controller> TxRunner<'d, C> {
     }
 }
 
-pub struct AclSender<'a, 'd, T: Controller> {
+pub struct AclSender<'a, 'resources, T: Controller> {
     pub(crate) controller: &'a T,
     pub(crate) handle: ConnHandle,
-    pub(crate) grant: PacketGrant<'a, 'd>,
+    pub(crate) grant: PacketGrant<'a, 'resources>,
 }
 
 impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {

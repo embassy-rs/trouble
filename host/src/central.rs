@@ -1,8 +1,9 @@
 //! Functionality for the BLE central role.
 use crate::connection::{ConnectConfig, Connection};
+use crate::Controller;
 use crate::{BleHostError, Error, Stack};
 use bt_hci::cmd::le::{LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn};
-use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
@@ -10,17 +11,20 @@ use embassy_futures::select::{select, Either};
 use embassy_time::Duration;
 
 /// A type implementing the BLE central role.
-pub struct Central<'d, C: Controller> {
-    pub(crate) stack: Stack<'d, C>,
+pub struct Central<'stack, 'resources, C: Controller> {
+    pub(crate) stack: &'stack Stack<'resources, C>,
 }
 
-impl<'d, C: Controller> Central<'d, C> {
-    pub(crate) fn new(stack: Stack<'d, C>) -> Self {
+impl<'stack, 'resources, C: Controller> Central<'stack, 'resources, C> {
+    pub(crate) fn new(stack: &'stack Stack<'resources, C>) -> Self {
         Self { stack }
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'d>, BleHostError<C::Error>>
+    pub async fn connect(
+        &mut self,
+        config: &ConnectConfig<'_>,
+    ) -> Result<Connection<'resources>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -30,7 +34,7 @@ impl<'d, C: Controller> Central<'d, C> {
             return Err(Error::InvalidValue.into());
         }
 
-        let host = self.stack.host;
+        let host = &self.stack.host;
         let _drop = crate::host::OnDrop::new(|| {
             host.connect_command_state.cancel(true);
         });
@@ -70,7 +74,10 @@ impl<'d, C: Controller> Central<'d, C> {
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect_ext(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'d>, BleHostError<C::Error>>
+    pub async fn connect_ext(
+        &mut self,
+        config: &ConnectConfig<'_>,
+    ) -> Result<Connection<'resources>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -80,7 +87,7 @@ impl<'d, C: Controller> Central<'d, C> {
             return Err(Error::InvalidValue.into());
         }
 
-        let host = self.stack.host;
+        let host = &self.stack.host;
         // Ensure no other connect ongoing.
         let _drop = crate::host::OnDrop::new(|| {
             host.connect_command_state.cancel(true);
@@ -133,7 +140,7 @@ impl<'d, C: Controller> Central<'d, C> {
     where
         C: ControllerCmdSync<LeClearFilterAcceptList> + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        let host = self.stack.host;
+        let host = &self.stack.host;
         host.command(LeClearFilterAcceptList::new()).await?;
         for entry in filter_accept_list {
             host.command(LeAddDeviceToFilterAcceptList::new(entry.0, *entry.1))

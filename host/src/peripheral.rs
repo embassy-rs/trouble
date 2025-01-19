@@ -13,12 +13,12 @@ use crate::connection::Connection;
 use crate::{Address, BleHostError, Error, Stack};
 
 /// Type which implements the BLE peripheral role.
-pub struct Peripheral<'d, C: Controller> {
-    stack: Stack<'d, C>,
+pub struct Peripheral<'c, 'd, C: Controller> {
+    stack: &'c Stack<'d, C>,
 }
 
-impl<'d, C: Controller> Peripheral<'d, C> {
-    pub(crate) fn new(stack: Stack<'d, C>) -> Self {
+impl<'c, 'd, C: Controller> Peripheral<'c, 'd, C> {
+    pub(crate) fn new(stack: &'c Stack<'d, C>) -> Self {
         Self { stack }
     }
 
@@ -34,7 +34,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
-        let host = self.stack.host;
+        let host = &self.stack.host;
 
         // Ensure no other advertise ongoing.
         let drop = crate::host::OnDrop::new(|| {
