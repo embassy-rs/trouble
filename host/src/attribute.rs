@@ -679,6 +679,22 @@ impl<T: FromGatt> Characteristic<T> {
     pub fn get<M: RawMutex, const MAX: usize>(&self, server: &AttributeServer<'_, M, MAX>) -> Result<T, Error> {
         server.table().get(self)
     }
+
+    /// Returns the attribute handle for the characteristic's CCCD properties (if available)
+    pub fn cccd_handle(&self) -> Option<CccdHandle> {
+        self.cccd_handle.map(CccdHandle)
+    }
+}
+
+/// Attribute handle for a characteristic's CCCD properties
+pub struct CccdHandle(u16);
+
+impl AttributeHandle for CccdHandle {
+    type Value = CharacteristicProps;
+
+    fn handle(&self) -> u16 {
+        self.0
+    }
 }
 
 /// Builder for characteristics.
@@ -810,6 +826,22 @@ impl CharacteristicProps {
             }
         }
         false
+    }
+}
+
+impl FixedGattValue for CharacteristicProps {
+    const SIZE: usize = 1;
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            return Err(FromGattError::InvalidLength);
+        }
+
+        Ok(CharacteristicProps(data[0]))
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        FixedGattValue::to_gatt(&self.0)
     }
 }
 
