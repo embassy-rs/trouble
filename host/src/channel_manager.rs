@@ -12,13 +12,13 @@ use embassy_sync::waitqueue::WakerRegistration;
 use crate::cursor::WriteCursor;
 use crate::host::{AclSender, BleHost};
 use crate::l2cap::L2capChannel;
-use crate::packet_pool::{AllocId, DynamicPacketPool, Packet};
+use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
     L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
 };
-use crate::{BleHostError, Error};
+use crate::{config, BleHostError, Error};
 
 const BASE_ID: u16 = 0x40;
 
@@ -31,37 +31,37 @@ struct State<'d> {
 }
 
 /// Channel manager for L2CAP channels used directly by clients.
-pub struct ChannelManager<'d, const RXQ: usize> {
-    pool: &'d dyn DynamicPacketPool<'d>,
+pub struct ChannelManager<'d> {
+    pool: &'d dyn Pool,
     state: RefCell<State<'d>>,
-    inbound: &'d mut [PacketChannel<'d, RXQ>],
+    inbound: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
 }
 
-pub(crate) struct PacketChannel<'d, const QLEN: usize> {
-    chan: Channel<NoopRawMutex, Option<Pdu<'d>>, QLEN>,
+pub(crate) struct PacketChannel<const QLEN: usize> {
+    chan: Channel<NoopRawMutex, Option<Pdu>, QLEN>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChannelIndex(u8);
 
-impl<'d, const QLEN: usize> PacketChannel<'d, QLEN> {
+impl<const QLEN: usize> PacketChannel<QLEN> {
     #[allow(clippy::declare_interior_mutable_const)]
-    pub(crate) const NEW: PacketChannel<'d, QLEN> = PacketChannel { chan: Channel::new() };
+    pub(crate) const NEW: PacketChannel<QLEN> = PacketChannel { chan: Channel::new() };
 
     pub fn close(&self) -> Result<(), ()> {
         self.chan.try_send(None).map_err(|_| ())
     }
 
-    pub async fn send(&self, pdu: Pdu<'d>) {
+    pub async fn send(&self, pdu: Pdu) {
         self.chan.send(Some(pdu)).await;
     }
 
-    pub fn try_send(&self, pdu: Pdu<'d>) -> Result<(), Error> {
+    pub fn try_send(&self, pdu: Pdu) -> Result<(), Error> {
         self.chan.try_send(Some(pdu)).map_err(|_| Error::OutOfMemory)
     }
 
-    pub async fn receive(&self) -> Option<Pdu<'d>> {
+    pub async fn receive(&self) -> Option<Pdu> {
         self.chan.receive().await
     }
 
@@ -94,11 +94,11 @@ impl State<'_> {
     }
 }
 
-impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
+impl<'d> ChannelManager<'d> {
     pub fn new(
-        pool: &'d dyn DynamicPacketPool<'d>,
+        pool: &'d dyn Pool,
         channels: &'d mut [ChannelStorage],
-        inbound: &'d mut [PacketChannel<'d, RXQ>],
+        inbound: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
     ) -> Self {
         Self {
             pool,
@@ -178,7 +178,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
                         chan.mtu = mtu;
                         chan.flow_control = CreditFlowControl::new(
                             credit_flow,
-                            initial_credits.unwrap_or(self.pool.min_available(AllocId::from_channel(chan.cid)) as u16),
+                            initial_credits.unwrap_or(self.pool.available() as u16),
                         );
                         chan.state = ChannelState::Connected;
                         let mps = chan.mps;
@@ -237,7 +237,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         // Allocate space for our new channel.
         let idx = self.alloc(conn, |storage| {
             cid = storage.cid;
-            credits = initial_credits.unwrap_or(self.pool.min_available(AllocId::from_channel(storage.cid)) as u16);
+            credits = initial_credits.unwrap_or(self.pool.available() as u16);
             storage.psm = psm;
             storage.mps = mps;
             storage.mtu = mtu;
@@ -300,7 +300,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
     }
 
     /// Dispatch an incoming L2CAP packet to the appropriate channel.
-    pub(crate) fn dispatch(&self, header: L2capHeader, packet: Packet<'d>) -> Result<(), Error> {
+    pub(crate) fn dispatch(&self, header: L2capHeader, packet: Packet) -> Result<(), Error> {
         if header.channel < BASE_ID {
             return Err(Error::InvalidChannelId);
         }
@@ -522,7 +522,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         Ok(pos)
     }
 
-    async fn receive_pdu(&self, chan: ChannelIndex) -> Result<Pdu<'d>, Error> {
+    async fn receive_pdu(&self, chan: ChannelIndex) -> Result<Pdu, Error> {
         match self.inbound[chan.0 as usize].receive().await {
             Some(pdu) => Ok(pdu),
             None => Err(Error::ChannelClosed),
@@ -625,7 +625,7 @@ impl<'d, const RXQ: usize> ChannelManager<'d, RXQ> {
         &self,
         index: ChannelIndex,
         ble: &BleHost<'d, T>,
-        mut packet: Packet<'d>,
+        mut packet: Packet,
     ) -> Result<(), BleHostError<T::Error>> {
         let (conn, cid, credits) = self.with_mut(|state| {
             let chan = &mut state.channels[index.0 as usize];
@@ -800,7 +800,7 @@ pub(crate) trait DynamicChannelManager {
     fn print(&self, index: ChannelIndex, f: defmt::Formatter);
 }
 
-impl<const RXQ: usize> DynamicChannelManager for ChannelManager<'_, RXQ> {
+impl DynamicChannelManager for ChannelManager<'_> {
     fn inc_ref(&self, index: ChannelIndex) {
         ChannelManager::inc_ref(self, index)
     }
@@ -1010,12 +1010,11 @@ mod tests {
 
     use super::*;
     use crate::mock_controller::MockController;
-    use crate::packet_pool::Qos;
     use crate::HostResources;
 
     #[test]
     fn channel_refcount() {
-        let mut resources: HostResources<MockController, 2, 2, 27> = HostResources::new(Qos::None);
+        let mut resources: HostResources<2, 2, 27> = HostResources::new();
         let ble = MockController::new();
 
         let builder = crate::new(ble, &mut resources);

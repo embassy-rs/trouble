@@ -1,11 +1,11 @@
 //! BLE connection.
+
 use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-use bt_hci::param::{BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_time::Duration;
 
-use crate::central::ScanConfig;
 use crate::connection_manager::ConnectionManager;
 use crate::pdu::Pdu;
 use crate::{BleHostError, Error, Stack};
@@ -16,6 +16,56 @@ pub struct ConnectConfig<'d> {
     pub scan_config: ScanConfig<'d>,
     /// Parameters to use for the connection.
     pub connect_params: ConnectParams,
+}
+
+/// Scan/connect configuration.
+pub struct ScanConfig<'d> {
+    /// Active scanning.
+    pub active: bool,
+    /// List of addresses to accept.
+    pub filter_accept_list: &'d [(AddrKind, &'d BdAddr)],
+    /// PHYs to scan on.
+    pub phys: PhySet,
+    /// Scan interval.
+    pub interval: Duration,
+    /// Scan window.
+    pub window: Duration,
+    /// Scan timeout.
+    pub timeout: Duration,
+}
+
+impl Default for ScanConfig<'_> {
+    fn default() -> Self {
+        Self {
+            active: true,
+            filter_accept_list: &[],
+            phys: PhySet::M1,
+            interval: Duration::from_secs(1),
+            window: Duration::from_secs(1),
+            timeout: Duration::from_secs(0),
+        }
+    }
+}
+
+/// PHYs to scan on.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Eq, PartialEq, Copy, Clone)]
+#[repr(u8)]
+pub enum PhySet {
+    /// 1Mbps phy
+    M1 = 1,
+    /// 2Mbps phy
+    M2 = 2,
+    /// 1Mbps + 2Mbps phys
+    M1M2 = 3,
+    /// Coded phy (125kbps, S=8)
+    Coded = 4,
+    /// 1Mbps and Coded phys
+    M1Coded = 5,
+    /// 2Mbps and Coded phys
+    M2Coded = 6,
+    /// 1Mbps, 2Mbps and Coded phys
+    M1M2Coded = 7,
 }
 
 /// Connection parameters.
@@ -32,8 +82,19 @@ pub struct ConnectParams {
     pub supervision_timeout: Duration,
 }
 
-/// An event
-pub enum ConnectionEvent<'d> {
+#[cfg(not(feature = "gatt"))]
+/// A connection event.
+pub enum ConnectionEvent {
+    /// Connection disconnected.
+    Disconnected {
+        /// The reason (status code) for the disconnect.
+        reason: Status,
+    },
+}
+
+/// A connection event.
+#[cfg(feature = "gatt")]
+pub enum ConnectionEvent<'stack> {
     /// Connection disconnected.
     Disconnected {
         /// The reason (status code) for the disconnect.
@@ -42,11 +103,20 @@ pub enum ConnectionEvent<'d> {
     /// GATT event.
     Gatt {
         /// The event that was returned
-        #[cfg(feature = "gatt")]
-        data: crate::gatt::GattData<'d>,
-        #[cfg(not(feature = "gatt"))]
-        /// Connection handle for the event
-        connection: Connection<'d>,
+        data: crate::gatt::GattData<'stack>,
+    },
+}
+
+pub(crate) enum ConnectionEventData {
+    /// Connection disconnected.
+    Disconnected {
+        /// The reason (status code) for the disconnect.
+        reason: Status,
+    },
+    /// GATT event.
+    Gatt {
+        /// The event that was returned
+        data: Pdu,
     },
 }
 
@@ -65,9 +135,9 @@ impl Default for ConnectParams {
 /// Handle to a BLE connection.
 ///
 /// When the last reference to a connection is dropped, the connection is automatically disconnected.
-pub struct Connection<'d> {
+pub struct Connection<'stack> {
     index: u8,
-    manager: &'d ConnectionManager<'d>,
+    manager: &'stack ConnectionManager<'stack>,
 }
 
 impl Clone for Connection<'_> {
@@ -83,8 +153,8 @@ impl Drop for Connection<'_> {
     }
 }
 
-impl<'d> Connection<'d> {
-    pub(crate) fn new(index: u8, manager: &'d ConnectionManager<'d>) -> Self {
+impl<'stack> Connection<'stack> {
+    pub(crate) fn new(index: u8, manager: &'stack ConnectionManager<'stack>) -> Self {
         Self { index, manager }
     }
 
@@ -96,26 +166,41 @@ impl<'d> Connection<'d> {
         self.manager.get_att_mtu(self.index)
     }
 
-    pub(crate) async fn send(&self, pdu: Pdu<'d>) {
+    pub(crate) async fn send(&self, pdu: Pdu) {
         self.manager.send(self.index, pdu).await
     }
 
-    pub(crate) fn try_send(&self, pdu: Pdu<'d>) -> Result<(), Error> {
+    pub(crate) fn try_send(&self, pdu: Pdu) -> Result<(), Error> {
         self.manager.try_send(self.index, pdu)
     }
 
-    pub(crate) async fn post_event(&self, event: ConnectionEvent<'d>) {
+    pub(crate) async fn post_event(&self, event: ConnectionEventData) {
         self.manager.post_event(self.index, event).await
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) fn alloc_tx(&self) -> Result<crate::packet_pool::Packet<'d>, Error> {
+    pub(crate) fn alloc_tx(&self) -> Result<crate::packet_pool::Packet, Error> {
         self.manager.alloc_tx()
     }
 
     /// Wait for next connection event.
-    pub async fn next(&self) -> ConnectionEvent<'d> {
-        self.manager.next(self.index).await
+    #[cfg(not(feature = "gatt"))]
+    pub async fn next(&self) -> ConnectionEvent {
+        match self.manager.next(self.index).await {
+            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
+            ConnectionEventData::Gatt { data } => unreachable!(),
+        }
+    }
+
+    /// Wait for next connection event.
+    #[cfg(feature = "gatt")]
+    pub async fn next(&self) -> ConnectionEvent<'stack> {
+        match self.manager.next(self.index).await {
+            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
+            ConnectionEventData::Gatt { data } => ConnectionEvent::Gatt {
+                data: crate::gatt::GattData::new(data, self.clone()),
+            },
+        }
     }
 
     /// Check if still connected
@@ -150,7 +235,7 @@ impl<'d> Connection<'d> {
     }
 
     /// The RSSI value for this connection.
-    pub async fn rssi<T>(&self, stack: Stack<'_, T>) -> Result<i8, BleHostError<T::Error>>
+    pub async fn rssi<T>(&self, stack: &Stack<'_, T>) -> Result<i8, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
     {
@@ -162,7 +247,7 @@ impl<'d> Connection<'d> {
     /// Update connection parameters for this connection.
     pub async fn update_connection_params<T>(
         &self,
-        stack: Stack<'_, T>,
+        stack: &Stack<'_, T>,
         params: ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where

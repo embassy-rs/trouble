@@ -38,11 +38,9 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        HostResources::new(PacketQos::None);
-    let (stack, mut peripheral, _, runner) = trouble_host::new(controller, &mut resources)
-        .set_random_address(address)
-        .build();
+    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let (mut peripheral, _, runner) = stack.build();
 
     info!("Starting advertising and GATT service");
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
@@ -57,7 +55,7 @@ where
                 Ok(conn) => {
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let a = gatt_events_task(&server, &conn);
-                    let b = custom_task(&server, &conn, stack);
+                    let b = custom_task(&server, &conn, &stack);
                     // run until any task ends (usually because the connection has been closed),
                     // then return to advertising state.
                     select(a, b).await;
@@ -176,7 +174,7 @@ async fn advertise<'a, C: Controller>(
 /// This task will notify the connected central of a counter value every 2 seconds.
 /// It will also read the RSSI value every 2 seconds.
 /// and will stop when the connection is closed by the central or an error occurs.
-async fn custom_task<C: Controller>(server: &Server<'_>, conn: &Connection<'_>, stack: Stack<'_, C>) {
+async fn custom_task<C: Controller>(server: &Server<'_>, conn: &Connection<'_>, stack: &Stack<'_, C>) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
     loop {

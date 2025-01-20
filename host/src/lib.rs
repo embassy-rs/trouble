@@ -17,13 +17,12 @@ use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
 use bt_hci::FromHciBytesError;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
-use crate::packet_pool::{PacketPool, Qos};
+use crate::packet_pool::PacketPool;
 
 mod fmt;
 
@@ -31,6 +30,7 @@ mod fmt;
 compile_error!("Must enable at least one of the `central` or `peripheral` features");
 
 mod att;
+#[cfg(feature = "central")]
 pub mod central;
 mod channel_manager;
 mod codec;
@@ -40,10 +40,15 @@ mod connection_manager;
 mod cursor;
 pub mod packet_pool;
 mod pdu;
+#[cfg(feature = "peripheral")]
 pub mod peripheral;
 pub mod types;
 
-pub use packet_pool::Qos as PacketQos;
+#[cfg(feature = "peripheral")]
+use peripheral::*;
+
+#[cfg(feature = "central")]
+use central::*;
 
 pub mod advertise;
 pub mod connection;
@@ -57,9 +62,7 @@ pub mod scan;
 pub(crate) mod mock_controller;
 
 pub(crate) mod host;
-pub use central::*;
 use host::{AdvHandleState, BleHost, HostMetrics, Runner};
-pub use peripheral::*;
 
 #[allow(missing_docs)]
 pub mod prelude {
@@ -86,7 +89,7 @@ pub mod prelude {
     pub use crate::gatt::*;
     pub use crate::host::{ControlRunner, HostMetrics, Runner, RxRunner, TxRunner};
     pub use crate::l2cap::*;
-    pub use crate::packet_pool::{PacketPool, Qos as PacketQos};
+    pub use crate::packet_pool::PacketPool;
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
     #[cfg(feature = "scan")]
@@ -301,33 +304,32 @@ impl<
 ///
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<
-    C: Controller,
-    const CONNS: usize,
-    const CHANNELS: usize,
-    const L2CAP_MTU: usize,
-    const ADV_SETS: usize = 1,
-> {
-    qos: Qos,
-    rx_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }, CHANNELS>>,
+pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize = 1> {
+    rx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }>>,
     #[cfg(feature = "gatt")]
-    tx_pool: MaybeUninit<PacketPool<NoopRawMutex, L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }, 1>>,
+    tx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }>>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
-    events: MaybeUninit<[EventChannel<'static>; CONNS]>,
+    events: MaybeUninit<[EventChannel; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
-    channels_rx: MaybeUninit<[PacketChannel<'static, { config::L2CAP_RX_QUEUE_SIZE }>; CHANNELS]>,
-    sar: MaybeUninit<[SarType<'static>; CONNS]>,
+    channels_rx: MaybeUninit<[PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>; CHANNELS]>,
+    sar: MaybeUninit<[SarType; CONNS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
-    inner: MaybeUninit<BleHost<'static, C>>,
 }
 
-impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
-    HostResources<C, CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize> Default
+    for HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
 {
-    /// Create a new instance of host resources with the provided QoS requirements for packets.
-    pub fn new(qos: Qos) -> Self {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
+    HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+{
+    /// Create a new instance of host resources.
+    pub const fn new() -> Self {
         Self {
-            qos,
             rx_pool: MaybeUninit::uninit(),
             #[cfg(feature = "gatt")]
             tx_pool: MaybeUninit::uninit(),
@@ -337,7 +339,6 @@ impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: 
             channels: MaybeUninit::uninit(),
             channels_rx: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
-            inner: MaybeUninit::uninit(),
         }
     }
 }
@@ -345,7 +346,7 @@ impl<C: Controller, const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: 
 /// Create a new instance of the BLE host using the provided controller implementation and
 /// the resource configuration
 pub fn new<
-    'd,
+    'resources,
     C: Controller,
     const CONNS: usize,
     const CHANNELS: usize,
@@ -353,43 +354,48 @@ pub fn new<
     const ADV_SETS: usize,
 >(
     controller: C,
-    resources: &'d mut HostResources<C, CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
-) -> Builder<'d, C> {
+    resources: &'resources mut HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
+) -> Stack<'resources, C> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         core::mem::transmute(x)
     }
 
     // Safety:
-    // - HostResources has the same lifetime as the returned Builder.
+    // - HostResources has the exceeding lifetime as the returned Stack.
     // - Internal lifetimes are elided (made 'static) to simplify API usage
     // - This _should_ be OK, because there are no references held to the resources
     //   when the stack is shut down.
-    use crate::packet_pool::DynamicPacketPool;
-    let rx_pool: &'d dyn DynamicPacketPool<'d> = &*resources.rx_pool.write(PacketPool::new(resources.qos));
-    let rx_pool = unsafe {
-        core::mem::transmute::<&'d dyn DynamicPacketPool<'d>, &'static dyn DynamicPacketPool<'static>>(rx_pool)
-    };
+    use crate::packet_pool::Pool;
+    let rx_pool: &'resources dyn Pool = &*resources.rx_pool.write(PacketPool::new());
+    let rx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(rx_pool) };
 
     #[cfg(feature = "gatt")]
-    let tx_pool: &'d dyn DynamicPacketPool<'d> = &*resources.tx_pool.write(PacketPool::new(PacketQos::None));
+    let tx_pool: &'resources dyn Pool = &*resources.tx_pool.write(PacketPool::new());
     #[cfg(feature = "gatt")]
-    let tx_pool = unsafe {
-        core::mem::transmute::<&'d dyn DynamicPacketPool<'d>, &'static dyn DynamicPacketPool<'static>>(tx_pool)
-    };
+    let tx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(tx_pool) };
 
-    let connections = &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
-    let connections = unsafe { transmute_slice(connections) };
-    let events = &mut *resources.events.write([const { EventChannel::new() }; CONNS]);
-    let events = unsafe { transmute_slice(events) };
+    use crate::l2cap::sar::AssembledPacket;
+    use crate::types::l2cap::L2capHeader;
+    use bt_hci::param::ConnHandle;
+    let connections: &mut [ConnectionStorage] =
+        &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
+    let connections: &'resources mut [ConnectionStorage] = unsafe { transmute_slice(connections) };
+
+    let events: &mut [EventChannel] = &mut *resources.events.write([EventChannel::NEW; CONNS]);
+    let events: &'resources mut [EventChannel] = unsafe { transmute_slice(events) };
+
     let channels = &mut *resources.channels.write([ChannelStorage::DISCONNECTED; CHANNELS]);
-    let channels = unsafe { transmute_slice(channels) };
-    let channels_rx = &mut *resources.channels_rx.write([PacketChannel::NEW; CHANNELS]);
-    let channels_rx = unsafe { transmute_slice(channels_rx) };
+    let channels: &'static mut [ChannelStorage] = unsafe { transmute_slice(channels) };
+
+    let channels_rx: &mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>] =
+        &mut *resources.channels_rx.write([PacketChannel::NEW; CHANNELS]);
+    let channels_rx: &'static mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>] =
+        unsafe { transmute_slice(channels_rx) };
     let sar = &mut *resources.sar.write([const { None }; CONNS]);
-    let sar = unsafe { transmute_slice(sar) };
+    let sar: &'static mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>] = unsafe { transmute_slice(sar) };
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
-    let advertise_handles = unsafe { transmute_slice(advertise_handles) };
-    let host = BleHost::new(
+    let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
+    let host: BleHost<'_, C> = BleHost::new(
         controller,
         rx_pool,
         #[cfg(feature = "gatt")]
@@ -402,53 +408,40 @@ pub fn new<
         advertise_handles,
     );
 
-    let host = &mut *resources.inner.write(host);
-    let host = unsafe { core::mem::transmute::<&mut BleHost<'_, C>, &'d mut BleHost<'d, C>>(host) };
-    Builder { host }
+    Stack { host }
 }
 
-/// Type for configuring the BLE host.
-pub struct Builder<'d, C: Controller> {
-    host: &'d mut BleHost<'d, C>,
+/// Contains the host stack
+pub struct Stack<'stack, C> {
+    host: BleHost<'stack, C>,
 }
 
-impl<'d, C: Controller> Builder<'d, C> {
+impl<'stack, C: Controller> Stack<'stack, C> {
     /// Set the random address used by this host.
-    pub fn set_random_address(self, address: Address) -> Self {
+    pub fn set_random_address(mut self, address: Address) -> Self {
         self.host.address.replace(address);
         self
     }
 
     /// Build the stack.
     #[cfg(all(feature = "central", feature = "peripheral"))]
-    pub fn build(self) -> (Stack<'d, C>, Peripheral<'d, C>, Central<'d, C>, Runner<'d, C>) {
-        let stack = Stack::new(self.host);
-        (stack, Peripheral::new(stack), Central::new(stack), Runner::new(stack))
+    pub fn build(&'stack self) -> (Peripheral<'stack, C>, Central<'stack, C>, Runner<'stack, C>) {
+        let stack = self;
+        (Peripheral::new(stack), Central::new(stack), Runner::new(stack))
     }
 
     /// Build the stack.
     #[cfg(all(not(feature = "central"), feature = "peripheral"))]
-    pub fn build(self) -> (Stack<'d, C>, Peripheral<'d, C>, Runner<'d, C>) {
-        let stack = Stack::new(self.host);
-        (stack, Peripheral::new(stack), Runner::new(stack))
+    pub fn build(&'stack self) -> (Peripheral<'stack, C>, Runner<'stack, C>) {
+        let stack = self;
+        (Peripheral::new(stack), Runner::new(stack))
     }
 
     /// Build the stack.
     #[cfg(all(feature = "central", not(feature = "peripheral")))]
-    pub fn build(self) -> (Stack<'d, C>, Central<'d, C>, Runner<'d, C>) {
-        let stack = Stack::new(self.host);
-        (stack, Central::new(stack), Runner::new(stack))
-    }
-}
-
-/// Handle to the BLE stack.
-pub struct Stack<'d, C> {
-    host: &'d BleHost<'d, C>,
-}
-
-impl<'d, C: Controller> Stack<'d, C> {
-    pub(crate) fn new(host: &'d BleHost<'d, C>) -> Self {
-        Self { host }
+    pub fn build(&'stack self) -> (Central<'stack, C>, Runner<'stack, C>) {
+        let stack = self;
+        (Central::new(stack), Runner::new(stack))
     }
 
     /// Run a HCI command and return the response.
@@ -479,11 +472,3 @@ impl<'d, C: Controller> Stack<'d, C> {
         self.host.log_status(verbose);
     }
 }
-
-impl<C> Clone for Stack<'_, C> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<C> Copy for Stack<'_, C> {}

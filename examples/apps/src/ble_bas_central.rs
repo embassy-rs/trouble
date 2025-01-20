@@ -17,11 +17,9 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        HostResources::new(PacketQos::None);
-    let (stack, _, mut central, mut runner) = trouble_host::new(controller, &mut resources)
-        .set_random_address(address)
-        .build();
+    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let (_, mut central, mut runner) = stack.build();
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
     // Currently it matches the address used by the peripheral examples
@@ -42,7 +40,7 @@ where
         let conn = central.connect(&config).await.unwrap();
         info!("Connected, creating gatt client");
 
-        let client = GattClient::<C, 10, 24>::new(stack, &conn).await.unwrap();
+        let client = GattClient::<C, 10, 24>::new(&stack, &conn).await.unwrap();
 
         let _ = join(client.task(), async {
             info!("Looking for battery service");

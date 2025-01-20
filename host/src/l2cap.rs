@@ -73,14 +73,14 @@ impl<'d> L2capChannel<'d> {
     /// If there are no available credits to send, waits until more credits are available.
     pub async fn send<T: Controller, const TX_MTU: usize>(
         &mut self,
-        stack: Stack<'_, T>,
+        stack: &Stack<'_, T>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = [0u8; TX_MTU];
         stack
             .host
             .channels
-            .send(self.index, buf, &mut p_buf[..], stack.host)
+            .send(self.index, buf, &mut p_buf[..], &stack.host)
             .await
     }
 
@@ -92,14 +92,14 @@ impl<'d> L2capChannel<'d> {
     /// If there are no available credits to send, returns Error::Busy.
     pub fn try_send<T: Controller + blocking::Controller, const TX_MTU: usize>(
         &mut self,
-        stack: Stack<'_, T>,
+        stack: &Stack<'_, T>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = [0u8; TX_MTU];
         stack
             .host
             .channels
-            .try_send(self.index, buf, &mut p_buf[..], stack.host)
+            .try_send(self.index, buf, &mut p_buf[..], &stack.host)
     }
 
     /// Receive data on this channel and copy it into the buffer.
@@ -107,15 +107,15 @@ impl<'d> L2capChannel<'d> {
     /// The length provided buffer slice must be equal or greater to the agreed MTU.
     pub async fn receive<T: Controller>(
         &mut self,
-        stack: Stack<'_, T>,
+        stack: &Stack<'_, T>,
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
-        stack.host.channels.receive(self.index, buf, stack.host).await
+        stack.host.channels.receive(self.index, buf, &stack.host).await
     }
 
     /// Await an incoming connection request matching the list of PSM.
     pub async fn accept<T: Controller>(
-        stack: Stack<'d, T>,
+        stack: &'d Stack<'d, T>,
         connection: &Connection<'_>,
         psm: &[u16],
         config: &L2capChannelConfig,
@@ -130,14 +130,14 @@ impl<'d> L2capChannel<'d> {
                 config.mtu,
                 config.flow_policy,
                 config.initial_credits,
-                stack.host,
+                &stack.host,
             )
             .await
     }
 
     /// Create a new connection request with the provided PSM.
     pub async fn create<T: Controller>(
-        stack: Stack<'d, T>,
+        stack: &'d Stack<'d, T>,
         connection: &Connection<'_>,
         psm: u16,
         config: &L2capChannelConfig,
@@ -152,7 +152,7 @@ where {
                 config.mtu,
                 config.flow_policy,
                 config.initial_credits,
-                stack.host,
+                &stack.host,
             )
             .await
     }

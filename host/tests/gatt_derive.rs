@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::time::Duration;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -70,10 +71,11 @@ async fn gatt_client_server() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
-        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new(PacketQos::None);
-        let (_, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
-            .set_random_address(peripheral_address)
-            .build();
+        let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
+        let stack = trouble_host::new(controller_peripheral, &mut resources)
+            .set_random_address(peripheral_address);
+        let (mut peripheral, _, mut runner) = stack.build();
+
         let gap = GapConfig::Peripheral(PeripheralConfig {
             name: &name,
             appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
@@ -154,10 +156,9 @@ async fn gatt_client_server() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = common::create_controller(&central).await;
-        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            HostResources::new(PacketQos::None);
-        let (stack, _peripheral, mut central, mut runner) =
-            trouble_host::new(controller_central, &mut resources).build();
+        let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
+        let stack = trouble_host::new(controller_central, &mut resources);
+        let (_, mut central, mut runner) = stack.build();
 
         select! {
             r = runner.run() => {
@@ -179,7 +180,7 @@ async fn gatt_client_server() {
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
                 println!("[central] creating gatt client");
-                let client = GattClient::<common::Controller, 10, 27>::new(stack, &conn).await.unwrap();
+                let client = GattClient::<common::Controller, 10, 27>::new(&stack, &conn).await.unwrap();
 
                 select! {
                     r = async {

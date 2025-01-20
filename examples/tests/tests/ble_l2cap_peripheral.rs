@@ -45,9 +45,9 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     let peripheral_address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     let central = tokio::task::spawn_local(async move {
         let controller_central = serial::create_controller(&central).await;
-        let mut resources: HostResources<serial::Controller, 2, 4, 27> = HostResources::new(PacketQos::None);
-        let (stack, _peripheral, mut central, mut runner) =
-            trouble_host::new(controller_central, &mut resources).build();
+        let mut resources: HostResources<2, 4, 27> = HostResources::new();
+        let stack = trouble_host::new(controller_central, &mut resources);
+        let (_peripheral, mut central, mut runner) = stack.build();
         select! {
             r = runner.run() => {
                 r
@@ -67,16 +67,16 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
                     let conn = central.connect(&config).await.unwrap();
                     log::info!("[central] connected");
                     const PAYLOAD_LEN: usize = 27;
-                    let mut ch1 = L2capChannel::create(stack, &conn, 0x2349, &Default::default()).await?;
+                    let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &Default::default()).await?;
                     log::info!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, PAYLOAD_LEN>(stack, &tx).await?;
+                        ch1.send::<_, PAYLOAD_LEN>(&stack, &tx).await?;
                     }
                     log::info!("[central] data sent");
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(stack, &mut rx).await?;
+                        let len = ch1.receive(&stack, &mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }

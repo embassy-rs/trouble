@@ -17,12 +17,9 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        HostResources::new(PacketQos::None);
-
-    let (stack, _, mut central, mut runner) = trouble_host::new(controller, &mut resources)
-        .set_random_address(address)
-        .build();
+    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let (_, mut central, mut runner) = stack.build();
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
     // Currently, it matches the address used by the peripheral examples
@@ -42,18 +39,18 @@ where
             let conn = central.connect(&config).await.unwrap();
             info!("Connected, creating l2cap channel");
             const PAYLOAD_LEN: usize = 27;
-            let mut ch1 = L2capChannel::create(stack, &conn, 0x2349, &Default::default())
+            let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &Default::default())
                 .await
                 .unwrap();
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(stack, &tx).await.unwrap();
+                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
             }
             info!("Sent data, waiting for them to be sent back");
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
-                let len = ch1.receive(stack, &mut rx).await.unwrap();
+                let len = ch1.receive(&stack, &mut rx).await.unwrap();
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }

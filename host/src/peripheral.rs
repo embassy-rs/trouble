@@ -14,11 +14,11 @@ use crate::{Address, BleHostError, Error, Stack};
 
 /// Type which implements the BLE peripheral role.
 pub struct Peripheral<'d, C: Controller> {
-    stack: Stack<'d, C>,
+    stack: &'d Stack<'d, C>,
 }
 
 impl<'d, C: Controller> Peripheral<'d, C> {
-    pub(crate) fn new(stack: Stack<'d, C>) -> Self {
+    pub(crate) fn new(stack: &'d Stack<'d, C>) -> Self {
         Self { stack }
     }
 
@@ -34,7 +34,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
-        let host = self.stack.host;
+        let host = &self.stack.host;
 
         // Ensure no other advertise ongoing.
         let drop = crate::host::OnDrop::new(|| {
@@ -128,7 +128,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
             + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
     {
         assert_eq!(sets.len(), handles.len());
-        let host = self.stack.host;
+        let host = &self.stack.host;
         // Check host supports the required advertisement sets
         {
             let result = host.command(LeReadNumberOfSupportedAdvSets::new()).await?;
@@ -219,7 +219,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
 
 /// Handle to an active advertiser which can accept connections.
 pub struct Advertiser<'d, C: Controller> {
-    stack: Stack<'d, C>,
+    stack: &'d Stack<'d, C>,
     extended: bool,
     done: bool,
 }
