@@ -48,10 +48,9 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
     let peripheral = tokio::task::spawn_local(async move {
         let controller_peripheral = serial::create_controller(&peripheral).await;
 
-        let mut resources: HostResources<serial::Controller, 2, 4, 27> = HostResources::new(PacketQos::None);
-        let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
-            .set_random_address(peripheral_address)
-            .build();
+        let mut resources: HostResources<2, 4, 27> = HostResources::new();
+        let stack = trouble_host::new(controller_peripheral, &mut resources).set_random_address(peripheral_address);
+        let (mut peripheral, _central, mut runner) = stack.build();
 
         select! {
             r = runner.run() => {
@@ -79,7 +78,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
                     let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::accept(stack, &conn, &[0x2349], &Default::default()).await?;
+                    let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &Default::default()).await?;
 
                     println!("[peripheral] channel created");
 
@@ -87,7 +86,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
                     // Size of payload we're expecting
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(stack, &mut rx).await?;
+                        let len = ch1.receive(&stack, &mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }
@@ -95,7 +94,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
 
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, PAYLOAD_LEN>(stack, &tx).await?;
+                        ch1.send::<_, PAYLOAD_LEN>(&stack, &tx).await?;
                     }
                     println!("[peripheral] data sent");
                     token.cancel();

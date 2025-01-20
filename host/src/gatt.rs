@@ -19,26 +19,20 @@ use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, 
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::packet_pool::{DynamicPacketPool, GENERIC_ID};
 use crate::pdu::Pdu;
 use crate::types::gatt_traits::{FromGattError, GattValue};
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
 /// A GATT payload ready for processing.
-pub struct GattData<'d> {
-    pdu: Pdu<'d>,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-    connection: Connection<'d>,
+pub struct GattData<'stack> {
+    pdu: Pdu,
+    connection: Connection<'stack>,
 }
 
-impl<'d> GattData<'d> {
-    pub(crate) fn new(pdu: Pdu<'d>, tx_pool: &'d dyn DynamicPacketPool<'d>, connection: Connection<'d>) -> Self {
-        Self {
-            pdu,
-            tx_pool,
-            connection,
-        }
+impl<'stack> GattData<'stack> {
+    pub(crate) fn new(pdu: Pdu, connection: Connection<'stack>) -> Self {
+        Self { pdu, connection }
     }
 
     /// Get the raw request.
@@ -49,7 +43,7 @@ impl<'d> GattData<'d> {
 
     /// Respond directly to request.
     pub async fn reply(self, rsp: AttRsp<'_>) -> Result<(), Error> {
-        let pdu = respond(&self.connection, self.tx_pool, rsp)?;
+        let pdu = respond(&self.connection, rsp)?;
         self.connection.send(pdu).await;
         Ok(())
     }
@@ -61,12 +55,11 @@ impl<'d> GattData<'d> {
     pub async fn process<'m, 'server, M: RawMutex, const MAX: usize>(
         self,
         server: &'m AttributeServer<'server, M, MAX>,
-    ) -> Result<Option<GattEvent<'d, 'm>>, Error> {
+    ) -> Result<Option<GattEvent<'stack, 'm>>, Error> {
         let att = self.request();
         match att {
             AttReq::Write { handle, data: _ } => Ok(Some(GattEvent::Write(WriteEvent {
                 value_handle: handle,
-                tx_pool: self.tx_pool,
                 pdu: Some(self.pdu),
                 connection: self.connection,
                 server,
@@ -74,7 +67,6 @@ impl<'d> GattData<'d> {
 
             AttReq::WriteCmd { handle, data: _ } => Ok(Some(GattEvent::Write(WriteEvent {
                 value_handle: handle,
-                tx_pool: self.tx_pool,
                 pdu: Some(self.pdu),
                 connection: self.connection,
                 server,
@@ -82,7 +74,6 @@ impl<'d> GattData<'d> {
 
             AttReq::Read { handle } => Ok(Some(GattEvent::Read(ReadEvent {
                 value_handle: handle,
-                tx_pool: self.tx_pool,
                 pdu: Some(self.pdu),
                 connection: self.connection,
                 server,
@@ -90,14 +81,13 @@ impl<'d> GattData<'d> {
 
             AttReq::ReadBlob { handle, offset } => Ok(Some(GattEvent::Read(ReadEvent {
                 value_handle: handle,
-                tx_pool: self.tx_pool,
                 pdu: Some(self.pdu),
                 connection: self.connection,
                 server,
             }))),
             _ => {
                 // Process it now since the user will not
-                let reply = process_accept(self.pdu, &self.connection, server, self.tx_pool)?;
+                let reply = process_accept(self.pdu, &self.connection, server)?;
                 reply.send().await;
                 Ok(None)
             }
@@ -106,23 +96,22 @@ impl<'d> GattData<'d> {
 }
 
 /// An event returned while processing GATT requests.
-pub enum GattEvent<'d, 'server> {
+pub enum GattEvent<'stack, 'server> {
     /// A characteristic was read.
-    Read(ReadEvent<'d, 'server>),
+    Read(ReadEvent<'stack, 'server>),
     /// A characteristic was written.
-    Write(WriteEvent<'d, 'server>),
+    Write(WriteEvent<'stack, 'server>),
 }
 
 /// An event returned while processing GATT requests.
-pub struct ReadEvent<'d, 'server> {
+pub struct ReadEvent<'stack, 'server> {
     value_handle: u16,
-    connection: Connection<'d>,
+    connection: Connection<'stack>,
     server: &'server dyn DynamicAttributeServer,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-    pdu: Option<Pdu<'d>>,
+    pdu: Option<Pdu>,
 }
 
-impl<'d> ReadEvent<'d, '_> {
+impl<'stack> ReadEvent<'stack, '_> {
     /// Characteristic handle that was read
     pub fn handle(&self) -> u16 {
         self.value_handle
@@ -131,57 +120,35 @@ impl<'d> ReadEvent<'d, '_> {
     /// Accept the event, making it processed by the server.
     ///
     /// Automatically called if drop() is invoked.
-    pub fn accept(mut self) -> Result<Reply<'d>, Error> {
+    pub fn accept(mut self) -> Result<Reply<'stack>, Error> {
         let handle = self.handle();
-        process(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            Ok(()),
-        )
+        process(&mut self.pdu, handle, &self.connection, self.server, Ok(()))
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
-    pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'d>, Error> {
+    pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack>, Error> {
         let handle = self.handle();
-        process(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            Err(err),
-        )
+        process(&mut self.pdu, handle, &self.connection, self.server, Err(err))
     }
 }
 
 impl Drop for ReadEvent<'_, '_> {
     fn drop(&mut self) {
         let handle = self.handle();
-        let _ = process(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            Ok(()),
-        );
+        let _ = process(&mut self.pdu, handle, &self.connection, self.server, Ok(()));
     }
 }
 
 /// An event returned while processing GATT requests.
-pub struct WriteEvent<'d, 'server> {
+pub struct WriteEvent<'stack, 'server> {
     /// Characteristic handle that was written.
     value_handle: u16,
-    pdu: Option<Pdu<'d>>,
-    connection: Connection<'d>,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
+    pdu: Option<Pdu>,
+    connection: Connection<'stack>,
     server: &'server dyn DynamicAttributeServer,
 }
 
-impl<'d> WriteEvent<'d, '_> {
+impl<'stack> WriteEvent<'stack, '_> {
     /// Characteristic handle that was read
     pub fn handle(&self) -> u16 {
         self.value_handle
@@ -201,72 +168,49 @@ impl<'d> WriteEvent<'d, '_> {
     /// Accept the event, making it processed by the server.
     ///
     /// Automatically called if drop() is invoked.
-    pub fn accept(mut self) -> Result<Reply<'d>, Error> {
+    pub fn accept(mut self) -> Result<Reply<'stack>, Error> {
         let handle = self.handle();
-        process(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            Ok(()),
-        )
+        process(&mut self.pdu, handle, &self.connection, self.server, Ok(()))
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
-    pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'d>, Error> {
+    pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack>, Error> {
         let handle = self.handle();
-        process(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            Err(err),
-        )
+        process(&mut self.pdu, handle, &self.connection, self.server, Err(err))
     }
 }
 
 impl Drop for WriteEvent<'_, '_> {
     fn drop(&mut self) {
         let handle = self.handle();
-        let _ = process(
-            &mut self.pdu,
-            handle,
-            &self.connection,
-            self.server,
-            self.tx_pool,
-            Ok(()),
-        );
+        let _ = process(&mut self.pdu, handle, &self.connection, self.server, Ok(()));
     }
 }
 
-fn process<'d>(
-    pdu: &mut Option<Pdu<'d>>,
+fn process<'stack>(
+    pdu: &mut Option<Pdu>,
     handle: u16,
-    connection: &Connection<'d>,
+    connection: &Connection<'stack>,
     server: &dyn DynamicAttributeServer,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
     result: Result<(), AttErrorCode>,
-) -> Result<Reply<'d>, Error> {
+) -> Result<Reply<'stack>, Error> {
     if let Some(pdu) = pdu.take() {
         match result {
-            Ok(_) => process_accept(pdu, connection, server, tx_pool),
-            Err(code) => process_reject(pdu, handle, connection, tx_pool, code),
+            Ok(_) => process_accept(pdu, connection, server),
+            Err(code) => process_reject(pdu, handle, connection, code),
         }
     } else {
         Ok(Reply::new(connection.clone(), None))
     }
 }
 
-fn process_accept<'d>(
-    pdu: Pdu<'d>,
-    connection: &Connection<'d>,
+fn process_accept<'stack>(
+    pdu: Pdu,
+    connection: &Connection<'stack>,
     server: &dyn DynamicAttributeServer,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-) -> Result<Reply<'d>, Error> {
+) -> Result<Reply<'stack>, Error> {
     let att = unwrap!(AttReq::decode(pdu.as_ref()));
-    let mut tx = tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)?;
+    let mut tx = connection.alloc_tx()?;
     let mut w = WriteCursor::new(tx.as_mut());
     let (mut header, mut data) = w.split(4)?;
     if let Some(written) = server.process(connection, &att, data.write_buf())? {
@@ -283,26 +227,21 @@ fn process_accept<'d>(
     }
 }
 
-fn process_reject<'d>(
-    pdu: Pdu<'d>,
+fn process_reject<'stack>(
+    pdu: Pdu,
     handle: u16,
-    connection: &Connection<'d>,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
+    connection: &Connection<'stack>,
     code: AttErrorCode,
-) -> Result<Reply<'d>, Error> {
+) -> Result<Reply<'stack>, Error> {
     // We know it has been checked, therefore this cannot fail
     let request = pdu.as_ref()[0];
     let rsp = AttRsp::Error { request, handle, code };
-    let pdu = respond(connection, tx_pool, rsp)?;
+    let pdu = respond(connection, rsp)?;
     Ok(Reply::new(connection.clone(), Some(pdu)))
 }
 
-fn respond<'d>(
-    conn: &Connection<'d>,
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
-    rsp: AttRsp<'_>,
-) -> Result<Pdu<'d>, Error> {
-    let mut tx = tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)?;
+fn respond<'stack>(conn: &Connection<'stack>, rsp: AttRsp<'_>) -> Result<Pdu, Error> {
+    let mut tx = conn.alloc_tx()?;
     let mut w = WriteCursor::new(tx.as_mut());
     let (mut header, mut data) = w.split(4)?;
     data.write(rsp)?;
@@ -319,13 +258,13 @@ fn respond<'d>(
 ///
 /// The reply may be sent immediately or queued for sending later. To guarantee delivery of a reply
 /// in case of a full outbound queue, the async send() should be used rather than relying on the Drop implementation.
-pub struct Reply<'d> {
-    connection: Connection<'d>,
-    pdu: Option<Pdu<'d>>,
+pub struct Reply<'stack> {
+    connection: Connection<'stack>,
+    pdu: Option<Pdu>,
 }
 
-impl<'d> Reply<'d> {
-    fn new(connection: Connection<'d>, pdu: Option<Pdu<'d>>) -> Self {
+impl<'stack> Reply<'stack> {
+    fn new(connection: Connection<'stack>, pdu: Option<Pdu>) -> Self {
         Self { connection, pdu }
     }
 
@@ -382,10 +321,10 @@ const NOTIF_QSIZE: usize = config::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
 /// A GATT client capable of using the GATT protocol.
 pub struct GattClient<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize = 27> {
     known_services: RefCell<Vec<ServiceHandle, MAX_SERVICES>>,
-    rx: DynamicReceiver<'reference, (ConnHandle, Pdu<'reference>)>,
-    stack: Stack<'reference, T>,
+    rx: DynamicReceiver<'reference, (ConnHandle, Pdu)>,
+    stack: &'reference Stack<'reference, T>,
     connection: Connection<'reference>,
-    response_channel: Channel<NoopRawMutex, (ConnHandle, Pdu<'reference>), 1>,
+    response_channel: Channel<NoopRawMutex, (ConnHandle, Pdu), 1>,
 
     notifications: PubSubChannel<NoopRawMutex, Notification<L2CAP_MTU>, NOTIF_QSIZE, MAX_NOTIF, 1>,
 }
@@ -417,13 +356,13 @@ pub struct ServiceHandle {
 /// Trait with behavior for a gatt client.
 pub(crate) trait Client<'d, E> {
     /// Perform a gatt request and return the response.
-    fn request(&self, req: AttReq<'_>) -> impl Future<Output = Result<Pdu<'d>, BleHostError<E>>>;
+    fn request(&self, req: AttReq<'_>) -> impl Future<Output = Result<Pdu, BleHostError<E>>>;
 }
 
 impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize> Client<'reference, T::Error>
     for GattClient<'reference, T, MAX_SERVICES, L2CAP_MTU>
 {
-    async fn request(&self, req: AttReq<'_>) -> Result<Pdu<'reference>, BleHostError<T::Error>> {
+    async fn request(&self, req: AttReq<'_>) -> Result<Pdu, BleHostError<T::Error>> {
         let header = L2capHeader {
             channel: crate::types::l2cap::L2CAP_CID_ATT,
             length: req.size() as u16,
@@ -449,7 +388,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
 {
     /// Creates a GATT client capable of processing the GATT protocol using the provided table of attributes.
     pub async fn new(
-        stack: Stack<'reference, C>,
+        stack: &'reference Stack<'reference, C>,
         connection: &Connection<'reference>,
     ) -> Result<GattClient<'reference, C, MAX_SERVICES, L2CAP_MTU>, BleHostError<C::Error>> {
         let l2cap = L2capHeader { channel: 4, length: 3 };

@@ -12,16 +12,13 @@ pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where
     C: Controller,
 {
-    let mut resources: HostResources<C, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        HostResources::new(PacketQos::None);
-
     // Hardcoded peripheral address
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let (stack, mut peripheral, _, mut runner) = trouble_host::new(controller, &mut resources)
-        .set_random_address(address)
-        .build();
+    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let (mut peripheral, _, mut runner) = stack.build();
 
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(
@@ -50,7 +47,7 @@ where
 
             info!("Connection established");
 
-            let mut ch1 = L2capChannel::accept(stack, &conn, &[0x2349], &Default::default())
+            let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &Default::default())
                 .await
                 .unwrap();
 
@@ -60,7 +57,7 @@ where
             const PAYLOAD_LEN: usize = 27;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
-                let len = ch1.receive(stack, &mut rx).await.unwrap();
+                let len = ch1.receive(&stack, &mut rx).await.unwrap();
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }
@@ -69,7 +66,7 @@ where
             Timer::after(Duration::from_secs(1)).await;
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, PAYLOAD_LEN>(stack, &tx).await.unwrap();
+                ch1.send::<_, PAYLOAD_LEN>(&stack, &tx).await.unwrap();
             }
             info!("L2CAP data echoed");
 

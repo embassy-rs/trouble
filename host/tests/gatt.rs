@@ -31,10 +31,10 @@ async fn gatt_client_server() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
-        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new(PacketQos::None);
-        let (_stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
-            .set_random_address(peripheral_address)
-            .build();
+        let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
+        let stack = trouble_host::new(controller_peripheral, &mut resources)
+            .set_random_address(peripheral_address);
+        let (mut peripheral, _, mut runner) = stack.build();
 
         let id = b"Trouble";
         let appearance = [0x80, 0x07];
@@ -127,10 +127,9 @@ async fn gatt_client_server() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = common::create_controller(&central).await;
-        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            HostResources::new(PacketQos::None);
-        let (stack, _peripheral, mut central, mut runner) =
-            trouble_host::new(controller_central, &mut resources).build();
+        let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
+        let stack = trouble_host::new(controller_central, &mut resources);
+        let (_, mut central, mut runner) = stack.build();
 
         select! {
             r = runner.run() => {
@@ -152,7 +151,7 @@ async fn gatt_client_server() {
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
                 println!("[central] creating gatt client");
-                let client = GattClient::<common::Controller, 10, 27>::new(stack, &conn).await.unwrap();
+                let client = GattClient::<common::Controller, 10, 27>::new(&stack, &conn).await.unwrap();
 
                 select! {
                     r = async {
