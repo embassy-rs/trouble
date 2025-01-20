@@ -174,14 +174,6 @@ impl ServiceBuilder {
                 }
                 #code_impl
             }
-
-            impl trouble_host::attribute::AttributeHandle for #struct_name {
-                type Value = trouble_host::types::uuid::Uuid;
-
-                fn handle(&self) -> u16 {
-                    self.handle
-                }
-            }
         }
     }
 
