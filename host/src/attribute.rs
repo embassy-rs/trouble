@@ -680,16 +680,16 @@ impl<T: FromGatt> Characteristic<T> {
         server.table().get(self)
     }
 
-    /// Returns the attribute handle for the characteristic's CCCD properties (if available)
-    pub fn cccd_handle(&self) -> Option<CccdHandle> {
-        self.cccd_handle.map(CccdHandle)
+    /// Returns the attribute handle for the characteristic's properties (if available)
+    pub fn cccd_handle(&self) -> Option<CharacteristicPropertiesHandle> {
+        self.cccd_handle.map(CharacteristicPropertiesHandle)
     }
 }
 
-/// Attribute handle for a characteristic's CCCD properties
-pub struct CccdHandle(u16);
+/// Attribute handle for a characteristic's properties
+pub struct CharacteristicPropertiesHandle(u16);
 
-impl AttributeHandle for CccdHandle {
+impl AttributeHandle for CharacteristicPropertiesHandle {
     type Value = CharacteristicProps;
 
     fn handle(&self) -> u16 {
