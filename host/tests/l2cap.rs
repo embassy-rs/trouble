@@ -26,10 +26,10 @@ async fn l2cap_connection_oriented_channels() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
-        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new(PacketQos::None);
-        let (stack, mut peripheral, _central, mut runner) = trouble_host::new(controller_peripheral, &mut resources)
-            .set_random_address(peripheral_address)
-            .build();
+        let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
+        let stack = trouble_host::new(controller_peripheral, &mut resources)
+            .set_random_address(peripheral_address);
+        let (mut peripheral, _, mut runner) = stack.build();
 
         select! {
             r = runner.run() => {
@@ -57,14 +57,14 @@ async fn l2cap_connection_oriented_channels() {
                     let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::accept(stack, &conn, &[0x2349], &Default::default()).await?;
+                    let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &Default::default()).await?;
 
                     println!("[peripheral] channel created");
 
                     // Size of payload we're expecting
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(stack, &mut rx).await?;
+                        let len = ch1.receive(&stack, &mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }
@@ -72,7 +72,7 @@ async fn l2cap_connection_oriented_channels() {
 
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, MTU>(stack, &tx).await?;
+                        ch1.send::<_, MTU>(&stack, &tx).await?;
                     }
                     println!("[peripheral] data sent");
                     break;
@@ -87,10 +87,10 @@ async fn l2cap_connection_oriented_channels() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = common::create_controller(&central).await;
-        let mut resources: HostResources<common::Controller, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> =
-            HostResources::new(PacketQos::None);
-        let (stack, _peripheral, mut central, mut runner) =
-            trouble_host::new(controller_central, &mut resources).build();
+        let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
+
+        let stack = trouble_host::new(controller_central, &mut resources);
+        let (_, mut central, mut runner) = stack.build();
 
         select! {
             r = runner.run() => {
@@ -110,16 +110,16 @@ async fn l2cap_connection_oriented_channels() {
                 loop {
                     let conn = central.connect(&config).await.unwrap();
                     println!("[central] connected");
-                    let mut ch1 = L2capChannel::create(stack, &conn, 0x2349, &Default::default()).await?;
+                    let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &Default::default()).await?;
                     println!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, MTU>(stack, &tx).await?;
+                        ch1.send::<_, MTU>(&stack, &tx).await?;
                     }
                     println!("[central] data sent");
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(stack, &mut rx).await?;
+                        let len = ch1.receive(&stack, &mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }

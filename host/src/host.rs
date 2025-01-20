@@ -36,11 +36,11 @@ use futures::pin_mut;
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
 #[cfg(feature = "gatt")]
-use crate::connection::ConnectionEvent;
+use crate::connection::ConnectionEventData;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
-use crate::packet_pool::{AllocId, DynamicPacketPool};
+use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
     L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL,
@@ -61,12 +61,12 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
-    pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
+    pub(crate) channels: ChannelManager<'d>,
     #[cfg(feature = "gatt")]
-    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
-    pub(crate) rx_pool: &'d dyn DynamicPacketPool<'d>,
+    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
+    pub(crate) rx_pool: &'d dyn Pool,
     #[cfg(feature = "gatt")]
-    pub(crate) tx_pool: &'d dyn DynamicPacketPool<'d>,
+    pub(crate) tx_pool: &'d dyn Pool,
 
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
@@ -224,13 +224,13 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
-        rx_pool: &'d dyn DynamicPacketPool<'d>,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn DynamicPacketPool<'d>,
+        rx_pool: &'d dyn Pool,
+        #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
         connections: &'d mut [ConnectionStorage],
-        events: &'d mut [EventChannel<'d>],
+        events: &'d mut [EventChannel],
         channels: &'d mut [ChannelStorage],
-        channels_rx: &'d mut [PacketChannel<'d, { config::L2CAP_RX_QUEUE_SIZE }>],
-        sar: &'d mut [SarType<'d>],
+        channels_rx: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
+        sar: &'d mut [SarType],
         advertise_handles: &'d mut [AdvHandleState],
     ) -> Self {
         Self {
@@ -326,7 +326,7 @@ where
         true
     }
 
-    fn handle_acl(&'d self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let (header, mut packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
@@ -347,7 +347,7 @@ where
                     return Ok(());
                 }
 
-                let Some(mut p) = self.rx_pool.alloc(AllocId::from_channel(header.channel)) else {
+                let Some(mut p) = self.rx_pool.alloc() else {
                     info!("No memory for packets on channel {}", header.channel);
                     return Err(Error::OutOfMemory);
                 };
@@ -403,16 +403,10 @@ where
                     #[cfg(feature = "gatt")]
                     match a {
                         Ok(att::Att::Req(_)) => {
-                            if let Some(connection) = self.connections.get_connected_handle(acl.handle()) {
-                                let event = ConnectionEvent::Gatt {
-                                    data: crate::gatt::GattData::new(
-                                        Pdu::new(packet, header.length as usize),
-                                        self.tx_pool,
-                                        connection,
-                                    ),
-                                };
-                                self.connections.post_handle_event(acl.handle(), event)?;
-                            }
+                            let event = ConnectionEventData::Gatt {
+                                data: Pdu::new(packet, header.length as usize),
+                            };
+                            self.connections.post_handle_event(acl.handle(), event)?;
                         }
                         Ok(att::Att::Rsp(_)) => {
                             if let Err(e) = self
@@ -503,21 +497,21 @@ pub struct Runner<'d, C: Controller> {
 
 /// The receiver part of the host runner.
 pub struct RxRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+    stack: &'d Stack<'d, C>,
 }
 
 /// The control part of the host runner.
 pub struct ControlRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+    stack: &'d Stack<'d, C>,
 }
 
 /// The transmit part of the host runner.
 pub struct TxRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+    stack: &'d Stack<'d, C>,
 }
 
 impl<'d, C: Controller> Runner<'d, C> {
-    pub(crate) fn new(stack: Stack<'d, C>) -> Self {
+    pub(crate) fn new(stack: &'d Stack<'d, C>) -> Self {
         Self {
             rx: RxRunner { stack },
             control: ControlRunner { stack },
@@ -610,7 +604,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
         C: ControllerCmdSync<Disconnect> + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
-        let host = self.stack.host;
+        let host = &self.stack.host;
         // use embassy_time::Instant;
         // let mut last = Instant::now();
         loop {
@@ -832,7 +826,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>,
     {
-        let host = self.stack.host;
+        let host = &self.stack.host;
         Reset::new().exec(&host.controller).await?;
 
         if let Some(addr) = host.address {
@@ -967,7 +961,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
 impl<'d, C: Controller> TxRunner<'d, C> {
     /// Run the transmit loop for the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
-        let host = self.stack.host;
+        let host = &self.stack.host;
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;

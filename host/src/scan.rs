@@ -1,6 +1,6 @@
 //! Scan config.
-use crate::central::ScanConfig;
 use crate::command::CommandState;
+use crate::connection::ScanConfig;
 use crate::host::ScanState;
 use crate::BleHostError;
 use crate::Error;
@@ -54,7 +54,7 @@ impl<'d, C: Controller, const BUFFER_SIZE: usize> Scanner<'d, C, BUFFER_SIZE> {
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        let host = self.central.stack.host;
+        let host = &self.central.stack.host;
         let drop = crate::host::OnDrop::new(|| {
             host.scan_command_state.cancel(false);
             host.scan_state.stop();
@@ -68,7 +68,7 @@ impl<'d, C: Controller, const BUFFER_SIZE: usize> Scanner<'d, C, BUFFER_SIZE> {
             scan_window: config.window.into(),
         };
         let phy_params = crate::central::create_phy_params(scanning, config.phys);
-        let host = self.central.stack.host;
+        let host = &self.central.stack.host;
         host.command(LeSetExtScanParams::new(
             host.address.map(|s| s.kind).unwrap_or(AddrKind::PUBLIC),
             if config.filter_accept_list.is_empty() {
@@ -118,7 +118,7 @@ impl<'d, C: Controller, const BUFFER_SIZE: usize> Scanner<'d, C, BUFFER_SIZE> {
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        let host = self.central.stack.host;
+        let host = &self.central.stack.host;
         let drop = crate::host::OnDrop::new(|| {
             host.scan_command_state.cancel(false);
             host.scan_state.stop();
