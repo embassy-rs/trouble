@@ -25,7 +25,7 @@ where
         .build();
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
-    // Currently it matches the address used by the peripheral examples
+    // Currently, it matches the address used by the peripheral examples
     let target: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
 
     let config = ConnectConfig {
@@ -48,7 +48,7 @@ where
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, PAYLOAD_LEN>(stack, &tx).await.unwrap();
+                ch1.send::<_, L2CAP_MTU>(stack, &tx).await.unwrap();
             }
             info!("Sent data, waiting for them to be sent back");
             let mut rx = [0; PAYLOAD_LEN];
