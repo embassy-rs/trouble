@@ -66,6 +66,7 @@ use host::{AdvHandleState, BleHost, HostMetrics, Runner};
 
 #[allow(missing_docs)]
 pub mod prelude {
+    pub use super::Host;
     pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
     pub use heapless::String as HeaplessString;
@@ -416,6 +417,19 @@ pub struct Stack<'stack, C> {
     host: BleHost<'stack, C>,
 }
 
+/// Host components.
+#[non_exhaustive]
+pub struct Host<'stack, C> {
+    /// Central role
+    #[cfg(feature = "central")]
+    pub central: Central<'stack, C>,
+    /// Peripheral role
+    #[cfg(feature = "peripheral")]
+    pub peripheral: Peripheral<'stack, C>,
+    /// Host runner
+    pub runner: Runner<'stack, C>,
+}
+
 impl<'stack, C: Controller> Stack<'stack, C> {
     /// Set the random address used by this host.
     pub fn set_random_address(mut self, address: Address) -> Self {
@@ -424,24 +438,14 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     }
 
     /// Build the stack.
-    #[cfg(all(feature = "central", feature = "peripheral"))]
-    pub fn build(&'stack self) -> (Peripheral<'stack, C>, Central<'stack, C>, Runner<'stack, C>) {
-        let stack = self;
-        (Peripheral::new(stack), Central::new(stack), Runner::new(stack))
-    }
-
-    /// Build the stack.
-    #[cfg(all(not(feature = "central"), feature = "peripheral"))]
-    pub fn build(&'stack self) -> (Peripheral<'stack, C>, Runner<'stack, C>) {
-        let stack = self;
-        (Peripheral::new(stack), Runner::new(stack))
-    }
-
-    /// Build the stack.
-    #[cfg(all(feature = "central", not(feature = "peripheral")))]
-    pub fn build(&'stack self) -> (Central<'stack, C>, Runner<'stack, C>) {
-        let stack = self;
-        (Central::new(stack), Runner::new(stack))
+    pub fn build(&'stack self) -> Host<'stack, C> {
+        Host {
+            #[cfg(feature = "central")]
+            central: Central::new(self),
+            #[cfg(feature = "peripheral")]
+            peripheral: Peripheral::new(self),
+            runner: Runner::new(self),
+        }
     }
 
     /// Run a HCI command and return the response.

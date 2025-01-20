@@ -47,7 +47,11 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
         let controller_central = serial::create_controller(&central).await;
         let mut resources: HostResources<2, 4, 27> = HostResources::new();
         let stack = trouble_host::new(controller_central, &mut resources);
-        let (_peripheral, mut central, mut runner) = stack.build();
+        let Host {
+            mut central,
+            mut runner,
+            ..
+        } = stack.build();
         select! {
             r = runner.run() => {
                 r
