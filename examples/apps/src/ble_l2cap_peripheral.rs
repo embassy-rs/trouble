@@ -18,7 +18,11 @@ where
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
-    let (mut peripheral, _, mut runner) = stack.build();
+    let Host {
+        mut peripheral,
+        mut runner,
+        ..
+    } = stack.build();
 
     let mut adv_data = [0; 31];
     AdStructure::encode_slice(

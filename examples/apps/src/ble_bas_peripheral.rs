@@ -40,7 +40,9 @@ where
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
-    let (mut peripheral, _, runner) = stack.build();
+    let Host {
+        mut peripheral, runner, ..
+    } = stack.build();
 
     info!("Starting advertising and GATT service");
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {

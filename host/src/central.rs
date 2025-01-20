@@ -9,7 +9,7 @@ use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use embassy_futures::select::{select, Either};
 
 /// A type implementing the BLE central role.
-pub struct Central<'stack, C: Controller> {
+pub struct Central<'stack, C> {
     pub(crate) stack: &'stack Stack<'stack, C>,
 }
 

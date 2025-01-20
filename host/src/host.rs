@@ -489,24 +489,24 @@ where
 }
 
 /// Runs the host with the given controller.
-pub struct Runner<'d, C: Controller> {
+pub struct Runner<'d, C> {
     rx: RxRunner<'d, C>,
     control: ControlRunner<'d, C>,
     tx: TxRunner<'d, C>,
 }
 
 /// The receiver part of the host runner.
-pub struct RxRunner<'d, C: Controller> {
+pub struct RxRunner<'d, C> {
     stack: &'d Stack<'d, C>,
 }
 
 /// The control part of the host runner.
-pub struct ControlRunner<'d, C: Controller> {
+pub struct ControlRunner<'d, C> {
     stack: &'d Stack<'d, C>,
 }
 
 /// The transmit part of the host runner.
-pub struct TxRunner<'d, C: Controller> {
+pub struct TxRunner<'d, C> {
     stack: &'d Stack<'d, C>,
 }
 

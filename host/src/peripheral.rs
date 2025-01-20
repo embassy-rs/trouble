@@ -13,7 +13,7 @@ use crate::connection::Connection;
 use crate::{Address, BleHostError, Error, Stack};
 
 /// Type which implements the BLE peripheral role.
-pub struct Peripheral<'d, C: Controller> {
+pub struct Peripheral<'d, C> {
     stack: &'d Stack<'d, C>,
 }
 
