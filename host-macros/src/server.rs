@@ -101,19 +101,19 @@ impl ServerBuilder {
         let attribute_table_size = if let Some(value) = self.arguments.attribute_table_size {
             value
         } else {
-            parse_quote!(GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation)
+            parse_quote!(trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation)
         };
 
         quote! {
             const _ATTRIBUTE_TABLE_SIZE: usize = #attribute_table_size;
             // This pattern causes the assertion to happen at compile time
             const _: () = {
-                core::assert!(_ATTRIBUTE_TABLE_SIZE >= GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation, "Specified attribute table size is insufficient. Please increase attribute_table_size or remove the argument entirely to allow automatic sizing of the attribute table.");
+                core::assert!(_ATTRIBUTE_TABLE_SIZE >= trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation, "Specified attribute table size is insufficient. Please increase attribute_table_size or remove the argument entirely to allow automatic sizing of the attribute table.");
             };
 
             #visibility struct #name<'values>
             {
-                server: AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>,
+                server: trouble_host::prelude::AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>,
                 #code_service_definition
             }
 
@@ -122,12 +122,12 @@ impl ServerBuilder {
                 /// Create a new Gatt Server instance.
                 ///
                 /// Requires you to add your own GAP Service.  Use `new_default(name)` or `new_with_config(name, gap_config)` if you want to add a GAP Service.
-                #visibility fn new(mut table: AttributeTable<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>) -> Self {
+                #visibility fn new(mut table: trouble_host::attribute::AttributeTable<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>) -> Self {
 
                     #code_service_init
 
                     Self {
-                        server: AttributeServer::new(table),
+                        server: trouble_host::prelude::AttributeServer::new(table),
                         #code_server_populate
                     }
                 }
@@ -137,14 +137,14 @@ impl ServerBuilder {
                 /// The maximum length which the name can be is 22 bytes (limited by the size of the advertising packet).
                 /// If a name longer than this is passed, Err() is returned.
                 #visibility fn new_default(name: &'values str) -> Result<Self, &'static str> {
-                    let mut table: AttributeTable<'_, #mutex_type, _ATTRIBUTE_TABLE_SIZE> = AttributeTable::new();
+                    let mut table: trouble_host::attribute::AttributeTable<'_, #mutex_type, _ATTRIBUTE_TABLE_SIZE> = trouble_host::attribute::AttributeTable::new();
 
-                    GapConfig::default(name).build(&mut table)?;
+                    trouble_host::gap::GapConfig::default(name).build(&mut table)?;
 
                     #code_service_init
 
                     Ok(Self {
-                        server: AttributeServer::new(table),
+                        server: trouble_host::prelude::AttributeServer::new(table),
                         #code_server_populate
                     })
                 }
@@ -154,31 +154,31 @@ impl ServerBuilder {
                 /// This function will add a GAP Service.
                 /// The maximum length which the device name can be is 22 bytes (limited by the size of the advertising packet).
                 /// If a name longer than this is passed, Err() is returned.
-                #visibility fn new_with_config(gap: GapConfig<'values>) -> Result<Self, &'static str> {
-                    let mut table: AttributeTable<'_, #mutex_type, _ATTRIBUTE_TABLE_SIZE> = AttributeTable::new();
+                #visibility fn new_with_config(gap: trouble_host::gap::GapConfig<'values>) -> Result<Self, &'static str> {
+                    let mut table: trouble_host::attribute::AttributeTable<'_, #mutex_type, _ATTRIBUTE_TABLE_SIZE> = trouble_host::attribute::AttributeTable::new();
 
                     gap.build(&mut table)?;
 
                     #code_service_init
 
                     Ok(Self {
-                        server: AttributeServer::new(table),
+                        server: trouble_host::prelude::AttributeServer::new(table),
                         #code_server_populate
                     })
                 }
 
-                #visibility fn get<T: trouble_host::types::gatt_traits::GattValue>(&self, characteristic: &Characteristic<T>) -> Result<T, Error> {
+                #visibility fn get<T: trouble_host::types::gatt_traits::GattValue>(&self, characteristic: &trouble_host::attribute::Characteristic<T>) -> Result<T, trouble_host::Error> {
                     self.server.table().get(characteristic)
                 }
 
-                #visibility fn set<T: trouble_host::types::gatt_traits::GattValue>(&self, characteristic: &Characteristic<T>, input: &T) -> Result<(), Error> {
+                #visibility fn set<T: trouble_host::types::gatt_traits::GattValue>(&self, characteristic: &trouble_host::attribute::Characteristic<T>, input: &T) -> Result<(), trouble_host::Error> {
                     self.server.table().set(characteristic, input)
                 }
             }
 
             impl<'values> core::ops::Deref for #name<'values>
             {
-                type Target = AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>;
+                type Target = trouble_host::prelude::AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>;
 
                 fn deref(&self) -> &Self::Target {
                     &self.server

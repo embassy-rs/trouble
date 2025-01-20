@@ -51,7 +51,7 @@ fn parse_arg_uuid(value: &Expr) -> Result<TokenStream2> {
             let span = other.span(); // span will highlight if the value does not impl Into<Uuid>
             Ok(quote::quote_spanned! { span =>
                 {
-                    let uuid: Uuid = #other.into();
+                    let uuid: trouble_host::types::uuid::Uuid = #other.into();
                     uuid
                 }
             })
@@ -153,18 +153,18 @@ impl ServiceBuilder {
         quote! {
             #visibility struct #struct_name {
                 #fields
-                handle: AttributeHandle,
+                handle: trouble_host::attribute::AttributeHandle,
             }
 
             #[allow(unused)]
             impl #struct_name {
                 #visibility const ATTRIBUTE_COUNT: usize = #attribute_count;
 
-                #visibility fn new<M, const MAX_ATTRIBUTES: usize>(table: &mut AttributeTable<'_, M, MAX_ATTRIBUTES>) -> Self
+                #visibility fn new<M, const MAX_ATTRIBUTES: usize>(table: &mut trouble_host::attribute::AttributeTable<'_, M, MAX_ATTRIBUTES>) -> Self
                 where
                     M: embassy_sync::blocking_mutex::raw::RawMutex,
                 {
-                    let mut service = table.add_service(Service::new(#uuid));
+                    let mut service = table.add_service(trouble_host::attribute::Service::new(#uuid));
                     #code_build_chars
 
                     Self {
@@ -193,10 +193,10 @@ impl ServiceBuilder {
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let #char_name = {
-                static #name_screaming: static_cell::StaticCell<[u8; <#ty as GattValue>::MAX_SIZE]> = static_cell::StaticCell::new();
+                static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::GattValue>::MAX_SIZE]> = static_cell::StaticCell::new();
                 let mut val = <#ty>::default(); // constrain the type of the value here
                 val = #default_value; // update the temporary value with our new default
-                let store = #name_screaming.init([0; <#ty as GattValue>::MAX_SIZE]);
+                let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::GattValue>::MAX_SIZE]);
                 let mut builder = service
                     .add_characteristic(#uuid, &[#(#properties),*], val, store);
                 #descriptors
@@ -235,7 +235,7 @@ impl ServiceBuilder {
             // add fields for each characteristic value handle
             fields.push(syn::Field {
                 ident: Some(char_name.clone()),
-                ty: syn::Type::Verbatim(quote!(Characteristic<#ty>)),
+                ty: syn::Type::Verbatim(quote!(trouble_host::attribute::Characteristic<#ty>)),
                 attrs: Vec::new(),
                 colon_token: Default::default(),
                 vis: ch.vis.clone(),
@@ -300,7 +300,7 @@ impl ServiceBuilder {
                             const CAPACITY: u8 = if (#capacity) < 16 { 16 } else { #capacity }; // minimum capacity is 16 bytes
                             static #name_screaming: static_cell::StaticCell<[u8; CAPACITY as usize]> = static_cell::StaticCell::new();
                             let store = #name_screaming.init([0; CAPACITY as usize]);
-                            let value = GattValue::to_gatt(&value);
+                            let value = trouble_host::types::gatt_traits::GattValue::to_gatt(&value);
                             store[..value.len()].copy_from_slice(value);
                             builder.add_descriptor(
                                 #uuid,
@@ -323,14 +323,30 @@ fn parse_property_into_list(property: bool, variant: TokenStream2, properties: &
 /// Parse the properties of a characteristic and return a list of properties
 fn set_access_properties(args: &AccessArgs) -> Vec<TokenStream2> {
     let mut properties = Vec::new();
-    parse_property_into_list(args.read, quote! {CharacteristicProp::Read}, &mut properties);
-    parse_property_into_list(args.write, quote! {CharacteristicProp::Write}, &mut properties);
     parse_property_into_list(
-        args.write_without_response,
-        quote! {CharacteristicProp::WriteWithoutResponse},
+        args.read,
+        quote! {trouble_host::attribute::CharacteristicProp::Read},
         &mut properties,
     );
-    parse_property_into_list(args.notify, quote! {CharacteristicProp::Notify}, &mut properties);
-    parse_property_into_list(args.indicate, quote! {CharacteristicProp::Indicate}, &mut properties);
+    parse_property_into_list(
+        args.write,
+        quote! {trouble_host::attribute::CharacteristicProp::Write},
+        &mut properties,
+    );
+    parse_property_into_list(
+        args.write_without_response,
+        quote! {trouble_host::attribute::CharacteristicProp::WriteWithoutResponse},
+        &mut properties,
+    );
+    parse_property_into_list(
+        args.notify,
+        quote! {trouble_host::attribute::CharacteristicProp::Notify},
+        &mut properties,
+    );
+    parse_property_into_list(
+        args.indicate,
+        quote! {trouble_host::attribute::CharacteristicProp::Indicate},
+        &mut properties,
+    );
     properties
 }
