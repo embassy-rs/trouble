@@ -106,7 +106,7 @@ pub fn parse_uuid(meta: &ParseNestedMeta<'_>) -> Result<TokenStream> {
         let span = expr.span(); // span will highlight if the value does not impl Into<Uuid>
         Ok(quote::quote_spanned! { span =>
             {
-                let uuid: Uuid = #expr.into();
+                let uuid: trouble_host::types::uuid::Uuid = #expr.into();
                 uuid
             }
         })
