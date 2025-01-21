@@ -34,7 +34,11 @@ async fn gatt_client_server() {
         let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address);
-        let (mut peripheral, _, mut runner) = stack.build();
+        let Host {
+            mut peripheral,
+            mut runner,
+            ..
+        } = stack.build();
 
         let id = b"Trouble";
         let appearance = [0x80, 0x07];
@@ -129,7 +133,11 @@ async fn gatt_client_server() {
         let controller_central = common::create_controller(&central).await;
         let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
         let stack = trouble_host::new(controller_central, &mut resources);
-        let (_, mut central, mut runner) = stack.build();
+        let Host {
+            mut central,
+            mut runner,
+            ..
+        } = stack.build();
 
         select! {
             r = runner.run() => {

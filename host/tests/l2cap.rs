@@ -29,7 +29,12 @@ async fn l2cap_connection_oriented_channels() {
         let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address);
-        let (mut peripheral, _, mut runner) = stack.build();
+        let Host {
+            mut peripheral,
+            mut runner,
+            ..
+        } = stack.build();
+
 
         select! {
             r = runner.run() => {
@@ -90,7 +95,11 @@ async fn l2cap_connection_oriented_channels() {
         let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
 
         let stack = trouble_host::new(controller_central, &mut resources);
-        let (_, mut central, mut runner) = stack.build();
+        let Host {
+            mut central,
+            mut runner,
+            ..
+        } = stack.build();
 
         select! {
             r = runner.run() => {

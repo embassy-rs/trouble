@@ -19,7 +19,11 @@ where
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
-    let (_, mut central, mut runner) = stack.build();
+    let Host {
+        mut central,
+        mut runner,
+        ..
+    } = stack.build();
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
     // Currently, it matches the address used by the peripheral examples

@@ -50,7 +50,11 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
 
         let mut resources: HostResources<2, 4, 27> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources).set_random_address(peripheral_address);
-        let (mut peripheral, _central, mut runner) = stack.build();
+        let Host {
+            mut peripheral,
+            mut runner,
+            ..
+        } = stack.build();
 
         select! {
             r = runner.run() => {

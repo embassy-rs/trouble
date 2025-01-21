@@ -15,7 +15,6 @@ use core::mem::MaybeUninit;
 use advertise::AdvertisementDataError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
 use bt_hci::FromHciBytesError;
 
 use crate::att::AttErrorCode;
@@ -23,6 +22,7 @@ use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
+use bt_hci::param::{AddrKind, BdAddr};
 
 mod fmt;
 
@@ -66,6 +66,8 @@ use host::{AdvHandleState, BleHost, HostMetrics, Runner};
 
 #[allow(missing_docs)]
 pub mod prelude {
+    pub use super::Host;
+    pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
     pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
     pub use heapless::String as HeaplessString;
@@ -416,6 +418,19 @@ pub struct Stack<'stack, C> {
     host: BleHost<'stack, C>,
 }
 
+/// Host components.
+#[non_exhaustive]
+pub struct Host<'stack, C> {
+    /// Central role
+    #[cfg(feature = "central")]
+    pub central: Central<'stack, C>,
+    /// Peripheral role
+    #[cfg(feature = "peripheral")]
+    pub peripheral: Peripheral<'stack, C>,
+    /// Host runner
+    pub runner: Runner<'stack, C>,
+}
+
 impl<'stack, C: Controller> Stack<'stack, C> {
     /// Set the random address used by this host.
     pub fn set_random_address(mut self, address: Address) -> Self {
@@ -424,24 +439,14 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     }
 
     /// Build the stack.
-    #[cfg(all(feature = "central", feature = "peripheral"))]
-    pub fn build(&'stack self) -> (Peripheral<'stack, C>, Central<'stack, C>, Runner<'stack, C>) {
-        let stack = self;
-        (Peripheral::new(stack), Central::new(stack), Runner::new(stack))
-    }
-
-    /// Build the stack.
-    #[cfg(all(not(feature = "central"), feature = "peripheral"))]
-    pub fn build(&'stack self) -> (Peripheral<'stack, C>, Runner<'stack, C>) {
-        let stack = self;
-        (Peripheral::new(stack), Runner::new(stack))
-    }
-
-    /// Build the stack.
-    #[cfg(all(feature = "central", not(feature = "peripheral")))]
-    pub fn build(&'stack self) -> (Central<'stack, C>, Runner<'stack, C>) {
-        let stack = self;
-        (Central::new(stack), Runner::new(stack))
+    pub fn build(&'stack self) -> Host<'stack, C> {
+        Host {
+            #[cfg(feature = "central")]
+            central: Central::new(self),
+            #[cfg(feature = "peripheral")]
+            peripheral: Peripheral::new(self),
+            runner: Runner::new(self),
+        }
     }
 
     /// Run a HCI command and return the response.
