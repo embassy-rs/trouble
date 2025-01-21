@@ -15,7 +15,6 @@ use core::mem::MaybeUninit;
 use advertise::AdvertisementDataError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
 use bt_hci::FromHciBytesError;
 
 use crate::att::AttErrorCode;
@@ -23,6 +22,7 @@ use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
+use bt_hci::param::{AddrKind, BdAddr};
 
 mod fmt;
 
@@ -67,6 +67,7 @@ use host::{AdvHandleState, BleHost, HostMetrics, Runner};
 #[allow(missing_docs)]
 pub mod prelude {
     pub use super::Host;
+    pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
     pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
     pub use heapless::String as HeaplessString;
