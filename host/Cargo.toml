@@ -11,7 +11,7 @@ resolver = "2"
 [dependencies]
 bt-hci = { version = "0.2", features = ["embassy-time", "uuid"] }
 embedded-io = { version = "0.6" }
-embassy-sync = "0.6"
+embassy-sync = "0.6.2"
 embassy-time = "0.4"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }

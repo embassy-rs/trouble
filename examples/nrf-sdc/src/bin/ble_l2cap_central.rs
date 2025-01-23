@@ -76,5 +76,5 @@ async fn main(spawner: Spawner) {
 
     Timer::after(Duration::from_millis(200)).await;
 
-    ble_l2cap_central::run(sdc).await;
+    ble_l2cap_central::run::<_, L2CAP_MTU>(sdc).await;
 }

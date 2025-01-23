@@ -11,7 +11,7 @@ use bt_hci::cmd::controller_baseband::{
 };
 use bt_hci::cmd::le::{
     LeConnUpdate, LeCreateConnCancel, LeReadBufferSize, LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask,
-    LeSetExtAdvEnable, LeSetRandomAddr,
+    LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr, LeSetScanEnable,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -20,12 +20,13 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
-    AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, LeConnRole, LeEventMask, Status,
+    AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates, LeConnRole,
+    LeEventMask, Status,
 };
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select3, select4, Either3, Either4};
+use embassy_futures::select::{select3, Either3};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -35,14 +36,12 @@ use futures::pin_mut;
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
 #[cfg(feature = "gatt")]
-use crate::connection::ConnectionEvent;
+use crate::connection::ConnectionEventData;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
-use crate::packet_pool::{AllocId, DynamicPacketPool};
+use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
-#[cfg(feature = "scan")]
-use crate::scan::ScanReport;
 use crate::types::l2cap::{
     L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL,
 };
@@ -62,18 +61,19 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
     pub(crate) reassembly: PacketReassembly<'d>,
-    pub(crate) channels: ChannelManager<'d, { config::L2CAP_RX_QUEUE_SIZE }>,
+    pub(crate) channels: ChannelManager<'d>,
     #[cfg(feature = "gatt")]
-    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_RX_QUEUE_SIZE }>,
-    pub(crate) rx_pool: &'d dyn DynamicPacketPool<'d>,
+    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
+    pub(crate) rx_pool: &'d dyn Pool,
     #[cfg(feature = "gatt")]
-    pub(crate) tx_pool: &'d dyn DynamicPacketPool<'d>,
+    pub(crate) tx_pool: &'d dyn Pool,
 
-    #[cfg(feature = "scan")]
-    pub(crate) scanner: Channel<NoopRawMutex, Option<ScanReport>, 1>,
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
+    pub(crate) scan_command_state: CommandState<bool>,
+    #[cfg(feature = "scan")]
+    pub(crate) scan_state: ScanState,
 }
 
 #[derive(Clone, Copy)]
@@ -174,6 +174,34 @@ impl<'d> AdvState<'d> {
     }
 }
 
+pub(crate) struct ScanState {
+    writer: RefCell<Option<embassy_sync::pipe::DynamicWriter<'static>>>,
+}
+
+impl ScanState {
+    pub(crate) fn new() -> Self {
+        Self {
+            writer: RefCell::new(None),
+        }
+    }
+
+    pub(crate) fn reset(&self, writer: embassy_sync::pipe::DynamicWriter<'static>) {
+        self.writer.borrow_mut().replace(writer);
+    }
+
+    pub(crate) fn try_push(&self, _n_reports: u8, data: &[u8]) -> Result<(), ()> {
+        let mut writer = self.writer.borrow_mut();
+        if let Some(writer) = writer.as_mut() {
+            writer.try_write(data).map_err(|_| ())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn stop(&self) {
+        let _ = self.writer.borrow_mut().take();
+    }
+}
+
 /// Host metrics
 #[derive(Default, Clone)]
 pub struct HostMetrics {
@@ -196,13 +224,13 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
-        rx_pool: &'d dyn DynamicPacketPool<'d>,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn DynamicPacketPool<'d>,
+        rx_pool: &'d dyn Pool,
+        #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
         connections: &'d mut [ConnectionStorage],
-        events: &'d mut [EventChannel<'d>],
+        events: &'d mut [EventChannel],
         channels: &'d mut [ChannelStorage],
-        channels_rx: &'d mut [PacketChannel<'d, { config::L2CAP_RX_QUEUE_SIZE }>],
-        sar: &'d mut [SarType<'d>],
+        channels_rx: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
+        sar: &'d mut [SarType],
         advertise_handles: &'d mut [AdvHandleState],
     ) -> Self {
         Self {
@@ -222,9 +250,10 @@ where
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),
             #[cfg(feature = "scan")]
-            scanner: Channel::new(),
+            scan_state: ScanState::new(),
             advertise_state: AdvState::new(advertise_handles),
             advertise_command_state: CommandState::new(),
+            scan_command_state: CommandState::new(),
             connect_command_state: CommandState::new(),
         }
     }
@@ -297,7 +326,7 @@ where
         true
     }
 
-    fn handle_acl(&'d self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let (header, mut packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
@@ -318,7 +347,7 @@ where
                     return Ok(());
                 }
 
-                let Some(mut p) = self.rx_pool.alloc(AllocId::from_channel(header.channel)) else {
+                let Some(mut p) = self.rx_pool.alloc() else {
                     info!("No memory for packets on channel {}", header.channel);
                     return Err(Error::OutOfMemory);
                 };
@@ -374,16 +403,10 @@ where
                     #[cfg(feature = "gatt")]
                     match a {
                         Ok(att::Att::Req(_)) => {
-                            if let Some(connection) = self.connections.get_connected_handle(acl.handle()) {
-                                let event = ConnectionEvent::Gatt {
-                                    data: crate::gatt::GattData::new(
-                                        Pdu::new(packet, header.length as usize),
-                                        self.tx_pool,
-                                        connection,
-                                    ),
-                                };
-                                self.connections.post_handle_event(acl.handle(), event)?;
-                            }
+                            let event = ConnectionEventData::Gatt {
+                                data: Pdu::new(packet, header.length as usize),
+                            };
+                            self.connections.post_handle_event(acl.handle(), event)?;
                         }
                         Ok(att::Att::Rsp(_)) => {
                             if let Err(e) = self
@@ -466,29 +489,29 @@ where
 }
 
 /// Runs the host with the given controller.
-pub struct Runner<'d, C: Controller> {
+pub struct Runner<'d, C> {
     rx: RxRunner<'d, C>,
     control: ControlRunner<'d, C>,
     tx: TxRunner<'d, C>,
 }
 
 /// The receiver part of the host runner.
-pub struct RxRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+pub struct RxRunner<'d, C> {
+    stack: &'d Stack<'d, C>,
 }
 
 /// The control part of the host runner.
-pub struct ControlRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+pub struct ControlRunner<'d, C> {
+    stack: &'d Stack<'d, C>,
 }
 
 /// The transmit part of the host runner.
-pub struct TxRunner<'d, C: Controller> {
-    stack: Stack<'d, C>,
+pub struct TxRunner<'d, C> {
+    stack: &'d Stack<'d, C>,
 }
 
 impl<'d, C: Controller> Runner<'d, C> {
-    pub(crate) fn new(stack: Stack<'d, C>) -> Self {
+    pub(crate) fn new(stack: &'d Stack<'d, C>) -> Self {
         Self {
             rx: RxRunner { stack },
             control: ControlRunner { stack },
@@ -514,6 +537,8 @@ impl<'d, C: Controller> Runner<'d, C> {
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
+            + ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetExtScanEnable>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
@@ -536,6 +561,8 @@ impl<'d, C: Controller> Runner<'d, C> {
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+            + ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeReadBufferSize>,
@@ -577,7 +604,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
         C: ControllerCmdSync<Disconnect> + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
-        let host = self.stack.host;
+        let host = &self.stack.host;
         // use embassy_time::Instant;
         // let mut last = Instant::now();
         loop {
@@ -671,22 +698,54 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             }
                             LeEvent::LeScanTimeout(_) => {
                                 #[cfg(feature = "scan")]
-                                let _ = host.scanner.try_send(None);
+                                host.scan_state.stop();
                             }
                             LeEvent::LeAdvertisingSetTerminated(set) => {
                                 host.advertise_state.terminate(set.adv_handle);
                             }
                             LeEvent::LeExtendedAdvertisingReport(data) => {
                                 #[cfg(feature = "scan")]
-                                let _ = host
-                                    .scanner
-                                    .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
+                                {
+                                    let mut bytes = &data.reports.bytes[..];
+                                    let mut n = 0;
+                                    while n < data.reports.num_reports {
+                                        match bt_hci::param::LeExtAdvReport::from_hci_bytes(bytes) {
+                                            Ok((_, remaining)) => {
+                                                n += 1;
+                                                bytes = remaining;
+                                            }
+                                            Err(_) => {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    let consumed = data.reports.bytes.len() - bytes.len();
+                                    if let Err(_) = host.scan_state.try_push(n, &data.reports.bytes[..consumed]) {
+                                        warn!("[host] scan buffer overflow");
+                                    }
+                                }
                             }
                             LeEvent::LeAdvertisingReport(data) => {
                                 #[cfg(feature = "scan")]
-                                let _ = host
-                                    .scanner
-                                    .try_send(Some(ScanReport::new(data.reports.num_reports, &data.reports.bytes)));
+                                {
+                                    let mut bytes = &data.reports.bytes[..];
+                                    let mut n = 0;
+                                    while n < data.reports.num_reports {
+                                        match bt_hci::param::LeAdvReport::from_hci_bytes(bytes) {
+                                            Ok((_, remaining)) => {
+                                                n += 1;
+                                                bytes = remaining;
+                                            }
+                                            Err(_) => {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    let consumed = data.reports.bytes.len() - bytes.len();
+                                    if let Err(_) = host.scan_state.try_push(n, &data.reports.bytes[..consumed]) {
+                                        warn!("[host] scan buffer overflow");
+                                    }
+                                }
                             }
                             _ => {
                                 warn!("Unknown LE event!");
@@ -762,10 +821,12 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             + ControllerCmdSync<LeCreateConnCancel>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+            + ControllerCmdSync<LeSetScanEnable>
+            + ControllerCmdSync<LeSetExtScanEnable>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>,
     {
-        let host = self.stack.host;
+        let host = &self.stack.host;
         Reset::new().exec(&host.controller).await?;
 
         if let Some(addr) = host.address {
@@ -834,43 +895,64 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
         info!("[host] initialized");
 
         loop {
-            match select4(
+            match select3(
                 poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
                 poll_fn(|cx| host.channels.poll_disconnecting(Some(cx))),
-                poll_fn(|cx| host.connect_command_state.poll_cancelled(cx)),
-                poll_fn(|cx| host.advertise_command_state.poll_cancelled(cx)),
+                select3(
+                    poll_fn(|cx| host.connect_command_state.poll_cancelled(cx)),
+                    poll_fn(|cx| host.advertise_command_state.poll_cancelled(cx)),
+                    poll_fn(|cx| host.scan_command_state.poll_cancelled(cx)),
+                ),
             )
             .await
             {
-                Either4::First(request) => {
+                Either3::First(request) => {
                     trace!("[host] poll disconnecting links");
                     host.command(Disconnect::new(request.handle(), request.reason()))
                         .await?;
                     request.confirm();
                 }
-                Either4::Second(request) => {
+                Either3::Second(request) => {
                     trace!("[host] poll disconnecting channels");
                     let mut grant = host.acl(request.handle(), 1).await?;
                     request.send(&mut grant).await?;
                     request.confirm();
                 }
-                Either4::Third(_) => {
-                    trace!("[host] cancel connection create");
-                    // trace!("[host] cancelling create connection");
-                    if host.command(LeCreateConnCancel::new()).await.is_err() {
-                        // Signal to ensure no one is stuck
-                        host.connect_command_state.canceled();
+                Either3::Third(states) => match states {
+                    Either3::First(_) => {
+                        trace!("[host] cancel connection create");
+                        // trace!("[host] cancelling create connection");
+                        if host.command(LeCreateConnCancel::new()).await.is_err() {
+                            // Signal to ensure no one is stuck
+                            host.connect_command_state.canceled();
+                        }
                     }
-                }
-                Either4::Fourth(ext) => {
-                    trace!("[host] disabling advertising");
-                    if ext {
-                        host.command(LeSetExtAdvEnable::new(false, &[])).await?
-                    } else {
-                        host.command(LeSetAdvEnable::new(false)).await?
+                    Either3::Second(ext) => {
+                        trace!("[host] disabling advertising");
+                        if ext {
+                            host.command(LeSetExtAdvEnable::new(false, &[])).await?
+                        } else {
+                            host.command(LeSetAdvEnable::new(false)).await?
+                        }
+                        host.advertise_command_state.canceled();
                     }
-                    host.advertise_command_state.canceled();
-                }
+                    Either3::Third(ext) => {
+                        trace!("[host] disabling scanning");
+                        if ext {
+                            // TODO: A bit opinionated but not more than before
+                            host.command(LeSetExtScanEnable::new(
+                                false,
+                                FilterDuplicates::Disabled,
+                                bt_hci::param::Duration::from_secs(0),
+                                bt_hci::param::Duration::from_secs(0),
+                            ))
+                            .await?;
+                        } else {
+                            host.command(LeSetScanEnable::new(false, false)).await?;
+                        }
+                        host.scan_command_state.canceled();
+                    }
+                },
             }
         }
     }
@@ -879,7 +961,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
 impl<'d, C: Controller> TxRunner<'d, C> {
     /// Run the transmit loop for the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
-        let host = self.stack.host;
+        let host = &self.stack.host;
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;

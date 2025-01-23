@@ -1,136 +1,103 @@
-use probe_rs::flashing::Format;
-use probe_rs::probe::list::Lister;
-use probe_rs::probe::DebugProbeSelector;
-use probe_rs::{Permissions, Session};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
-use tokio::sync::oneshot;
-use tokio::task::spawn_blocking;
+use std::process::Stdio;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
+use tokio::process::Command;
+use tokio::select;
+use tokio_util::sync::CancellationToken;
 
-mod run;
+use hilbench_agent::ProbeConfig;
+use hilbench_agent::Target;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ProbeConfig {
-    pub targets: Vec<TargetConfig>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TargetConfig {
-    pub chip: String,
-    pub probe: String,
-    pub labels: HashMap<String, String>,
-}
-
-static SELECTOR: OnceLock<ProbeSelector> = OnceLock::new();
-
-pub fn init(config: ProbeConfig) -> &'static ProbeSelector {
-    SELECTOR.get_or_init(|| ProbeSelector::new(config))
-}
-
-pub struct ProbeSelector {
-    targets: Vec<(AtomicBool, TargetConfig)>,
-}
-
-#[derive(Debug)]
-pub struct Target<'d> {
-    config: TargetConfig,
-    taken: &'d AtomicBool,
+pub fn init(config: ProbeConfig) {
+    hilbench_agent::init(config);
 }
 
 pub struct Firmware {
     pub data: Vec<u8>,
-    pub format: Format,
 }
 
-impl ProbeSelector {
-    fn new(config: ProbeConfig) -> Self {
-        let mut targets = Vec::new();
-        for t in config.targets {
-            targets.push((AtomicBool::new(false), t));
+pub struct DeviceUnderTest<'d> {
+    target: Target<'d>,
+    token: CancellationToken,
+}
+
+impl<'d> DeviceUnderTest<'d> {
+    pub(crate) fn new(target: Target<'d>) -> Self {
+        Self {
+            target,
+            token: CancellationToken::new(),
         }
-        Self { targets }
+    }
+    pub fn token(&self) -> CancellationToken {
+        self.token.clone()
     }
 
-    /// Select a target with the provided labels
-    pub fn select<'m>(&'m self, labels: &[(&str, &str)]) -> Option<Target<'m>> {
-        for (taken, config) in &self.targets {
-            let mut matched = true;
-            for (key, value) in labels {
-                let v = config.labels.get(*key);
-                if let Some(v) = v {
-                    if v != value {
-                        matched = false;
-                        break;
+    pub async fn run(self, firmware: String) -> Result<FirmwareLogs, anyhow::Error> {
+        let mut flasher = if self.target.config().chip.starts_with("esp32") {
+            Command::new("espflash")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .arg("flash")
+                .arg(&firmware)
+                .arg("--monitor")
+                .spawn()
+                .unwrap()
+        } else {
+            Command::new("probe-rs")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .arg("run")
+                .arg(&firmware)
+                .arg("--chip")
+                .arg(&self.target.config().chip)
+                .arg("--probe")
+                .arg(&self.target.config().probe)
+                .spawn()
+                .unwrap()
+        };
+
+        let stdout = flasher.stdout.take().unwrap();
+        let stderr = flasher.stderr.take().unwrap();
+        let mut stdout_reader = BufReader::new(stdout).lines();
+        let mut stderr_reader = BufReader::new(stderr).lines();
+
+        let mut lines: Vec<String> = Vec::new();
+        select! {
+            r = flasher.wait() => {
+                log::warn!("flasher exited unexpectedly: {:?}", r);
+                for line in lines {
+                    log::warn!("{}", line);
+                }
+                return Err(anyhow::anyhow!("flasher exited unexpectedly: {:?}", r));
+            }
+            _ = self.token.cancelled() => {
+                flasher.kill().await.unwrap();
+            }
+            _ = async {
+                loop {
+                    select! {
+                        r = stdout_reader.next_line() => {
+                            if let Ok(Some(r)) = r {
+                                lines.push(r);
+                            }
+                        }
+                        r = stderr_reader.next_line() => {
+                            if let Ok(Some(r)) = r {
+                                lines.push(r);
+                            }
+                        }
                     }
                 }
-            }
-            if matched && taken.swap(true, Ordering::Acquire) == false {
-                return Some(Target {
-                    config: config.clone(),
-                    taken,
-                });
+            } => {
+
             }
         }
-        None
+        log::info!("waiting for process exit");
+        flasher.wait().await.unwrap();
+        Ok(FirmwareLogs { lines })
     }
 }
 
-impl<'d> Target<'d> {
-    pub fn flash(self, fw: Firmware) -> Result<TargetRunner<'d>, anyhow::Error> {
-        let probe = self.config.probe.clone();
-        let p: DebugProbeSelector = probe.try_into()?;
-        log::info!("Debug probe selector created");
-        let t = probe_rs::config::get_target_by_name(&self.config.chip)?;
-        log::info!("Target created");
-
-        let lister = Lister::new();
-        log::info!("Opening probe");
-        let probe = lister.open(p)?;
-
-        let perms = Permissions::new().allow_erase_all();
-        log::info!("Attaching probe");
-        let mut session = probe.attach(t, perms)?;
-        let mut flasher = run::Flasher::new(fw);
-        flasher.flash(&mut session)?;
-        Ok(TargetRunner {
-            _target: self,
-            flasher,
-            session,
-        })
-    }
-}
-
-impl<'d> Drop for Target<'d> {
-    fn drop(&mut self) {
-        self.taken.store(false, Ordering::Release);
-    }
-}
-
-pub struct TargetRunner<'d> {
-    _target: Target<'d>,
-    flasher: run::Flasher,
-    session: Session,
-}
-
-impl<'d> TargetRunner<'d> {
-    pub async fn run(mut self, cancel: oneshot::Receiver<()>) -> Result<(), anyhow::Error> {
-        let result = spawn_blocking(move || {
-            let mut runner = self.flasher.start(&mut self.session).unwrap();
-            runner.run(&mut self.session, cancel)
-        })
-        .await
-        .unwrap();
-        match result {
-            Ok(halted) => {
-                if halted {
-                    Err(anyhow::anyhow!("Firmware stopped"))
-                } else {
-                    Ok(())
-                }
-            }
-            Err(e) => Err(e.into()),
-        }
-    }
+pub struct FirmwareLogs {
+    pub lines: Vec<String>,
 }

@@ -6,19 +6,31 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 embassy-executor    = { version = "0.7.0", features = ["task-arena-size-32768"] }
-esp-backtrace = { version = "0.14.2", features = [ "exception-handler", "panic-handler", "println" ] }
-esp-hal = { version = "0.22.0", features = [ "unstable" ] }
-esp-hal-embassy = { version = "0.5.0" }
-esp-alloc = { version = "0.5.0" }
-esp-println = { version = "0.12.0", features = ["log"] }
-esp-wifi = { version = "0.11.0", features = [ "ble" ] }
-trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["esp", "log"] }
+esp-backtrace = { version = "0.15", features = [ "exception-handler", "panic-handler", "println" ] }
+esp-hal = { version = "0.23.1", features = [ "unstable" ] }
+esp-hal-embassy = { version = "0.6.0" }
+esp-alloc = { version = "0.6.0" }
+esp-println = { version = "0.13.0", features = ["log"] }
+esp-wifi = { version = "0.12.0", features = [ "ble" ] }
+trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
 bt-hci = { version = "0.2" }
-embassy-futures = "0.1.1"
-embassy-time = { version = "0.4", features = ["generic-queue-8"] }
 
 [features]
 default = ["esp32c3"]
+
+# trouble-example-apps/esp:
+#
+# 'esp-hal' likely has a bug, causing _some_ ESP32 chips to give "Invalid HCI Command Parameters" BLE errors at launch,
+# if the L2CAP MTU is set low enough.
+#
+# The error producing ranges go:
+#   - ESP32-C6: x..<255             // examples with 128, 251 would fail
+#   - ESP32-C2: RANGE NOT KNOWN     // not having the hardware
+#   - ESP32-H2: RANGE NOT KNOWN     // not having the hardware
+#   - ESP32, -C3, -S2, -S3: claimed not to be affected [1], so the behaviour-altering feature is not enabled for them.
+#
+#       [1]: https://github.com/embassy-rs/trouble/pull/236#issuecomment-2586457641
+#
 esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-wifi/esp32"]
 esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-wifi/esp32c2"]
 esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-wifi/esp32c3"]
@@ -41,9 +53,9 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-wifi = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-println = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-backtrace = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
-esp-alloc = { git = "https://github.com/esp-rs/esp-hal.git", rev = "7288d0367e0a820db4ca25a22496a35beff1bb61" }
+esp-wifi = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
+esp-backtrace = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
+esp-hal = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
+esp-hal-embassy = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
+esp-alloc = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
+esp-println = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}

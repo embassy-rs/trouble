@@ -7,9 +7,9 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
-use crate::connection::{Connection, ConnectionEvent};
+use crate::connection::{Connection, ConnectionEventData};
 #[cfg(feature = "gatt")]
-use crate::packet_pool::{DynamicPacketPool, Packet, GENERIC_ID};
+use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
 use crate::{config, Error};
 
@@ -40,22 +40,45 @@ impl State<'_> {
     }
 }
 
-pub(crate) type EventChannel<'d> = Channel<NoopRawMutex, ConnectionEvent<'d>, { config::CONNECTION_EVENT_QUEUE_SIZE }>;
+pub(crate) struct EventChannel {
+    chan: Channel<NoopRawMutex, ConnectionEventData, { config::CONNECTION_EVENT_QUEUE_SIZE }>,
+}
+
+impl EventChannel {
+    #[allow(clippy::declare_interior_mutable_const)]
+    pub(crate) const NEW: EventChannel = EventChannel { chan: Channel::new() };
+
+    pub async fn receive(&self) -> ConnectionEventData {
+        self.chan.receive().await
+    }
+
+    pub async fn send(&self, event: ConnectionEventData) {
+        self.chan.send(event).await;
+    }
+
+    pub fn try_send(&self, event: ConnectionEventData) -> Result<(), Error> {
+        self.chan.try_send(event).map_err(|_| Error::OutOfMemory)
+    }
+
+    pub fn clear(&self) {
+        self.chan.clear();
+    }
+}
 
 pub(crate) struct ConnectionManager<'d> {
     state: RefCell<State<'d>>,
-    events: &'d mut [EventChannel<'d>],
-    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<'d>), { config::L2CAP_TX_QUEUE_SIZE }>,
+    events: &'d mut [EventChannel],
+    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
-    tx_pool: &'d dyn DynamicPacketPool<'d>,
+    tx_pool: &'d dyn Pool,
 }
 
 impl<'d> ConnectionManager<'d> {
     pub(crate) fn new(
         connections: &'d mut [ConnectionStorage],
-        events: &'d mut [EventChannel<'d>],
+        events: &'d mut [EventChannel],
         default_att_mtu: u16,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn DynamicPacketPool<'d>,
+        #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
     ) -> Self {
         Self {
             state: RefCell::new(State {
@@ -94,15 +117,15 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
-    pub(crate) async fn next(&self, index: u8) -> ConnectionEvent<'d> {
+    pub(crate) async fn next(&self, index: u8) -> ConnectionEventData {
         self.events[index as usize].receive().await
     }
 
-    pub(crate) async fn post_event(&self, index: u8, event: ConnectionEvent<'d>) {
+    pub(crate) async fn post_event(&self, index: u8, event: ConnectionEventData) {
         self.events[index as usize].send(event).await
     }
 
-    pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEvent<'d>) -> Result<(), Error> {
+    pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEventData) -> Result<(), Error> {
         let index = self.with_mut(|state| {
             for (index, entry) in state.connections.iter().enumerate() {
                 if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
@@ -218,7 +241,7 @@ impl<'d> ConnectionManager<'d> {
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
-                let _ = self.events[idx].try_send(ConnectionEvent::Disconnected { reason });
+                let _ = self.events[idx].try_send(ConnectionEventData::Disconnected { reason });
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
                 return Ok(());
@@ -417,26 +440,26 @@ impl<'d> ConnectionManager<'d> {
         self.with_mut(|state| state.connections[index as usize].att_mtu)
     }
 
-    pub(crate) async fn send(&self, index: u8, pdu: Pdu<'d>) {
+    pub(crate) async fn send(&self, index: u8, pdu: Pdu) {
         let handle = self.with_mut(|state| state.connections[index as usize].handle.unwrap());
         self.outbound.send((handle, pdu)).await
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) fn alloc_tx(&self) -> Result<Packet<'d>, Error> {
-        self.tx_pool.alloc(GENERIC_ID).ok_or(Error::OutOfMemory)
+    pub(crate) fn alloc_tx(&self) -> Result<Packet, Error> {
+        self.tx_pool.alloc().ok_or(Error::OutOfMemory)
     }
 
-    pub(crate) fn try_send(&self, index: u8, pdu: Pdu<'d>) -> Result<(), Error> {
+    pub(crate) fn try_send(&self, index: u8, pdu: Pdu) -> Result<(), Error> {
         let handle = self.with_mut(|state| state.connections[index as usize].handle.unwrap());
         self.outbound.try_send((handle, pdu)).map_err(|_| Error::OutOfMemory)
     }
 
-    pub(crate) fn try_outbound(&self, handle: ConnHandle, pdu: Pdu<'d>) -> Result<(), Error> {
+    pub(crate) fn try_outbound(&self, handle: ConnHandle, pdu: Pdu) -> Result<(), Error> {
         self.outbound.try_send((handle, pdu)).map_err(|_| Error::OutOfMemory)
     }
 
-    pub(crate) async fn outbound(&self) -> (ConnHandle, Pdu<'d>) {
+    pub(crate) async fn outbound(&self) -> (ConnHandle, Pdu) {
         self.outbound.receive().await
     }
 
@@ -663,7 +686,6 @@ impl Drop for PacketGrant<'_, '_> {
 mod tests {
     use super::*;
     use crate::prelude::PacketPool;
-    use crate::PacketQos;
     extern crate std;
     use std::boxed::Box;
 
@@ -674,8 +696,8 @@ mod tests {
 
     fn setup() -> &'static ConnectionManager<'static> {
         let storage = Box::leak(Box::new([ConnectionStorage::DISCONNECTED; 3]));
-        let events = Box::leak(Box::new([const { EventChannel::new() }; 3]));
-        let pool = Box::leak(Box::new(PacketPool::<NoopRawMutex, 27, 8, 1>::new(PacketQos::None)));
+        let events = Box::leak(Box::new([EventChannel::NEW; 3]));
+        let pool = Box::leak(Box::new(PacketPool::<27, 8>::new()));
         let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool);
         Box::leak(Box::new(mgr))
     }
@@ -820,6 +842,7 @@ mod tests {
         unwrap!(mgr.disconnected(ConnHandle::new(2), Status::UNSPECIFIED));
 
         // Check that we get an event
+        use crate::connection::ConnectionEvent;
         assert!(matches!(
             block_on(peripheral.next()),
             ConnectionEvent::Disconnected {

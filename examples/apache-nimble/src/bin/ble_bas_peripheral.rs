@@ -31,7 +31,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     // wait for RNG to calm down
     Timer::after(Duration::from_secs(1)).await;
 
-    ble_bas_peripheral::run(controller).await;
+    ble_bas_peripheral::run::<_, 128>(controller).await;
 }
 
 #[embassy_executor::task]

@@ -7,7 +7,7 @@ edition = "2021"
 env_logger = "0.10.0"
 log = "0.4"
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
-embassy-sync = { version = "0.6.0", features = ["log"] }
+embassy-sync = { version = "0.6", features = ["log"] }
 embassy-time = { version = "0.4", features = ["log", "std", "generic-queue-8"] }
 critical-section = { version = "1.1", features = ["std"] }
 tokio = { version = "1", features = ["full"] }
