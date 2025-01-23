@@ -9,7 +9,7 @@ use crate::codec::{Decode, Encode, Error, Type};
 #[derive(Debug, PartialEq, Clone)]
 pub enum Uuid {
     /// 16-bit UUID
-    Uuid16([u8; 2]),
+    Uuid16([u8; 2]),    // Q: why here as slice, when 'u16' in 'host-macros'?
     /// 128-bit UUID
     Uuid128([u8; 16]),
 }
@@ -27,7 +27,11 @@ impl Uuid {
     }
 
     /// Create a new 128-bit UUID.
-    pub const fn new_long(val: [u8; 16]) -> Self {
+    pub const fn new_long(val: u128) -> Self {
+        Self::Uuid128(val.to_le_bytes())
+    }
+        // tbd. this is an API change
+    pub const fn new_long_from_arr(val: [u8; 16]) -> Self {
         Self::Uuid128(val)
     }
 
