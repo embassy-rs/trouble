@@ -704,12 +704,12 @@ pub struct CharacteristicBuilder<'r, 'd, T: ToGatt, M: RawMutex, const MAX: usiz
 }
 
 impl<'d, T: ToGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-    fn add_descriptor_internal(
+    fn add_descriptor_internal<DT: GattValue>(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
-    ) -> DescriptorHandle {
+    ) -> Descriptor<DT> {
         let handle = self.table.handle;
         self.table.push(Attribute {
             uuid,
@@ -718,16 +718,19 @@ impl<'d, T: ToGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd,
             data,
         });
 
-        DescriptorHandle { handle }
+        Descriptor {
+            handle,
+            phantom: PhantomData,
+        }
     }
 
     /// Add a characteristic descriptor for this characteristic.
-    pub fn add_descriptor<U: Into<Uuid>>(
+    pub fn add_descriptor<DT: ToGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
         props: &[CharacteristicProp],
         data: &'d mut [u8],
-    ) -> DescriptorHandle {
+    ) -> Descriptor<DT> {
         let props = props.into();
         let len = data.len() as u16;
         self.add_descriptor_internal(
@@ -743,7 +746,7 @@ impl<'d, T: ToGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd,
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> DescriptorHandle {
+    pub fn add_descriptor_ro<DT: ToGatt, U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> Descriptor<DT> {
         let props = [CharacteristicProp::Read].into();
         self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
     }
@@ -757,8 +760,17 @@ impl<'d, T: ToGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd,
 /// Characteristic descriptor handle.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
-pub struct DescriptorHandle {
+pub struct Descriptor<T: ToGatt> {
     pub(crate) handle: u16,
+    phantom: PhantomData<T>,
+}
+
+impl<T: ToGatt> AttributeHandle for Descriptor<T> {
+    type Value = T;
+
+    fn handle(&self) -> u16 {
+        self.handle
+    }
 }
 
 /// Iterator over attributes.
