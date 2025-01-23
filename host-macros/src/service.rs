@@ -7,7 +7,7 @@
 use darling::{Error, FromMeta};
 use inflector::cases::screamingsnakecase::to_screaming_snake_case;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::parse::Result;
 use syn::spanned::Spanned;
 use syn::{Expr, Meta, Token};
@@ -179,7 +179,7 @@ impl ServiceBuilder {
 
     /// Construct instructions for adding a characteristic to the service, with static storage.
     fn construct_characteristic_static(&mut self, characteristic: Characteristic) {
-        let descriptors = self.build_descriptors(&characteristic);
+        let (code_descriptors, named_descriptors) = self.build_descriptors(&characteristic);
         let name_screaming = format_ident!("{}", to_screaming_snake_case(characteristic.name.as_str()));
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
@@ -192,16 +192,16 @@ impl ServiceBuilder {
         };
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
-            let #char_name = {
+            let (#char_name, #(#named_descriptors),*) = {
                 static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::ToGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
                 let mut val = <#ty>::default(); // constrain the type of the value here
                 val = #default_value; // update the temporary value with our new default
                 let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::ToGatt>::MAX_SIZE]);
                 let mut builder = service
                     .add_characteristic(#uuid, &[#(#properties),*], val, store);
-                #descriptors
+                #code_descriptors
 
-                builder.build()
+                (builder.build(), #(#named_descriptors),*)
             };
         });
 
@@ -271,8 +271,9 @@ impl ServiceBuilder {
     }
 
     /// Generate token stream for any descriptors tagged against this characteristic.
-    fn build_descriptors(&mut self, characteristic: &Characteristic) -> TokenStream2 {
-        characteristic
+    fn build_descriptors(&mut self, characteristic: &Characteristic) -> (TokenStream2, Vec<TokenStream2>) {
+        let mut named_descriptors = Vec::<TokenStream2>::new();
+        (characteristic
                 .args
                 .descriptors
                 .iter()
@@ -280,6 +281,7 @@ impl ServiceBuilder {
                 .map(|(index, args)| {
                     let name_screaming =
                         format_ident!("DESC_{index}_{}", to_screaming_snake_case(characteristic.name.as_str()));
+                    let identifier = args.name.as_ref().map(|name| format_ident!("{}_{}_descriptor", characteristic.name.as_str(), name.value()));
                     let access = &args.access;
                     let properties = set_access_properties(access);
                     let uuid = &args.uuid;
@@ -289,28 +291,41 @@ impl ServiceBuilder {
                     };
                     let capacity = match &args.capacity {
                         Some(cap) => quote!(#cap),
-                        None => quote!(#default_value.len() as u8)
+                        None => quote!(#default_value.len() as usize)
+                    };
+
+                    let mut identifier_assignment = None;
+                    if let Some(name) = &identifier {
+                        self.code_fields.extend(quote_spanned!{ identifier.span() =>
+                            #name: trouble_host::attribute::Descriptor<&'static [u8]>,
+                        });
+                        self.code_struct_init.extend(quote_spanned! { identifier.span() =>
+                            #name,
+                        });
+                        named_descriptors.push(name.to_token_stream());
+                        identifier_assignment = Some(quote! { let #name = });
                     };
 
                     self.attribute_count += 1; // descriptors should always only be one attribute.
 
                     quote_spanned! {characteristic.span=>
-                        {
+                        #identifier_assignment {
                             let value = #default_value;
-                            const CAPACITY: u8 = if (#capacity) < 16 { 16 } else { #capacity }; // minimum capacity is 16 bytes
-                            static #name_screaming: static_cell::StaticCell<[u8; CAPACITY as usize]> = static_cell::StaticCell::new();
-                            let store = #name_screaming.init([0; CAPACITY as usize]);
+                            const CAPACITY: usize = if (#capacity) < 16 { 16 } else { #capacity }; // minimum capacity is 16 bytes
+                            static #name_screaming: static_cell::StaticCell<[u8; CAPACITY]> = static_cell::StaticCell::new();
+                            let store = #name_screaming.init([0; CAPACITY]);
                             let value = trouble_host::types::gatt_traits::ToGatt::to_gatt(&value);
                             store[..value.len()].copy_from_slice(value);
-                            builder.add_descriptor(
+                            builder.add_descriptor::<&[u8], _>(
                                 #uuid,
                                 &[#(#properties),*],
                                 store,
-                            );
+                            )
                         };
                     }
                 })
-                .collect()
+                .collect(),
+            named_descriptors)
     }
 }
 
