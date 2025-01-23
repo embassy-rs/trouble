@@ -30,7 +30,9 @@ impl Uuid {
     pub const fn new_long(val: u128) -> Self {
         Self::Uuid128(val.to_le_bytes())
     }
-        // tbd. this is an API change
+
+    /// Create a new 128-bit UUID. THIS MIGHT NOT NEED TO EXIST
+    #[deprecated]
     pub const fn new_long_from_arr(val: [u8; 16]) -> Self {
         Self::Uuid128(val)
     }
