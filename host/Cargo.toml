@@ -22,8 +22,6 @@ static_cell = "2.1.0"
 # Logging
 log = { version = "0.4.16", optional = true }
 defmt = { version = "0.3", optional = true }
-num_enum = { version = "0.7.3", default-features = false }
-thiserror = { version = "2.0.0", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = [
@@ -35,7 +33,6 @@ embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embedded-io = { version = "0.6.1" }
 tokio-serial = "5.4"
 env_logger = "0.11"
-critical-section = { version = "1", features = ["std"] }
 rand = "0.8.5"
 heapless = "0.8.0"
 
