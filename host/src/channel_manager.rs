@@ -10,7 +10,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::cursor::WriteCursor;
-use crate::host::{AclSender, BleHost};
+use crate::host::BleHost;
 use crate::l2cap::L2capChannel;
 use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
@@ -204,8 +204,8 @@ impl<'d> ChannelManager<'d> {
 
         let mut tx = [0; 18];
         // Respond that we accept the channel.
-        let mut hci = ble.acl(conn, 1).await?;
-        hci.signal(
+        ble.l2cap_signal(
+            conn,
             req_id,
             &LeCreditConnRes {
                 mps,
@@ -254,8 +254,7 @@ impl<'d> ChannelManager<'d> {
             mtu,
             credits,
         };
-        let mut hci = ble.acl(conn, 1).await?;
-        hci.signal(req_id, &command, &mut tx[..]).await?;
+        ble.l2cap_signal(conn, req_id, &command, &mut tx[..]).await?;
 
         // Wait until a response is accepted.
         poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))).await
@@ -543,27 +542,31 @@ impl<'d> ChannelManager<'d> {
     ) -> Result<(), BleHostError<T::Error>> {
         let (conn, mps, peer_cid) = self.connected_channel_params(index)?;
         // The number of packets we'll need to send for this payload
-        let n_packets = 1 + ((buf.len() as u16).saturating_sub(mps - 2)).div_ceil(mps);
+        let len = (buf.len() as u16).saturating_add(2);
+        let n_packets = len.div_ceil(mps);
 
         let mut grant = poll_fn(|cx| self.poll_request_to_send(index, n_packets, Some(cx))).await?;
-        let mut hci = ble.acl(conn, n_packets).await?;
+
+        let mut sender = ble.l2cap(conn, len, n_packets).await?;
 
         // Segment using mps
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        hci.send(&p_buf[..len], true).await?;
+        sender.send(&p_buf[..len]).await?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
 
         for chunk in chunks {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            hci.send(&p_buf[..len], true).await?;
+            sender.send(&p_buf[..len]).await?;
             grant.confirm(1);
         }
         Ok(())
     }
+
+    // Number of fragments
 
     /// Send the provided buffer over a given l2cap channel.
     ///
@@ -580,7 +583,8 @@ impl<'d> ChannelManager<'d> {
         let (conn, mps, peer_cid) = self.connected_channel_params(index)?;
 
         // The number of packets we'll need to send for this payload
-        let n_packets = ((buf.len() as u16).saturating_add(2)).div_ceil(mps);
+        let len = (buf.len() as u16).saturating_add(2);
+        let n_packets = len.div_ceil(mps);
 
         let mut grant = match self.poll_request_to_send(index, n_packets, None) {
             Poll::Ready(res) => res?,
@@ -589,13 +593,14 @@ impl<'d> ChannelManager<'d> {
             }
         };
 
-        let mut hci = ble.try_acl(conn, n_packets)?;
+        // Pre-request
+        let mut sender = ble.try_l2cap(conn, len, n_packets)?;
 
         // Segment using mps
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        hci.try_send(&p_buf[..len], true)?;
+        sender.try_send(&p_buf[..len])?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
@@ -603,7 +608,7 @@ impl<'d> ChannelManager<'d> {
 
         for (i, chunk) in chunks.enumerate() {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            hci.try_send(&p_buf[..len], true)?;
+            sender.try_send(&p_buf[..len])?;
             grant.confirm(1);
         }
         Ok(())
@@ -641,8 +646,7 @@ impl<'d> ChannelManager<'d> {
             let signal = LeCreditFlowInd { cid, credits };
 
             // Reuse packet buffer for signalling data to save the extra TX buffer
-            let mut hci = ble.acl(conn, 1).await?;
-            hci.signal(identifier, &signal, packet.as_mut()).await?;
+            ble.l2cap_signal(conn, identifier, &signal, packet.as_mut()).await?;
             self.with_mut(|state| {
                 let chan = &mut state.channels[index.0 as usize];
                 if chan.state == ChannelState::Connected {
@@ -745,7 +749,7 @@ impl<'a, 'd> DisconnectRequest<'a, 'd> {
         self.handle
     }
 
-    pub async fn send<T: Controller>(&self, hci: &mut AclSender<'a, 'd, T>) -> Result<(), BleHostError<T::Error>> {
+    pub async fn send<T: Controller>(&self, host: &BleHost<'_, T>) -> Result<(), BleHostError<T::Error>> {
         let (state, conn, identifier, dcid, scid) = {
             let mut state = self.state.borrow_mut();
             let identifier = state.next_request_id();
@@ -757,12 +761,12 @@ impl<'a, 'd> DisconnectRequest<'a, 'd> {
         match state {
             ChannelState::PeerDisconnecting => {
                 assert_eq!(Some(self.handle), conn);
-                hci.signal(identifier, &DisconnectionRes { dcid, scid }, &mut tx[..])
+                host.l2cap_signal(self.handle, identifier, &DisconnectionRes { dcid, scid }, &mut tx[..])
                     .await?;
             }
             ChannelState::Disconnecting => {
                 assert_eq!(Some(self.handle), conn);
-                hci.signal(identifier, &DisconnectionReq { dcid, scid }, &mut tx[..])
+                host.l2cap_signal(self.handle, identifier, &DisconnectionReq { dcid, scid }, &mut tx[..])
                     .await?;
             }
             _ => {}
@@ -1043,4 +1047,7 @@ mod tests {
             Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
         ));
     }
+
+    #[test]
+    fn channel_fragmentation() {}
 }

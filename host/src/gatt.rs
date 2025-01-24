@@ -373,8 +373,12 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         w.write_hci(&header)?;
         w.write(req)?;
 
-        let mut grant = self.stack.host.acl(self.connection.handle(), 1).await?;
-        grant.send(w.finish(), true).await?;
+        let mut grant = self
+            .stack
+            .host
+            .l2cap(self.connection.handle(), w.len() as u16, 1)
+            .await?;
+        grant.send(w.finish()).await?;
 
         let (h, pdu) = self.response_channel.receive().await;
 
@@ -399,9 +403,8 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             mtu: L2CAP_MTU as u16 - 4,
         })?;
 
-        let mut grant = stack.host.acl(connection.handle(), 1).await?;
-
-        grant.send(w.finish(), true).await?;
+        let mut grant = stack.host.l2cap(connection.handle(), w.len() as u16, 1).await?;
+        grant.send(w.finish()).await?;
 
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),
