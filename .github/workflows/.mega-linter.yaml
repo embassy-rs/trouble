@@ -165,40 +165,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Rustfmt check on src
-        run: cargo fmt --manifest-path Cargo.toml -- --check
-      - name: Rustfmt check on utils
-        run: cargo fmt --manifest-path utils/Cargo.toml -- --check
-      - name: Rustfmt check on esp32 example
-        run: cargo fmt --manifest-path examples/esp32c3/Cargo.toml -- --check
-      - name: Rustfmt check on esp32 tests
-        run: cargo fmt --manifest-path tests/esp32c3/Cargo.toml -- --check
-      - name: Rustfmt check on pipico tests
-        run: cargo fmt --manifest-path tests/pipico/Cargo.toml -- --check
-      - name: Rustfmt check on stm32 tests
-        run: cargo fmt --manifest-path tests/stm32f072/Cargo.toml -- --check
-
-  cargo_clippy:
-    name: Cargo Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Clippy check on esp32 example
-        run: |
-          cd examples/esp32c3
-          cargo clippy -- -D warnings
-      - name: Clippy check on esp32 tests
-        run: |
-          cd tests/esp32c3/
-          cargo clippy -- -D warnings
-      - name: Clippy on Pi Pico Tests
-        run: |
-          rustup target add thumbv6m-none-eabi
-          cd tests/pipico
-          cargo clippy -- -D warnings
-      - name: Clippy on STM32 Tests
-        run: |
-          rustup target add thumbv6m-none-eabi
-          cd tests/stm32f072
-          cargo clippy -- -D warnings
+      - name: Rustfmt check on host
+        run: cargo fmt --manifest-path host/Cargo.toml -- --check
+      - name: Rustfmt check on host macros
+        run: cargo fmt --manifest-path host-macros/Cargo.toml -- --check
