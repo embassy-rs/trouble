@@ -20,6 +20,24 @@ impl From<BluetoothUuid16> for Uuid {
     }
 }
 
+impl From<u128> for Uuid {
+    fn from(val: u128) -> Self {
+        Uuid::Uuid128(val.to_be_bytes())
+    }
+}
+
+impl From<[u8; 16]> for Uuid {
+    fn from(val: [u8; 16]) -> Self {
+        Uuid::Uuid128(val)
+    }
+}
+
+impl From<[u8; 2]> for Uuid {
+    fn from(val: [u8; 2]) -> Self {
+        Uuid::Uuid16(val)
+    }
+}
+
 impl Uuid {
     /// Create a new 16-bit UUID.
     pub const fn new_short(val: u16) -> Self {
