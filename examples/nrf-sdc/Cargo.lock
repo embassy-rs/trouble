@@ -1094,6 +1094,7 @@ dependencies = [
  "embassy-time",
  "embedded-hal 1.0.0",
  "embedded-io",
+ "heapless",
  "static_cell",
  "trouble-host",
 ]
