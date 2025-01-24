@@ -46,3 +46,5 @@ MARKDOWN_MARKDOWNLINT_CONFIG_FILE: .markdownlint.json
 RUST_CLIPPY_ARGUMENTS:
   - --manifest-path
   - host/Cargo.toml
+  - --
+  - --all-features

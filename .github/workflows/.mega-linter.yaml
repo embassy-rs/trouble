@@ -166,9 +166,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Rustfmt check on host
-        run: cargo fmt --manifest-path host/Cargo.toml -- --check
+        run: cargo +nightly fmt --manifest-path host/Cargo.toml -- --check
       - name: Rustfmt check on host macros
-        run: cargo fmt --manifest-path host-macros/Cargo.toml -- --check
+        run: cargo +nightly fmt --manifest-path host-macros/Cargo.toml -- --check
 
   cargo_clippy_library:
     name: Cargo Clippy Host Macros
@@ -177,7 +177,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Cargo Clippy check on host Macros
-        run: cargo clippy --manifest-path host-macros/Cargo.toml
+        run: cargo clippy --manifest-path host-macros/Cargo.toml --all-features
 
   cargo_clippy_examples:
     name: Cargo Clippy Examples
