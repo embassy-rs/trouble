@@ -67,7 +67,7 @@ jobs:
 
         # You can override MegaLinter flavor used to have faster performances
         # More info at https://megalinter.io/latest/flavors/
-        uses: oxsecurity/megalinter/flavors/rust@v8
+        uses: oxsecurity/megalinter/flavors/all
 
         id: ml
 
@@ -159,8 +159,8 @@ jobs:
             exit 1
           fi
 # Required due to Mega Linter not currently supporting Rust Format
-  cargo_fmt:
-    name: Cargo Formatter
+  cargo_fmt_library:
+    name: Cargo Formatter (Library)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -169,3 +169,58 @@ jobs:
         run: cargo fmt --manifest-path host/Cargo.toml -- --check
       - name: Rustfmt check on host macros
         run: cargo fmt --manifest-path host-macros/Cargo.toml -- --check
+
+  cargo_clippy_library:
+    name: Cargo Clippy Host Macros
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Cargo Clippy check on host Macros
+        run: cargo clippy --manifest-path host-macros/Cargo.toml
+
+  cargo_clippy_examples:
+    name: Cargo Clippy Examples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Cargo Clippy check on apache-nimble
+        run: cargo clippy --manifest-path examples/apache-nimble/Cargo.toml
+      - name: Cargo Clippy apps
+        run: cargo clippy --manifest-path examples/apps/Cargo.toml
+      - name: Cargo Clippy esp32
+        run: cargo clippy --manifest-path examples/esp32/Cargo.toml
+      - name: Cargo Clippy nrf-sdc
+        run: cargo clippy --manifest-path examples/nrf-sdc/Cargo.toml
+      - name: Cargo Clippy rp-pico-2-w
+        run: cargo clippy --manifest-path examples/rp-pico-2-w/Cargo.toml
+      - name: Cargo Clippy rp-pico-w
+        run: cargo clippy --manifest-path examples/rp-pico-w/Cargo.toml
+      - name: Cargo Clippy serial-hci
+        run: cargo clippy --manifest-path examples/serial-hci/Cargo.toml
+      - name: Cargo Clippy tests
+        run: cargo clippy --manifest-path examples/tests/Cargo.toml
+
+  cargo_fmt_examples:
+    name: Cargo Formatter Examples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Rustfmt check on apache-nimble
+        run: cargo fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
+      - name: Rustfmt check on apps
+        run: cargo fmt --manifest-path examples/apps/Cargo.toml -- --check
+      - name: Rustfmt check on esp32
+        run: cargo fmt --manifest-path examples/esp32/Cargo.toml -- --check
+      - name: Rustfmt check on nrf-sdc
+        run: cargo fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
+      - name: Rustfmt check on rp-pico-2-w
+        run: cargo fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
+      - name: Rustfmt check on rp-pico-w
+        run: cargo fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
+      - name: Rustfmt check on serial-hci
+        run: cargo fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
+      - name: Rustfmt check on tests
+        run: cargo fmt --manifest-path examples/tests/Cargo.toml -- --check
