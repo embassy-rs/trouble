@@ -70,7 +70,7 @@ where
             Timer::after(Duration::from_secs(1)).await;
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, PAYLOAD_LEN>(&stack, &tx).await.unwrap();
+                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
             }
             info!("L2CAP data echoed");
 
