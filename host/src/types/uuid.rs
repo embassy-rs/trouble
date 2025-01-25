@@ -15,8 +15,32 @@ pub enum Uuid {
 }
 
 impl From<BluetoothUuid16> for Uuid {
-    fn from(val: bt_hci::uuid::BluetoothUuid16) -> Self {
-        Uuid::Uuid16(val.into())
+    fn from(data: bt_hci::uuid::BluetoothUuid16) -> Self {
+        Uuid::Uuid16(data.into())
+    }
+}
+
+impl From<u128> for Uuid {
+    fn from(data: u128) -> Self {
+        Uuid::Uuid128(data.to_le_bytes())
+    }
+}
+
+impl From<[u8; 16]> for Uuid {
+    fn from(data: [u8; 16]) -> Self {
+        Uuid::Uuid128(data)
+    }
+}
+
+impl From<[u8; 2]> for Uuid {
+    fn from(data: [u8; 2]) -> Self {
+        Uuid::Uuid16(data)
+    }
+}
+
+impl From<u16> for Uuid {
+    fn from(data: u16) -> Self {
+        Uuid::Uuid16(data.to_le_bytes())
     }
 }
 
@@ -68,12 +92,6 @@ impl Uuid {
             Uuid::Uuid16(uuid) => uuid,
             Uuid::Uuid128(uuid) => uuid,
         }
-    }
-}
-
-impl From<u16> for Uuid {
-    fn from(data: u16) -> Self {
-        Uuid::Uuid16(data.to_le_bytes())
     }
 }
 
