@@ -45,14 +45,17 @@ impl From<u16> for Uuid {
 }
 
 impl Uuid {
+    // Note: 'new_{short|long}' are 'const fn'; '::from' implementations cannot be.
+    //      Thus, there might be a place for both, though they look superficially overlapping.
+
     /// Create a new 16-bit UUID.
     pub const fn new_short(val: u16) -> Self {
         Self::Uuid16(val.to_le_bytes())
     }
 
-    /// Create a new 128-bit UUID.
-    pub const fn new_long(val: [u8; 16]) -> Self {
-        Self::Uuid128(val)
+    /// Create a new 128-bit UUID. THIS MIGHT NOT NEED TO EXIST
+    pub const fn new_long(val: u128) -> Self {
+        Self::Uuid128(val.to_le_bytes())
     }
 
     /// Copy the UUID bytes into a slice.
@@ -92,6 +95,30 @@ impl Uuid {
             Uuid::Uuid16(uuid) => uuid,
             Uuid::Uuid128(uuid) => uuid,
         }
+    }
+}
+
+impl From<u16> for Uuid {
+    fn from(data: u16) -> Self {
+        Uuid::Uuid16(data.to_le_bytes())
+    }
+}
+
+impl From<u128> for Uuid {
+    fn from(data: u128) -> Self {
+        Self::Uuid128(data.to_le_bytes())
+    }
+}
+
+impl From<[u8; 2]> for Uuid {
+    fn from(data: [u8; 2]) -> Self {
+        Self::Uuid16(data)
+    }
+}
+
+impl From<[u8; 16]> for Uuid {
+    fn from(data: [u8; 16]) -> Self {
+        Self::Uuid128(data)
     }
 }
 
