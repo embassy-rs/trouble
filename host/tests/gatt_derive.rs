@@ -23,13 +23,15 @@ struct Server {
     bas: BatteryService,
 }
 
+const UUID_U128: u128 = 0x408813df_5dd4_1f87_ec11_cdb000100000;
+
 #[gatt_service(uuid = "408813df-5dd4-1f87-ec11-cdb000100000")]
 struct CustomService {
     #[descriptor(uuid = "2b20", value = "Read Only Descriptor", read)]
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", value = 42, read, write, notify)]
     #[descriptor(uuid = "2b21", value = [0x01,0x02,0x03], read)]
     pub value: u8,
-    #[characteristic(uuid = "408814df-5dd4-1f87-ec11-cdb001100000", value = 123.321, read, write, notify)]
+    #[characteristic(uuid = UUID_U128, value = 123.321, read, write, notify)]
     /// Order doesn't matter
     #[descriptor(uuid = "2b20", read, value = 42u16.to_le_bytes())] // empty descriptor
     pub second: f32,
