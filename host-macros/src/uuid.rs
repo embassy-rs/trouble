@@ -11,7 +11,7 @@ use quote::quote;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Uuid {
     Uuid16(u16),
-    Uuid128(u128)   //was: Uuid128([u8; 16]),
+    Uuid128(u128)
 }
 
 impl FromMeta for Uuid {
