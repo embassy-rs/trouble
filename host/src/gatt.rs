@@ -103,6 +103,24 @@ pub enum GattEvent<'stack, 'server> {
     Write(WriteEvent<'stack, 'server>),
 }
 
+impl<'stack, 'server> GattEvent<'stack, 'server> {
+    /// Accept the event, making it processed by the server.
+    pub fn accept(self) -> Result<Reply<'stack>, Error> {
+        match self {
+            Self::Read(e) => e.accept(),
+            Self::Write(e) => e.accept(),
+        }
+    }
+
+    /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    pub fn reject(self, err: AttErrorCode) -> Result<Reply<'stack>, Error> {
+        match self {
+            Self::Read(e) => e.reject(err),
+            Self::Write(e) => e.reject(err),
+        }
+    }
+}
+
 /// An event returned while processing GATT requests.
 pub struct ReadEvent<'stack, 'server> {
     value_handle: u16,
@@ -290,7 +308,9 @@ impl<'stack> Reply<'stack> {
 impl Drop for Reply<'_> {
     fn drop(&mut self) {
         if let Some(pdu) = self.pdu.take() {
-            let _ = self.connection.try_send(pdu);
+            if self.connection.try_send(pdu).is_err() {
+                warn!("[gatt] error sending reply (outbound buffer full)");
+            }
         }
     }
 }
