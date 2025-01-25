@@ -58,7 +58,7 @@ where
             info!("L2CAP channel accepted");
 
             // Size of payload we're expecting
-            const PAYLOAD_LEN: usize = 27;
+            const PAYLOAD_LEN: usize = 250;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
                 let len = ch1.receive(&stack, &mut rx).await.unwrap();
