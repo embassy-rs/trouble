@@ -8,8 +8,6 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
-const MAX_ATTRIBUTES: usize = 10;
-
 // GATT Server definition
 #[gatt_server]
 struct Server {
