@@ -48,13 +48,13 @@ async fn gatt_client_server() {
         let mut expected = value.wrapping_add(1);
 
         let mut table: AttributeTable<'_, NoopRawMutex, 10> = AttributeTable::new();
-        let mut svc = table.add_service(Service::new(0x1800));
-        let _ = svc.add_characteristic_ro(0x2a00, id);
-        let _ = svc.add_characteristic_ro(0x2a01, &appearance);
+        let mut svc = table.add_service(Service::new(0x1800u16));
+        let _ = svc.add_characteristic_ro(0x2a00u16, id);
+        let _ = svc.add_characteristic_ro(0x2a01u16, &appearance);
         svc.build();
 
         // Generic attribute service (mandatory)
-        table.add_service(Service::new(0x1801));
+        table.add_service(Service::new(0x1801u16));
 
         // Custom service
         let _handle: Characteristic<u8> = table.add_service(Service::new(SERVICE_UUID.clone()))
