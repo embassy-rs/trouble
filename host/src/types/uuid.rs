@@ -22,7 +22,7 @@ impl From<BluetoothUuid16> for Uuid {
 
 impl From<u128> for Uuid {
     fn from(val: u128) -> Self {
-        Uuid::Uuid128(val.to_be_bytes())
+        Uuid::Uuid128(val.to_le_bytes())
     }
 }
 
