@@ -3,7 +3,7 @@ name: rodbot
 
 on:
   issue_comment:
-    types: [ "created" ]
+    types: ["created"]
 
 jobs:
   rodbot:
@@ -18,7 +18,7 @@ jobs:
           cat $"GITHUB_EVENT_PATH"
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - uses: ctron/rodbot-action@v0.1
         with:

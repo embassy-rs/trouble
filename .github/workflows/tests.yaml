@@ -23,7 +23,7 @@ jobs:
         run: |
           sudo apt-get install --no-install-recommends libudev-dev
       - name: Set up cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4.2.0
         continue-on-error: true
         with:
           path: |
