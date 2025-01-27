@@ -208,7 +208,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Cargo Clippy check on host Macros
-        run: cargo clippy --manifest-path host-macros/Cargo.toml --all-features
+        run: |
+          cd host-macros
+          cargo clippy --all-features
 
   cargo_clippy_examples:
     name: Cargo Clippy Examples
@@ -216,19 +218,35 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      # - name: Cargo Clippy check on apache-nimble
-      #   run: cargo clippy --manifest-path examples/apache-nimble/Cargo.toml
+      - name: Cargo Clippy check on apache-nimble
+        run: |
+          cd examples/apache-nimble
+          cargo clippy
       - name: Cargo Clippy apps
-        run: cargo clippy --manifest-path examples/apps/Cargo.toml
-      # - name: Cargo Clippy esp32
-      #   run: cargo clippy --manifest-path examples/esp32/Cargo.toml # Portable Atomic Error
-      # - name: Cargo Clippy nrf-sdc
-      #   run: cargo clippy --manifest-path examples/nrf-sdc/Cargo.toml
+        run: |
+          cd examples/apps
+          cargo clippy
+      - name: Cargo Clippy esp32
+        run: |
+          cd examples/esp32
+          cargo clippy
+      - name: Cargo Clippy nrf-sdc
+        run: |
+          cd examples/nrf-sdc
+          cargo clippy
       - name: Cargo Clippy rp-pico-2-w
-        run: cargo clippy --manifest-path examples/rp-pico-2-w/Cargo.toml
+        run: |
+          cd examples/rp-pico-2-w
+          cargo clippy
       - name: Cargo Clippy rp-pico-w
-        run: cargo clippy --manifest-path examples/rp-pico-w/Cargo.toml
+        run: |
+          cd examples/rp-pico-w
+          cargo clippy
       - name: Cargo Clippy serial-hci
-        run: cargo clippy --manifest-path examples/serial-hci/Cargo.toml
+        run: |
+          cd examples/serial-hci
+          cargo clippy
       - name: Cargo Clippy tests
-        run: cargo clippy --manifest-path examples/tests/Cargo.toml
+        run: |
+          cd examples/tests
+          cargo clippy
