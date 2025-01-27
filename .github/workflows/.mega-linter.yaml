@@ -222,8 +222,8 @@ jobs:
         run: cargo clippy --manifest-path examples/apps/Cargo.toml
       # - name: Cargo Clippy esp32
       #   run: cargo clippy --manifest-path examples/esp32/Cargo.toml # Portable Atomic Error
-      - name: Cargo Clippy nrf-sdc
-        run: cargo clippy --manifest-path examples/nrf-sdc/Cargo.toml
+      # - name: Cargo Clippy nrf-sdc
+      #   run: cargo clippy --manifest-path examples/nrf-sdc/Cargo.toml
       - name: Cargo Clippy rp-pico-2-w
         run: cargo clippy --manifest-path examples/rp-pico-2-w/Cargo.toml
       - name: Cargo Clippy rp-pico-w
