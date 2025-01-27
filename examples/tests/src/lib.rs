@@ -31,3 +31,9 @@ impl TestContext {
         Ok(DeviceUnderTest::new(target))
     }
 }
+
+impl Default for TestContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
