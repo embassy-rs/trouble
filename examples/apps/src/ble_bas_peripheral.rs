@@ -9,8 +9,6 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
-const MAX_ATTRIBUTES: usize = 10;
-
 // GATT Server definition
 #[gatt_server]
 struct Server {
@@ -80,7 +78,7 @@ where
 ///
 /// If you didn't require this to be generic for your application, you could statically spawn this with i.e.
 ///
-/// ```rust [ignore]
+/// ```rust,ignore
 ///
 /// #[embassy_executor::task]
 /// async fn ble_task(mut runner: Runner<'static, SoftdeviceController<'static>>) {
