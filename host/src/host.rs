@@ -72,8 +72,6 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
     pub(crate) scan_command_state: CommandState<bool>,
-    #[cfg(feature = "scan")]
-    pub(crate) scan_state: ScanState,
 }
 
 #[derive(Clone, Copy)]
@@ -174,34 +172,6 @@ impl<'d> AdvState<'d> {
     }
 }
 
-pub(crate) struct ScanState {
-    writer: RefCell<Option<embassy_sync::pipe::DynamicWriter<'static>>>,
-}
-
-impl ScanState {
-    pub(crate) fn new() -> Self {
-        Self {
-            writer: RefCell::new(None),
-        }
-    }
-
-    pub(crate) fn reset(&self, writer: embassy_sync::pipe::DynamicWriter<'static>) {
-        self.writer.borrow_mut().replace(writer);
-    }
-
-    pub(crate) fn try_push(&self, _n_reports: u8, data: &[u8]) -> Result<(), ()> {
-        let mut writer = self.writer.borrow_mut();
-        if let Some(writer) = writer.as_mut() {
-            writer.try_write(data).map_err(|_| ())?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn stop(&self) {
-        let _ = self.writer.borrow_mut().take();
-    }
-}
-
 /// Host metrics
 #[derive(Default, Clone)]
 pub struct HostMetrics {
@@ -249,8 +219,6 @@ where
             tx_pool,
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),
-            #[cfg(feature = "scan")]
-            scan_state: ScanState::new(),
             advertise_state: AdvState::new(advertise_handles),
             advertise_command_state: CommandState::new(),
             scan_command_state: CommandState::new(),
@@ -510,6 +478,21 @@ pub struct TxRunner<'d, C> {
     stack: &'d Stack<'d, C>,
 }
 
+/// Event handler.
+pub trait EventHandler {
+    /// Handle vendor events
+    fn on_vendor(&self, vendor: &Vendor) {}
+    /// Handle advertising reports
+    #[cfg(feature = "scan")]
+    fn on_adv_reports(&self, reports: bt_hci::param::LeAdvReportsIter) {}
+    /// Handle extended advertising reports
+    #[cfg(feature = "scan")]
+    fn on_ext_adv_reports(&self, reports: bt_hci::param::LeExtAdvReportsIter) {}
+}
+
+struct DummyHandler;
+impl EventHandler for DummyHandler {}
+
 impl<'d, C: Controller> Runner<'d, C> {
     pub(crate) fn new(stack: &'d Stack<'d, C>) -> Self {
         Self {
@@ -544,11 +527,12 @@ impl<'d, C: Controller> Runner<'d, C> {
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>,
     {
-        self.run_with_handler(|_| {}).await
+        let dummy = DummyHandler;
+        self.run_with_handler(&dummy).await
     }
 
     /// Run the host with a vendor event handler for custom events.
-    pub async fn run_with_handler<F: Fn(&Vendor)>(&mut self, vendor_handler: F) -> Result<(), BleHostError<C::Error>>
+    pub async fn run_with_handler<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -568,7 +552,7 @@ impl<'d, C: Controller> Runner<'d, C> {
             + ControllerCmdSync<LeReadBufferSize>,
     {
         let control_fut = self.control.run();
-        let rx_fut = self.rx.run_with_handler(vendor_handler);
+        let rx_fut = self.rx.run_with_handler(event_handler);
         let tx_fut = self.tx.run();
         pin_mut!(control_fut, rx_fut, tx_fut);
         match select3(&mut tx_fut, &mut rx_fut, &mut control_fut).await {
@@ -594,12 +578,13 @@ impl<'d, C: Controller> RxRunner<'d, C> {
     where
         C: ControllerCmdSync<Disconnect> + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>,
     {
-        self.run_with_handler(|_| {}).await
+        let dummy = DummyHandler;
+        self.run_with_handler(&dummy).await
     }
 
     /// Runs the receive loop that pools the controller for events, dispatching
     /// vendor events to the provided closure.
-    pub async fn run_with_handler<F: Fn(&Vendor)>(&mut self, vendor_handler: F) -> Result<(), BleHostError<C::Error>>
+    pub async fn run_with_handler<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect> + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>,
     {
@@ -696,55 +681,20 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                     host.connect_command_state.canceled();
                                 }
                             }
-                            LeEvent::LeScanTimeout(_) => {
-                                #[cfg(feature = "scan")]
-                                host.scan_state.stop();
-                            }
+                            LeEvent::LeScanTimeout(_) => {}
                             LeEvent::LeAdvertisingSetTerminated(set) => {
                                 host.advertise_state.terminate(set.adv_handle);
                             }
                             LeEvent::LeExtendedAdvertisingReport(data) => {
                                 #[cfg(feature = "scan")]
                                 {
-                                    let mut bytes = &data.reports.bytes[..];
-                                    let mut n = 0;
-                                    while n < data.reports.num_reports {
-                                        match bt_hci::param::LeExtAdvReport::from_hci_bytes(bytes) {
-                                            Ok((_, remaining)) => {
-                                                n += 1;
-                                                bytes = remaining;
-                                            }
-                                            Err(_) => {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    let consumed = data.reports.bytes.len() - bytes.len();
-                                    if let Err(_) = host.scan_state.try_push(n, &data.reports.bytes[..consumed]) {
-                                        warn!("[host] scan buffer overflow");
-                                    }
+                                    event_handler.on_ext_adv_reports(data.reports.iter());
                                 }
                             }
                             LeEvent::LeAdvertisingReport(data) => {
                                 #[cfg(feature = "scan")]
                                 {
-                                    let mut bytes = &data.reports.bytes[..];
-                                    let mut n = 0;
-                                    while n < data.reports.num_reports {
-                                        match bt_hci::param::LeAdvReport::from_hci_bytes(bytes) {
-                                            Ok((_, remaining)) => {
-                                                n += 1;
-                                                bytes = remaining;
-                                            }
-                                            Err(_) => {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    let consumed = data.reports.bytes.len() - bytes.len();
-                                    if let Err(_) = host.scan_state.try_push(n, &data.reports.bytes[..consumed]) {
-                                        warn!("[host] scan buffer overflow");
-                                    }
+                                    event_handler.on_adv_reports(data.reports.iter());
                                 }
                             }
                             _ => {
@@ -789,7 +739,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             }
                         }
                         Event::Vendor(vendor) => {
-                            vendor_handler(&vendor);
+                            event_handler.on_vendor(&vendor);
                         }
                         // Ignore
                         _ => {}
