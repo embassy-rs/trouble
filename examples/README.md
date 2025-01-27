@@ -4,7 +4,7 @@
 
 Within this directory we have numerous examples showing how to get started using Trouble in your projects. We also test these examples using Automated CI. More information on this can be found below:
 
-## Examples
+## Example Applications
 
 Within this examples directory we have the following structure:
 
