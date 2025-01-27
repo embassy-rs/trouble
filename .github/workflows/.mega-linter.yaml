@@ -211,7 +211,7 @@ jobs:
       - name: Cargo Clippy check on host Macros
         run: |
           cd host-macros
-          cargo clippy -- --D warnings --all-features
+          cargo clippy -- --D warnings 
 
   cargo_clippy_examples:
     name: Cargo Clippy Examples
