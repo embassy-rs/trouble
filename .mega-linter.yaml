@@ -47,7 +47,8 @@ RUST_CLIPPY_ARGUMENTS:
   - --
   - --manifest-path
   - host/Cargo.toml
-  - --all-features
+  - --features
+  - gatt,peripheral,central
 
 JSON_JSONLINT_ARGUMENTS:
 - --comments
