@@ -51,4 +51,4 @@ RUST_CLIPPY_ARGUMENTS:
   - gatt,peripheral,central
 
 JSON_JSONLINT_ARGUMENTS:
-- --comments
+  - --comments

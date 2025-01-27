@@ -30,9 +30,9 @@ The hardware for which each example uses is listed below:
 - **[rp-pico-2-w](./rp-pico-2-w/Cargo.toml)**: [Raspberry Pi Pico 2 W](https://thepihut.com/products/raspberry-pi-pico-2-w?variant=53727839027585&country=GB&currency=GBP&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&gad_source=1&gclid=CjwKCAiAkc28BhB0EiwAM001TXNknX7fTXNwbaySLfbvbUJRaOgFseqj6RcDeu4Dd8RE64GgZ0imnxoCVVYQAvD_BwE)
 - **[rp-pico-w](./rp-pico-w/Cargo.toml)**: [Raspberry Pico W](https://thepihut.com/products/raspberry-pi-pico-w)
 - **[serial-hci](./serial-hci/Cargo.toml)**: Can be used with any Serial HCI, the following has been used:
-    - [Example 1]()
-    - [Example 2]()
-    - [Example 3]()
+  - [Example 1]()
+  - [Example 2]()
+  - [Example 3]()
 
 ## Tests
 

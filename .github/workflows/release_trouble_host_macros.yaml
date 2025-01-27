@@ -1,11 +1,10 @@
 ---
-
 name: Trouble Host macros Release
 
 on:
   push:
     tags:
-     - 'trouble-host-macros-v[0-9]+.[0-9]+.[0-9]+'
+      - "trouble-host-macros-v[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
   contents: write
@@ -44,48 +43,48 @@ jobs:
     timeout-minutes: 10
     if: github.ref == 'refs/heads/main'
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Verify Version
-      run: |
-        TAG_VERSION=${GITHUB_REF#refs/tags/trouble-host-macros-v}
-        CARGO_VERSION=$(grep '^version =' host-macros/Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')
-        if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-          echo "Version mismatch: tag is $TAG_VERSION but Cargo.toml is $CARGO_VERSION"
-          exit 1  # Exits with a non-zero status to fail the workflow
-        fi
-      shell: bash
+      - name: Verify Version
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/trouble-host-macros-v}
+          CARGO_VERSION=$(grep '^version =' host-macros/Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Version mismatch: tag is $TAG_VERSION but Cargo.toml is $CARGO_VERSION"
+            exit 1  # Exits with a non-zero status to fail the workflow
+          fi
+        shell: bash
 
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
-    - name: Build project
-      run: |
-        cd host-macros
-        cargo build --release
+      - name: Build project
+        run: |
+          cd host-macros
+          cargo build --release
 
-    - name: Create GitHub release
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        tag: ${{ github.ref_name }}
-      run: |
-        gh release create "$tag" \
-            --repo="$GITHUB_REPOSITORY" \
-            --title="${GITHUB_REPOSITORY#*/} host macros v${tag#trouble-host-macros-v}" \
-            --generate-notes
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+        run: |
+          gh release create "$tag" \
+              --repo="$GITHUB_REPOSITORY" \
+              --title="${GITHUB_REPOSITORY#*/} host macros v${tag#trouble-host-macros-v}" \
+              --generate-notes
 
-    - name: Publish to crates.io
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      # Publish to the main registry
-      run: |
-        echo "Publishing to crates.io"
-        cargo publish
-      # To perform a dry run uncomment the following lines
-      # run: |
-      #   echo "Performing dry-run publish to crates.io"
-      #   cd host-macros
-      #   cargo publish --dry-run
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        # Publish to the main registry
+        run: |
+          echo "Publishing to crates.io"
+          cargo publish
+        # To perform a dry run uncomment the following lines
+        # run: |
+        #   echo "Performing dry-run publish to crates.io"
+        #   cd host-macros
+        #   cargo publish --dry-run

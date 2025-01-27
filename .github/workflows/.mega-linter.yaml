@@ -158,7 +158,7 @@ jobs:
             echo "A PR with formatting fixes has been created. Please merge it before proceeding."
             exit 1
           fi
-# Required due to Mega Linter not currently supporting Rust Format
+  # Required due to Mega Linter not currently supporting Rust Format
   cargo_fmt_library:
     name: Cargo Formatter (Library)
     runs-on: ubuntu-latest
