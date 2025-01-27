@@ -165,12 +165,41 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Install Toolchain
-        run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
+      - name: Install Toolchains
+        run: |
+          rustup toolchain install nightly-x86_64-unknown-linux-gnu
+          rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
       - name: Rustfmt check on host
         run: cargo  +nightly fmt --manifest-path host/Cargo.toml -- --check
       - name: Rustfmt check on host macros
         run: cargo  +nightly fmt --manifest-path host-macros/Cargo.toml -- --check
+
+  cargo_fmt_examples:
+    name: Cargo Formatter Examples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install Toolchains
+        run: |
+          rustup toolchain install nightly-x86_64-unknown-linux-gnu
+          rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
+      - name: Rustfmt check on apache-nimble
+        run: cargo +nightly fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
+      - name: Rustfmt check on apps
+        run: cargo +nightly fmt --manifest-path examples/apps/Cargo.toml -- --check
+      - name: Rustfmt check on esp32
+        run: cargo +nightly fmt --manifest-path examples/esp32/Cargo.toml -- --check
+      - name: Rustfmt check on nrf-sdc
+        run: cargo +nightly fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
+      - name: Rustfmt check on rp-pico-2-w
+        run: cargo +nightly fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
+      - name: Rustfmt check on rp-pico-w
+        run: cargo +nightly fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
+      - name: Rustfmt check on serial-hci
+        run: cargo +nightly fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
+      - name: Rustfmt check on tests
+        run: cargo +nightly fmt --manifest-path examples/tests/Cargo.toml -- --check
 
   cargo_clippy_library:
     name: Cargo Clippy Host Macros
@@ -204,25 +233,4 @@ jobs:
       - name: Cargo Clippy tests
         run: cargo clippy --manifest-path examples/tests/Cargo.toml
 
-  cargo_fmt_examples:
-    name: Cargo Formatter Examples
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Rustfmt check on apache-nimble
-        run: cargo +nightly fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
-      - name: Rustfmt check on apps
-        run: cargo +nightly fmt --manifest-path examples/apps/Cargo.toml -- --check
-      - name: Rustfmt check on esp32
-        run: cargo +nightly fmt --manifest-path examples/esp32/Cargo.toml -- --check
-      - name: Rustfmt check on nrf-sdc
-        run: cargo +nightly fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
-      - name: Rustfmt check on rp-pico-2-w
-        run: cargo +nightly fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
-      - name: Rustfmt check on rp-pico-w
-        run: cargo +nightly fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
-      - name: Rustfmt check on serial-hci
-        run: cargo +nightly fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
-      - name: Rustfmt check on tests
-        run: cargo +nightly fmt --manifest-path examples/tests/Cargo.toml -- --check
+  
