@@ -203,7 +203,7 @@ jobs:
         run: cargo +nightly fmt --manifest-path examples/tests/Cargo.toml -- --check
 
   cargo_clippy_library:
-    name: Cargo Clippy Host Macros
+    name: Cargo Clippy (Host Macros)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -211,10 +211,10 @@ jobs:
       - name: Cargo Clippy check on host Macros
         run: |
           cd host-macros
-          cargo clippy -- --D warnings 
+          cargo clippy -- --D warnings
 
   cargo_clippy_examples:
-    name: Cargo Clippy Examples
+    name: Cargo Clippy (Examples)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
