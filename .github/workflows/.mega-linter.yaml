@@ -211,7 +211,7 @@ jobs:
       - name: Cargo Clippy check on host Macros
         run: |
           cd host-macros
-          cargo clippy --all-features
+          cargo clippy -- --D warnings --all-features
 
   cargo_clippy_examples:
     name: Cargo Clippy Examples
@@ -222,32 +222,32 @@ jobs:
       - name: Cargo Clippy check on apache-nimble
         run: |
           cd examples/apache-nimble
-          cargo clippy
+          cargo clippy -- --D warnings
       - name: Cargo Clippy apps
         run: |
           cd examples/apps
-          cargo clippy
+          cargo clippy -- --D warnings
       - name: Cargo Clippy esp32
         run: |
           cd examples/esp32
-          cargo clippy
+          cargo clippy -- --D warnings
       - name: Cargo Clippy nrf-sdc
         run: |
           cd examples/nrf-sdc
-          cargo clippy
+          cargo clippy -- --D warnings
       - name: Cargo Clippy rp-pico-2-w
         run: |
           cd examples/rp-pico-2-w
-          cargo clippy
+          cargo clippy -- --D warnings
       - name: Cargo Clippy rp-pico-w
         run: |
           cd examples/rp-pico-w
-          cargo clippy
+          cargo clippy -- --D warnings
       - name: Cargo Clippy serial-hci
         run: |
           cd examples/serial-hci
-          cargo clippy
+          cargo clippy -- --D warnings
       - name: Cargo Clippy tests
         run: |
           cd examples/tests
-          cargo clippy
+          cargo clippy -- --D warnings
