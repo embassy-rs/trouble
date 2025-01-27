@@ -1,6 +1,7 @@
+use core::cell::RefCell;
+
 use bt_hci::cmd::le::LeSetScanParams;
 use bt_hci::controller::ControllerCmdSync;
-use core::cell::RefCell;
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use heapless::Deque;
