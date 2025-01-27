@@ -1,4 +1,5 @@
-use embassy_futures::{join::join, select::select};
+use embassy_futures::join::join;
+use embassy_futures::select::select;
 use embassy_time::Timer;
 use trouble_host::prelude::*;
 
@@ -77,7 +78,7 @@ where
 ///
 /// If you didn't require this to be generic for your application, you could statically spawn this with i.e.
 ///
-/// ```rust [ignore]
+/// ```rust,ignore
 ///
 /// #[embassy_executor::task]
 /// async fn ble_task(mut runner: Runner<'static, SoftdeviceController<'static>>) {

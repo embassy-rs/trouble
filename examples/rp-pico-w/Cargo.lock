@@ -293,7 +293,7 @@ dependencies = [
  "embedded-io-async",
  "futures",
  "heapless",
- "num_enum 0.5.11",
+ "num_enum",
 ]
 
 [[package]]
@@ -1428,16 +1428,7 @@ version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
 dependencies = [
- "num_enum_derive 0.5.11",
-]
-
-[[package]]
-name = "num_enum"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e613fc340b2220f734a8595782c551f1250e969d87d3be1ae0579e8d4065179"
-dependencies = [
- "num_enum_derive 0.7.3",
+ "num_enum_derive",
 ]
 
 [[package]]
@@ -1449,17 +1440,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af1844ef2428cc3e1cb900be36181049ef3d3193c63e43026cfe202983b27a56"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.93",
 ]
 
 [[package]]
@@ -1604,7 +1584,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76e09694b50f89f302ed531c1f2a7569f0be5867aee4ab4f8f729bbeec0078e3"
 dependencies = [
  "arrayvec",
- "num_enum 0.5.11",
+ "num_enum",
  "paste",
 ]
 
@@ -2415,6 +2395,7 @@ dependencies = [
  "embassy-time",
  "embedded-hal 1.0.0",
  "embedded-io",
+ "heapless",
  "static_cell",
  "trouble-host",
 ]
@@ -2431,9 +2412,7 @@ dependencies = [
  "embedded-io",
  "futures",
  "heapless",
- "num_enum 0.7.3",
  "static_cell",
- "thiserror 2.0.9",
  "trouble-host-macros",
 ]
 
