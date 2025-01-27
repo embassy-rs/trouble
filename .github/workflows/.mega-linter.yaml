@@ -170,10 +170,9 @@ jobs:
           rustup toolchain install nightly-x86_64-unknown-linux-gnu
           rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
       - name: Rustfmt check on host
-        continue-on-error: true
         run: cargo  +nightly fmt --manifest-path host/Cargo.toml -- --check
       - name: Rustfmt check on host macros
-        continue-on-error: true
+
         run: cargo  +nightly fmt --manifest-path host-macros/Cargo.toml -- --check
 
   cargo_fmt_examples:
@@ -187,28 +186,20 @@ jobs:
           rustup toolchain install nightly-x86_64-unknown-linux-gnu
           rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
       - name: Rustfmt check on apache-nimble
-        continue-on-error: true
         run: cargo +nightly fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
       - name: Rustfmt check on apps
-        continue-on-error: true
         run: cargo +nightly fmt --manifest-path examples/apps/Cargo.toml -- --check
       - name: Rustfmt check on esp32
-        continue-on-error: true
         run: cargo +nightly fmt --manifest-path examples/esp32/Cargo.toml -- --check
       - name: Rustfmt check on nrf-sdc
-        continue-on-error: true
         run: cargo +nightly fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
       - name: Rustfmt check on rp-pico-2-w
-        continue-on-error: true
         run: cargo +nightly fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
       - name: Rustfmt check on rp-pico-w
-        continue-on-error: true
         run: cargo +nightly fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
       - name: Rustfmt check on serial-hci
-        continue-on-error: true
         run: cargo +nightly fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
       - name: Rustfmt check on tests
-        continue-on-error: true
         run: cargo +nightly fmt --manifest-path examples/tests/Cargo.toml -- --check
 
   cargo_clippy_library:
@@ -229,42 +220,34 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Cargo Clippy check on apache-nimble
-        continue-on-error: true
         run: |
           cd examples/apache-nimble
           cargo clippy
       - name: Cargo Clippy apps
-        continue-on-error: true
         run: |
           cd examples/apps
           cargo clippy
       - name: Cargo Clippy esp32
-        continue-on-error: true
         run: |
           cd examples/esp32
           cargo clippy
       - name: Cargo Clippy nrf-sdc
-        continue-on-error: true
         run: |
           cd examples/nrf-sdc
           cargo clippy
       - name: Cargo Clippy rp-pico-2-w
-        continue-on-error: true
         run: |
           cd examples/rp-pico-2-w
           cargo clippy
       - name: Cargo Clippy rp-pico-w
-        continue-on-error: true
         run: |
           cd examples/rp-pico-w
           cargo clippy
       - name: Cargo Clippy serial-hci
-        continue-on-error: true
         run: |
           cd examples/serial-hci
           cargo clippy
       - name: Cargo Clippy tests
-        continue-on-error: true
         run: |
           cd examples/tests
           cargo clippy
