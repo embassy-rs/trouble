@@ -32,11 +32,13 @@ where
     };
     let mut scanner = Scanner::new(central);
     let _ = join(runner.run_with_handler(&printer), async {
-        let mut config = ScanConfig::default();
-        config.active = true;
-        config.phys = PhySet::M1;
-        config.interval = Duration::from_secs(1);
-        config.window = Duration::from_secs(1);
+        let config = ScanConfig::<'_> {
+            active: true,
+            phys: PhySet::M1,
+            interval: Duration::from_secs(1),
+            window: Duration::from_secs(1),
+            ..Default::default()
+        };
         let mut _session = scanner.scan(&config).await.unwrap();
         // Scan forever
         loop {
@@ -54,7 +56,7 @@ impl EventHandler for Printer {
     fn on_adv_reports(&self, mut it: LeAdvReportsIter<'_>) {
         let mut seen = self.seen.borrow_mut();
         while let Some(Ok(report)) = it.next() {
-            if seen.iter().find(|b| b.raw() == report.addr.raw()).is_none() {
+            if !seen.iter().any(|b| b.raw() == report.addr.raw()) {
                 info!("discovered: {:?}", report.addr);
                 if seen.is_full() {
                     seen.pop_front();
