@@ -15,6 +15,7 @@ use core::mem::MaybeUninit;
 use advertise::AdvertisementDataError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
+use bt_hci::param::{AddrKind, BdAddr};
 use bt_hci::FromHciBytesError;
 
 use crate::att::AttErrorCode;
@@ -22,7 +23,6 @@ use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
-use bt_hci::param::{AddrKind, BdAddr};
 
 mod fmt;
 
@@ -44,11 +44,10 @@ mod pdu;
 pub mod peripheral;
 pub mod types;
 
-#[cfg(feature = "peripheral")]
-use peripheral::*;
-
 #[cfg(feature = "central")]
 use central::*;
+#[cfg(feature = "peripheral")]
+use peripheral::*;
 
 pub mod advertise;
 pub mod connection;
@@ -66,7 +65,6 @@ use host::{AdvHandleState, BleHost, HostMetrics, Runner};
 
 #[allow(missing_docs)]
 pub mod prelude {
-    pub use super::Host;
     pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
     pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
@@ -75,7 +73,7 @@ pub mod prelude {
     pub use trouble_host_macros::*;
 
     pub use super::att::AttErrorCode;
-    pub use super::{BleHostError, Controller, Error, HostResources, Stack};
+    pub use super::{BleHostError, Controller, Error, Host, HostResources, Stack};
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
@@ -376,9 +374,10 @@ pub fn new<
     #[cfg(feature = "gatt")]
     let tx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(tx_pool) };
 
+    use bt_hci::param::ConnHandle;
+
     use crate::l2cap::sar::AssembledPacket;
     use crate::types::l2cap::L2capHeader;
-    use bt_hci::param::ConnHandle;
     let connections: &mut [ConnectionStorage] =
         &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
     let connections: &'resources mut [ConnectionStorage] = unsafe { transmute_slice(connections) };

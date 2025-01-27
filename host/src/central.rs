@@ -1,12 +1,13 @@
 //! Functionality for the BLE central role.
-use crate::connection::{ConnectConfig, Connection, PhySet};
-use crate::{BleHostError, Error, Stack};
 use bt_hci::cmd::le::{LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn};
 use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use embassy_futures::select::{select, Either};
+
+use crate::connection::{ConnectConfig, Connection, PhySet};
+use crate::{BleHostError, Error, Stack};
 
 /// A type implementing the BLE central role.
 pub struct Central<'stack, C> {

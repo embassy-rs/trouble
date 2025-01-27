@@ -1,8 +1,7 @@
 #![no_main]
 #![no_std]
 
-use apache_nimble::controller::NimbleController;
-use apache_nimble::controller::NimbleControllerTask;
+use apache_nimble::controller::{NimbleController, NimbleControllerTask};
 use embassy_time::{Duration, Ticker, Timer};
 use trouble_example_apps::ble_bas_peripheral;
 use {defmt_rtt as _, panic_probe as _};

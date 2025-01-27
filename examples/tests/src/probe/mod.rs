@@ -1,12 +1,10 @@
 use std::process::Stdio;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::BufReader;
+
+use hilbench_agent::{ProbeConfig, Target};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-
-use hilbench_agent::ProbeConfig;
-use hilbench_agent::Target;
 
 pub fn init(config: ProbeConfig) {
     hilbench_agent::init(config);

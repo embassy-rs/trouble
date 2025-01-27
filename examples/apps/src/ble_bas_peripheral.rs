@@ -1,4 +1,5 @@
-use embassy_futures::{join::join, select::select};
+use embassy_futures::join::join;
+use embassy_futures::select::select;
 use embassy_time::Timer;
 use trouble_host::prelude::*;
 

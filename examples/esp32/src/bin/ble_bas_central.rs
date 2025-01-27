@@ -3,7 +3,8 @@
 
 use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
-use esp_hal::{clock::CpuClock, timer::timg::TimerGroup};
+use esp_hal::clock::CpuClock;
+use esp_hal::timer::timg::TimerGroup;
 use esp_wifi::ble::controller::BleConnector;
 use trouble_example_apps::ble_bas_central;
 use {esp_alloc as _, esp_backtrace as _};
