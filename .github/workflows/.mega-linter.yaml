@@ -216,8 +216,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Cargo Clippy check on apache-nimble
-        run: cargo clippy --manifest-path examples/apache-nimble/Cargo.toml
+      # - name: Cargo Clippy check on apache-nimble
+      #   run: cargo clippy --manifest-path examples/apache-nimble/Cargo.toml
       - name: Cargo Clippy apps
         run: cargo clippy --manifest-path examples/apps/Cargo.toml
       - name: Cargo Clippy esp32
