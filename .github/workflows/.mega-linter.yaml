@@ -232,5 +232,3 @@ jobs:
         run: cargo clippy --manifest-path examples/serial-hci/Cargo.toml
       - name: Cargo Clippy tests
         run: cargo clippy --manifest-path examples/tests/Cargo.toml
-
-  
