@@ -62,7 +62,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/"${COMMIT}" \
             -f "state=pending" -f "description=Running integration tests" -f "context=integration-tests"
       - name: Test
         env:
@@ -78,7 +78,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/"${COMMIT}" \
             -f "state=failure" -f "description=The integration tests failed" -f "context=integration-tests"
       - name: Update success status
         if: success()
@@ -87,7 +87,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/"${COMMIT}" \
             -f "state=success" -f "description=The integration tests succeeded!" -f "context=integration-tests"
 
   example-tests:
@@ -108,7 +108,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/"${COMMIT}" \
             -f "state=pending" -f "description=Running example tests" -f "context=example-tests"
 
       - uses: actions/download-artifact@v4
@@ -131,7 +131,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/"${COMMIT}" \
             -f "state=failure" -f "description=The example tests failed" -f "context=example-tests"
       - name: Update success status
         if: success()
@@ -140,5 +140,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/${COMMIT} \
+            -H "X-GitHub-Api-Version: 2022-11-28" /repos/embassy-rs/trouble/statuses/"${COMMIT}" \
             -f "state=success" -f "description=The example tests succeeded!" -f "context=example-tests"
