@@ -5,7 +5,13 @@
   "recommendations": [
     "rust-lang.rust-analyzer",
     "tamasfe.even-better-toml",
-    "fill-labs.dependi"
+    "fill-labs.dependi",
+    "tamasfe.even-better-toml",
+    "esbenp.prettier-vscode",
+    "foxundermoon.shell-format",
+    "charliermarsh.ruff",
+    "timonwong.shellcheck",
+    "davidanson.vscode-markdownlint"
   ],
   // List of extensions recommended by VS Code that should not be recommended for users of this workspace.
   "unwantedRecommendations": []
