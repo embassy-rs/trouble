@@ -236,10 +236,10 @@ jobs:
           cargo clippy --no-default-features --features=esp32c2 --target=riscv32imc-unknown-none-elf -- -D warnings
           echo "Checking esp32c3"
           cargo clippy --no-default-features --features=esp32c3 --target=riscv32imc-unknown-none-elf -- -D warnings
-          # echo "Checking esp32c6"
-          # cargo clippy  --no-default-features --features=esp32c6 --target=riscv32imc-unknown-none-elf -- -D warnings
-          # echo "Checking esp32h2"
-          # cargo clippy  --no-default-features --features=esp32h2 --target=riscv32imc-unknown-none-elf -- -D warnings
+          echo "Checking esp32c6"
+          cargo clippy  --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf -- -D warnings
+          echo "Checking esp32h2"
+          cargo clippy  --no-default-features --features=esp32h2 --target=riscv32imac-unknown-none-elf -- -D warnings
           # echo "Checking esp32s3"
           # cargo clippy --no-default-features --features=esp32s3 --target=xtensa-esp32s3-none-elf -- -D warnings # (Disabled due to missing toolchain)
       - name: Cargo Clippy nrf-sdc
