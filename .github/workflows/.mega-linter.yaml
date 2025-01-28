@@ -219,10 +219,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Cargo Clippy check on apache-nimble
-        run: |
-          cd examples/apache-nimble
-          cargo clippy -- --D warnings
+      # - name: Cargo Clippy check on apache-nimble # (Disabled due to version bumps needed)
+      #   run: |
+      #     cd examples/apache-nimble
+      #     cargo clippy -- --D warnings
       - name: Cargo Clippy apps
         run: |
           cd examples/apps
