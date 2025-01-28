@@ -219,6 +219,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install toolchains
+        run: |
+          rustup target add riscv32imac-unknown-none-elf
       # - name: Cargo Clippy check on apache-nimble # (Disabled due to version bumps needed)
       #   run: |
       #     cd examples/apache-nimble
