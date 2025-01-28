@@ -245,7 +245,12 @@ jobs:
       - name: Cargo Clippy nrf-sdc
         run: |
           cd examples/nrf-sdc
-          cargo clippy -- --D warnings
+          echo "Checking nrf52832"
+          cargo clippy --features=nrf52832  -- -D warnings
+          echo "Checking nrf52833"
+          cargo clippy --features=nrf52833  -- -D warnings
+          echo "Checking nrf52840"
+          cargo clippy --features=nrf52840  -- -D warnings
       - name: Cargo Clippy rp-pico-2-w
         run: |
           cd examples/rp-pico-2-w
