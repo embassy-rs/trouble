@@ -566,8 +566,6 @@ impl<'d> ChannelManager<'d> {
         Ok(())
     }
 
-    // Number of fragments
-
     /// Send the provided buffer over a given l2cap channel.
     ///
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
@@ -1047,7 +1045,4 @@ mod tests {
             Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
         ));
     }
-
-    #[test]
-    fn channel_fragmentation() {}
 }
