@@ -7,6 +7,7 @@ use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use heapless::Vec;
 
 use crate::att::AttErrorCode;
 use crate::attribute_server::AttributeServer;
@@ -15,7 +16,6 @@ use crate::prelude::Connection;
 use crate::types::gatt_traits::GattValue;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
-use heapless::Vec;
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
