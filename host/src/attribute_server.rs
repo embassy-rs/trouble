@@ -486,6 +486,8 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
             AttReq::ReadBlob { handle, offset } => self.handle_read_blob(connection, rx, *handle, *offset)?,
 
             AttReq::ReadMultiple { handles } => self.handle_read_multiple(connection, rx, handles)?,
+
+            AttReq::ConfirmIndication => 0,
         };
         if len > 0 {
             Ok(Some(len))
