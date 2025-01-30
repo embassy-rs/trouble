@@ -980,6 +980,12 @@ impl<'d, C: Controller> TxRunner<'d, C> {
                         return Err(e);
                     }
                 }
+                Err(BleHostError::BleHost(Error::NotFound)) => {
+                    warn!("[host] unable to send data to disconnected host (ignored)");
+                }
+                Err(BleHostError::BleHost(Error::Disconnected)) => {
+                    warn!("[host] unable to send data to disconnected host (ignored)");
+                }
                 Err(e) => {
                     warn!("[host] error requesting sending outbound pdu");
                     return Err(e);
