@@ -69,6 +69,7 @@ impl Primitive for f32 {}
 impl Primitive for f64 {}
 impl Primitive for BluetoothUuid16 {} // ok as this is just a NewType(u16)
 impl Primitive for &'_ str {}
+impl Primitive for &'_ [u8] {}
 
 impl<T: Primitive> FixedGattValue for T {
     const SIZE: usize = mem::size_of::<Self>();
@@ -155,5 +156,18 @@ impl<const N: usize> GattValue for String<N> {
 
     fn to_gatt(&self) -> &[u8] {
         self.as_ref()
+    }
+}
+
+impl GattValue for crate::types::uuid::Uuid {
+    const MIN_SIZE: usize = 2;
+    const MAX_SIZE: usize = 16;
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        Self::try_from(data).map_err(|_| FromGattError::InvalidLength)
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        self.as_raw()
     }
 }
