@@ -103,6 +103,24 @@ pub enum GattEvent<'stack, 'server> {
     Write(WriteEvent<'stack, 'server>),
 }
 
+impl<'stack, 'server> GattEvent<'stack, 'server> {
+    /// Accept the event, making it processed by the server.
+    pub fn accept(self) -> Result<Reply<'stack>, Error> {
+        match self {
+            Self::Read(e) => e.accept(),
+            Self::Write(e) => e.accept(),
+        }
+    }
+
+    /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    pub fn reject(self, err: AttErrorCode) -> Result<Reply<'stack>, Error> {
+        match self {
+            Self::Read(e) => e.reject(err),
+            Self::Write(e) => e.reject(err),
+        }
+    }
+}
+
 /// An event returned while processing GATT requests.
 pub struct ReadEvent<'stack, 'server> {
     value_handle: u16,
@@ -290,7 +308,9 @@ impl<'stack> Reply<'stack> {
 impl Drop for Reply<'_> {
     fn drop(&mut self) {
         if let Some(pdu) = self.pdu.take() {
-            let _ = self.connection.try_send(pdu);
+            if self.connection.try_send(pdu).is_err() {
+                warn!("[gatt] error sending reply (outbound buffer full)");
+            }
         }
     }
 }
@@ -373,8 +393,12 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         w.write_hci(&header)?;
         w.write(req)?;
 
-        let mut grant = self.stack.host.acl(self.connection.handle(), 1).await?;
-        grant.send(w.finish(), true).await?;
+        let mut grant = self
+            .stack
+            .host
+            .l2cap(self.connection.handle(), w.len() as u16, 1)
+            .await?;
+        grant.send(w.finish()).await?;
 
         let (h, pdu) = self.response_channel.receive().await;
 
@@ -399,9 +423,8 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             mtu: L2CAP_MTU as u16 - 4,
         })?;
 
-        let mut grant = stack.host.acl(connection.handle(), 1).await?;
-
-        grant.send(w.finish(), true).await?;
+        let mut grant = stack.host.l2cap(connection.handle(), w.len() as u16, 1).await?;
+        grant.send(w.finish()).await?;
 
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),

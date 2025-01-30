@@ -119,15 +119,30 @@ async fn gatt_events_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<
                 // the protocol details
                 match data.process(server).await {
                     // Server processing emits
-                    Ok(Some(GattEvent::Read(event))) => {
-                        if event.handle() == level.handle {
-                            let value = server.get(&level);
-                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                    Ok(Some(event)) => {
+                        match &event {
+                            GattEvent::Read(event) => {
+                                if event.handle() == level.handle {
+                                    let value = server.get(&level);
+                                    info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                                }
+                            }
+                            GattEvent::Write(event) => {
+                                if event.handle() == level.handle {
+                                    info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                                }
+                            }
                         }
-                    }
-                    Ok(Some(GattEvent::Write(event))) => {
-                        if event.handle() == level.handle {
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+
+                        // This step is also performed at drop(), but writing it explicitly is necessary
+                        // in order to ensure reply is sent.
+                        match event.accept() {
+                            Ok(reply) => {
+                                reply.send().await;
+                            }
+                            Err(e) => {
+                                warn!("[gatt] error sending response: {:?}", e);
+                            }
                         }
                     }
                     Ok(_) => {}
