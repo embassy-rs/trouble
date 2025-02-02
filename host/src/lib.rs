@@ -29,7 +29,6 @@ mod fmt;
 #[cfg(not(any(feature = "central", feature = "peripheral")))]
 compile_error!("Must enable at least one of the `central` or `peripheral` features");
 
-#[allow(missing_docs)] // Temporary
 pub mod att;
 #[cfg(feature = "central")]
 pub mod central;

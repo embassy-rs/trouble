@@ -1,3 +1,4 @@
+//! Attribute Protocol (ATT) PDU definitions
 use core::fmt::Display;
 use core::mem;
 
@@ -157,120 +158,208 @@ impl codec::Type for AttErrorCode {
     }
 }
 
+/// ATT Client PDU (Request, Command, Confirmation)
+///
+/// The ATT Client PDU is used to send requests, commands and confirmations to the ATT Server
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttClient<'d> {
+    /// ATT Request PDU
     Request(AttReq<'d>),
+    /// ATT Command PDU
     Command(AttCmd<'d>),
+    /// ATT Confirmation PDU
     Confirmation(AttCfm),
 }
 
+/// ATT Request PDU
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttReq<'d> {
+    /// Read By Group Type Request
     ReadByGroupType {
+        /// Start attribute handle
         start: u16,
+        /// End attribute handle
         end: u16,
+        /// Group type
         group_type: Uuid,
     },
+    /// Read By Type Request
     ReadByType {
+        /// Start attribute handle
         start: u16,
+        /// End attribute handle
         end: u16,
+        /// Attribute type
         attribute_type: Uuid,
     },
+    /// Read Request
     Read {
+        /// Attribute handle
         handle: u16,
     },
+    /// Write Request
     Write {
+        /// Attribute handle
         handle: u16,
+        /// Attribute value
         data: &'d [u8],
     },
+    /// Exchange MTU Request
     ExchangeMtu {
+        /// Client MTU
         mtu: u16,
     },
+    /// Find By Type Value Request
     FindByTypeValue {
+        /// Start attribute handle
         start_handle: u16,
+        /// End attribute handle
         end_handle: u16,
+        /// Attribute type
         att_type: u16,
+        /// Attribute value
         att_value: &'d [u8],
     },
+    /// Find Information Request
     FindInformation {
+        /// Start attribute handle
         start_handle: u16,
+        /// End attribute handle
         end_handle: u16,
     },
+    /// Prepare Write Request
     PrepareWrite {
+        /// Attribute handle
         handle: u16,
+        /// Attribute offset
         offset: u16,
+        /// Attribute value
         value: &'d [u8],
     },
+    /// Execute Write Request
     ExecuteWrite {
+        /// Flags
         flags: u8,
     },
+    /// Read Multiple Request
     ReadMultiple {
+        /// Attribute handles
         handles: &'d [u8],
     },
+    /// Read Blob Request
     ReadBlob {
+        /// Attribute handle
         handle: u16,
+        /// Attribute offset
         offset: u16,
     },
 }
 
+/// ATT Command PDU
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttCmd<'d> {
-    Write { handle: u16, data: &'d [u8] },
+    /// Write Command
+    Write {
+        /// Attribute handle
+        handle: u16,
+        /// Attribute value
+        data: &'d [u8],
+    },
 }
 
+/// ATT Confirmation PDU
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttCfm {
+    /// Confirm Indication
     ConfirmIndication,
 }
 
+/// ATT Server PDU (Response, Unsolicited)
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttServer<'d> {
+    /// ATT Response PDU
     Response(AttRsp<'d>),
+    /// ATT Unsolicited PDU
     Unsolicited(AttUns<'d>),
 }
 
+/// ATT Response PDU
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttRsp<'d> {
+    /// Exchange MTU Response
     ExchangeMtu {
+        /// Server MTU
         mtu: u16,
     },
+    /// Find By Type Value Response
     FindByTypeValue {
+        /// Iterator over the found handles
         it: FindByTypeValueIter<'d>,
     },
+    /// Error Response
     Error {
+        /// Request opcode
         request: u8,
+        /// Attribute handle
         handle: u16,
+        /// Error code
         code: AttErrorCode,
     },
+    /// Read Response
     ReadByType {
+        /// Iterator over the found handles
         it: ReadByTypeIter<'d>,
     },
+    /// Read Response
     Read {
+        /// Attribute value
         data: &'d [u8],
     },
+    /// Write Response
     Write,
 }
 
+/// ATT Unsolicited PDU
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum AttUns<'d> {
-    Notify { handle: u16, data: &'d [u8] },
-    Indicate { handle: u16, data: &'d [u8] },
+    /// Notify
+    Notify {
+        /// Attribute handle
+        handle: u16,
+        /// Attribute value
+        data: &'d [u8],
+    },
+    /// Indicate
+    Indicate {
+        /// Attribute handle
+        handle: u16,
+        /// Attribute value
+        data: &'d [u8],
+    },
 }
 
+/// ATT Protocol Data Unit (PDU)
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum Att<'d> {
+    /// ATT Client PDU (Request, Command, Confirmation)
+    ///
+    /// The ATT Client PDU is used to send requests, commands and confirmations to the ATT Server
     Client(AttClient<'d>),
+    /// ATT Server PDU (Response, Unsolicited)
+    ///
+    /// The ATT Server PDU is used to send responses and unsolicited ATT PDUs (notifications and indications) to the ATT Client
     Server(AttServer<'d>),
 }
 
+/// An Iterator-like type for iterating over the found handles
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug)]
 pub struct FindByTypeValueIter<'d> {
@@ -278,6 +367,7 @@ pub struct FindByTypeValueIter<'d> {
 }
 
 impl FindByTypeValueIter<'_> {
+    /// Get the next pair of start and end attribute handles
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Result<(u16, u16), crate::Error>> {
         if self.cursor.available() >= 4 {
@@ -293,6 +383,7 @@ impl FindByTypeValueIter<'_> {
     }
 }
 
+/// An Iterator-like type for iterating over the found handles
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug)]
 pub struct ReadByTypeIter<'d> {
@@ -301,6 +392,7 @@ pub struct ReadByTypeIter<'d> {
 }
 
 impl<'d> ReadByTypeIter<'d> {
+    /// Get the next pair of attribute handle and attribute data
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Result<(u16, &'d [u8]), crate::Error>> {
         if self.cursor.available() >= self.item_len {
@@ -729,6 +821,7 @@ impl AttCfm {
 }
 
 impl<'d> Att<'d> {
+    /// Get the wire-size of the ATT PDU
     pub fn size(&self) -> usize {
         match self {
             Self::Client(client) => client.size(),
@@ -736,6 +829,7 @@ impl<'d> Att<'d> {
         }
     }
 
+    /// Encode the ATT PDU into a byte buffer
     pub fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
         match self {
             Self::Client(client) => client.encode(dest),
@@ -743,6 +837,7 @@ impl<'d> Att<'d> {
         }
     }
 
+    /// Decode an ATT PDU from a byte buffer
     pub fn decode(data: &'d [u8]) -> Result<Att<'d>, codec::Error> {
         let mut r = ReadCursor::new(data);
         let opcode: u8 = r.read()?;
