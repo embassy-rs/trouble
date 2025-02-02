@@ -20,6 +20,7 @@ jobs:
           gh pr checkout "${{ github.event.inputs.prNr }}"
       - name: Add dependencies
         run: |
+          sudo apt-get update
           sudo apt-get install --no-install-recommends libudev-dev
       - name: Set up cargo cache
         uses: actions/cache@v3
