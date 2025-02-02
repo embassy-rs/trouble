@@ -159,6 +159,14 @@ impl codec::Type for AttErrorCode {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
+pub enum AttClient<'d> {
+    Request(AttReq<'d>),
+    Command(AttCmd<'d>),
+    Confirmation(AttCfm),
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
 pub enum AttReq<'d> {
     ReadByGroupType {
         start: u16,
@@ -174,10 +182,6 @@ pub enum AttReq<'d> {
         handle: u16,
     },
     Write {
-        handle: u16,
-        data: &'d [u8],
-    },
-    WriteCmd {
         handle: u16,
         data: &'d [u8],
     },
@@ -209,7 +213,25 @@ pub enum AttReq<'d> {
         handle: u16,
         offset: u16,
     },
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
+pub enum AttCmd<'d> {
+    Write { handle: u16, data: &'d [u8] },
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
+pub enum AttCfm {
     ConfirmIndication,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
+pub enum AttServer<'d> {
+    Response(AttRsp<'d>),
+    Unsolicited(AttUns<'d>),
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -233,39 +255,20 @@ pub enum AttRsp<'d> {
         data: &'d [u8],
     },
     Write,
-    Notify {
-        handle: u16,
-        data: &'d [u8],
-    },
-    Indicate {
-        handle: u16,
-        data: &'d [u8],
-    },
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
+pub enum AttUns<'d> {
+    Notify { handle: u16, data: &'d [u8] },
+    Indicate { handle: u16, data: &'d [u8] },
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 pub enum Att<'d> {
-    Req(AttReq<'d>),
-    Rsp(AttRsp<'d>),
-}
-
-impl codec::Type for AttRsp<'_> {
-    fn size(&self) -> usize {
-        AttRsp::size(self)
-    }
-}
-
-impl codec::Encode for AttRsp<'_> {
-    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
-        AttRsp::encode(self, dest)
-    }
-}
-
-impl<'d> codec::Decode<'d> for AttRsp<'d> {
-    fn decode(src: &'d [u8]) -> Result<AttRsp<'d>, codec::Error> {
-        AttRsp::decode(src)
-    }
+    Client(AttClient<'d>),
+    Server(AttServer<'d>),
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -313,8 +316,32 @@ impl<'d> ReadByTypeIter<'d> {
     }
 }
 
+impl<'d> AttServer<'d> {
+    fn size(&self) -> usize {
+        match self {
+            Self::Response(rsp) => rsp.size(),
+            Self::Unsolicited(uns) => uns.size(),
+        }
+    }
+
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+        match self {
+            Self::Response(rsp) => rsp.encode(dest),
+            Self::Unsolicited(uns) => uns.encode(dest),
+        }
+    }
+
+    fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<Self, codec::Error> {
+        let decoded = match opcode {
+            ATT_HANDLE_VALUE_NTF | ATT_HANDLE_VALUE_IND => Self::Unsolicited(AttUns::decode_with_opcode(opcode, r)?),
+            _ => Self::Response(AttRsp::decode_with_opcode(opcode, r)?),
+        };
+        Ok(decoded)
+    }
+}
+
 impl<'d> AttRsp<'d> {
-    pub fn size(&self) -> usize {
+    fn size(&self) -> usize {
         1 + match self {
             Self::ExchangeMtu { mtu: u16 } => 2,
             Self::FindByTypeValue { it } => it.cursor.len(),
@@ -322,12 +349,10 @@ impl<'d> AttRsp<'d> {
             Self::Read { data } => data.len(),
             Self::ReadByType { it } => it.cursor.len(),
             Self::Write => 0,
-            Self::Notify { data, .. } => 2 + data.len(),
-            Self::Indicate { data, .. } => 2 + data.len(),
         }
     }
 
-    pub fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
         let mut w = WriteCursor::new(dest);
         match self {
             Self::ExchangeMtu { mtu } => {
@@ -364,27 +389,11 @@ impl<'d> AttRsp<'d> {
             Self::Write => {
                 w.write(ATT_WRITE_RSP)?;
             }
-            Self::Notify { handle, data } => {
-                w.write(ATT_HANDLE_VALUE_NTF)?;
-                w.write(*handle)?;
-                w.append(data)?;
-            }
-            Self::Indicate { handle, data } => {
-                w.write(ATT_HANDLE_VALUE_IND)?;
-                w.write(*handle)?;
-                w.append(data)?;
-            }
         }
         Ok(())
     }
 
-    pub fn decode(data: &'d [u8]) -> Result<AttRsp<'d>, codec::Error> {
-        let mut r = ReadCursor::new(data);
-        let opcode: u8 = r.read()?;
-        AttRsp::decode_with_opcode(opcode, r)
-    }
-
-    pub fn decode_with_opcode(opcode: u8, mut r: ReadCursor<'d>) -> Result<AttRsp<'d>, codec::Error> {
+    fn decode_with_opcode(opcode: u8, mut r: ReadCursor<'d>) -> Result<Self, codec::Error> {
         match opcode {
             ATT_FIND_BY_TYPE_VALUE_RSP => Ok(Self::FindByTypeValue {
                 it: FindByTypeValueIter { cursor: r },
@@ -410,6 +419,38 @@ impl<'d> AttRsp<'d> {
                 })
             }
             ATT_WRITE_RSP => Ok(Self::Write),
+            _ => Err(codec::Error::InvalidValue),
+        }
+    }
+}
+
+impl<'d> AttUns<'d> {
+    fn size(&self) -> usize {
+        1 + match self {
+            Self::Notify { data, .. } => 2 + data.len(),
+            Self::Indicate { data, .. } => 2 + data.len(),
+        }
+    }
+
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+        let mut w = WriteCursor::new(dest);
+        match self {
+            Self::Notify { handle, data } => {
+                w.write(ATT_HANDLE_VALUE_NTF)?;
+                w.write(*handle)?;
+                w.append(data)?;
+            }
+            Self::Indicate { handle, data } => {
+                w.write(ATT_HANDLE_VALUE_IND)?;
+                w.write(*handle)?;
+                w.append(data)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn decode_with_opcode(opcode: u8, mut r: ReadCursor<'d>) -> Result<Self, codec::Error> {
+        match opcode {
             ATT_HANDLE_VALUE_NTF => {
                 let handle = r.read()?;
                 Ok(Self::Notify {
@@ -429,46 +470,35 @@ impl<'d> AttRsp<'d> {
     }
 }
 
-impl From<codec::Error> for AttErrorCode {
-    fn from(e: codec::Error) -> Self {
-        AttErrorCode::INVALID_PDU
-    }
-}
-
-impl codec::Type for AttReq<'_> {
+impl<'d> AttClient<'d> {
     fn size(&self) -> usize {
-        AttReq::size(self)
-    }
-}
-
-impl codec::Encode for AttReq<'_> {
-    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
-        AttReq::encode(self, dest)
-    }
-}
-
-impl<'d> codec::Decode<'d> for AttReq<'d> {
-    fn decode(data: &'d [u8]) -> Result<AttReq<'d>, codec::Error> {
-        AttReq::decode(data)
-    }
-}
-
-impl<'d> Att<'d> {
-    pub fn decode(data: &'d [u8]) -> Result<Att<'d>, codec::Error> {
-        let mut r = ReadCursor::new(data);
-        let opcode: u8 = r.read()?;
-        if opcode % 2 == 0 {
-            let req = AttReq::decode_with_opcode(opcode, r)?;
-            Ok(Att::Req(req))
-        } else {
-            let rsp = AttRsp::decode_with_opcode(opcode, r)?;
-            Ok(Att::Rsp(rsp))
+        match self {
+            Self::Request(req) => req.size(),
+            Self::Command(cmd) => cmd.size(),
+            Self::Confirmation(cfm) => cfm.size(),
         }
+    }
+
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+        match self {
+            Self::Request(req) => req.encode(dest),
+            Self::Command(cmd) => cmd.encode(dest),
+            Self::Confirmation(cfm) => cfm.encode(dest),
+        }
+    }
+
+    fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<Self, codec::Error> {
+        let decoded = match opcode {
+            ATT_WRITE_CMD => Self::Command(AttCmd::decode_with_opcode(opcode, r)?),
+            ATT_HANDLE_VALUE_CMF => Self::Confirmation(AttCfm::decode_with_opcode(opcode, r)?),
+            _ => Self::Request(AttReq::decode_with_opcode(opcode, r)?),
+        };
+        Ok(decoded)
     }
 }
 
 impl<'d> AttReq<'d> {
-    pub fn size(&self) -> usize {
+    fn size(&self) -> usize {
         1 + match self {
             Self::ExchangeMtu { .. } => 2,
             Self::FindByTypeValue {
@@ -487,7 +517,7 @@ impl<'d> AttReq<'d> {
             _ => unimplemented!(),
         }
     }
-    pub fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
         let mut w = WriteCursor::new(dest);
         match self {
             Self::ExchangeMtu { mtu } => {
@@ -525,21 +555,12 @@ impl<'d> AttReq<'d> {
                 w.write(*handle)?;
                 w.append(data)?;
             }
-            Self::ConfirmIndication => {
-                w.write(ATT_HANDLE_VALUE_CMF)?;
-            }
             _ => unimplemented!(),
         }
         Ok(())
     }
 
-    pub fn decode(data: &'d [u8]) -> Result<AttReq<'d>, codec::Error> {
-        let mut r = ReadCursor::new(data);
-        let opcode: u8 = r.read()?;
-        AttReq::decode_with_opcode(opcode, r)
-    }
-
-    pub fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<AttReq<'d>, codec::Error> {
+    fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<Self, codec::Error> {
         let payload = r.remaining();
         match opcode {
             ATT_READ_BY_GROUP_TYPE_REQ => {
@@ -591,12 +612,6 @@ impl<'d> AttReq<'d> {
 
                 Ok(Self::Write { handle, data })
             }
-            ATT_WRITE_CMD => {
-                let handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
-                let data = &payload[2..];
-
-                Ok(Self::WriteCmd { handle, data })
-            }
             ATT_EXCHANGE_MTU_REQ => {
                 let mtu = (payload[0] as u16) + ((payload[1] as u16) << 8);
                 Ok(Self::ExchangeMtu { mtu })
@@ -642,11 +657,125 @@ impl<'d> AttReq<'d> {
                 let offset = (payload[2] as u16) + ((payload[3] as u16) << 8);
                 Ok(Self::ReadBlob { handle, offset })
             }
+            code => {
+                warn!("[att] unknown opcode {:x}", code);
+                Err(codec::Error::InvalidValue)
+            }
+        }
+    }
+}
+
+impl<'d> AttCmd<'d> {
+    fn size(&self) -> usize {
+        1 + match self {
+            Self::Write { handle, data } => 2 + data.len(),
+        }
+    }
+
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+        let mut w = WriteCursor::new(dest);
+        match self {
+            Self::Write { handle, data } => {
+                w.write(ATT_WRITE_REQ)?;
+                w.write(*handle)?;
+                w.append(data)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<Self, codec::Error> {
+        let payload = r.remaining();
+        match opcode {
+            ATT_WRITE_CMD => {
+                let handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
+                let data = &payload[2..];
+
+                Ok(Self::Write { handle, data })
+            }
+            code => {
+                warn!("[att] unknown opcode {:x}", code);
+                Err(codec::Error::InvalidValue)
+            }
+        }
+    }
+}
+
+impl AttCfm {
+    fn size(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+        let mut w = WriteCursor::new(dest);
+        match self {
+            Self::ConfirmIndication => {
+                w.write(ATT_HANDLE_VALUE_CMF)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn decode_with_opcode(opcode: u8, r: ReadCursor<'_>) -> Result<Self, codec::Error> {
+        let payload = r.remaining();
+        match opcode {
             ATT_HANDLE_VALUE_CMF => Ok(Self::ConfirmIndication),
             code => {
                 warn!("[att] unknown opcode {:x}", code);
                 Err(codec::Error::InvalidValue)
             }
         }
+    }
+}
+
+impl<'d> Att<'d> {
+    pub fn size(&self) -> usize {
+        match self {
+            Self::Client(client) => client.size(),
+            Self::Server(server) => server.size(),
+        }
+    }
+
+    pub fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+        match self {
+            Self::Client(client) => client.encode(dest),
+            Self::Server(server) => server.encode(dest),
+        }
+    }
+
+    pub fn decode(data: &'d [u8]) -> Result<Att<'d>, codec::Error> {
+        let mut r = ReadCursor::new(data);
+        let opcode: u8 = r.read()?;
+        if opcode % 2 == 0 {
+            let client = AttClient::decode_with_opcode(opcode, r)?;
+            Ok(Att::Client(client))
+        } else {
+            let server = AttServer::decode_with_opcode(opcode, r)?;
+            Ok(Att::Server(server))
+        }
+    }
+}
+
+impl From<codec::Error> for AttErrorCode {
+    fn from(e: codec::Error) -> Self {
+        AttErrorCode::INVALID_PDU
+    }
+}
+
+impl codec::Type for Att<'_> {
+    fn size(&self) -> usize {
+        Self::size(self)
+    }
+}
+
+impl codec::Encode for Att<'_> {
+    fn encode(&self, dest: &mut [u8]) -> Result<(), codec::Error> {
+        Self::encode(self, dest)
+    }
+}
+
+impl<'d> codec::Decode<'d> for Att<'d> {
+    fn decode(data: &'d [u8]) -> Result<Self, codec::Error> {
+        Self::decode(data)
     }
 }
