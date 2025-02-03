@@ -37,10 +37,12 @@ impl<'stack> GattData<'stack> {
 
     /// Get the raw incoming ATT PDU.
     pub fn incoming(&self) -> AttClient<'_> {
-        // We know it has been checked, therefore this cannot fail
+        // We know that:
+        // - The PDU is decodable, as it was already decoded once before adding it to the connection queue
+        // - The PDU is of type `Att::Client` because only those types of PDUs are added to the connection queue
         let att = unwrap!(Att::decode(self.pdu.as_ref()));
         let Att::Client(client) = att else {
-            unreachable!();
+            unreachable!("Expected Att::Client, got {:?}", att)
         };
 
         client
@@ -239,9 +241,11 @@ fn process_accept<'stack>(
     connection: &Connection<'stack>,
     server: &dyn DynamicAttributeServer,
 ) -> Result<Reply<'stack>, Error> {
+    // - The PDU is decodable, as it was already decoded once before adding it to the connection queue
+    // - The PDU is of type `Att::Client` because only those types of PDUs are added to the connection queue
     let att = unwrap!(Att::decode(pdu.as_ref()));
     let Att::Client(att) = att else {
-        unreachable!();
+        unreachable!("Expected Att::Client, got {:?}", att)
     };
     let mut tx = connection.alloc_tx()?;
     let mut w = WriteCursor::new(tx.as_mut());
