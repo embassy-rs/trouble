@@ -53,9 +53,7 @@ impl<'stack> GattData<'stack> {
         Ok(())
     }
 
-    /// Send an unsolicited reply without having a request
-    ///
-    /// Useful for sending notifications and indications
+    /// Send an unsolicited ATT PDU without having a request (e.g. notification or indication)
     pub async fn send_unsolicited(connection: &Connection<'_>, uns: AttUns<'_>) -> Result<(), Error> {
         let pdu = send(connection, AttServer::Unsolicited(uns))?;
         connection.send(pdu).await;
