@@ -18,19 +18,6 @@ bt-hci = { version = "0.2" }
 [features]
 default = ["esp32c3"]
 
-# trouble-example-apps/esp:
-#
-# 'esp-hal' likely has a bug, causing _some_ ESP32 chips to give "Invalid HCI Command Parameters" BLE errors at launch,
-# if the L2CAP MTU is set low enough.
-#
-# The error producing ranges go:
-#   - ESP32-C6: x..<255             // examples with 128, 251 would fail
-#   - ESP32-C2: RANGE NOT KNOWN     // not having the hardware
-#   - ESP32-H2: RANGE NOT KNOWN     // not having the hardware
-#   - ESP32, -C3, -S2, -S3: claimed not to be affected [1], so the behaviour-altering feature is not enabled for them.
-#
-#       [1]: https://github.com/embassy-rs/trouble/pull/236#issuecomment-2586457641
-#
 esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-wifi/esp32"]
 esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-wifi/esp32c2"]
 esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-wifi/esp32c3"]
