@@ -18,3 +18,8 @@ rustflags = [
 
 [env]
 ESP_LOG = "info"
+
+# Xtensa only:
+# Needed for nightly, until llvm upstream has support for Rust Xtensa.
+[unstable]
+build-std = ["alloc", "core"]
