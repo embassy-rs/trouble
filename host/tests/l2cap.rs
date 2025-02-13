@@ -157,6 +157,19 @@ async fn l2cap_connection_oriented_channels() {
                 println!("Peripheral error: {:?}", e);
                 assert!(false)
             }
+            (Ok(Err(e1)), Ok(Err(e2))) => {
+                println!("Central error: {:?}", e1);
+                println!("Peripheral error: {:?}", e2);
+                assert!(false);
+            }
+            (Ok(Err(e)), _) => {
+                println!("Central error: {:?}", e);
+                assert!(false)
+            }
+            (_, Ok(Err(e))) => {
+                println!("Peripheral error: {:?}", e);
+                assert!(false)
+            }
             _ => {
                 println!("Test completed successfully");
             }
