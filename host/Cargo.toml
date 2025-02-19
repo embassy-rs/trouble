@@ -37,6 +37,8 @@ critical-section = { version = "1", features = ["std"] }  # needed for CI builds
 rand = "0.8.5"
 heapless = "0.8.0"
 
+[patch.crates-io]
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "9681bf790f9f486eac72f8f7c773eddba7d6c6a5" }
 
 [features]
 defmt = ["dep:defmt", "embassy-time/defmt", "bt-hci/defmt"]
