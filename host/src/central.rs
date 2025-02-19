@@ -145,13 +145,20 @@ impl<'stack, C: Controller> Central<'stack, C> {
 
     /// Initiate pairing
     #[cfg(feature = "security")]
-    pub fn pairing(&self, connection: &Connection<'stack>) -> Result<(), BleHostError<C::Error>> {
-        self.stack
-            .host
-            .connections
-            .security_manager
-            .initiate(connection)
-            .map_err(|e| e.into())
+    pub async fn pairing(&self, connection: &Connection<'stack>) -> Result<(), BleHostError<C::Error>> {
+        let sm = &self.stack.host.connections.security_manager;
+        let mut result_watch = if let Some(w) = sm.get_result_watch() {
+            w
+        } else {
+            return Err(BleHostError::BleHost(Error::OutOfMemory));
+        };
+        sm.initiate(connection).map_err(BleHostError::BleHost)?;
+        let reason = result_watch.get().await;
+        if reason == crate::security_manager::Reason::Success {
+            Ok(())
+        } else {
+            Err(BleHostError::BleHost(Error::Security(reason)))
+        }
     }
 }
 

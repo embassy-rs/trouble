@@ -49,11 +49,9 @@ where
 
         #[cfg(feature = "security")]
         {
-            if let Err(_error) = central.pairing(&conn) {
+            if let Err(_error) = central.pairing(&conn).await {
                 error!("Pairing failed");
             }
-            // TODO: Fix pairing to be awaitable
-            Timer::after(Duration::from_secs(30)).await;
         }
 
         let client = GattClient::<C, 10, 24>::new(&stack, &conn).await.unwrap();

@@ -13,8 +13,9 @@ use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
+use embassy_sync::watch::Watch;
 use heapless::Vec;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
@@ -276,7 +277,7 @@ impl PairingData {
 // ----- Key Distribution (HCI) -----
 
 /// Security manager that handles SM packet
-pub struct SecurityManager {
+pub struct SecurityManager<'a> {
     /// Random generator
     rng: RefCell<ChaCha12Rng>,
     /// Security manager data
@@ -285,9 +286,12 @@ pub struct SecurityManager {
     pairing_state: RefCell<PairingData>,
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
+    result_sender: embassy_sync::watch::Sender<'a, CriticalSectionRawMutex, Reason, 4>,
 }
 
-impl SecurityManager {
+static WATCHER: Watch<CriticalSectionRawMutex, Reason, 4> = Watch::new();
+
+impl<'a> SecurityManager<'a> {
     const NON_SECURE_RANDOM_SEED: [u8; 32] = [0; 32];
     /// Create a new SecurityManager
     pub(crate) fn new() -> Self {
@@ -296,6 +300,7 @@ impl SecurityManager {
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
             pairing_state: RefCell::new(PairingData::new()),
+            result_sender: WATCHER.sender(),
         }
     }
 
@@ -312,6 +317,16 @@ impl SecurityManager {
     /// Get the long term key from the latests pairing
     pub(crate) fn get_long_term_key(&self) -> Option<[u8; 16]> {
         self.pairing_state.borrow().ltk.map(|ltk| ltk.to_le_bytes())
+    }
+
+    /// Get the long term key from the latests pairing
+    pub(crate) fn get_result_watch(&self) -> Option<embassy_sync::watch::Receiver<CriticalSectionRawMutex, Reason, 4>> {
+        WATCHER.receiver()
+    }
+
+    /// Get the long term key from the latests pairing
+    fn update_result(&self, reason: Reason) {
+        self.result_sender.send(reason);
     }
 
     /// Handle packet
@@ -331,6 +346,8 @@ impl SecurityManager {
             kind: peer_address_kind,
             addr: peer_address,
         };
+
+        // let arrival_time = Instant::now();
 
         let result = {
             let mut buffer = [0u8; 72];
@@ -384,6 +401,24 @@ impl SecurityManager {
                 self.pairing_state.borrow_mut().peer_address = Some(peer_address);
             }
 
+            /*
+            match command {
+                Command::PairingRequest => (),
+                Command::PairingResponse
+                | Command::PairingPublicKey
+                | Command::PairingConfirm
+                | Command::PairingRandom
+                | Command::PairingDhKeyCheck => {
+                    let last_message_time = self.pairing_state.borrow().message_time;
+                    let elapsed = arrival_time - last_message_time;
+                    if elapsed.as_secs() > 30 {
+                        return Err(Error::Timeout);
+                    }
+                }
+                _ => (),
+            }
+             */
+
             match command {
                 Command::PairingRequest => self.handle_pairing_request(payload, connections, handle),
                 Command::PairingResponse => self.handle_pairing_response(payload, connections, handle),
@@ -407,22 +442,28 @@ impl SecurityManager {
 
             error!("Handling of command failed {:?}", error);
 
-            let mut packet = self.prepare_packet(Command::PairingFailed, connections)?;
-            let payload = packet.payload_mut();
-            payload[0] = u8::from(reason);
+            // Cease sending security manager messages on timeout
+            if *error != Error::Timeout {
+                let mut packet = self.prepare_packet(Command::PairingFailed, connections)?;
+                let payload = packet.payload_mut();
+                payload[0] = u8::from(reason);
 
-            match self.try_send_packet(packet, connections, handle) {
-                Ok(()) => {
-                    self.pairing_state.borrow_mut().clear();
+                match self.try_send_packet(packet, connections, handle) {
+                    Ok(()) => {
+                        self.pairing_state.borrow_mut().clear();
+                    }
+                    Err(error) => {
+                        error!("[security manager] Failed to send pairing failed {:?}", error);
+                        return Err(error);
+                    }
                 }
-                Err(error) => {
-                    error!("[security manager] Failed to send pairing failed {:?}", error);
-                    return Err(error);
-                }
+                self.update_result(reason);
+                self.events
+                    .try_send(SecurityEventData::PairingResult(reason))
+                    .map_err(|_| Error::OutOfMemory)?;
             }
-            self.events
-                .try_send(SecurityEventData::PairingResult(reason))
-                .map_err(|_| Error::OutOfMemory)?;
+        } else {
+            // self.pairing_state.borrow_mut().message_time = arrival_time;
         }
         result
     }
@@ -458,6 +499,7 @@ impl SecurityManager {
                 pairing_state.state = PairingState::Request;
                 pairing_state.local_features = Some(local_features);
                 pairing_state.method = PairingMethod::LeSecureConnectionNumericComparison;
+                // pairing_state.message_time = Instant::now();
             }
         } else {
             // Send sequrity request to central
@@ -476,6 +518,7 @@ impl SecurityManager {
                     return Err(error);
                 }
             }
+            // self.pairing_state.borrow_mut().message_time = Instant::now();
         }
 
         Ok(())
@@ -991,6 +1034,7 @@ impl SecurityManager {
                                     && pairing_state.state == PairingState::PeripheralKeyCheck);
                             if end_of_pairing && pairing_state.handle == Some(event_data.handle) && event_data.enabled {
                                 info!("[security manager] Encryption Changed");
+                                self.update_result(Reason::Success);
                                 self.events
                                     .try_send(SecurityEventData::PairingResult(Reason::Success))
                                     .map_err(|_| Error::OutOfMemory)?;
