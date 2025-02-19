@@ -8,6 +8,8 @@ use crate::security_manager::crypto::IoCap;
 // ([Vol 3] Part H, Section 3.5.5).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Reason {
+    /// Pairing success
+    Success,
     /// The user input of passkey failed, for example, the user cancelled the operation.
     PasskeyEntryFailed,
     /// The OOB data is not available.
@@ -46,6 +48,7 @@ impl TryFrom<u8> for Reason {
     type Error = Error;
     fn try_from(val: u8) -> Result<Self, Error> {
         Ok(match val {
+            // Do not convert 0 to Success
             0x01 => Self::PasskeyEntryFailed,
             0x02 => Self::OobNotAvailable,
             0x03 => Self::AuthenticationRequirements,
@@ -70,6 +73,7 @@ impl TryFrom<u8> for Reason {
 impl From<Reason> for u8 {
     fn from(val: Reason) -> u8 {
         match val {
+            Reason::Success => 0x00,
             Reason::PasskeyEntryFailed => 0x01,
             Reason::OobNotAvailable => 0x02,
             Reason::AuthenticationRequirements => 0x03,
@@ -93,6 +97,7 @@ impl From<Reason> for u8 {
 impl AsRef<str> for Reason {
     fn as_ref(&self) -> &str {
         match self {
+            Reason::Success => "Success",
             Reason::PasskeyEntryFailed => "Passkey entry canceled or failed",
             Reason::OobNotAvailable => "Out-of-band data not available",
             Reason::AuthenticationRequirements => "Authentication requirements not met",
@@ -709,6 +714,51 @@ impl defmt::Format for PairingFeatures {
             self.responder_key_distribution
         )
     }
+}
+
+/// Security Mode 1 Levels
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SecurityMode1Level {
+    /// No security (No authentication and no encryption)
+    Level1,
+    /// Unauthenticated pairing with encryption
+    Level2,
+    /// Authenticated pairing with encryption
+    Level3,
+    /// Authenticated LE Secure Connections pairing with encryption using a 128-bit strength encryption key.
+    Level4,
+}
+
+/// Security Mode 2 Levels
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SecurityMode2Level {
+    /// Unauthenticated pairing with data signing
+    Level1,
+    /// Authenticated pairing with data signing
+    Level2,
+}
+
+/// Security Mode 3 Levels
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SecurityMode3Level {
+    /// No security (no authentication and no encryption)
+    Level1,
+    /// Use of unauthenticated Broadcast_Code
+    Level2,
+    /// Use of authenticated Broadcast_Code
+    Level3,
+}
+
+/// Security Levels
+//
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SecurityLevel {
+    /// LE security mode 1
+    Mode1(SecurityMode1Level),
+    /// LE security mode 1
+    Mode2(SecurityMode2Level),
+    /// LE security mode 1
+    Mode3(SecurityMode3Level),
 }
 
 #[cfg(test)]

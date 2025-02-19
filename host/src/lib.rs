@@ -109,8 +109,7 @@ mod attribute_server;
 pub mod gatt;
 
 /// A BLE address.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Address {
     /// Address type.
     pub kind: AddrKind,
@@ -135,6 +134,34 @@ impl Address {
         addr_bytes.reverse();
         bytes[1..].copy_from_slice(&addr_bytes);
         bytes
+    }
+}
+
+impl core::fmt::Display for Address {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let a = self.addr.into_inner();
+        write!(
+            f,
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            a[5], a[4], a[3], a[2], a[1], a[0]
+        )
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Address {
+    fn format(&self, fmt: defmt::Formatter) {
+        let a = self.addr.into_inner();
+        defmt::write!(
+            fmt,
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            a[5],
+            a[4],
+            a[3],
+            a[2],
+            a[1],
+            a[0]
+        )
     }
 }
 
@@ -245,6 +272,7 @@ impl<E> From<codec::Error> for BleHostError<E> {
 }
 
 use bt_hci::cmd::controller_baseband::*;
+use bt_hci::cmd::info::*;
 use bt_hci::cmd::le::*;
 use bt_hci::cmd::link_control::*;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -283,6 +311,7 @@ pub trait Controller:
     + for<'t> ControllerCmdSync<LeSetScanResponseData>
     + ControllerCmdSync<LeLongTermKeyRequestReply>
     + ControllerCmdAsync<LeEnableEncryption>
+    + ControllerCmdSync<ReadBdAddr>
 {
 }
 
@@ -316,7 +345,8 @@ impl<
         + for<'t> ControllerCmdSync<LeSetAdvEnable>
         + for<'t> ControllerCmdSync<LeSetScanResponseData>
         + ControllerCmdSync<LeLongTermKeyRequestReply>
-        + ControllerCmdAsync<LeEnableEncryption>,
+        + ControllerCmdAsync<LeEnableEncryption>
+        + ControllerCmdSync<ReadBdAddr>,
 > Controller for C
 {
 }
@@ -456,13 +486,13 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     pub fn set_random_address(mut self, address: Address) -> Self {
         self.host.address.replace(address);
         #[cfg(feature = "security")]
-        self.host.security_manager.set_local_address(address);
+        self.host.connections.security_manager.set_local_address(address);
         self
     }
     /// Set the random seed
     pub fn set_random_seed(self, random_seed: &[u8; 32]) -> Self {
         #[cfg(feature = "security")]
-        self.host.security_manager.set_random_seed(random_seed);
+        self.host.connections.security_manager.set_random_seed(random_seed);
         self
     }
 

@@ -10,6 +10,7 @@ use bt_hci::cmd::controller_baseband::{
     HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
     SetEventMaskPage2,
 };
+use bt_hci::cmd::info::ReadBdAddr;
 use bt_hci::cmd::le::{
     LeConnUpdate, LeCreateConnCancel, LeEnableEncryption, LeLongTermKeyRequestReply, LeReadBufferSize,
     LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask, LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr,
@@ -45,8 +46,6 @@ use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
-#[cfg(feature = "security")]
-use crate::security_manager::{self, SecurityManager};
 use crate::types::l2cap::{
     L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL, L2capHeader,
     L2capSignal, L2capSignalHeader,
@@ -73,8 +72,6 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) rx_pool: &'d dyn Pool,
     #[cfg(feature = "gatt")]
     pub(crate) tx_pool: &'d dyn Pool,
-    #[cfg(feature = "security")]
-    pub(crate) security_manager: SecurityManager,
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
@@ -230,8 +227,6 @@ where
             advertise_command_state: CommandState::new(),
             scan_command_state: CommandState::new(),
             connect_command_state: CommandState::new(),
-            #[cfg(feature = "security")]
-            security_manager: SecurityManager::new(),
         }
     }
 
@@ -284,14 +279,6 @@ where
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
-
-                    #[cfg(feature = "security")]
-                    {
-                        self.security_manager.set_peer_address(Address {
-                            kind: peer_addr_kind,
-                            addr: peer_addr,
-                        });
-                    }
                 }
             }
             Err(bt_hci::param::Error::ADV_TIMEOUT) => {
@@ -309,7 +296,7 @@ where
         true
     }
 
-    fn handle_acl(&'d self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let handle = acl.handle();
         let on_drop = OnDrop::new(|| {
@@ -419,17 +406,8 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                #[cfg(feature = "security")]
-                {
-                    if let Some(connection) = self.connections.get_connected_handle(acl.handle()) {
-                        if let Err(error) =
-                            self.security_manager
-                                .handle(&packet, usize::from(header.length), &connection)
-                        {
-                            error!("Failed to handle security manager packet, {:?}", error);
-                        }
-                    }
-                }
+                self.connections
+                    .handle_security_channel(acl.handle(), &packet, usize::from(header.length))?;
             }
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, packet) {
                 Ok(_) => {
@@ -625,7 +603,8 @@ impl<'d, C: Controller> Runner<'d, C> {
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>,
+            + ControllerCmdAsync<LeEnableEncryption>
+            + ControllerCmdSync<ReadBdAddr>,
     {
         let dummy = DummyHandler;
         self.run_with_handler(&dummy).await
@@ -652,7 +631,8 @@ impl<'d, C: Controller> Runner<'d, C> {
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>,
+            + ControllerCmdAsync<LeEnableEncryption>
+            + ControllerCmdSync<ReadBdAddr>,
     {
         let control_fut = self.control.run();
         let rx_fut = self.rx.run_with_handler(event_handler);
@@ -733,7 +713,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                 },
                 Ok(ControllerToHostPacket::Event(event)) => {
                     match event {
-                        Event::Le(event) => match event {
+                        Event::Le(ref le_event) => match le_event {
                             LeEvent::LeConnectionComplete(e) => {
                                 if !host.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
                                     let _ = host
@@ -773,8 +753,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                 }
                             }
                             LeEvent::LeLongTermKeyRequest(_) => {
-                                #[cfg(feature = "security")]
-                                host.security_manager.handle_le_event(event)?;
+                                host.connections.handle_security_hci_event(event)?;
                             }
                             _ => {
                                 warn!("Unknown LE event!");
@@ -820,31 +799,8 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                         Event::Vendor(vendor) => {
                             event_handler.on_vendor(&vendor);
                         }
-                        Event::EncryptionChangeV1(event_data) => {
-                            #[cfg(feature = "security")]
-                            host.security_manager.handle_event(event)?;
-                            if let Err(error) = event_data.status.to_result() {
-                                info!("[host] Encryption change event {:?}", error);
-                            } else {
-                                info!(
-                                    "[host] Encryption change event {} {}",
-                                    event_data.handle.raw(),
-                                    event_data.enabled
-                                );
-                                host.connections.set_encrypted(event_data.handle, event_data.enabled);
-                            }
-                        }
-                        Event::EncryptionChangeV2(event) => {
-                            if let Err(error) = event.status.to_result() {
-                                info!("[host] Encryption change event 2 {:?}", error);
-                            } else {
-                                info!(
-                                    "[host] Encryption change event 2 {} {} {}",
-                                    event.handle.raw(),
-                                    event.encryption_enabled,
-                                    event.encryption_key_size * 8
-                                );
-                            }
+                        Event::EncryptionChangeV1(_) => {
+                            host.connections.handle_security_hci_event(event)?;
                         }
                         // Ignore
                         _ => {}
@@ -882,7 +838,8 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>,
+            + ControllerCmdAsync<LeEnableEncryption>
+            + ControllerCmdSync<ReadBdAddr>,
     {
         let host = &self.stack.host;
         Reset::new().exec(&host.controller).await?;
@@ -960,6 +917,20 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
 
         #[allow(unused_mut)]
         let mut completed_packets_cursor = 0;
+
+        let device_address = host.command(ReadBdAddr::new()).await?;
+        if *device_address.raw() != [0, 0, 0, 0, 0, 0] {
+            let device_address = Address {
+                kind: AddrKind::PUBLIC,
+                addr: device_address,
+            };
+            info!("[host] Device Address {}", device_address);
+            if host.address.is_none() {
+                #[cfg(feature = "security")]
+                host.connections.security_manager.set_local_address(device_address);
+            }
+        }
+
         loop {
             match select4(
                 poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
@@ -975,7 +946,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                     poll_fn(|cx| {
                         #[cfg(feature = "security")]
                         {
-                            host.security_manager.poll_work(cx)
+                            host.connections.poll_security_events(cx)
                         }
                         #[cfg(not(feature = "security"))]
                         Poll::<()>::Pending
@@ -1044,28 +1015,9 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                         }
                         host.scan_command_state.canceled();
                     }
-                    Either4::Fourth(_request) => {
+                    Either4::Fourth(request) => {
                         #[cfg(feature = "security")]
-                        {
-                            match _request {
-                                security_manager::SecurityEventData::SendLongTermKey(handle) => {
-                                    if let Some(ltk) = host.security_manager.get_long_term_key() {
-                                        let _ = host.command(LeLongTermKeyRequestReply::new(handle, ltk)).await?;
-                                    } else {
-                                        warn!("[host] Long term key request reply failed, no long term key")
-                                    }
-                                }
-                                security_manager::SecurityEventData::EnableEncryption(handle) => {
-                                    if let Some(ltk) = host.security_manager.get_long_term_key() {
-                                        host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk))
-                                            .await?;
-                                        info!("[host] Enable encryption")
-                                    } else {
-                                        warn!("[host] Enable encryption failed, no long term key")
-                                    }
-                                }
-                            }
-                        }
+                        host.connections.handle_security_event(host, request).await?;
                     }
                 },
             }

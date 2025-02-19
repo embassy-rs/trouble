@@ -236,6 +236,11 @@ impl<'stack> Connection<'stack> {
         self.manager.peer_address(self.index)
     }
 
+    /// Get the encrypted state of the connection
+    pub fn encrypted(&self) -> bool {
+        self.manager.get_encrypted(self.index)
+    }
+
     /// Request connection to be disconnected.
     pub fn disconnect(&self) {
         self.manager
@@ -281,10 +286,5 @@ impl<'stack> Connection<'stack> {
             }
             Err(e) => Err(e),
         }
-    }
-
-    /// Get encrypted state of connection
-    pub fn encrypted(&self) -> bool {
-        self.manager.get_encrypted_index(self.index)
     }
 }

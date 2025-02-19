@@ -148,6 +148,7 @@ impl<'stack, C: Controller> Central<'stack, C> {
     pub fn pairing(&self, connection: &Connection<'stack>) -> Result<(), BleHostError<C::Error>> {
         self.stack
             .host
+            .connections
             .security_manager
             .initiate(connection)
             .map_err(|e| e.into())

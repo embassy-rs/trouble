@@ -35,7 +35,7 @@ where
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
-    info!("Our address = {:?}", address);
+    info!("Our address = {}", address);
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
