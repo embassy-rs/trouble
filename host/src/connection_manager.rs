@@ -11,6 +11,8 @@ use crate::connection::{Connection, ConnectionEventData};
 #[cfg(feature = "gatt")]
 use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
+#[cfg(feature = "security")]
+use crate::security_manager::SecurityManager;
 use crate::{config, Error};
 
 struct State<'d> {
@@ -71,6 +73,8 @@ pub(crate) struct ConnectionManager<'d> {
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
     tx_pool: &'d dyn Pool,
+    #[cfg(feature = "security")]
+    pub(crate) security_manager: SecurityManager,
 }
 
 impl<'d> ConnectionManager<'d> {
@@ -93,6 +97,8 @@ impl<'d> ConnectionManager<'d> {
             outbound: Channel::new(),
             #[cfg(feature = "gatt")]
             tx_pool,
+            #[cfg(feature = "security")]
+            security_manager: SecurityManager::new(),
         }
     }
 
@@ -107,17 +113,6 @@ impl<'d> ConnectionManager<'d> {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
             state.handle.unwrap()
-        })
-    }
-
-    pub(crate) fn index(&self, handle: ConnHandle) -> Option<u8> {
-        self.with_mut(|state| {
-            for (i, entry) in state.connections.iter_mut().enumerate() {
-                if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
-                    return Some(i as u8);
-                }
-            }
-            None
         })
     }
 
@@ -501,46 +496,102 @@ impl<'d> ConnectionManager<'d> {
         mtu
     }
 
-    pub(crate) fn get_encrypted_index(&self, index: u8) -> bool {
+    pub(crate) fn get_encrypted(&self, index: u8) -> bool {
         #[cfg(feature = "security")]
         {
-            self.state.borrow().connections[usize::from(index)].encrypted
+            self.state.borrow().connections[index as usize].encrypted
         }
         #[cfg(not(feature = "security"))]
         false
     }
 
-    pub(crate) fn get_encrypted(&self, conn: ConnHandle) -> bool {
+    pub(crate) fn handle_security_channel(
+        &self,
+        handle: ConnHandle,
+        packet: &crate::packet_pool::Packet,
+        payload_size: usize,
+    ) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let state = self.state.borrow();
             for storage in state.connections.iter() {
                 match storage.state {
-                    ConnectionState::Connected if storage.handle.unwrap() == conn => {
-                        return storage.encrypted;
+                    ConnectionState::Connected if storage.handle.unwrap() == handle => {
+                        if let Err(error) = self.security_manager.handle(packet, payload_size, self, storage) {
+                            error!("Failed to handle security manager packet, {:?}", error);
+                            return Err(error);
+                        }
                     }
-                    _ => {}
+                    _ => (),
                 }
             }
-            false
         }
-        #[cfg(not(feature = "security"))]
-        false
+        Ok(())
     }
 
-    pub(crate) fn set_encrypted(&self, conn: ConnHandle, encrypted: bool) {
+    pub(crate) fn handle_security_hci_event(&self, event: bt_hci::event::Event) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
-            let mut state = self.state.borrow_mut();
-            for storage in state.connections.iter_mut() {
-                match storage.state {
-                    ConnectionState::Connected if storage.handle.unwrap() == conn => {
-                        storage.encrypted = encrypted;
-                    }
-                    _ => {}
+            self.security_manager.handle_event(&event)?;
+
+            if let bt_hci::event::Event::EncryptionChangeV1(event_data) = event {
+                self.with_connected_handle(event_data.handle, |storage| {
+                    storage.encrypted = event_data.enabled;
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) async fn handle_security_event<'h, C>(
+        &self,
+        host: &crate::host::BleHost<'h, C>,
+        _event: crate::security_manager::SecurityEventData,
+    ) -> Result<(), crate::BleHostError<C::Error>>
+    where
+        C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
+            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
+    {
+        use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
+        match _event {
+            crate::security_manager::SecurityEventData::SendLongTermKey(handle) => {
+                if let Some(ltk) = self.security_manager.get_long_term_key() {
+                    let _ = host.command(LeLongTermKeyRequestReply::new(handle, ltk)).await?;
+                } else {
+                    warn!("[host] Long term key request reply failed, no long term key")
+                }
+            }
+            crate::security_manager::SecurityEventData::EnableEncryption(handle) => {
+                if let Some(ltk) = self.security_manager.get_long_term_key() {
+                    host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk))
+                        .await?;
+                    info!("[host] Enable encryption")
+                } else {
+                    warn!("[host] Enable encryption failed, no long term key")
+                }
+            }
+            crate::security_manager::SecurityEventData::PairingResult(reason) => {
+                if reason == crate::security_manager::Reason::Success {
+                    info!("[host] Pairing succeeded");
+                } else {
+                    warn!("[host] Pairing failed {}", reason);
                 }
             }
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) fn poll_security_events(
+        &self,
+        cx: &mut Context<'_>,
+    ) -> Poll<crate::security_manager::SecurityEventData> {
+        #[cfg(feature = "security")]
+        return self.security_manager.poll_events(cx);
+        #[cfg(not(feature = "security"))]
+        Poll::<()>::Pending
     }
 }
 

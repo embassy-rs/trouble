@@ -109,7 +109,7 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.2.0"
-source = "git+https://github.com/blueluna/bt-hci.git?rev=8895e6eb1d0d970294cd96998081494cd36f17a3#8895e6eb1d0d970294cd96998081494cd36f17a3"
+source = "git+https://github.com/embassy-rs/bt-hci.git?rev=3755da87d0ef8660c5f9d4694b928ad7f679299a#3755da87d0ef8660c5f9d4694b928ad7f679299a"
 dependencies = [
  "defmt",
  "embassy-sync",

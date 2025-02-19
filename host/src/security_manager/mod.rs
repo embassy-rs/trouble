@@ -20,9 +20,9 @@ use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
 
 use crate::codec::{Decode, Encode};
+use crate::prelude::Connection;
 use crate::{
-    connection::Connection,
-    packet_pool::{PacketPool, Pool},
+    connection_manager::{ConnectionManager, ConnectionStorage},
     pdu::Pdu,
     types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER,
     Address, Error,
@@ -39,18 +39,24 @@ pub(crate) enum SecurityEventData {
     SendLongTermKey(ConnHandle),
     /// Enable encryption on channel
     EnableEncryption(ConnHandle),
+    /// Pairing result
+    PairingResult(Reason),
 }
 
 /// Bonding data
 struct BondData {
-    /// Long term key
+    /// Long Term Key (LTK)
     ltk: [u8; 16],
     /// Device address
     address: Address,
+    // Identity Resolving Key (IRK)?
+    // Connection Signature Resolving Key (CSRK)?
 }
 
 /// Security manager data
 struct SecurityManagerData {
+    /// Local device address
+    local_address: Option<Address>,
     /// Current bonds with other devices
     bond: Vec<BondData, 10>,
 }
@@ -58,14 +64,17 @@ struct SecurityManagerData {
 impl SecurityManagerData {
     /// Create a new security manager data structure
     pub(crate) fn new() -> Self {
-        Self { bond: Vec::new() }
+        Self {
+            local_address: None,
+            bond: Vec::new(),
+        }
     }
 }
 
 /// Packet structure for sending security manager protocol (SMP) commands
 struct TxPacket {
     /// Underlying packet
-    pub(crate) packet: crate::packet_pool::Packet,
+    packet: crate::packet_pool::Packet,
     /// Command to send
     command: Command,
 }
@@ -75,13 +84,7 @@ impl TxPacket {
     const HEADER_SIZE: usize = 5;
 
     /// Get a packet from the pool
-    pub fn new<const MTU: usize, const N: usize>(pool: &PacketPool<MTU, N>, command: Command) -> Result<Self, Error> {
-        let mut packet = match pool.alloc() {
-            Some(p) => p,
-            None => {
-                return Err(Error::OutOfMemory);
-            }
-        };
+    pub fn new(mut packet: crate::packet_pool::Packet, command: Command) -> Result<Self, Error> {
         let packet_data = packet.as_mut();
         let smp_size = command.payload_size() + 1;
         packet_data[..2].copy_from_slice(&(smp_size).to_le_bytes());
@@ -89,7 +92,12 @@ impl TxPacket {
         packet_data[4] = command.into();
         Ok(Self { packet, command })
     }
-    /// Package payload
+    /// Packet command
+    pub fn command(&self) -> Command {
+        self.command
+    }
+
+    /// Packet payload
     pub fn payload(&self) -> &[u8] {
         &self.packet.as_ref()[Self::HEADER_SIZE..Self::HEADER_SIZE + usize::from(self.command.payload_size())]
     }
@@ -100,6 +108,11 @@ impl TxPacket {
     /// Package size
     pub fn total_size(&self) -> usize {
         usize::from(self.command.payload_size()) + Self::HEADER_SIZE
+    }
+    /// Create a PDU from the packet
+    pub fn into_pdu(self) -> Pdu {
+        let len = self.total_size();
+        Pdu::new(self.packet, len)
     }
 }
 
@@ -118,6 +131,7 @@ enum PairingMethod {
 
 /// Pairing states
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum PairingState {
     /// No pairing initialized
     Idle,
@@ -179,12 +193,10 @@ struct PairingData {
     mac_key: Option<MacKey>,
     /// Local check value
     local_check: Option<Check>,
-    /// Local device address
-    local_address: Option<Address>,
-    /// Peer device address
-    peer_address: Option<Address>,
     /// Long term key
     ltk: Option<u128>,
+    /// Peer device address
+    peer_address: Option<Address>,
 }
 
 impl PairingData {
@@ -206,9 +218,8 @@ impl PairingData {
             confirm: None,
             mac_key: None,
             local_check: None,
-            local_address: None,
-            peer_address: None,
             ltk: None,
+            peer_address: None,
         }
     }
     /// Clear pairing data
@@ -228,9 +239,8 @@ impl PairingData {
         self.confirm = None;
         self.mac_key = None;
         self.local_check = None;
-        self.peer_address = None;
         self.ltk = None;
-        // local_address is not cleared
+        self.peer_address = None;
     }
 }
 
@@ -269,9 +279,6 @@ impl PairingData {
 pub struct SecurityManager {
     /// Random generator
     rng: RefCell<ChaCha12Rng>,
-    // Maximum SMP package size is 69 bytes, align to 8 bytes
-    /// Packet pool for transmitting SMP packets
-    tx_pool: PacketPool<72, 2>,
     /// Security manager data
     state: RefCell<SecurityManagerData>,
     /// Current state of the pairing
@@ -281,12 +288,11 @@ pub struct SecurityManager {
 }
 
 impl SecurityManager {
+    const NON_SECURE_RANDOM_SEED: [u8; 32] = [0; 32];
     /// Create a new SecurityManager
     pub(crate) fn new() -> Self {
-        let random_seed = [0; 32];
         Self {
-            rng: RefCell::new(ChaCha12Rng::from_seed(random_seed)),
-            tx_pool: PacketPool::new(),
+            rng: RefCell::new(ChaCha12Rng::from_seed(Self::NON_SECURE_RANDOM_SEED)),
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
             pairing_state: RefCell::new(PairingData::new()),
@@ -295,18 +301,7 @@ impl SecurityManager {
 
     /// Set the current local address
     pub(crate) fn set_local_address(&self, address: Address) {
-        {
-            let mut pairing_state = self.pairing_state.borrow_mut();
-            pairing_state.local_address = Some(address);
-        }
-    }
-
-    /// Set the current peer address
-    pub(crate) fn set_peer_address(&self, address: Address) {
-        {
-            let mut pairing_state = self.pairing_state.borrow_mut();
-            pairing_state.peer_address = Some(address);
-        }
+        self.state.borrow_mut().local_address = Some(address);
     }
 
     /// Set random seed
@@ -323,14 +318,25 @@ impl SecurityManager {
     pub(crate) fn handle(
         &self,
         packet: &crate::packet_pool::Packet,
-        length: usize,
-        connection: &Connection,
+        payload_size: usize,
+        connections: &ConnectionManager,
+        storage: &ConnectionStorage,
     ) -> Result<(), Error> {
+        // Should it be possible to handle multiple concurrent pairings?
+        let role = storage.role.ok_or(Error::InvalidValue)?;
+        let handle = storage.handle.ok_or(Error::InvalidValue)?;
+        let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+        let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
+        let peer_address = Address {
+            kind: peer_address_kind,
+            addr: peer_address,
+        };
+
         let result = {
-            let mut buffer = [0u8; 128];
+            let mut buffer = [0u8; 72];
             let size = {
                 let packet_payload = packet.as_ref();
-                let size = length.min(buffer.len());
+                let size = payload_size.min(buffer.len());
                 buffer[..size].copy_from_slice(&packet_payload[..size]);
                 size
             };
@@ -350,35 +356,42 @@ impl SecurityManager {
                 }
                 Err(_) => return Err(Error::Security(Reason::CommandNotSupported)),
             };
-
-            let role = connection.role();
-
-            {
+            let pairing_peer_address = {
                 let pairing_state = self.pairing_state.borrow();
                 if role != pairing_state.role {
                     return Err(Error::InvalidValue);
                 }
 
-                if let Some(handle) = pairing_state.handle {
-                    if handle != connection.handle() {
+                if let Some(pairing_handle) = pairing_state.handle {
+                    if pairing_handle != handle {
                         error!(
                             "Mismatching connection handle {} != {}",
-                            handle.raw(),
-                            connection.handle().raw()
+                            pairing_handle.raw(),
+                            handle.raw()
                         );
                         return Err(Error::InvalidValue);
                     }
                 }
+
+                pairing_state.peer_address
+            };
+
+            if let Some(address) = pairing_peer_address {
+                if address != peer_address {
+                    return Err(Error::InvalidValue);
+                }
+            } else {
+                self.pairing_state.borrow_mut().peer_address = Some(peer_address);
             }
 
             match command {
-                Command::PairingRequest => self.handle_pairing_request(payload, connection),
-                Command::PairingResponse => self.handle_pairing_response(payload, connection),
-                Command::PairingPublicKey => self.handle_pairing_public_key(payload, connection),
-                Command::PairingConfirm => self.handle_pairing_confirm(payload, connection),
-                Command::PairingRandom => self.handle_pairing_random(payload, connection),
-                Command::PairingDhKeyCheck => self.handle_pairing_dhkey_check(payload, connection),
-                Command::PairingFailed => self.handle_pairing_failed(payload, connection),
+                Command::PairingRequest => self.handle_pairing_request(payload, connections, handle),
+                Command::PairingResponse => self.handle_pairing_response(payload, connections, handle),
+                Command::PairingPublicKey => self.handle_pairing_public_key(payload, connections, handle),
+                Command::PairingConfirm => self.handle_pairing_confirm(payload, connections, handle),
+                Command::PairingRandom => self.handle_pairing_random(payload, connections, handle, storage),
+                Command::PairingDhKeyCheck => self.handle_pairing_dhkey_check(payload, connections, handle, storage),
+                Command::PairingFailed => self.handle_pairing_failed(payload),
                 _ => {
                     warn!("Unhandled Security Manager Protocol command {}", command);
                     Ok(())
@@ -394,11 +407,11 @@ impl SecurityManager {
 
             error!("Handling of command failed {:?}", error);
 
-            let mut packet = self.prepare_packet(Command::PairingFailed)?;
+            let mut packet = self.prepare_packet(Command::PairingFailed, connections)?;
             let payload = packet.payload_mut();
             payload[0] = u8::from(reason);
 
-            match self.try_send_packet(packet, connection) {
+            match self.try_send_packet(packet, connections, handle) {
                 Ok(()) => {
                     self.pairing_state.borrow_mut().clear();
                 }
@@ -407,12 +420,15 @@ impl SecurityManager {
                     return Err(error);
                 }
             }
+            self.events
+                .try_send(SecurityEventData::PairingResult(reason))
+                .map_err(|_| Error::OutOfMemory)?;
         }
         result
     }
 
     /// Initiate pairing
-    pub fn initiate(&self, connection: &Connection<'_>) -> Result<(), Error> {
+    pub fn initiate(&self, connection: &Connection) -> Result<(), Error> {
         if connection.role() == LeConnRole::Central {
             // Send pairing request
             let local_features = PairingFeatures {
@@ -421,13 +437,13 @@ impl SecurityManager {
                 ..Default::default()
             };
 
-            let mut packet = self.prepare_packet(Command::PairingRequest)?;
+            let mut packet = TxPacket::new(connection.alloc_tx()?, Command::PairingRequest)?;
 
             let payload = packet.payload_mut();
 
             local_features.encode(payload).map_err(|_| Error::InvalidValue)?;
 
-            match self.try_send_packet(packet, connection) {
+            match connection.try_send(packet.into_pdu()) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to respond to request {:?}", error);
@@ -445,24 +461,15 @@ impl SecurityManager {
             }
         } else {
             // Send sequrity request to central
-
-            let mut tx_packet = match self.tx_pool.alloc() {
-                Some(p) => p,
-                None => {
-                    return Err(Error::OutOfMemory);
-                }
-            };
-            let packet_data = tx_packet.as_mut();
-
             let auth_req = AuthReq::new(BondingFlag::Bonding);
 
-            let mut packet = self.prepare_packet(Command::SecurityRequest)?;
+            let mut packet = TxPacket::new(connection.alloc_tx()?, Command::SecurityRequest)?;
 
             let response = packet.payload_mut();
 
             response[0] = auth_req.into();
 
-            match self.try_send_packet(packet, connection) {
+            match connection.try_send(packet.into_pdu()) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to send security request {:?}", error);
@@ -475,7 +482,7 @@ impl SecurityManager {
     }
 
     /// Handle pairing response command
-    fn handle_pairing_failed(&self, payload: &[u8], connection: &Connection<'_>) -> Result<(), Error> {
+    fn handle_pairing_failed(&self, payload: &[u8]) -> Result<(), Error> {
         let reason = if let Ok(r) = Reason::try_from(payload[0]) {
             r
         } else {
@@ -483,16 +490,28 @@ impl SecurityManager {
         };
         error!("[security manager] Pairing failed {}", reason);
 
+        self.events
+            .try_send(SecurityEventData::PairingResult(reason))
+            .map_err(|_| Error::OutOfMemory)?;
+
         self.pairing_state.borrow_mut().clear();
 
         Ok(())
     }
 
     /// Handle pairing request command
-    fn handle_pairing_request(&self, payload: &[u8], connection: &Connection<'_>) -> Result<(), Error> {
+    fn handle_pairing_request(
+        &self,
+        payload: &[u8],
+        connections: &ConnectionManager,
+        handle: ConnHandle,
+    ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
-        if connection.role() == LeConnRole::Central {
-            return Err(Error::InvalidValue);
+        {
+            let pairing_state = self.pairing_state.borrow();
+            if pairing_state.role == LeConnRole::Central {
+                return Err(Error::Security(Reason::CommandNotSupported));
+            }
         }
         if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
             return Err(Error::Security(Reason::EncryptionKeySize));
@@ -513,12 +532,12 @@ impl SecurityManager {
                 return Err(Error::InvalidState);
             }
 
-            let mut packet = self.prepare_packet(Command::PairingResponse)?;
+            let mut packet = self.prepare_packet(Command::PairingResponse, connections)?;
 
             let response = packet.payload_mut();
             local_features.encode(response).map_err(|_| Error::InvalidValue)?;
 
-            match self.try_send_packet(packet, connection) {
+            match self.try_send_packet(packet, connections, handle) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to respond to request {:?}", error);
@@ -531,8 +550,7 @@ impl SecurityManager {
             let mut pairing_state = self.pairing_state.borrow_mut();
             pairing_state.local_features = Some(local_features);
             pairing_state.peer_features = Some(peer_features);
-            pairing_state.role = connection.role();
-            pairing_state.handle = Some(connection.handle());
+            pairing_state.handle = Some(handle);
             pairing_state.state = PairingState::Response;
             pairing_state.method = PairingMethod::LeSecureConnectionNumericComparison;
         }
@@ -541,7 +559,12 @@ impl SecurityManager {
     }
 
     /// Handle pairing response command
-    fn handle_pairing_response(&self, payload: &[u8], connection: &Connection<'_>) -> Result<(), Error> {
+    fn handle_pairing_response(
+        &self,
+        payload: &[u8],
+        connections: &ConnectionManager,
+        handle: ConnHandle,
+    ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
         {
             let pairing_state = self.pairing_state.borrow();
@@ -556,7 +579,7 @@ impl SecurityManager {
         let secret_key = SecretKey::new(rng);
         let public_key = secret_key.public_key();
 
-        let mut packet = self.prepare_packet(Command::PairingPublicKey)?;
+        let mut packet = self.prepare_packet(Command::PairingPublicKey, connections)?;
 
         let response = packet.payload_mut();
 
@@ -570,7 +593,7 @@ impl SecurityManager {
         response[..x.len()].copy_from_slice(&x);
         response[x.len()..y.len() + x.len()].copy_from_slice(&y);
 
-        match self.try_send_packet(packet, connection) {
+        match self.try_send_packet(packet, connections, handle) {
             Ok(()) => (),
             Err(error) => {
                 error!("[security manager] Failed to respond to request {:?}", error);
@@ -590,7 +613,12 @@ impl SecurityManager {
     }
 
     /// Handle pairing public key command
-    fn handle_pairing_public_key(&self, payload: &[u8], connection: &Connection<'_>) -> Result<(), Error> {
+    fn handle_pairing_public_key(
+        &self,
+        payload: &[u8],
+        connections: &ConnectionManager,
+        handle: ConnHandle,
+    ) -> Result<(), Error> {
         let role = {
             let pairing_state = self.pairing_state.borrow();
             if (pairing_state.role == LeConnRole::Central && pairing_state.state == PairingState::CentralPublicKey)
@@ -644,14 +672,14 @@ impl SecurityManager {
             x.reverse();
             y.reverse();
 
-            let mut packet = self.prepare_packet(Command::PairingPublicKey)?;
+            let mut packet = self.prepare_packet(Command::PairingPublicKey, connections)?;
 
             let response = packet.payload_mut();
 
             response[..x.len()].copy_from_slice(&x);
             response[x.len()..y.len() + x.len()].copy_from_slice(&y);
 
-            match self.try_send_packet(packet, connection) {
+            match self.try_send_packet(packet, connections, handle) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to send public key {:?}", error);
@@ -669,13 +697,13 @@ impl SecurityManager {
             let local_nonce = Nonce::new(rng);
             let confirm = local_nonce.f4(public_key.x(), peer_public_key.x(), 0);
 
-            let mut packet = self.prepare_packet(Command::PairingConfirm)?;
+            let mut packet = self.prepare_packet(Command::PairingConfirm, connections)?;
 
             let response = packet.payload_mut();
 
             response.copy_from_slice(&confirm.0.to_le_bytes());
 
-            match self.try_send_packet(packet, connection) {
+            match self.try_send_packet(packet, connections, handle) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to send confirm {:?}", error);
@@ -698,7 +726,12 @@ impl SecurityManager {
     }
 
     /// Handle pairing confirm command
-    fn handle_pairing_confirm(&self, payload: &[u8], connection: &Connection<'_>) -> Result<(), Error> {
+    fn handle_pairing_confirm(
+        &self,
+        payload: &[u8],
+        connections: &ConnectionManager,
+        handle: ConnHandle,
+    ) -> Result<(), Error> {
         let confirm = Confirm(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
@@ -713,13 +746,13 @@ impl SecurityManager {
                 }
             }?;
 
-            let mut packet = self.prepare_packet(Command::PairingRandom)?;
+            let mut packet = self.prepare_packet(Command::PairingRandom, connections)?;
 
             let response = packet.payload_mut();
 
             response.copy_from_slice(&local_nonce.0.to_le_bytes());
 
-            match self.try_send_packet(packet, connection) {
+            match self.try_send_packet(packet, connections, handle) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to send random {:?}", error);
@@ -738,7 +771,13 @@ impl SecurityManager {
     }
 
     /// Handle pairing random command
-    fn handle_pairing_random(&self, payload: &[u8], connection: &Connection<'_>) -> Result<(), Error> {
+    fn handle_pairing_random(
+        &self,
+        payload: &[u8],
+        connections: &ConnectionManager,
+        handle: ConnHandle,
+        storage: &ConnectionStorage,
+    ) -> Result<(), Error> {
         let peer_nonce = Nonce(u128::from_le_bytes(
             payload
                 .try_into()
@@ -762,13 +801,13 @@ impl SecurityManager {
                 info!("[security manager] Pairing confirm OK");
             }
         } else {
-            let mut packet = self.prepare_packet(Command::PairingRandom)?;
+            let mut packet = self.prepare_packet(Command::PairingRandom, connections)?;
 
             let response = packet.payload_mut();
 
             response.copy_from_slice(&local_nonce.0.to_le_bytes());
 
-            match self.try_send_packet(packet, connection) {
+            match self.try_send_packet(packet, connections, handle) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to send random {:?}", error);
@@ -778,9 +817,13 @@ impl SecurityManager {
         }
         let (peer_nonce, mac_key, ltk, local_check) = {
             let pairing_state = self.pairing_state.borrow();
-
-            let peer_address = pairing_state.peer_address.ok_or(Error::InvalidValue)?;
-            let local_address = pairing_state.local_address.ok_or(Error::InvalidValue)?;
+            let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+            let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
+            let peer_address = Address {
+                kind: peer_address_kind,
+                addr: peer_address,
+            };
+            let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
             let dh_key = pairing_state.dh_key.as_ref().ok_or(Error::InvalidValue)?;
             let local_features = pairing_state.local_features.ok_or(Error::InvalidValue)?;
 
@@ -838,13 +881,13 @@ impl SecurityManager {
         }
         if role == LeConnRole::Central {
             // Send DH check
-            let mut packet = self.prepare_packet(Command::PairingDhKeyCheck)?;
+            let mut packet = self.prepare_packet(Command::PairingDhKeyCheck, connections)?;
 
             let response = packet.payload_mut();
 
             response.copy_from_slice(&local_check.0.to_le_bytes());
 
-            match self.try_send_packet(packet, connection) {
+            match self.try_send_packet(packet, connections, handle) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to send DH check {:?}", error);
@@ -857,7 +900,13 @@ impl SecurityManager {
     }
 
     /// Handle pairing DH key check
-    fn handle_pairing_dhkey_check(&self, payload: &[u8], connection: &Connection<'_>) -> Result<(), Error> {
+    fn handle_pairing_dhkey_check(
+        &self,
+        payload: &[u8],
+        connections: &ConnectionManager,
+        handle: ConnHandle,
+        storage: &ConnectionStorage,
+    ) -> Result<(), Error> {
         let (role, local_check) = {
             let pairing_state = self.pairing_state.borrow();
 
@@ -865,8 +914,13 @@ impl SecurityManager {
             let peer_nonce = pairing_state.peer_nonce.ok_or(Error::InvalidValue)?;
             let peer_public_key = pairing_state.public_key_peer.ok_or(Error::InvalidValue)?;
             let local_public_key = pairing_state.public_key.ok_or(Error::InvalidValue)?;
-            let peer_address = pairing_state.peer_address.ok_or(Error::InvalidValue)?;
-            let local_address = pairing_state.local_address.ok_or(Error::InvalidValue)?;
+            let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+            let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
+            let peer_address = Address {
+                kind: peer_address_kind,
+                addr: peer_address,
+            };
+            let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
             let mac_key = pairing_state.mac_key.as_ref().ok_or(Error::InvalidValue)?;
             let peer_features = pairing_state.peer_features.ok_or(Error::InvalidValue)?;
             let local_check = pairing_state.local_check.ok_or(Error::InvalidValue)?;
@@ -894,16 +948,16 @@ impl SecurityManager {
         };
         if role == LeConnRole::Central {
             self.events
-                .try_send(SecurityEventData::EnableEncryption(connection.handle()))
+                .try_send(SecurityEventData::EnableEncryption(handle))
                 .map_err(|_| Error::OutOfMemory)?;
         } else {
-            let mut packet = self.prepare_packet(Command::PairingDhKeyCheck)?;
+            let mut packet = self.prepare_packet(Command::PairingDhKeyCheck, connections)?;
 
             let response = packet.payload_mut();
 
             response.copy_from_slice(&local_check.0.to_le_bytes());
 
-            match self.try_send_packet(packet, connection) {
+            match self.try_send_packet(packet, connections, handle) {
                 Ok(()) => (),
                 Err(error) => {
                     error!("[security manager] Failed to send DH check {:?}", error);
@@ -924,81 +978,74 @@ impl SecurityManager {
     }
 
     /// Handle recevied events from HCI
-    pub(crate) fn handle_event(&self, event: Event) -> Result<(), Error> {
-        if let Event::EncryptionChangeV1(event_data) = event {
-            {
-                let pairing_state = self.pairing_state.borrow();
-                if pairing_state.handle == Some(event_data.handle) {
+    pub(crate) fn handle_event(&self, event: &Event) -> Result<(), Error> {
+        match event {
+            Event::EncryptionChangeV1(event_data) => {
+                {
                     match event_data.status.to_result() {
                         Ok(()) => {
-                            info!(
-                                "[security manager] Pairing complete Handle {} {}",
-                                event_data.handle.raw(),
-                                if event_data.enabled {
-                                    "encrypted"
-                                } else {
-                                    "non-encrypted"
-                                }
-                            );
+                            let pairing_state = self.pairing_state.borrow();
+                            let end_of_pairing = (pairing_state.role == LeConnRole::Central
+                                && pairing_state.state == PairingState::SecurityChangeEvent)
+                                || (pairing_state.role == LeConnRole::Peripheral
+                                    && pairing_state.state == PairingState::PeripheralKeyCheck);
+                            if end_of_pairing && pairing_state.handle == Some(event_data.handle) && event_data.enabled {
+                                info!("[security manager] Encryption Changed");
+                                self.events
+                                    .try_send(SecurityEventData::PairingResult(Reason::Success))
+                                    .map_err(|_| Error::OutOfMemory)?;
+                            } else {
+                                warn!("[security manager] Encryption Changed");
+                            }
                         }
                         Err(error) => {
                             error!("[security manager] Encryption Changed Handle Error {}", error);
                         }
                     }
-                } else {
-                    error!(
-                        "[security manager] Pairing complete? {:?} Handle {} {}",
-                        event_data.status,
-                        event_data.handle.raw(),
-                        if event_data.enabled {
-                            "encrypted"
-                        } else {
-                            "non-encrypted"
-                        }
-                    );
+                }
+                {
+                    let mut pairing_state = self.pairing_state.borrow_mut();
+                    let ltk_bytes = pairing_state.ltk.map(|ltk| ltk.to_le_bytes()).unwrap();
+                    let bond = BondData {
+                        address: pairing_state.peer_address.unwrap(),
+                        ltk: ltk_bytes,
+                    };
+                    match self.state.borrow_mut().bond.push(bond) {
+                        Ok(_) => (),
+                        Err(_) => error!("[security manager] Failed to store bond"),
+                    }
+                    pairing_state.clear();
                 }
             }
-            {
-                let mut pairing_state = self.pairing_state.borrow_mut();
-                let ltk_bytes = pairing_state.ltk.map(|ltk| ltk.to_le_bytes()).unwrap();
-                let bond = BondData {
-                    address: pairing_state.peer_address.unwrap(),
-                    ltk: ltk_bytes,
-                };
-                match self.state.borrow_mut().bond.push(bond) {
-                    Ok(_) => (),
-                    Err(_) => error!("[security manager] Failed to store bond"),
-                }
-                pairing_state.clear();
+            Event::Le(LeEvent::LeLongTermKeyRequest(event_data)) => {
+                self.events
+                    .try_send(SecurityEventData::SendLongTermKey(event_data.handle))
+                    .map_err(|_| Error::OutOfMemory)?;
             }
+            _ => (),
         }
         Ok(())
     }
 
     /// Prepare a packet for sending
-    fn prepare_packet(&self, command: Command) -> Result<TxPacket, Error> {
-        TxPacket::new(&self.tx_pool, command)
+    fn prepare_packet(&self, command: Command, connections: &ConnectionManager) -> Result<TxPacket, Error> {
+        let packet = connections.alloc_tx()?;
+        TxPacket::new(packet, command)
     }
 
     /// Send a packet
-    fn try_send_packet(&self, packet: TxPacket, connection: &Connection<'_>) -> Result<(), Error> {
-        let size = packet.total_size();
-        info!("[security manager] Try send {} ({})", packet.command, size);
-        connection.try_send(Pdu::new(packet.packet, size))
-    }
-
-    /// Handle recevied LE events from HCI
-    pub(crate) fn handle_le_event(&self, event: LeEvent) -> Result<(), Error> {
-        if let LeEvent::LeLongTermKeyRequest(data) = event {
-            self.events
-                .try_send(SecurityEventData::SendLongTermKey(data.handle))
-                .map_err(|_| Error::OutOfMemory)?;
-        }
-        Ok(())
+    fn try_send_packet(
+        &self,
+        packet: TxPacket,
+        connections: &ConnectionManager,
+        handle: ConnHandle,
+    ) -> Result<(), Error> {
+        let len = packet.total_size();
+        connections.try_outbound(handle, packet.into_pdu())
     }
 
     /// Poll for security manager work
-    pub(crate) fn poll_work(&self, cx: &mut Context<'_>) -> Poll<SecurityEventData> {
+    pub(crate) fn poll_events(&self, cx: &mut Context<'_>) -> Poll<SecurityEventData> {
         self.events.poll_receive(cx)
     }
 }
