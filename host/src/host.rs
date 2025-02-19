@@ -33,6 +33,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use futures::pin_mut;
 
+use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
 #[cfg(feature = "gatt")]
@@ -348,10 +349,10 @@ where
                 // Handle ATT MTU exchange here since it doesn't strictly require
                 // gatt to be enabled.
                 let a = att::Att::decode(&packet.as_ref()[..header.length as usize]);
-                if let Ok(att::Att::Req(att::AttReq::ExchangeMtu { mtu })) = a {
+                if let Ok(att::Att::Client(AttClient::Request(att::AttReq::ExchangeMtu { mtu }))) = a {
                     let mtu = self.connections.exchange_att_mtu(acl.handle(), mtu);
 
-                    let rsp = att::AttRsp::ExchangeMtu { mtu };
+                    let rsp = att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }));
                     let l2cap = L2capHeader {
                         channel: L2CAP_CID_ATT,
                         length: 3,
@@ -364,19 +365,19 @@ where
                     info!("[host] agreed att MTU of {}", mtu);
                     let len = w.len();
                     self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
-                } else if let Ok(att::Att::Rsp(att::AttRsp::ExchangeMtu { mtu })) = a {
+                } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
                     info!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
                 } else {
                     #[cfg(feature = "gatt")]
                     match a {
-                        Ok(att::Att::Req(_)) => {
+                        Ok(att::Att::Client(_)) => {
                             let event = ConnectionEventData::Gatt {
                                 data: Pdu::new(packet, header.length as usize),
                             };
                             self.connections.post_handle_event(acl.handle(), event)?;
                         }
-                        Ok(att::Att::Rsp(_)) => {
+                        Ok(att::Att::Server(_)) => {
                             if let Err(e) = self
                                 .att_client
                                 .try_send((acl.handle(), Pdu::new(packet, header.length as usize)))
@@ -414,28 +415,87 @@ where
         Ok(())
     }
 
-    // Request to send n ACL packets to the HCI controller for a connection
-    pub(crate) async fn acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
-        let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n as usize, Some(cx))).await?;
-        Ok(AclSender {
+    // Send l2cap signal payload
+    pub(crate) async fn l2cap_signal<D: L2capSignal>(
+        &self,
+        conn: ConnHandle,
+        identifier: u8,
+        signal: &D,
+        p_buf: &mut [u8],
+    ) -> Result<(), BleHostError<T::Error>> {
+        //trace!(
+        //    "[l2cap] sending control signal (req = {}) signal: {:?}",
+        //    identifier,
+        //    signal
+        //);
+        let header = L2capSignalHeader {
+            identifier,
+            code: D::code(),
+            length: signal.size() as u16,
+        };
+        let l2cap = L2capHeader {
+            channel: D::channel(),
+            length: header.size() as u16 + header.length,
+        };
+
+        let mut w = WriteCursor::new(p_buf);
+        w.write_hci(&l2cap)?;
+        w.write_hci(&header)?;
+        w.write_hci(signal)?;
+
+        let mut sender = self.l2cap(conn, w.len() as u16, 1).await?;
+        sender.send(w.finish()).await?;
+
+        Ok(())
+    }
+
+    // Request to an L2CAP payload of len to the HCI controller for a connection.
+    //
+    // This function will request the appropriate number of ACL packets to be sent and
+    // the returned sender will handle fragmentation.
+    pub(crate) async fn l2cap(
+        &self,
+        handle: ConnHandle,
+        len: u16,
+        n_packets: u16,
+    ) -> Result<L2capSender<'_, 'd, T>, BleHostError<T::Error>> {
+        // Take into account l2cap header.
+        let acl_max = self.initialized.get().await.acl_max as u16;
+        let len = len + (4 * n_packets);
+        let n_acl = len.div_ceil(acl_max);
+        let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n_acl as usize, Some(cx))).await?;
+        Ok(L2capSender {
             controller: &self.controller,
             handle,
             grant,
+            fragment_size: acl_max,
         })
     }
 
-    // Request to send n ACL packets to the HCI controller for a connection
-    pub(crate) fn try_acl(&self, handle: ConnHandle, n: u16) -> Result<AclSender<'_, 'd, T>, BleHostError<T::Error>> {
-        let grant = match self.connections.poll_request_to_send(handle, n as usize, None) {
+    // Request to an L2CAP payload of len to the HCI controller for a connection.
+    //
+    // This function will request the appropriate number of ACL packets to be sent and
+    // the returned sender will handle fragmentation.
+    pub(crate) fn try_l2cap(
+        &self,
+        handle: ConnHandle,
+        len: u16,
+        n_packets: u16,
+    ) -> Result<L2capSender<'_, 'd, T>, BleHostError<T::Error>> {
+        let acl_max = self.initialized.try_get().map(|i| i.acl_max).unwrap_or(27) as u16;
+        let len = len + (4 * n_packets);
+        let n_acl = len.div_ceil(acl_max);
+        let grant = match self.connections.poll_request_to_send(handle, n_acl as usize, None) {
             Poll::Ready(res) => res?,
             Poll::Pending => {
                 return Err(Error::Busy.into());
             }
         };
-        Ok(AclSender {
+        Ok(L2capSender {
             controller: &self.controller,
             handle,
             grant,
+            fragment_size: acl_max,
         })
     }
 
@@ -864,8 +924,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                 }
                 Either3::Second(request) => {
                     trace!("[host] poll disconnecting channels");
-                    let mut grant = host.acl(request.handle(), 1).await?;
-                    request.send(&mut grant).await?;
+                    request.send(host).await?;
                     request.confirm();
                 }
                 Either3::Third(states) => match states {
@@ -915,109 +974,71 @@ impl<'d, C: Controller> TxRunner<'d, C> {
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;
-            let mut first = true;
-            for chunk in pdu.as_ref().chunks(params.acl_max) {
-                match host.acl(conn, 1).await {
-                    Ok(mut sender) => {
-                        if let Err(e) = sender.send(chunk, first).await {
-                            warn!("[host] error sending outbound pdu");
-                            return Err(e);
-                        }
-                        first = false;
-                    }
-                    Err(e) => {
-                        warn!("[host] error requesting sending outbound pdu");
+            match host.l2cap(conn, pdu.len as u16, 1).await {
+                Ok(mut sender) => {
+                    if let Err(e) = sender.send(pdu.as_ref()).await {
+                        warn!("[host] error sending outbound pdu");
                         return Err(e);
                     }
+                }
+                Err(BleHostError::BleHost(Error::NotFound)) => {
+                    warn!("[host] unable to send data to disconnected host (ignored)");
+                }
+                Err(BleHostError::BleHost(Error::Disconnected)) => {
+                    warn!("[host] unable to send data to disconnected host (ignored)");
+                }
+                Err(e) => {
+                    warn!("[host] error requesting sending outbound pdu");
+                    return Err(e);
                 }
             }
         }
     }
 }
 
-pub struct AclSender<'a, 'd, T: Controller> {
+pub struct L2capSender<'a, 'd, T: Controller> {
     pub(crate) controller: &'a T,
     pub(crate) handle: ConnHandle,
     pub(crate) grant: PacketGrant<'a, 'd>,
+    pub(crate) fragment_size: u16,
 }
 
-impl<'a, 'd, T: Controller> AclSender<'a, 'd, T> {
-    pub(crate) fn try_send(&mut self, pdu: &[u8], first: bool) -> Result<(), BleHostError<T::Error>>
+impl<'a, 'd, T: Controller> L2capSender<'a, 'd, T> {
+    pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
     where
         T: blocking::Controller,
     {
-        let acl = AclPacket::new(
-            self.handle,
-            if first {
-                AclPacketBoundary::FirstNonFlushable
-            } else {
-                AclPacketBoundary::Continuing
-            },
-            AclBroadcastFlag::PointToPoint,
-            pdu,
-        );
-        // info!("Sent ACL {:?}", acl);
-        match self.controller.try_write_acl_data(&acl) {
-            Ok(result) => {
-                self.grant.confirm(1);
-                Ok(result)
+        let mut pbf = AclPacketBoundary::FirstNonFlushable;
+        for chunk in pdu.chunks(self.fragment_size as usize) {
+            let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
+            // info!("Sent ACL {:?}", acl);
+            match self.controller.try_write_acl_data(&acl) {
+                Ok(result) => {
+                    self.grant.confirm(1);
+                }
+                Err(blocking::TryError::Busy) => {
+                    warn!("hci: acl data send busy");
+                    return Err(Error::Busy.into());
+                }
+                Err(blocking::TryError::Error(e)) => return Err(BleHostError::Controller(e)),
             }
-            Err(blocking::TryError::Busy) => {
-                warn!("hci: acl data send busy");
-                Err(Error::Busy.into())
-            }
-            Err(blocking::TryError::Error(e)) => Err(BleHostError::Controller(e)),
+            pbf = AclPacketBoundary::Continuing;
         }
-    }
-
-    pub(crate) async fn send(&mut self, pdu: &[u8], first: bool) -> Result<(), BleHostError<T::Error>> {
-        let acl = AclPacket::new(
-            self.handle,
-            if first {
-                AclPacketBoundary::FirstNonFlushable
-            } else {
-                AclPacketBoundary::Continuing
-            },
-            AclBroadcastFlag::PointToPoint,
-            pdu,
-        );
-        // info!("Sent ACL {:?}", acl);
-        self.controller
-            .write_acl_data(&acl)
-            .await
-            .map_err(BleHostError::Controller)?;
-        self.grant.confirm(1);
         Ok(())
     }
 
-    pub(crate) async fn signal<D: L2capSignal>(
-        &mut self,
-        identifier: u8,
-        signal: &D,
-        p_buf: &mut [u8],
-    ) -> Result<(), BleHostError<T::Error>> {
-        //trace!(
-        //    "[l2cap] sending control signal (req = {}) signal: {:?}",
-        //    identifier,
-        //    signal
-        //);
-        let header = L2capSignalHeader {
-            identifier,
-            code: D::code(),
-            length: signal.size() as u16,
-        };
-        let l2cap = L2capHeader {
-            channel: D::channel(),
-            length: header.size() as u16 + header.length,
-        };
-
-        let mut w = WriteCursor::new(p_buf);
-        w.write_hci(&l2cap)?;
-        w.write_hci(&header)?;
-        w.write_hci(signal)?;
-
-        self.send(w.finish(), true).await?;
-
+    pub(crate) async fn send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
+        let mut pbf = AclPacketBoundary::FirstNonFlushable;
+        for chunk in pdu.chunks(self.fragment_size as usize) {
+            let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
+            // info!("Sent ACL {:?}", acl);
+            self.controller
+                .write_acl_data(&acl)
+                .await
+                .map_err(BleHostError::Controller)?;
+            self.grant.confirm(1);
+            pbf = AclPacketBoundary::Continuing;
+        }
         Ok(())
     }
 }

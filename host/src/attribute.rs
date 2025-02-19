@@ -612,7 +612,8 @@ impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Characteristic<T: ToGatt> {
-    pub(crate) cccd_handle: Option<u16>,
+    /// Handle value assigned to the Client Characteristic Configuration Descriptor (if any)
+    pub cccd_handle: Option<u16>,
     /// Handle value assigned to this characteristic when it is added to the Gatt Attribute Table
     pub handle: u16,
     pub(crate) phantom: PhantomData<T>,
