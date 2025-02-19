@@ -74,7 +74,7 @@ pub(crate) struct ConnectionManager<'d> {
     #[cfg(feature = "gatt")]
     tx_pool: &'d dyn Pool,
     #[cfg(feature = "security")]
-    pub(crate) security_manager: SecurityManager,
+    pub(crate) security_manager: SecurityManager<'d>,
 }
 
 impl<'d> ConnectionManager<'d> {
