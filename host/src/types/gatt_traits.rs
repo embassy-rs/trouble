@@ -15,7 +15,7 @@ pub enum FromGattError {
 
 /// Trait to allow conversion of a fixed size type to and from a byte slice
 #[allow(private_bounds)]
-pub trait FixedGattValue: GattSized {
+pub trait FixedGattValue: FromGatt {
     /// Size of the type in bytes
     const SIZE: usize;
 
@@ -29,9 +29,11 @@ pub trait FixedGattValue: GattSized {
 }
 
 /// Trait to allow conversion of a type to gatt bytes
-///
-/// Requires that the type implements GattSized to specify length limits
-pub trait ToGatt: GattSized {
+pub trait ToGatt: Sized {
+    /// The minimum size the type might be
+    const MIN_SIZE: usize;
+    /// The maximum size the type might be
+    const MAX_SIZE: usize;
     /// Converts to gatt bytes.
     /// Must return a slice of len in MIN_SIZE..=MAX_SIZE
     fn to_gatt(&self) -> &[u8];
@@ -46,19 +48,6 @@ pub trait FromGatt: ToGatt {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
 }
 
-/// Trait to specify maximum and minimum lengths for a stream of gatt bytes for conversion between the type and gatt bytes
-pub trait GattSized: Sized {
-    /// The minimum size the type might be
-    const MIN_SIZE: usize;
-    /// The maximum size the type might be
-    const MAX_SIZE: usize;
-}
-
-impl<T: FixedGattValue> GattSized for T {
-    const MIN_SIZE: usize = Self::SIZE;
-    const MAX_SIZE: usize = Self::SIZE;
-}
-
 impl<T: FixedGattValue> FromGatt for T {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         <Self as FixedGattValue>::from_gatt(data)
@@ -66,6 +55,9 @@ impl<T: FixedGattValue> FromGatt for T {
 }
 
 impl<T: FixedGattValue> ToGatt for T {
+    const MIN_SIZE: usize = Self::SIZE;
+    const MAX_SIZE: usize = Self::SIZE;
+
     fn to_gatt(&self) -> &[u8] {
         <Self as FixedGattValue>::to_gatt(self)
     }
@@ -126,11 +118,6 @@ impl FixedGattValue for bool {
     }
 }
 
-impl<const N: usize> GattSized for Vec<u8, N> {
-    const MIN_SIZE: usize = 0;
-    const MAX_SIZE: usize = N;
-}
-
 impl<const N: usize> FromGatt for Vec<u8, N> {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         Self::from_slice(data).map_err(|_| FromGattError::InvalidLength)
@@ -138,14 +125,12 @@ impl<const N: usize> FromGatt for Vec<u8, N> {
 }
 
 impl<const N: usize> ToGatt for Vec<u8, N> {
+    const MIN_SIZE: usize = 0;
+    const MAX_SIZE: usize = N;
+
     fn to_gatt(&self) -> &[u8] {
         self
     }
-}
-
-impl<const N: usize> GattSized for [u8; N] {
-    const MIN_SIZE: usize = 0;
-    const MAX_SIZE: usize = N;
 }
 
 impl<const N: usize> FromGatt for [u8; N] {
@@ -161,14 +146,12 @@ impl<const N: usize> FromGatt for [u8; N] {
 }
 
 impl<const N: usize> ToGatt for [u8; N] {
+    const MIN_SIZE: usize = 0;
+    const MAX_SIZE: usize = N;
+
     fn to_gatt(&self) -> &[u8] {
         self.as_slice()
     }
-}
-
-impl<const N: usize> GattSized for String<N> {
-    const MIN_SIZE: usize = 0;
-    const MAX_SIZE: usize = N;
 }
 
 impl<const N: usize> FromGatt for String<N> {
@@ -179,17 +162,18 @@ impl<const N: usize> FromGatt for String<N> {
 }
 
 impl<const N: usize> ToGatt for String<N> {
+    const MIN_SIZE: usize = 0;
+    const MAX_SIZE: usize = N;
+
     fn to_gatt(&self) -> &[u8] {
         self.as_ref()
     }
 }
 
-impl GattSized for &'static str {
+impl ToGatt for &'static str {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = usize::MAX;
-}
 
-impl ToGatt for &'static str {
     fn to_gatt(&self) -> &[u8] {
         self.as_bytes()
     }
