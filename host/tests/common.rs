@@ -1,8 +1,9 @@
+use std::path::PathBuf;
+
 use bt_hci::controller::ExternalController;
 use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_io_adapters::tokio_1::FromTokio;
-use std::path::PathBuf;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};

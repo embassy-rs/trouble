@@ -1,5 +1,6 @@
-use futures::future::join;
 use std::time::Duration;
+
+use futures::future::join;
 use tokio::select;
 use trouble_example_tests::{serial, TestContext};
 use trouble_host::prelude::*;

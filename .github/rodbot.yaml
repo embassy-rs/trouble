@@ -1,3 +1,4 @@
+---
 on:
   issue_comment:
     - if:
