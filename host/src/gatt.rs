@@ -20,7 +20,7 @@ use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
-use crate::types::gatt_traits::{FromGatt, FromGattError, ToGatt};
+use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, Stack};
 
@@ -516,7 +516,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     }
 
     /// Discover characteristics in a given service using a UUID.
-    pub async fn characteristic_by_uuid<T: ToGatt>(
+    pub async fn characteristic_by_uuid<T: AsGatt>(
         &self,
         service: &ServiceHandle,
         uuid: &Uuid,
@@ -603,7 +603,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     /// Read a characteristic described by a handle.
     ///
     /// The number of bytes copied into the provided buffer is returned.
-    pub async fn read_characteristic<T: ToGatt>(
+    pub async fn read_characteristic<T: AsGatt>(
         &self,
         characteristic: &Characteristic<T>,
         dest: &mut [u8],
@@ -679,7 +679,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     /// Subscribe to indication/notification of a given Characteristic
     ///
     /// A listener is returned, which has a `next()` method
-    pub async fn subscribe<T: ToGatt>(
+    pub async fn subscribe<T: AsGatt>(
         &self,
         characteristic: &Characteristic<T>,
         indication: bool,
@@ -711,7 +711,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     }
 
     /// Unsubscribe from a given Characteristic
-    pub async fn unsubscribe<T: ToGatt>(
+    pub async fn unsubscribe<T: AsGatt>(
         &self,
         characteristic: &Characteristic<T>,
     ) -> Result<(), BleHostError<C::Error>> {
