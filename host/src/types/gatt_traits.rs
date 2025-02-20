@@ -41,7 +41,7 @@ pub trait AsGatt: Sized {
 
 /// Trait to allow conversion of gatt bytes into a type
 ///
-/// Requires that the type implements ToGatt
+/// Requires that the type implements AsGatt
 pub trait FromGatt: AsGatt {
     /// Converts from gatt bytes.
     /// Must return FromGattError::InvalidLength if data.len not in MIN_SIZE..=MAX_SIZE
