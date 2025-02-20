@@ -97,7 +97,7 @@ pub mod prelude {
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]
-    pub use crate::types::gatt_traits::{FixedGattValue, GattValue};
+    pub use crate::types::gatt_traits::{FixedGattValue, FromGatt, ToGatt};
     pub use crate::Address;
 }
 
