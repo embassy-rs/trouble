@@ -171,7 +171,7 @@ impl ServerBuilder {
                     self.server.table().get(characteristic)
                 }
 
-                #visibility fn set<T: trouble_host::types::gatt_traits::ToGatt>(&self, characteristic: &trouble_host::attribute::Characteristic<T>, input: &T) -> Result<(), trouble_host::Error> {
+                #visibility fn set<T: trouble_host::types::gatt_traits::AsGatt>(&self, characteristic: &trouble_host::attribute::Characteristic<T>, input: &T) -> Result<(), trouble_host::Error> {
                     self.server.table().set(characteristic, input)
                 }
             }
