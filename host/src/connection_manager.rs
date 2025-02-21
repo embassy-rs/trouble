@@ -74,7 +74,7 @@ pub(crate) struct ConnectionManager<'d> {
     #[cfg(feature = "gatt")]
     tx_pool: &'d dyn Pool,
     #[cfg(feature = "security")]
-    pub(crate) security_manager: SecurityManager<'d>,
+    pub(crate) security_manager: SecurityManager,
 }
 
 impl<'d> ConnectionManager<'d> {
@@ -570,13 +570,6 @@ impl<'d> ConnectionManager<'d> {
                     info!("[host] Enable encryption")
                 } else {
                     warn!("[host] Enable encryption failed, no long term key")
-                }
-            }
-            crate::security_manager::SecurityEventData::PairingResult(reason) => {
-                if reason == crate::security_manager::Reason::Success {
-                    info!("[host] Pairing succeeded");
-                } else {
-                    warn!("[host] Pairing failed {}", reason);
                 }
             }
         }

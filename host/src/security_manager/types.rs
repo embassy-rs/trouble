@@ -24,6 +24,7 @@ pub enum Reason {
     EncryptionKeySize,
     /// The SMP command received is not supported on this device.
     CommandNotSupported,
+    #[allow(clippy::enum_variant_names)]
     /// Pairing failed due to an unspecified reason.
     UnspecifiedReason,
     /// Pairing or authentication procedure is disallowed because too little time has elapsed since last pairing request or security request.
