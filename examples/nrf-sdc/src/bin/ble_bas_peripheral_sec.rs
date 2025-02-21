@@ -7,6 +7,8 @@ use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, rng};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
+use rand_chacha::ChaCha12Rng;
+use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_peripheral_sec;
 use {defmt_rtt as _, panic_probe as _};
@@ -69,11 +71,10 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let mut random_seed = [0u8; 32];
-    rng.fill_bytes(&mut random_seed).await;
+    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
 
     let mut sdc_mem = sdc::Mem::<3312>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    ble_bas_peripheral_sec::run::<_, L2CAP_MTU>(sdc, &random_seed).await;
+    ble_bas_peripheral_sec::run::<_, _, L2CAP_MTU>(sdc, &mut rng_2).await;
 }

@@ -1323,6 +1323,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-io",
  "heapless",
+ "rand_core",
  "static_cell",
  "trouble-host",
 ]
@@ -1380,6 +1381,8 @@ dependencies = [
  "nrf-sdc",
  "panic-probe",
  "rand",
+ "rand_chacha",
+ "rand_core",
  "static_cell",
  "trouble-example-apps",
 ]

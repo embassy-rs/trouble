@@ -1,5 +1,6 @@
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
+use rand_core::{CryptoRng, RngCore};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -8,16 +9,18 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
+pub async fn run<C, RNG, const L2CAP_MTU: usize>(controller: C, random_generator: &mut RNG)
 where
     C: Controller,
+    RNG: RngCore + CryptoRng,
 {
     // Hardcoded peripheral address
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let stack = trouble_host::new(controller, &mut resources, random_generator);
+    let stack = stack.set_random_address(address);
     let Host {
         mut peripheral,
         mut runner,

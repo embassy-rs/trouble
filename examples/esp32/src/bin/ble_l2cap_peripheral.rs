@@ -21,13 +21,9 @@ async fn main(_s: Spawner) {
     });
     esp_alloc::heap_allocator!(72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
+    let mut rng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);
 
-    let init = esp_wifi::init(
-        timg0.timer0,
-        esp_hal::rng::Rng::new(peripherals.RNG),
-        peripherals.RADIO_CLK,
-    )
-    .unwrap();
+    let init = esp_wifi::init(timg0.timer0, rng.rng.clone(), peripherals.RADIO_CLK).unwrap();
 
     #[cfg(not(feature = "esp32"))]
     {
@@ -43,5 +39,5 @@ async fn main(_s: Spawner) {
     let connector = BleConnector::new(&init, bluetooth);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
-    ble_l2cap_peripheral::run::<_, { consts::L2CAP_MTU }>(controller).await;
+    ble_l2cap_peripheral::run::<_, _, { consts::L2CAP_MTU }>(controller, &mut rng).await;
 }

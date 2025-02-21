@@ -23,6 +23,8 @@ use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
+use bt_hci::param::{AddrKind, BdAddr};
+use rand_core::{CryptoRng, RngCore};
 
 mod fmt;
 
@@ -399,6 +401,7 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
 pub fn new<
     'resources,
     C: Controller,
+    RNG: RngCore + CryptoRng,
     const CONNS: usize,
     const CHANNELS: usize,
     const L2CAP_MTU: usize,
@@ -406,6 +409,7 @@ pub fn new<
 >(
     controller: C,
     resources: &'resources mut HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
+    random_generator: &mut RNG,
 ) -> Stack<'resources, C> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         unsafe { core::mem::transmute(x) }
@@ -447,6 +451,8 @@ pub fn new<
     let sar: &'static mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>] = unsafe { transmute_slice(sar) };
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
+    let mut random_seed = [0u8; 32];
+    random_generator.fill_bytes(&mut random_seed);
     let host: BleHost<'_, C> = BleHost::new(
         controller,
         rx_pool,
@@ -458,6 +464,7 @@ pub fn new<
         channels_rx,
         sar,
         advertise_handles,
+        random_seed,
     );
 
     Stack { host }
@@ -487,12 +494,6 @@ impl<'stack, C: Controller> Stack<'stack, C> {
         self.host.address.replace(address);
         #[cfg(feature = "security")]
         self.host.connections.security_manager.set_local_address(address);
-        self
-    }
-    /// Set the random seed
-    pub fn set_random_seed(self, random_seed: &[u8; 32]) -> Self {
-        #[cfg(feature = "security")]
-        self.host.connections.security_manager.set_random_seed(random_seed);
         self
     }
 

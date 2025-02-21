@@ -293,11 +293,10 @@ enum TimerCommand {
 }
 
 impl SecurityManager {
-    const NON_SECURE_RANDOM_SEED: [u8; 32] = [0; 32];
     /// Create a new SecurityManager
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(random_seed: [u8; 32]) -> Self {
         Self {
-            rng: RefCell::new(ChaCha12Rng::from_seed(Self::NON_SECURE_RANDOM_SEED)),
+            rng: RefCell::new(ChaCha12Rng::from_seed(random_seed)),
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
             pairing_state: RefCell::new(PairingData::new()),
@@ -308,11 +307,6 @@ impl SecurityManager {
     /// Set the current local address
     pub(crate) fn set_local_address(&self, address: Address) {
         self.state.borrow_mut().local_address = Some(address);
-    }
-
-    /// Set random seed
-    pub(crate) fn set_random_seed(&self, random_seed: &[u8; 32]) {
-        self.rng.replace(ChaCha12Rng::from_seed(*random_seed));
     }
 
     /// Get the long term key from the latests pairing
