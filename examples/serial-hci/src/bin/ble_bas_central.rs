@@ -3,6 +3,7 @@ use bt_hci::controller::ExternalController;
 use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::*;
+use rand::rngs::OsRng;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_example_apps::ble_bas_central;
@@ -51,5 +52,5 @@ async fn main() {
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
 
-    ble_bas_central::run::<_, 128>(controller).await;
+    ble_bas_central::run::<_, _, 128>(controller, &mut OsRng).await;
 }

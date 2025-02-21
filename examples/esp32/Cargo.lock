@@ -1527,6 +1527,7 @@ dependencies = [
  "embedded-io",
  "heapless",
  "log",
+ "rand_core",
  "static_cell",
  "trouble-host",
 ]

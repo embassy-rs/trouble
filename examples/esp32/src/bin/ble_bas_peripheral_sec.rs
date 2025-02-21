@@ -23,8 +23,6 @@ async fn main(_s: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
 
     let mut rng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);
-    let mut random_seed = [0u8; 32];
-    rng.read(&mut random_seed);
 
     let init = esp_wifi::init(timg0.timer0, rng.rng.clone(), peripherals.RADIO_CLK).unwrap();
 
@@ -42,5 +40,5 @@ async fn main(_s: Spawner) {
     let connector = BleConnector::new(&init, bluetooth);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
-    ble_bas_peripheral_sec::run::<_, { consts::L2CAP_MTU }>(controller, &random_seed).await;
+    ble_bas_peripheral_sec::run::<_, _, { consts::L2CAP_MTU }>(controller, &mut rng).await;
 }
