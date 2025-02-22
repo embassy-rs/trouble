@@ -5,7 +5,7 @@ use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
 use esp_hal::{clock::CpuClock, timer::timg::TimerGroup};
 use esp_wifi::ble::controller::BleConnector;
-use trouble_example_apps::ble_l2cap_peripheral;
+use trouble_example_apps::ble_bas_peripheral_sec;
 use {esp_alloc as _, esp_backtrace as _};
 
 #[path = "../consts.rs"]
@@ -21,6 +21,7 @@ async fn main(_s: Spawner) {
     });
     esp_alloc::heap_allocator!(72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
+
     let mut rng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);
 
     let init = esp_wifi::init(timg0.timer0, rng.rng.clone(), peripherals.RADIO_CLK).unwrap();
@@ -39,5 +40,5 @@ async fn main(_s: Spawner) {
     let connector = BleConnector::new(&init, bluetooth);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
-    ble_l2cap_peripheral::run::<_, _, { consts::L2CAP_MTU }>(controller, &mut rng).await;
+    ble_bas_peripheral_sec::run::<_, _, { consts::L2CAP_MTU }>(controller, &mut rng).await;
 }

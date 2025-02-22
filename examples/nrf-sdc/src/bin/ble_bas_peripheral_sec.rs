@@ -10,7 +10,7 @@ use nrf_sdc::{self as sdc, mpsl};
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
 use static_cell::StaticCell;
-use trouble_example_apps::ble_l2cap_peripheral;
+use trouble_example_apps::ble_bas_peripheral_sec;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -28,12 +28,13 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
 }
 
 /// How many outgoing L2CAP buffers per link
-const L2CAP_TXQ: u8 = 20;
+const L2CAP_TXQ: u8 = 3;
 
 /// How many incoming L2CAP buffers per link
-const L2CAP_RXQ: u8 = 20;
+const L2CAP_RXQ: u8 = 3;
 
-const L2CAP_MTU: usize = 27;
+/// Size of L2CAP packets
+const L2CAP_MTU: usize = 72;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
@@ -72,8 +73,8 @@ async fn main(spawner: Spawner) {
     let mut rng = rng::Rng::new(p.RNG, Irqs);
     let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
 
-    let mut sdc_mem = sdc::Mem::<12848>::new();
+    let mut sdc_mem = sdc::Mem::<3312>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    ble_l2cap_peripheral::run::<_, _, L2CAP_MTU>(sdc, &mut rng_2).await;
+    ble_bas_peripheral_sec::run::<_, _, L2CAP_MTU>(sdc, &mut rng_2).await;
 }

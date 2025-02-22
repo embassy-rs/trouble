@@ -6,7 +6,7 @@ use log::*;
 use rand::rngs::OsRng;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
-use trouble_example_apps::ble_l2cap_peripheral;
+use trouble_example_apps::ble_bas_peripheral_sec;
 
 #[tokio::main]
 async fn main() {
@@ -52,5 +52,5 @@ async fn main() {
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
 
-    ble_l2cap_peripheral::run::<_, _, 128>(controller, &mut OsRng).await;
+    ble_bas_peripheral_sec::run::<_, _, 128>(controller, &mut OsRng).await;
 }

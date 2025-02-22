@@ -22,6 +22,7 @@ where
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources, random_generator);
     let stack = stack.set_random_address(address);
+
     let Host {
         mut central,
         mut runner,
@@ -46,6 +47,13 @@ where
 
         let conn = central.connect(&config).await.unwrap();
         info!("Connected, creating gatt client");
+
+        #[cfg(feature = "security")]
+        {
+            if let Err(_error) = central.pairing(&conn).await {
+                error!("Pairing failed");
+            }
+        }
 
         let client = GattClient::<C, 10, 24>::new(&stack, &conn).await.unwrap();
 

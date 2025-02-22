@@ -46,7 +46,7 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     let central = tokio::task::spawn_local(async move {
         let controller_central = serial::create_controller(&central).await;
         let mut resources: HostResources<2, 4, 27> = HostResources::new();
-        let stack = trouble_host::new(controller_central, &mut resources);
+        let stack = trouble_host::new(controller_central, &mut resources, &mut rand::rngs::OsRng);
         let Host {
             mut central,
             mut runner,

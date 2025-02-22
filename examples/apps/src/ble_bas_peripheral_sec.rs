@@ -37,7 +37,7 @@ where
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
-    info!("Our address = {:?}", address);
+    info!("Our address = {}", address);
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources, random_generator);
@@ -123,23 +123,43 @@ async fn gatt_events_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<
                 match data.process(server).await {
                     // Server processing emits
                     Ok(Some(event)) => {
-                        match &event {
+                        let result = match &event {
                             GattEvent::Read(event) => {
                                 if event.handle() == level.handle {
                                     let value = server.get(&level);
                                     info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                                 }
+                                #[cfg(feature = "security")]
+                                if conn.encrypted() {
+                                    None
+                                } else {
+                                    Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                                }
+                                #[cfg(not(feature = "security"))]
+                                None
                             }
                             GattEvent::Write(event) => {
                                 if event.handle() == level.handle {
                                     info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                                 }
+                                #[cfg(feature = "security")]
+                                if conn.encrypted() {
+                                    None
+                                } else {
+                                    Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                                }
+                                #[cfg(not(feature = "security"))]
+                                None
                             }
-                        }
-
+                        };
                         // This step is also performed at drop(), but writing it explicitly is necessary
                         // in order to ensure reply is sent.
-                        match event.accept() {
+                        let result = if let Some(code) = result {
+                            event.reject(code)
+                        } else {
+                            event.accept()
+                        };
+                        match result {
                             Ok(reply) => {
                                 reply.send().await;
                             }
