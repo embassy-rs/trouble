@@ -2,9 +2,9 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use bt_hci::controller::{blocking, Controller};
-use bt_hci::param::ConnHandle;
 use bt_hci::FromHciBytes;
+use bt_hci::controller::{Controller, blocking};
+use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
@@ -18,7 +18,7 @@ use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
     L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
 };
-use crate::{config, BleHostError, Error};
+use crate::{BleHostError, Error, config};
 
 const BASE_ID: u16 = 0x40;
 
@@ -371,16 +371,14 @@ impl<'d> ChannelManager<'d> {
                 let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
                 trace!(
                     "[l2cap][conn = {:?}] connection param update request: {:?}, ignored",
-                    conn,
-                    req
+                    conn, req
                 );
             }
             L2capSignalCode::ConnParamUpdateRes => {
                 let res = ConnParamUpdateRes::from_hci_bytes_complete(data)?;
                 trace!(
                     "[l2cap][conn = {:?}] connection param update response: {}",
-                    conn,
-                    res.result,
+                    conn, res.result,
                 );
             }
             r => {
@@ -1011,8 +1009,8 @@ mod tests {
     use bt_hci::param::{AddrKind, BdAddr, LeConnRole, Status};
 
     use super::*;
-    use crate::mock_controller::MockController;
     use crate::HostResources;
+    use crate::mock_controller::MockController;
 
     #[test]
     fn channel_refcount() {

@@ -8,21 +8,20 @@ use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
 
-use crate::att::{self, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
-use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
+use crate::att::{self, ATT_HANDLE_VALUE_NTF, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns};
+use crate::attribute::{AttributeData, CCCD, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, BleHostError, Error, Stack};
+use crate::{BleHostError, Error, Stack, config};
 
 /// A GATT payload ready for processing.
 pub struct GattData<'stack> {
