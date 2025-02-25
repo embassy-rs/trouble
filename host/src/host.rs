@@ -15,7 +15,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync, blocking};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
@@ -26,7 +26,7 @@ use bt_hci::param::{
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{Either3, select3};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -44,9 +44,9 @@ use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
-    L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL,
+    L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL, L2capHeader, L2capSignal, L2capSignalHeader,
 };
-use crate::{att, config, Address, BleHostError, Error, Stack};
+use crate::{Address, BleHostError, Error, Stack, att, config};
 
 /// A BLE Host.
 ///
@@ -266,15 +266,13 @@ where
                     #[cfg(feature = "defmt")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
 
                     #[cfg(feature = "log")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x?}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);

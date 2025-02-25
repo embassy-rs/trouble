@@ -1,15 +1,15 @@
 use core::cell::RefCell;
 
 use bt_hci::param::ConnHandle;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::att::{self, AttClient, AttCmd, AttErrorCode, AttReq};
 use crate::attribute::{AttributeData, AttributeTable};
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
-use crate::{codec, Error};
+use crate::{Error, codec};
 
 const MAX_NOTIFICATIONS: usize = 4;
 pub(crate) struct NotificationTable<const ENTRIES: usize> {
@@ -495,11 +495,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
 
             AttClient::Confirmation(_) => 0,
         };
-        if len > 0 {
-            Ok(Some(len))
-        } else {
-            Ok(None)
-        }
+        if len > 0 { Ok(Some(len)) } else { Ok(None) }
     }
 
     /// Get a reference to the attribute table

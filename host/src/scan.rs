@@ -1,17 +1,16 @@
 //! Scan config.
-use crate::command::CommandState;
-use crate::connection::ScanConfig;
-use crate::BleHostError;
-use bt_hci::cmd::le::LeSetScanParams;
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable,
+    LeSetScanParams,
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{AddrKind, FilterDuplicates, ScanningPhy};
 pub use bt_hci::param::{LeAdvReportsIter, LeExtAdvReportsIter};
 use embassy_time::Instant;
 
-use crate::Central;
+use crate::command::CommandState;
+use crate::connection::ScanConfig;
+use crate::{BleHostError, Central};
 
 /// A scanner that wraps a central to provide additional functionality
 /// around BLE scanning.
