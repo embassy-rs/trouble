@@ -852,8 +852,8 @@ impl FixedGattValue for CharacteristicProps {
         Ok(CharacteristicProps(data[0]))
     }
 
-    fn to_gatt(&self) -> &[u8] {
-        FixedGattValue::to_gatt(&self.0)
+    fn as_gatt(&self) -> &[u8] {
+        FixedGattValue::as_gatt(&self.0)
     }
 }
 
