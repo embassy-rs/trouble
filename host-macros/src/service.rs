@@ -193,10 +193,10 @@ impl ServiceBuilder {
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let (#char_name, #(#named_descriptors),*) = {
-                static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::ToGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
+                static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
                 let mut val = <#ty>::default(); // constrain the type of the value here
                 val = #default_value; // update the temporary value with our new default
-                let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::ToGatt>::MAX_SIZE]);
+                let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
                 let mut builder = service
                     .add_characteristic(#uuid, &[#(#properties),*], val, store);
                 #code_descriptors
@@ -314,7 +314,7 @@ impl ServiceBuilder {
                             const CAPACITY: usize = if (#capacity) < 16 { 16 } else { #capacity }; // minimum capacity is 16 bytes
                             static #name_screaming: static_cell::StaticCell<[u8; CAPACITY]> = static_cell::StaticCell::new();
                             let store = #name_screaming.init([0; CAPACITY]);
-                            let value = trouble_host::types::gatt_traits::ToGatt::to_gatt(&value);
+                            let value = trouble_host::types::gatt_traits::AsGatt::as_gatt(&value);
                             store[..value.len()].copy_from_slice(value);
                             builder.add_descriptor::<&[u8], _>(
                                 #uuid,

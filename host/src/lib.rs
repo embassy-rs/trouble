@@ -13,16 +13,16 @@
 use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
+use bt_hci::FromHciBytesError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::FromHciBytesError;
+use bt_hci::param::{AddrKind, BdAddr};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
-use bt_hci::param::{AddrKind, BdAddr};
 
 mod fmt;
 
@@ -44,11 +44,10 @@ mod pdu;
 pub mod peripheral;
 pub mod types;
 
-#[cfg(feature = "peripheral")]
-use peripheral::*;
-
 #[cfg(feature = "central")]
 use central::*;
+#[cfg(feature = "peripheral")]
+use peripheral::*;
 
 pub mod advertise;
 pub mod connection;
@@ -66,7 +65,6 @@ use host::{AdvHandleState, BleHost, HostMetrics, Runner};
 
 #[allow(missing_docs)]
 pub mod prelude {
-    pub use super::Host;
     pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
     pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
@@ -75,7 +73,8 @@ pub mod prelude {
     pub use trouble_host_macros::*;
 
     pub use super::att::AttErrorCode;
-    pub use super::{BleHostError, Controller, Error, HostResources, Stack};
+    pub use super::{BleHostError, Controller, Error, Host, HostResources, Stack};
+    pub use crate::Address;
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
@@ -97,8 +96,7 @@ pub mod prelude {
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]
-    pub use crate::types::gatt_traits::{FixedGattValue, FromGatt, ToGatt};
-    pub use crate::Address;
+    pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
 }
 
 #[cfg(feature = "gatt")]
@@ -271,34 +269,34 @@ pub trait Controller:
 }
 
 impl<
-        C: bt_hci::controller::Controller
-            + embedded_io::ErrorType
-            + ControllerCmdSync<LeReadBufferSize>
-            + ControllerCmdSync<Disconnect>
-            + ControllerCmdSync<SetEventMask>
-            + ControllerCmdSync<LeSetEventMask>
-            + ControllerCmdSync<LeSetRandomAddr>
-            + ControllerCmdSync<HostBufferSize>
-            + ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<LeReadFilterAcceptListSize>
-            + ControllerCmdSync<LeClearFilterAcceptList>
-            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
-            + ControllerCmdSync<SetControllerToHostFlowControl>
-            + ControllerCmdSync<Reset>
-            + ControllerCmdSync<ReadRssi>
-            + ControllerCmdSync<LeSetScanEnable>
-            + ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + ControllerCmdAsync<LeCreateConn>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
-            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<LeReadBufferSize>
-            + for<'t> ControllerCmdSync<LeSetAdvData>
-            + ControllerCmdSync<LeSetAdvParams>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>,
-    > Controller for C
+    C: bt_hci::controller::Controller
+        + embedded_io::ErrorType
+        + ControllerCmdSync<LeReadBufferSize>
+        + ControllerCmdSync<Disconnect>
+        + ControllerCmdSync<SetEventMask>
+        + ControllerCmdSync<LeSetEventMask>
+        + ControllerCmdSync<LeSetRandomAddr>
+        + ControllerCmdSync<HostBufferSize>
+        + ControllerCmdAsync<LeConnUpdate>
+        + ControllerCmdSync<LeReadFilterAcceptListSize>
+        + ControllerCmdSync<LeClearFilterAcceptList>
+        + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
+        + ControllerCmdSync<SetControllerToHostFlowControl>
+        + ControllerCmdSync<Reset>
+        + ControllerCmdSync<ReadRssi>
+        + ControllerCmdSync<LeSetScanEnable>
+        + ControllerCmdSync<LeSetExtScanEnable>
+        + ControllerCmdSync<LeCreateConnCancel>
+        + ControllerCmdAsync<LeCreateConn>
+        + for<'t> ControllerCmdSync<LeSetAdvEnable>
+        + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+        + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+        + ControllerCmdSync<LeReadBufferSize>
+        + for<'t> ControllerCmdSync<LeSetAdvData>
+        + ControllerCmdSync<LeSetAdvParams>
+        + for<'t> ControllerCmdSync<LeSetAdvEnable>
+        + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+> Controller for C
 {
 }
 
@@ -359,7 +357,7 @@ pub fn new<
     resources: &'resources mut HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
 ) -> Stack<'resources, C> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
-        core::mem::transmute(x)
+        unsafe { core::mem::transmute(x) }
     }
 
     // Safety:
@@ -376,9 +374,10 @@ pub fn new<
     #[cfg(feature = "gatt")]
     let tx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(tx_pool) };
 
+    use bt_hci::param::ConnHandle;
+
     use crate::l2cap::sar::AssembledPacket;
     use crate::types::l2cap::L2capHeader;
-    use bt_hci::param::ConnHandle;
     let connections: &mut [ConnectionStorage] =
         &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
     let connections: &'resources mut [ConnectionStorage] = unsafe { transmute_slice(connections) };

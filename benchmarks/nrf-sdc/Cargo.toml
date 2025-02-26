@@ -1,5 +1,5 @@
 [package]
-name = "trouble-nrf-sdc-examples"
+name = "trouble-nrf-sdc-tests"
 version = "0.1.0"
 edition = "2024"
 resolver = "2"
@@ -10,12 +10,12 @@ embassy-time = { version = "0.4", default-features = false, features = ["defmt",
 embassy-nrf = { version = "0.3", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.6", features = ["defmt"] }
+trouble-host = { path = "../../host", default-features = false, features = ["defmt", "l2cap-rx-queue-size-4", "l2cap-rx-packet-pool-size-16", "l2cap-tx-queue-size-4", "central", "peripheral", "scan", "gatt", "controller-host-flow-control"] }
 
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
 nrf-sdc = { version = "0.1.0", default-features = false, features = ["defmt", "peripheral", "central"] }
 nrf-mpsl = { version = "0.1.0", default-features = false, features = ["defmt", "critical-section-impl"] }
 bt-hci = { version = "0.2", default-features = false, features = ["defmt"] }
-trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 
 defmt = "0.3"
 defmt-rtt = "0.4.0"

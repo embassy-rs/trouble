@@ -29,20 +29,20 @@ pub trait FixedGattValue: FromGatt {
 }
 
 /// Trait to allow conversion of a type to gatt bytes
-pub trait ToGatt: Sized {
+pub trait AsGatt: Sized {
     /// The minimum size the type might be
     const MIN_SIZE: usize;
     /// The maximum size the type might be
     const MAX_SIZE: usize;
     /// Converts to gatt bytes.
     /// Must return a slice of len in MIN_SIZE..=MAX_SIZE
-    fn to_gatt(&self) -> &[u8];
+    fn as_gatt(&self) -> &[u8];
 }
 
 /// Trait to allow conversion of gatt bytes into a type
 ///
-/// Requires that the type implements ToGatt
-pub trait FromGatt: ToGatt {
+/// Requires that the type implements AsGatt
+pub trait FromGatt: AsGatt {
     /// Converts from gatt bytes.
     /// Must return FromGattError::InvalidLength if data.len not in MIN_SIZE..=MAX_SIZE
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
@@ -54,11 +54,11 @@ impl<T: FixedGattValue> FromGatt for T {
     }
 }
 
-impl<T: FixedGattValue> ToGatt for T {
+impl<T: FixedGattValue> AsGatt for T {
     const MIN_SIZE: usize = Self::SIZE;
     const MAX_SIZE: usize = Self::SIZE;
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         <Self as FixedGattValue>::to_gatt(self)
     }
 }
@@ -124,11 +124,11 @@ impl<const N: usize> FromGatt for Vec<u8, N> {
     }
 }
 
-impl<const N: usize> ToGatt for Vec<u8, N> {
+impl<const N: usize> AsGatt for Vec<u8, N> {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = N;
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         self
     }
 }
@@ -145,11 +145,11 @@ impl<const N: usize> FromGatt for [u8; N] {
     }
 }
 
-impl<const N: usize> ToGatt for [u8; N] {
+impl<const N: usize> AsGatt for [u8; N] {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = N;
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         self.as_slice()
     }
 }
@@ -161,20 +161,20 @@ impl<const N: usize> FromGatt for String<N> {
     }
 }
 
-impl<const N: usize> ToGatt for String<N> {
+impl<const N: usize> AsGatt for String<N> {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = N;
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         self.as_ref()
     }
 }
 
-impl ToGatt for &'static str {
+impl AsGatt for &'static str {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = usize::MAX;
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         self.as_bytes()
     }
 }

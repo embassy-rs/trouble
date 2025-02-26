@@ -173,6 +173,7 @@ impl ServerBuilder {
 
                 #visibility fn set<T: trouble_host::attribute::AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
                     self.server.table().set(attribute_handle, input)
+
                 }
             }
 
