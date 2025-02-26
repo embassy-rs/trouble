@@ -9,6 +9,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
+use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::BleHost;
 use crate::l2cap::L2capChannel;
@@ -491,9 +492,9 @@ impl<'d> ChannelManager<'d> {
         buf: &mut [u8],
         ble: &BleHost<'d, T>,
     ) -> Result<usize, BleHostError<T::Error>> {
-        let packet = self.receive_pdu(chan).await?;
+        let mut packet = self.receive_pdu(&ble.connections, chan).await?;
 
-        let (first, data) = packet.as_ref().split_at(2);
+        let (first, data) = packet.pdu.as_ref().split_at(2);
         let remaining: u16 = u16::from_le_bytes([first[0], first[1]]);
 
         let to_copy = data.len().min(buf.len());
@@ -502,26 +503,32 @@ impl<'d> ChannelManager<'d> {
 
         let mut remaining = remaining as usize - data.len();
 
-        self.flow_control(chan, ble, packet.packet).await?;
+        self.flow_control(chan, ble, packet.pdu.packet.as_mut()).await?;
+        drop(packet);
 
         // We have some k-frames to reassemble
         while remaining > 0 {
-            let packet = self.receive_pdu(chan).await?;
-            let to_copy = packet.len.min(buf.len() - pos);
+            let mut packet = self.receive_pdu(&ble.connections, chan).await?;
+            let to_copy = packet.pdu.len.min(buf.len() - pos);
             if to_copy > 0 {
-                buf[pos..pos + to_copy].copy_from_slice(&packet.as_ref()[..to_copy]);
+                buf[pos..pos + to_copy].copy_from_slice(&packet.pdu.as_ref()[..to_copy]);
                 pos += to_copy;
             }
-            remaining -= packet.len;
-            self.flow_control(chan, ble, packet.packet).await?;
+            remaining -= packet.pdu.len;
+            self.flow_control(chan, ble, packet.pdu.packet.as_mut()).await?;
         }
 
         Ok(pos)
     }
 
-    async fn receive_pdu(&self, chan: ChannelIndex) -> Result<Pdu, Error> {
+    async fn receive_pdu<'m>(
+        &self,
+        ble: &'m ConnectionManager<'d>,
+        chan: ChannelIndex,
+    ) -> Result<L2capPdu<'m, 'd>, Error> {
+        let (conn, _, _) = self.connected_channel_params(chan)?;
         match self.inbound[chan.0 as usize].receive().await {
-            Some(pdu) => Ok(pdu),
+            Some(pdu) => Ok(L2capPdu { ble, conn, pdu }),
             None => Err(Error::ChannelClosed),
         }
     }
@@ -626,7 +633,7 @@ impl<'d> ChannelManager<'d> {
         &self,
         index: ChannelIndex,
         ble: &BleHost<'d, T>,
-        mut packet: Packet,
+        p_buf: &mut [u8],
     ) -> Result<(), BleHostError<T::Error>> {
         let (conn, cid, credits) = self.with_mut(|state| {
             let chan = &mut state.channels[index.0 as usize];
@@ -642,7 +649,7 @@ impl<'d> ChannelManager<'d> {
             let signal = LeCreditFlowInd { cid, credits };
 
             // Reuse packet buffer for signalling data to save the extra TX buffer
-            ble.l2cap_signal(conn, identifier, &signal, packet.as_mut()).await?;
+            ble.l2cap_signal(conn, identifier, &signal, p_buf).await?;
             self.with_mut(|state| {
                 let chan = &mut state.channels[index.0 as usize];
                 if chan.state == ChannelState::Connected {
@@ -999,6 +1006,18 @@ impl Drop for CreditGrant<'_, '_> {
             // make it an assert?
             //        warn!("[l2cap][credit grant drop] channel {} not found", self.index);
         }
+    }
+}
+
+struct L2capPdu<'a, 'd> {
+    ble: &'a ConnectionManager<'d>,
+    conn: ConnHandle,
+    pdu: Pdu,
+}
+
+impl<'a, 'd> Drop for L2capPdu<'a, 'd> {
+    fn drop(&mut self) {
+        self.ble.completed_packets(self.conn, 1);
     }
 }
 

@@ -26,7 +26,7 @@ use bt_hci::param::{
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either3, Either4, select3, select4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -295,6 +295,10 @@ where
 
     fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
+        let handle = acl.handle();
+        let on_drop = OnDrop::new(|| {
+            self.connections.completed_packets(handle, 1);
+        });
         let (header, mut packet) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
                 let (header, data) = L2capHeader::from_hci_bytes(acl.data())?;
@@ -363,6 +367,7 @@ where
                     info!("[host] agreed att MTU of {}", mtu);
                     let len = w.len();
                     self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
+                    on_drop.defuse();
                 } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
                     info!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
@@ -374,6 +379,7 @@ where
                                 data: Pdu::new(packet, header.length as usize),
                             };
                             self.connections.post_handle_event(acl.handle(), event)?;
+                            on_drop.defuse();
                         }
                         Ok(att::Att::Server(_)) => {
                             if let Err(e) = self
@@ -382,6 +388,7 @@ where
                             {
                                 return Err(Error::OutOfMemory);
                             }
+                            on_drop.defuse();
                         }
                         Err(e) => {
                             warn!("Error decoding attribute payload: {:?}", e);
@@ -395,7 +402,9 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, packet) {
-                Ok(_) => {}
+                Ok(_) => {
+                    on_drop.defuse();
+                }
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
                     return Err(e);
@@ -634,7 +643,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
     /// Run the receive loop that polls the controller for events.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
-        C: ControllerCmdSync<Disconnect> + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>,
+        C: ControllerCmdSync<Disconnect>,
     {
         let dummy = DummyHandler;
         self.run_with_handler(&dummy).await
@@ -644,7 +653,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
     /// vendor events to the provided closure.
     pub async fn run_with_handler<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
     where
-        C: ControllerCmdSync<Disconnect> + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>,
+        C: ControllerCmdSync<Disconnect>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
         let host = &self.stack.host;
@@ -663,36 +672,8 @@ impl<'d, C: Controller> RxRunner<'d, C> {
             //        trace!("[host] polling took {} ms", (polled - started).as_millis());
             match result {
                 Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl) {
-                    Ok(_) => {
-                        //let processed = Instant::now();
-                        // trace!("[host] ACL process to {} ms", (processed - last).as_millis());
-                        #[cfg(feature = "controller-host-flow-control")]
-                        if let Err(e) =
-                            HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
-                                .exec(&host.controller)
-                                .await
-                        {
-                            // Only serious error if it's supposed to be connected
-                            if host.connections.get_connected_handle(acl.handle()).is_some() {
-                                error!("[host] error performing flow control on {:?}", acl.handle());
-                                return Err(e.into());
-                            }
-                        }
-                    }
+                    Ok(_) => {}
                     Err(e) => {
-                        #[cfg(feature = "controller-host-flow-control")]
-                        if let Err(e) =
-                            HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(acl.handle(), 1)])
-                                .exec(&host.controller)
-                                .await
-                        {
-                            // Only serious error if it's supposed to be connected
-                            if host.connections.get_connected_handle(acl.handle()).is_some() {
-                                error!("[host] error performing flow control on {:?}", acl.handle());
-                                return Err(e.into());
-                            }
-                        }
-
                         warn!(
                             "[host] encountered error processing ACL data for {:?}: {:?}",
                             acl.handle(),
@@ -902,10 +883,16 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
         });
         info!("[host] initialized");
 
+        #[allow(unused_mut)]
+        let mut completed_packets_cursor = 0;
         loop {
-            match select3(
+            match select4(
                 poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
                 poll_fn(|cx| host.channels.poll_disconnecting(Some(cx))),
+                poll_fn(|cx| {
+                    host.connections
+                        .poll_completed_packets(completed_packets_cursor, Some(cx))
+                }),
                 select3(
                     poll_fn(|cx| host.connect_command_state.poll_cancelled(cx)),
                     poll_fn(|cx| host.advertise_command_state.poll_cancelled(cx)),
@@ -914,18 +901,33 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             )
             .await
             {
-                Either3::First(request) => {
+                Either4::First(request) => {
                     trace!("[host] poll disconnecting links");
                     host.command(Disconnect::new(request.handle(), request.reason()))
                         .await?;
                     request.confirm();
                 }
-                Either3::Second(request) => {
+                Either4::Second(request) => {
                     trace!("[host] poll disconnecting channels");
                     request.send(host).await?;
                     request.confirm();
                 }
-                Either3::Third(states) => match states {
+                Either4::Third(completed) => {
+                    #[cfg(feature = "controller-host-flow-control")]
+                    {
+                        if let Err(e) = HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(
+                            completed.handle(),
+                            completed.amount(),
+                        )])
+                        .exec(&host.controller)
+                        .await
+                        {
+                            warn!("[host] error performing flow control");
+                        }
+                        completed_packets_cursor = completed.confirm();
+                    }
+                }
+                Either4::Fourth(states) => match states {
                     Either3::First(_) => {
                         trace!("[host] cancel connection create");
                         // trace!("[host] cancelling create connection");

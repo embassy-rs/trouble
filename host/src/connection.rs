@@ -158,6 +158,14 @@ impl<'stack> Connection<'stack> {
         Self { index, manager }
     }
 
+    pub(crate) fn completed_packets(&self, amount: u16) {
+        #[cfg(feature = "controller-host-flow-control")]
+        {
+            let handle = self.manager.handle(self.index);
+            self.manager.completed_packets(handle, amount);
+        }
+    }
+
     pub(crate) fn set_att_mtu(&self, mtu: u16) {
         self.manager.set_att_mtu(self.index, mtu);
     }
