@@ -225,7 +225,7 @@ impl<'d> ConnectionManager<'d> {
             let mut pos = cursor;
             let end = if pos > 0 { pos - 1 } else { state.connections.len() - 1 };
 
-            while pos != end {
+            loop {
                 let next = (pos + 1) % state.connections.len();
                 let storage = &state.connections[pos];
                 if let ConnectionState::Connected = storage.state {
@@ -237,6 +237,9 @@ impl<'d> ConnectionManager<'d> {
                             state: &self.state,
                         });
                     }
+                }
+                if pos == end {
+                    break;
                 }
                 pos = next;
             }
@@ -320,6 +323,7 @@ impl<'d> ConnectionManager<'d> {
                 self.events[idx].clear();
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
+                storage.completed_packets = 0;
                 storage.att_mtu = default_att_mtu;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
