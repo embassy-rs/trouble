@@ -456,8 +456,6 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     GattClient<'reference, T, MAX_SERVICES, L2CAP_MTU>
 {
     async fn send_att_data(&self, data: Att<'_>) -> Result<(), BleHostError<T::Error>> {
-        // Check the data type without consuming it
-
         let header = L2capHeader {
             channel: crate::types::l2cap::L2CAP_CID_ATT,
             length: data.size() as u16,
