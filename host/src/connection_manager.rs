@@ -324,7 +324,9 @@ impl<'d> ConnectionManager<'d> {
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
                 #[cfg(feature = "controller-host-flow-control")]
-                storage.completed_packets = 0;
+                {
+                    storage.completed_packets = 0;
+                }
                 storage.att_mtu = default_att_mtu;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
