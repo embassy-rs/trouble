@@ -25,7 +25,7 @@ pub trait FixedGattValue: FromGatt {
 
     /// Converts to gatt bytes.
     /// Must return a slice of len Self::SIZE
-    fn to_gatt(&self) -> &[u8];
+    fn as_gatt(&self) -> &[u8];
 }
 
 /// Trait to allow conversion of a type to gatt bytes
@@ -59,7 +59,7 @@ impl<T: FixedGattValue> AsGatt for T {
     const MAX_SIZE: usize = Self::SIZE;
 
     fn as_gatt(&self) -> &[u8] {
-        <Self as FixedGattValue>::to_gatt(self)
+        <Self as FixedGattValue>::as_gatt(self)
     }
 }
 
@@ -91,7 +91,7 @@ impl<T: Primitive> FixedGattValue for T {
         }
     }
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         // SAFETY
         // - Slice is of type u8 so data is guaranteed valid for reads of any length
         // - Data and len are tied to the address and size of the type
@@ -110,7 +110,7 @@ impl FixedGattValue for bool {
         }
     }
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         match self {
             true => &[0x01],
             false => &[0x00],
@@ -176,5 +176,29 @@ impl AsGatt for &'static str {
 
     fn as_gatt(&self) -> &[u8] {
         self.as_bytes()
+    }
+}
+
+impl AsGatt for &'static [u8] {
+    const MIN_SIZE: usize = 0;
+    const MAX_SIZE: usize = usize::MAX;
+
+    fn as_gatt(&self) -> &[u8] {
+        self
+    }
+}
+
+impl AsGatt for crate::types::uuid::Uuid {
+    const MIN_SIZE: usize = 2;
+    const MAX_SIZE: usize = 16;
+
+    fn as_gatt(&self) -> &[u8] {
+        self.as_raw()
+    }
+}
+
+impl FromGatt for crate::types::uuid::Uuid {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        Self::try_from(data).map_err(|_| FromGattError::InvalidLength)
     }
 }
