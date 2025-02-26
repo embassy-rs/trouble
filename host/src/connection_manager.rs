@@ -323,6 +323,7 @@ impl<'d> ConnectionManager<'d> {
                 self.events[idx].clear();
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
+                #[cfg(feature = "controller-host-flow-control")]
                 storage.completed_packets = 0;
                 storage.att_mtu = default_att_mtu;
                 storage.handle.replace(handle);

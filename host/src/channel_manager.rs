@@ -684,7 +684,7 @@ impl<'d> ChannelManager<'d> {
                 chan.peer_credits -= credits;
                 return Poll::Ready(Ok(CreditGrant::new(&self.state, index, credits)));
             } else {
-                warn!(
+                debug!(
                     "[l2cap][poll_request_to_send][cid = {}]: not enough credits, requested {} available {}",
                     chan.cid, credits, chan.peer_credits
                 );
