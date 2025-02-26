@@ -179,7 +179,7 @@ impl AsGatt for &'static str {
     }
 }
 
-impl ToGatt for &'static [u8] {
+impl AsGatt for &'static [u8] {
     const MIN_SIZE: usize = 0;
     const MAX_SIZE: usize = usize::MAX;
 
@@ -188,7 +188,7 @@ impl ToGatt for &'static [u8] {
     }
 }
 
-impl ToGatt for crate::types::uuid::Uuid {
+impl AsGatt for crate::types::uuid::Uuid {
     const MIN_SIZE: usize = 2;
     const MAX_SIZE: usize = 16;
 

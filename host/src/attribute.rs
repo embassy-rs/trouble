@@ -474,13 +474,13 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 /// A type which holds a handle to an attribute in the attribute table
 pub trait AttributeHandle {
     /// The data type which the attribute contains
-    type Value: ToGatt;
+    type Value: AsGatt;
 
     /// Returns the attribute's handle
     fn handle(&self) -> u16;
 }
 
-impl<T: ToGatt> AttributeHandle for Characteristic<T> {
+impl<T: AsGatt> AttributeHandle for Characteristic<T> {
     type Value = T;
 
     fn handle(&self) -> u16 {
@@ -725,7 +725,7 @@ impl<'d, T: AsGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd,
     }
 
     /// Add a characteristic descriptor for this characteristic.
-    pub fn add_descriptor<DT: ToGatt, U: Into<Uuid>>(
+    pub fn add_descriptor<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
         props: &[CharacteristicProp],
@@ -746,7 +746,7 @@ impl<'d, T: AsGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd,
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<DT: ToGatt, U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> Descriptor<DT> {
+    pub fn add_descriptor_ro<DT: AsGatt, U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> Descriptor<DT> {
         let props = [CharacteristicProp::Read].into();
         self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
     }
@@ -760,12 +760,12 @@ impl<'d, T: AsGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd,
 /// Characteristic descriptor handle.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
-pub struct Descriptor<T: ToGatt> {
+pub struct Descriptor<T: AsGatt> {
     pub(crate) handle: u16,
     phantom: PhantomData<T>,
 }
 
-impl<T: ToGatt> AttributeHandle for Descriptor<T> {
+impl<T: AsGatt> AttributeHandle for Descriptor<T> {
     type Value = T;
 
     fn handle(&self) -> u16 {
