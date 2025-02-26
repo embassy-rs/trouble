@@ -11,8 +11,8 @@ use embassy_sync::blocking_mutex::Mutex;
 use crate::att::AttErrorCode;
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::Connection;
-use crate::types::gatt_traits::{FromGatt, ToGatt};
+use crate::prelude::{Connection, FixedGattValue, FromGatt, ToGatt};
+use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
 use crate::Error;
 use heapless::Vec;
@@ -704,7 +704,7 @@ pub struct CharacteristicBuilder<'r, 'd, T: ToGatt, M: RawMutex, const MAX: usiz
 }
 
 impl<'d, T: ToGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-    fn add_descriptor_internal<DT: GattValue>(
+    fn add_descriptor_internal<DT: ToGatt>(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
