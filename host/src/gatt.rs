@@ -17,6 +17,7 @@ use crate::att::{self, ATT_HANDLE_VALUE_NTF, Att, AttClient, AttCmd, AttReq, Att
 use crate::attribute::{AttributeData, CCCD, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
+use crate::connection_manager::ConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
@@ -25,13 +26,23 @@ use crate::{BleHostError, Error, Stack, config};
 
 /// A GATT payload ready for processing.
 pub struct GattData<'stack> {
-    pdu: Pdu,
+    pdu: Option<Pdu>,
     connection: Connection<'stack>,
 }
 
+impl<'stack> Drop for GattData<'stack> {
+    fn drop(&mut self) {
+        if let Some(pdu) = self.pdu.take() {
+            self.connection.completed_packets(1);
+        }
+    }
+}
 impl<'stack> GattData<'stack> {
     pub(crate) fn new(pdu: Pdu, connection: Connection<'stack>) -> Self {
-        Self { pdu, connection }
+        Self {
+            pdu: Some(pdu),
+            connection,
+        }
     }
 
     /// Get the raw incoming ATT PDU.
@@ -39,7 +50,7 @@ impl<'stack> GattData<'stack> {
         // We know that:
         // - The PDU is decodable, as it was already decoded once before adding it to the connection queue
         // - The PDU is of type `Att::Client` because only those types of PDUs are added to the connection queue
-        let att = unwrap!(Att::decode(self.pdu.as_ref()));
+        let att = unwrap!(Att::decode(self.pdu.as_ref().unwrap().as_ref()));
         let Att::Client(client) = att else {
             unreachable!("Expected Att::Client, got {:?}", att)
         };
@@ -66,42 +77,44 @@ impl<'stack> GattData<'stack> {
     /// May return an event that should be replied/processed. Uses the attribute server to
     /// handle the protocol.
     pub async fn process<'m, 'server, M: RawMutex, const MAX: usize>(
-        self,
+        mut self,
         server: &'m AttributeServer<'server, M, MAX>,
     ) -> Result<Option<GattEvent<'stack, 'm>>, Error> {
         let att = self.incoming();
         match att {
             AttClient::Request(AttReq::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
                 value_handle: handle,
-                pdu: Some(self.pdu),
-                connection: self.connection,
+                pdu: self.pdu.take(),
+                connection: self.connection.clone(),
                 server,
             }))),
 
             AttClient::Command(AttCmd::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
                 value_handle: handle,
-                pdu: Some(self.pdu),
-                connection: self.connection,
+                pdu: self.pdu.take(),
+                connection: self.connection.clone(),
                 server,
             }))),
 
             AttClient::Request(AttReq::Read { handle }) => Ok(Some(GattEvent::Read(ReadEvent {
                 value_handle: handle,
-                pdu: Some(self.pdu),
-                connection: self.connection,
+                pdu: self.pdu.take(),
+                connection: self.connection.clone(),
                 server,
             }))),
 
             AttClient::Request(AttReq::ReadBlob { handle, offset }) => Ok(Some(GattEvent::Read(ReadEvent {
                 value_handle: handle,
-                pdu: Some(self.pdu),
-                connection: self.connection,
+                pdu: self.pdu.take(),
+                connection: self.connection.clone(),
                 server,
             }))),
             _ => {
                 // Process it now since the user will not
-                let reply = process_accept(self.pdu, &self.connection, server)?;
-                reply.send().await;
+                if let Some(pdu) = self.pdu.as_ref() {
+                    let reply = process_accept(pdu, &self.connection, server)?;
+                    reply.send().await;
+                }
                 Ok(None)
             }
         }
@@ -226,17 +239,19 @@ fn process<'stack>(
     result: Result<(), AttErrorCode>,
 ) -> Result<Reply<'stack>, Error> {
     if let Some(pdu) = pdu.take() {
-        match result {
-            Ok(_) => process_accept(pdu, connection, server),
-            Err(code) => process_reject(pdu, handle, connection, code),
-        }
+        let res = match result {
+            Ok(_) => process_accept(&pdu, connection, server),
+            Err(code) => process_reject(&pdu, handle, connection, code),
+        };
+        connection.completed_packets(1);
+        res
     } else {
         Ok(Reply::new(connection.clone(), None))
     }
 }
 
 fn process_accept<'stack>(
-    pdu: Pdu,
+    pdu: &Pdu,
     connection: &Connection<'stack>,
     server: &dyn DynamicAttributeServer,
 ) -> Result<Reply<'stack>, Error> {
@@ -264,7 +279,7 @@ fn process_accept<'stack>(
 }
 
 fn process_reject<'stack>(
-    pdu: Pdu,
+    pdu: &Pdu,
     handle: u16,
     connection: &Connection<'stack>,
     code: AttErrorCode,
@@ -391,16 +406,28 @@ pub struct ServiceHandle {
     uuid: Uuid,
 }
 
+pub(crate) struct Response<'reference> {
+    pdu: Pdu,
+    handle: ConnHandle,
+    connections: &'reference ConnectionManager<'reference>,
+}
+
+impl<'reference> Drop for Response<'reference> {
+    fn drop(&mut self) {
+        self.connections.completed_packets(self.handle, 1);
+    }
+}
+
 /// Trait with behavior for a gatt client.
 pub(crate) trait Client<'d, E> {
     /// Perform a gatt request and return the response.
-    fn request(&self, req: AttReq<'_>) -> impl Future<Output = Result<Pdu, BleHostError<E>>>;
+    fn request(&self, req: AttReq<'_>) -> impl Future<Output = Result<Response<'d>, BleHostError<E>>>;
 }
 
 impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize> Client<'reference, T::Error>
     for GattClient<'reference, T, MAX_SERVICES, L2CAP_MTU>
 {
-    async fn request(&self, req: AttReq<'_>) -> Result<Pdu, BleHostError<T::Error>> {
+    async fn request(&self, req: AttReq<'_>) -> Result<Response<'reference>, BleHostError<T::Error>> {
         let data = Att::Client(AttClient::Request(req));
 
         let header = L2capHeader {
@@ -423,7 +450,11 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         let (h, pdu) = self.response_channel.receive().await;
 
         assert_eq!(h, self.connection.handle());
-        Ok(pdu)
+        Ok(Response {
+            handle: h,
+            pdu,
+            connections: &self.stack.host.connections,
+        })
     }
 }
 
@@ -474,8 +505,8 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
                 att_value: uuid.as_raw(),
             };
 
-            let pdu = self.request(data).await?;
-            let res = Self::response(pdu.as_ref())?;
+            let response = self.request(data).await?;
+            let res = Self::response(response.pdu.as_ref())?;
             match res {
                 AttRsp::Error { request, handle, code } => {
                     if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND {
@@ -527,9 +558,9 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
                 end: service.end,
                 attribute_type: CHARACTERISTIC.into(),
             };
-            let pdu = self.request(data).await?;
+            let response = self.request(data).await?;
 
-            match Self::response(pdu.as_ref())? {
+            match Self::response(response.pdu.as_ref())? {
                 AttRsp::ReadByType { mut it } => {
                     while let Some(Ok((handle, item))) = it.next() {
                         if item.len() < 5 {
@@ -581,9 +612,9 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             attribute_type: CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
         };
 
-        let pdu = self.request(data).await?;
+        let response = self.request(data).await?;
 
-        match Self::response(pdu.as_ref())? {
+        match Self::response(response.pdu.as_ref())? {
             AttRsp::ReadByType { mut it } => {
                 if let Some(Ok((handle, item))) = it.next() {
                     Ok((
@@ -611,9 +642,9 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             handle: characteristic.handle,
         };
 
-        let pdu = self.request(data).await?;
+        let response = self.request(data).await?;
 
-        match Self::response(pdu.as_ref())? {
+        match Self::response(response.pdu.as_ref())? {
             AttRsp::Read { data } => {
                 let to_copy = data.len().min(dest.len());
                 dest[..to_copy].copy_from_slice(&data[..to_copy]);
@@ -639,9 +670,9 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             attribute_type: uuid.clone(),
         };
 
-        let pdu = self.request(data).await?;
+        let response = self.request(data).await?;
 
-        match Self::response(pdu.as_ref())? {
+        match Self::response(response.pdu.as_ref())? {
             AttRsp::ReadByType { mut it } => {
                 let mut to_copy = 0;
                 if let Some(item) = it.next() {
@@ -667,8 +698,8 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             data: buf,
         };
 
-        let pdu = self.request(data).await?;
-        match Self::response(pdu.as_ref())? {
+        let response = self.request(data).await?;
+        match Self::response(response.pdu.as_ref())? {
             AttRsp::Write => Ok(()),
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
             _ => Err(Error::InvalidValue.into()),
@@ -691,9 +722,9 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         };
 
         // set the CCCD
-        let pdu = self.request(data).await?;
+        let response = self.request(data).await?;
 
-        match Self::response(pdu.as_ref())? {
+        match Self::response(response.pdu.as_ref())? {
             AttRsp::Write => {
                 let listener = self
                     .notifications
@@ -721,9 +752,9 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         };
 
         // set the CCCD
-        let pdu = self.request(data).await?;
+        let response = self.request(data).await?;
 
-        match Self::response(pdu.as_ref())? {
+        match Self::response(response.pdu.as_ref())? {
             AttRsp::Write => Ok(()),
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
             _ => Err(Error::InvalidValue.into()),
@@ -755,12 +786,16 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         loop {
             let (handle, pdu) = self.rx.receive().await;
             let data = pdu.as_ref();
+            let on_drop = crate::host::OnDrop::new(|| {
+                self.stack.host.connections.completed_packets(handle, 1);
+            });
 
             // handle notifications
             if data[0] == ATT_HANDLE_VALUE_NTF {
                 self.handle_notification_packet(&data[1..]).await?;
             } else {
                 self.response_channel.send((handle, pdu)).await;
+                on_drop.defuse();
             }
         }
     }
