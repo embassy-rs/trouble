@@ -85,7 +85,6 @@ impl<'d> ConnectionManager<'d> {
         events: &'d mut [EventChannel],
         default_att_mtu: u16,
         #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
-        _random_seed: [u8; 32],
     ) -> Self {
         Self {
             state: RefCell::new(State {
@@ -103,7 +102,7 @@ impl<'d> ConnectionManager<'d> {
             #[cfg(feature = "gatt")]
             tx_pool,
             #[cfg(feature = "security")]
-            security_manager: SecurityManager::new(_random_seed),
+            security_manager: SecurityManager::new(),
         }
     }
 
@@ -884,14 +883,13 @@ mod tests {
     const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
 
     fn setup() -> &'static ConnectionManager<'static> {
-        let _random_seed = [0u8; 32];
         let storage = Box::leak(Box::new([ConnectionStorage::DISCONNECTED; 3]));
         let events = Box::leak(Box::new([EventChannel::NEW; 3]));
         let pool = Box::leak(Box::new(PacketPool::<27, 8>::new()));
         #[cfg(feature = "gatt")]
-        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool, _random_seed);
+        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool);
         #[cfg(not(feature = "gatt"))]
-        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool, _random_seed);
+        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool);
         Box::leak(Box::new(mgr))
     }
 

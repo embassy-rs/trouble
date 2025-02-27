@@ -6,12 +6,9 @@ use cyw43_pio::PioSpi;
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
-use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_peripheral;
 use {defmt_rtt as _, embassy_time as _, panic_probe as _};
@@ -66,9 +63,7 @@ async fn main(spawner: Spawner) {
     unwrap!(spawner.spawn(cyw43_task(runner)));
     control.init(clm).await;
 
-    let mut rng = ChaCha12Rng::from_rng(&mut RoscRng).unwrap();
-
     let controller: ExternalController<_, 10> = ExternalController::new(bt_device);
 
-    ble_bas_peripheral::run::<_, _, 128>(controller, &mut rng).await;
+    ble_bas_peripheral::run::<_, 128>(controller).await;
 }

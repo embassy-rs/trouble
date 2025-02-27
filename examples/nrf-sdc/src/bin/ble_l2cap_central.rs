@@ -8,8 +8,6 @@ use embassy_nrf::{bind_interrupts, rng};
 use embassy_time::{Duration, Timer};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_l2cap_central;
 use {defmt_rtt as _, panic_probe as _};
@@ -72,12 +70,11 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
 
     let mut sdc_mem = sdc::Mem::<6544>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     Timer::after(Duration::from_millis(200)).await;
 
-    ble_l2cap_central::run::<_, _, L2CAP_MTU>(sdc, &mut rng_2).await;
+    ble_l2cap_central::run::<_, L2CAP_MTU>(sdc).await;
 }

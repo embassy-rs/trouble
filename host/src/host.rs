@@ -206,7 +206,6 @@ where
         channels_rx: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
         sar: &'d mut [SarType],
         advertise_handles: &'d mut [AdvHandleState],
-        random_seed: [u8; 32],
     ) -> Self {
         Self {
             address: None,
@@ -214,9 +213,9 @@ where
             metrics: RefCell::new(HostMetrics::default()),
             controller,
             #[cfg(feature = "gatt")]
-            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4, tx_pool, random_seed),
+            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4, tx_pool),
             #[cfg(not(feature = "gatt"))]
-            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4, random_seed),
+            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4),
             reassembly: PacketReassembly::new(sar),
             channels: ChannelManager::new(rx_pool, channels, channels_rx),
             rx_pool,

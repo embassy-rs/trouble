@@ -12,7 +12,7 @@ Currently supported chips are,
  - `nrf52840`
 
 ```shell
-cargo build --features nrf52833 --target thumbv7em-none-eabihf
+cargo build --release --features nrf52833 --target thumbv7em-none-eabihf
 ```
 
 ## Run
@@ -20,5 +20,5 @@ cargo build --features nrf52833 --target thumbv7em-none-eabihf
 Select the binary to run and use cargo run to run the example using probe-rs.
 
 ```shell
-cargo run --features nrf52833 --target thumbv7em-none-eabihf --bin ble_bas_peripheral
+cargo run --release --features nrf52833 --target thumbv7em-none-eabihf --bin ble_bas_peripheral
 ```

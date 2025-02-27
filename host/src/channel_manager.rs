@@ -1036,7 +1036,7 @@ mod tests {
         let mut resources: HostResources<2, 2, 27> = HostResources::new();
         let ble = MockController::new();
 
-        let builder = crate::new(ble, &mut resources, &mut rand::rngs::OsRng);
+        let builder = crate::new(ble, &mut resources);
         let ble = builder.host;
 
         let conn = ConnHandle::new(33);

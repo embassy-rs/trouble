@@ -9,8 +9,8 @@ mod types;
 use core::task::{Context, Poll};
 use core::{cell::RefCell, ops::DerefMut};
 
-use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
+use bt_hci::event::le::LeEvent;
 use bt_hci::param::{ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -23,10 +23,10 @@ use rand_core::SeedableRng;
 use crate::codec::{Decode, Encode};
 use crate::prelude::Connection;
 use crate::{
+    Address, Error,
     connection_manager::{ConnectionManager, ConnectionStorage},
     pdu::Pdu,
     types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER,
-    Address, Error,
 };
 
 pub use types::Reason;
@@ -244,6 +244,10 @@ impl PairingData {
 }
 
 // TODO: 30 second timer for pairing timeout
+// Idea, use Ticker and next
+// https://docs.embassy.dev/embassy-time/git/default/struct.Ticker.html
+// or schedule_wake?
+// https://docs.embassy.dev/embassy-time-driver/git/default/fn.schedule_wake.html
 // TODO: IRK exchange, HCI_LE_­Add_­Device_­To_­Resolving_­List
 
 // LESC LE Security Connections Pairing over L2CAP
@@ -294,7 +298,8 @@ enum TimerCommand {
 
 impl SecurityManager {
     /// Create a new SecurityManager
-    pub(crate) fn new(random_seed: [u8; 32]) -> Self {
+    pub(crate) fn new() -> Self {
+        let random_seed = [0u8; 32];
         Self {
             rng: RefCell::new(ChaCha12Rng::from_seed(random_seed)),
             state: RefCell::new(SecurityManagerData::new()),
@@ -302,6 +307,11 @@ impl SecurityManager {
             pairing_state: RefCell::new(PairingData::new()),
             result_signal: Signal::new(),
         }
+    }
+
+    /// Set the current local address
+    pub(crate) fn set_random_generator_seed(&self, random_seed: [u8; 32]) {
+        self.rng.replace(ChaCha12Rng::from_seed(random_seed));
     }
 
     /// Set the current local address
@@ -353,6 +363,7 @@ impl SecurityManager {
                 size
             };
             if size < 2 {
+                error!("[security manager] Payload size too small {}", size);
                 return Err(Error::Security(Reason::InvalidParameters));
             }
             let payload = &buffer[1..size];
@@ -413,7 +424,7 @@ impl SecurityManager {
                 _ => (),
             }
              */
-            // debug!("Security Manager Protocol command {}", command);
+            debug!("Security Manager Protocol command {}", command);
 
             match command {
                 Command::PairingRequest => self.handle_pairing_request(payload, connections, handle),
@@ -718,15 +729,21 @@ impl SecurityManager {
                 }
             }
 
+            info!("[security manager] DH key");
+
             let dh_key = match secret_key.dh_key(peer_public_key) {
                 Some(dh_key) => Ok(dh_key),
                 None => Err(Error::Security(Reason::InvalidParameters)),
             }?;
 
+            info!("[security manager] Nonce");
+
             // SUBTLE: The order of these send/recv ops is important. See last
             // paragraph of Section 2.3.5.6.2.
             let local_nonce = Nonce::new(rng);
             let confirm = local_nonce.f4(public_key.x(), peer_public_key.x(), 0);
+
+            info!("[security manager] Confirm");
 
             let mut packet = self.prepare_packet(Command::PairingConfirm, connections)?;
 
@@ -742,6 +759,8 @@ impl SecurityManager {
                 }
             }
 
+            info!("[security manager] Store state");
+
             {
                 let mut pairing_state = self.pairing_state.borrow_mut();
                 pairing_state.state = PairingState::PeripheralConfirm;
@@ -751,6 +770,8 @@ impl SecurityManager {
                 pairing_state.local_nonce = Some(local_nonce);
                 pairing_state.dh_key = Some(dh_key);
             }
+
+            info!("[security manager] Done");
         }
 
         Ok(())
@@ -1069,6 +1090,7 @@ impl SecurityManager {
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let len = packet.total_size();
+        debug!("[security manager] Send {} {}", packet.command, len);
         connections.try_outbound(handle, packet.into_pdu())
     }
 
