@@ -286,7 +286,6 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
                             }
                             w.write(att.handle)?;
                             w.write(att.last_handle_in_group)?;
-                            w.write_ref(uuid)?;
                         }
                     }
                 }
