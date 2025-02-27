@@ -5,17 +5,17 @@ use core::marker::PhantomData;
 
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 
+use crate::Error;
 use crate::att::AttErrorCode;
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::prelude::{AsGatt, Connection, FixedGattValue, FromGatt};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
-use crate::Error;
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
