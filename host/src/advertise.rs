@@ -480,13 +480,71 @@ impl<'d> AdStructureIter<'d> {
         }
         let code: u8 = self.cursor.read()?;
         let data = self.cursor.slice(len as usize - 1)?;
+        // These codes correspond to the table in 2.3 Common Data Types table `assigned_numbers/core/ad_types.yaml` from <https://www.bluetooth.com/specifications/assigned-numbers/>
+        // Look there for more information on each.
         match code {
+            // Flags
             0x01 => Ok(AdStructure::Flags(data[0])),
-            // 0x02 => unimplemented!(),
-            // 0x07 => unimplemented!(),
+            // Incomplete List of 16-bit Service or Service Class UUIDs
+            // 0x02 =>
+            // Complete List of 16-bit Service or Service Class UUIDs
+            // 0x03 =>
+            // Incomplete List of 32-bit Service or Service Class UUIDs
+            // 0x04 =>
+            // Complete List of 32-bit Service or Service Class UUIDs
+            // 0x05
+            // Incomplete List of 128-bit Service or Service Class UUIDs
+            // 0x06
+            // Complete List of 128-bit Service or Service Class UUIDs
+            // 0x07
+            // Shortened Local Name
             0x08 => Ok(AdStructure::ShortenedLocalName(data)),
+            // Complete Local Name
             0x09 => Ok(AdStructure::CompleteLocalName(data)),
-            // 0x16 => unimplemented!(),
+            /*
+            0x0A Tx Power Level
+            0x0D Class of Device
+            0x0E Simple Pairing Hash C-192
+            0x0F Simple Pairing Randomizer R-192
+            0x10 Device ID Device: ID Profile (when used in EIR data)
+            0x10 Security Manager TK Value when used in OOB data blocks
+            0x11 Security Manager Out of Band Flags
+            0x12 Peripheral Connection Interval Range
+            0x14 List of 16-bit Service Solicitation UUIDs
+            0x15 List of 128-bit Service Solicitation UUIDs
+            0x16 Service Data - 16-bit UUID
+            0x17 Public Target Address
+            0x18 Random Target Address
+            0x19 Appearance
+            0x1A Advertising Interval
+            0x1B LE Bluetooth Device Address
+            0x1C LE Role
+            0x1D Simple Pairing Hash C-256
+            0x1E Simple Pairing Randomizer R-256
+            0x1F List of 32-bit Service Solicitation UUIDs
+            0x20 Service Data - 32-bit UUID
+            0x21 Service Data - 128-bit UUID
+            0x22 LE Secure Connections Confirmation Value
+            0x23 LE Secure Connections Random Value
+            0x24 URI
+            0x25 Indoor Positioning
+            0x26 Transport Discovery Data
+            0x27 LE Supported Features
+            0x28 Channel Map Update Indication
+            0x29 PB-ADV
+            0x2A Mesh Message
+            0x2B Mesh Beacon
+            0x2C BIGInfo
+            0x2D Broadcast_Code
+            0x2E Resolvable Set Identifier
+            0x2F Advertising Interval - long
+            0x30 Broadcast_Name
+            0x31 Encrypted Advertising Data
+            0x32 Periodic Advertising Response Timing
+            0x34 Electronic Shelf Label
+            0x3D 3D Information Data
+            */
+            // Manufacturer Specific Data
             0xff if data.len() >= 2 => Ok(AdStructure::ManufacturerSpecificData {
                 company_identifier: u16::from_le_bytes([data[0], data[1]]),
                 payload: &data[2..],
