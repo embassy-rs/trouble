@@ -365,15 +365,18 @@ pub enum AdStructure<'a> {
     Flags(u8),
 
     /// List of 16-bit service UUIDs.
+    /// The UUID data is in network endian order.
     ServiceUuids16(&'a [[u8; 2]]),
 
     /// List of 128-bit service UUIDs.
+    /// The UUID data is in network endian order.
     ServiceUuids128(&'a [[u8; 16]]),
 
     /// Service data with 16-bit service UUID.
+    /// The UUID data is in network endian order.
     ServiceData16 {
         /// The 16-bit service UUID.
-        uuid: u16,
+        uuid: [u8; 2],
         /// The associated service data. May be empty.
         data: &'a [u8],
     },
@@ -440,7 +443,7 @@ impl AdStructure<'_> {
             }
             AdStructure::ServiceData16 { uuid, data } => {
                 w.append(&[(data.len() + 3) as u8, 0x16])?;
-                w.write(*uuid)?;
+                w.write(Uuid::Uuid16(*uuid))?;
                 w.append(data)?;
             }
             AdStructure::ManufacturerSpecificData {
@@ -488,7 +491,13 @@ impl<'d> AdStructureIter<'d> {
             // Incomplete List of 16-bit Service or Service Class UUIDs
             // 0x02 =>
             // Complete List of 16-bit Service or Service Class UUIDs
-            // 0x03 =>
+            0x03 => match zerocopy::FromBytes::ref_from_bytes(data) {
+                Ok(x) => Ok(AdStructure::ServiceUuids16(x)),
+                Err(e) => {
+                    let _ = zerocopy::SizeError::from(e);
+                    Err(codec::Error::InvalidValue)
+                }
+            },
             // Incomplete List of 32-bit Service or Service Class UUIDs
             // 0x04 =>
             // Complete List of 32-bit Service or Service Class UUIDs
@@ -496,7 +505,13 @@ impl<'d> AdStructureIter<'d> {
             // Incomplete List of 128-bit Service or Service Class UUIDs
             // 0x06
             // Complete List of 128-bit Service or Service Class UUIDs
-            // 0x07
+            0x07 => match zerocopy::FromBytes::ref_from_bytes(data) {
+                Ok(x) => Ok(AdStructure::ServiceUuids128(x)),
+                Err(e) => {
+                    let _ = zerocopy::SizeError::from(e);
+                    Err(codec::Error::InvalidValue)
+                }
+            },
             // Shortened Local Name
             0x08 => Ok(AdStructure::ShortenedLocalName(data)),
             // Complete Local Name
@@ -512,7 +527,16 @@ impl<'d> AdStructureIter<'d> {
             0x12 Peripheral Connection Interval Range
             0x14 List of 16-bit Service Solicitation UUIDs
             0x15 List of 128-bit Service Solicitation UUIDs
-            0x16 Service Data - 16-bit UUID
+            */
+            // Service Data - 16-bit UUID
+            0x16 => {
+                if data.len() < 2 {
+                    return Err(codec::Error::InvalidValue);
+                }
+                let uuid = data[0..2].try_into().unwrap();
+                Ok(AdStructure::ServiceData16 { uuid, data: &data[2..] })
+            }
+            /*
             0x17 Public Target Address
             0x18 Random Target Address
             0x19 Appearance

@@ -18,6 +18,7 @@ futures = { version = "0.3", default-features = false }
 heapless = "0.8"
 trouble-host-macros = { path = "../host-macros", version = "0.1.0", optional = true }
 static_cell = "2.1.0"
+zerocopy = "0.8.21"
 
 # Logging
 log = { version = "0.4.16", optional = true }
