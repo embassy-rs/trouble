@@ -365,15 +365,15 @@ pub enum AdStructure<'a> {
     Flags(u8),
 
     /// List of 16-bit service UUIDs.
-    /// The UUID data is in network endian order.
+    /// The UUID data matches the ble network's endian order (should be little endian).
     ServiceUuids16(&'a [[u8; 2]]),
 
     /// List of 128-bit service UUIDs.
-    /// The UUID data is in network endian order.
+    /// The UUID data matches the ble network's endian order (should be little endian).
     ServiceUuids128(&'a [[u8; 16]]),
 
     /// Service data with 16-bit service UUID.
-    /// The UUID data is in network endian order.
+    /// The UUID data matches the ble network's endian order (should be little endian).
     ServiceData16 {
         /// The 16-bit service UUID.
         uuid: [u8; 2],
