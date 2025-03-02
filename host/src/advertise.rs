@@ -365,10 +365,10 @@ pub enum AdStructure<'a> {
     Flags(u8),
 
     /// List of 16-bit service UUIDs.
-    ServiceUuids16(&'a [Uuid]),
+    ServiceUuids16(&'a [[u8; 2]]),
 
     /// List of 128-bit service UUIDs.
-    ServiceUuids128(&'a [Uuid]),
+    ServiceUuids128(&'a [[u8; 16]]),
 
     /// Service data with 16-bit service UUID.
     ServiceData16 {
@@ -421,13 +421,13 @@ impl AdStructure<'_> {
             AdStructure::ServiceUuids16(uuids) => {
                 w.append(&[(uuids.len() * 2 + 1) as u8, 0x02])?;
                 for uuid in uuids.iter() {
-                    w.write_ref(uuid)?;
+                    w.write_ref(&Uuid::Uuid16(*uuid))?;
                 }
             }
             AdStructure::ServiceUuids128(uuids) => {
                 w.append(&[(uuids.len() * 16 + 1) as u8, 0x07])?;
                 for uuid in uuids.iter() {
-                    w.write_ref(uuid)?;
+                    w.write_ref(&Uuid::Uuid128(*uuid))?;
                 }
             }
             AdStructure::ShortenedLocalName(name) => {
@@ -575,7 +575,7 @@ mod tests {
             AdStructure::encode_slice(
                 &[
                     AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                    AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+                    AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
                     AdStructure::CompleteLocalName(b"12345678901234567890123"),
                 ],
                 &mut adv_data[..],
