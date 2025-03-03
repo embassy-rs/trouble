@@ -422,6 +422,7 @@ impl<'reference> Drop for Response<'reference> {
 pub(crate) trait Client<'d, E> {
     /// Perform a gatt request and return the response.
     fn request(&self, req: AttReq<'_>) -> impl Future<Output = Result<Response<'d>, BleHostError<E>>>;
+    fn command(&self, cmd: AttCmd<'_>) -> impl Future<Output = Result<(), BleHostError<E>>>;
 }
 
 impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize> Client<'reference, T::Error>
@@ -430,6 +431,31 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
     async fn request(&self, req: AttReq<'_>) -> Result<Response<'reference>, BleHostError<T::Error>> {
         let data = Att::Client(AttClient::Request(req));
 
+        self.send_att_data(data).await?;
+
+        let (h, pdu) = self.response_channel.receive().await;
+
+        assert_eq!(h, self.connection.handle());
+        Ok(Response {
+            handle: h,
+            pdu,
+            connections: &self.stack.host.connections,
+        })
+    }
+
+    async fn command(&self, cmd: AttCmd<'_>) -> Result<(), BleHostError<T::Error>> {
+        let data = Att::Client(AttClient::Command(cmd));
+
+        self.send_att_data(data).await?;
+
+        Ok(())
+    }
+}
+
+impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize>
+    GattClient<'reference, T, MAX_SERVICES, L2CAP_MTU>
+{
+    async fn send_att_data(&self, data: Att<'_>) -> Result<(), BleHostError<T::Error>> {
         let header = L2capHeader {
             channel: crate::types::l2cap::L2CAP_CID_ATT,
             length: data.size() as u16,
@@ -447,14 +473,7 @@ impl<'reference, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             .await?;
         grant.send(w.finish()).await?;
 
-        let (h, pdu) = self.response_channel.receive().await;
-
-        assert_eq!(h, self.connection.handle());
-        Ok(Response {
-            handle: h,
-            pdu,
-            connections: &self.stack.host.connections,
-        })
+        Ok(())
     }
 }
 
@@ -704,6 +723,22 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
             _ => Err(Error::InvalidValue.into()),
         }
+    }
+
+    /// Write without waiting for a response to a characteristic described by a handle.
+    pub async fn write_characteristic_without_response<T: FromGatt>(
+        &self,
+        handle: &Characteristic<T>,
+        buf: &[u8],
+    ) -> Result<(), BleHostError<C::Error>> {
+        let data = att::AttCmd::Write {
+            handle: handle.handle,
+            data: buf,
+        };
+
+        self.command(data).await?;
+
+        Ok(())
     }
 
     /// Subscribe to indication/notification of a given Characteristic

@@ -768,7 +768,7 @@ impl<'d> AttCmd<'d> {
         let mut w = WriteCursor::new(dest);
         match self {
             Self::Write { handle, data } => {
-                w.write(ATT_WRITE_REQ)?;
+                w.write(ATT_WRITE_CMD)?;
                 w.write(*handle)?;
                 w.append(data)?;
             }
