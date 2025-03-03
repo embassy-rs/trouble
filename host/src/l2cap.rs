@@ -206,6 +206,21 @@ where {
             },
         )
     }
+
+    /// Merge writer and reader into a single channel again.
+    ///
+    /// This function will panic if the channels are not referring to the same channel id.
+    pub fn merge(writer: L2capChannelWriter<'d>, reader: L2capChannelReader<'d>) -> Self {
+        // A channel will not be reused unless the refcount is 0, so the index could
+        // never be stale.
+        assert_eq!(writer.index, reader.index);
+
+        let manager = writer.manager;
+        let index = writer.index;
+        manager.inc_ref(index);
+
+        Self { index, manager }
+    }
 }
 
 impl<'d> L2capChannelReader<'d> {
