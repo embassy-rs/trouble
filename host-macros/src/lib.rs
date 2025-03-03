@@ -46,10 +46,16 @@ pub fn gatt_server(args: TokenStream, item: TokenStream) -> TokenStream {
     let ctxt = Ctxt::new();
     let server_properties = syn::parse_macro_input!(item as syn::ItemStruct);
 
-    let result = ServerBuilder::new(server_properties, server_args).build();
+    let result = match ServerBuilder::new(server_properties, server_args).build() {
+        Ok(result) => Some(result),
+        Err(e) => {
+            ctxt.syn_error(e);
+            None
+        }
+    };
 
     match ctxt.check() {
-        Ok(()) => result.into(),
+        Ok(()) => result.unwrap().into(),
         Err(e) => e.into(),
     }
 }

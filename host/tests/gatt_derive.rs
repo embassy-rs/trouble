@@ -17,7 +17,7 @@ const VALUE_UUID: Uuid = Uuid::new_long([
     0x00, 0x00, 0x10, 0x01, 0xb0, 0xcd, 0x11, 0xec, 0x87, 0x1f, 0xd4, 0x5d, 0xdf, 0x13, 0x88, 0x40,
 ]);
 
-#[gatt_server(mutex_type = NoopRawMutex, attribute_table_size = 31)] // gatt_server args are optional
+#[gatt_server(connections_max = CONNECTIONS_MAX, mutex_type = NoopRawMutex, attribute_table_size = 31)]
 struct Server {
     service: CustomService,
     bas: BatteryService,
@@ -120,16 +120,16 @@ async fn gatt_client_server() {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
-                    let conn = acceptor.accept().await?;
+                    let conn = acceptor.accept().await?.to_gatt(&server);
                     println!("[peripheral] connected");
                     let mut writes = 0;
                     while !done {
                         match conn.next().await {
-                            ConnectionEvent::Disconnected { reason } => {
+                            GattConnectionEvent::Disconnected { reason } => {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            ConnectionEvent::Gatt { data } => if let Ok(Some(GattEvent::Write(event))) = data.process(&server).await {
+                            GattConnectionEvent::Gatt { data } => if let Ok(Some(GattEvent::Write(event))) = data.process().await {
                                 if writes == 0 {
                                     event.reject(AttErrorCode::VALUE_NOT_ALLOWED).unwrap().send().await;
                                     writes += 1;

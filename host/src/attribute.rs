@@ -13,7 +13,7 @@ use crate::Error;
 use crate::att::AttErrorCode;
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::{AsGatt, Connection, FixedGattValue, FromGatt};
+use crate::prelude::{AsGatt, Connection, FixedGattValue, FromGatt, GattConnection};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
 
@@ -629,17 +629,13 @@ impl<T: FromGatt> Characteristic<T> {
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
     /// If the characteristic does not support notifications, an error is returned.
-    pub async fn notify<M: RawMutex, const MAX: usize>(
-        &self,
-        server: &AttributeServer<'_, M, MAX>,
-        connection: &Connection<'_>,
-        value: &T,
-    ) -> Result<(), Error> {
+    pub async fn notify(&self, connection: &GattConnection<'_, '_>, value: &T) -> Result<(), Error> {
         let value = value.as_gatt();
-        server.table().set_raw(self.handle, value)?;
+        let server = connection.server;
+        server.set(self.handle, value)?;
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
-
+        let connection = connection.raw();
         if !server.should_notify(connection, cccd_handle) {
             // No reason to fail?
             return Ok(());
@@ -662,9 +658,9 @@ impl<T: FromGatt> Characteristic<T> {
     }
 
     /// Set the value of the characteristic in the provided attribute server.
-    pub fn set<M: RawMutex, const MAX: usize>(
+    pub fn set<M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, MAX>,
+        server: &AttributeServer<'_, M, AT, CT, CN>,
         value: &T,
     ) -> Result<(), Error> {
         let value = value.as_gatt();
@@ -676,7 +672,10 @@ impl<T: FromGatt> Characteristic<T> {
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
     ///
-    pub fn get<M: RawMutex, const MAX: usize>(&self, server: &AttributeServer<'_, M, MAX>) -> Result<T, Error> {
+    pub fn get<M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+        &self,
+        server: &AttributeServer<'_, M, AT, CT, CN>,
+    ) -> Result<T, Error> {
         server.table().get(self)
     }
 
@@ -874,6 +873,8 @@ pub enum CCCDFlag {
 }
 
 /// CCCD flag.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Default)]
 pub struct CCCD(pub(crate) u16);
 
 impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
@@ -887,6 +888,16 @@ impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
 }
 
 impl CCCD {
+    /// Get raw value
+    pub fn raw(&self) -> u16 {
+        self.0
+    }
+
+    /// Clear all properties
+    pub fn disable(&mut self) {
+        self.0 = 0;
+    }
+
     /// Check if any of the properties are set.
     pub fn any(&self, props: &[CCCDFlag]) -> bool {
         for p in props {
@@ -895,5 +906,16 @@ impl CCCD {
             }
         }
         false
+    }
+
+    /// Enable or disable notifications
+    pub fn set_notify(&mut self, is_enabled: bool) {
+        let mask: u16 = CCCDFlag::Notify as u16;
+        self.0 = if is_enabled { self.0 | mask } else { self.0 & !mask };
+    }
+
+    /// Check if notifications are enabled
+    pub fn should_notify(&self) -> bool {
+        (self.0 & (CCCDFlag::Notify as u16)) != 0
     }
 }

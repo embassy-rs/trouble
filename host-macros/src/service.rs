@@ -109,6 +109,7 @@ pub(crate) struct ServiceBuilder {
     properties: syn::ItemStruct,
     args: ServiceArgs,
     attribute_count: usize,
+    cccd_count: usize,
     code_impl: TokenStream2,
     code_build_chars: TokenStream2,
     code_struct_init: TokenStream2,
@@ -121,6 +122,7 @@ impl ServiceBuilder {
             properties,
             args,
             attribute_count: 1, // Service counts as an attribute
+            cccd_count: 0,
             code_struct_init: TokenStream2::new(),
             code_impl: TokenStream2::new(),
             code_fields: TokenStream2::new(),
@@ -136,7 +138,12 @@ impl ServiceBuilder {
     /// If the characteristic has either the notify or indicate property,
     /// a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
     fn increment_attributes(&mut self, access: &AccessArgs) -> usize {
-        self.attribute_count += if access.notify || access.indicate { 3 } else { 2 };
+        if access.notify || access.indicate {
+            self.cccd_count += 1;
+            self.attribute_count += 3;
+        } else {
+            self.attribute_count += 2;
+        }
         self.attribute_count
     }
     /// Construct the macro blueprint for the service struct.
@@ -150,6 +157,7 @@ impl ServiceBuilder {
         let code_build_chars = self.code_build_chars;
         let uuid = self.args.uuid;
         let attribute_count = self.attribute_count;
+        let cccd_count = self.cccd_count;
         quote! {
             #visibility struct #struct_name {
                 #fields
@@ -159,6 +167,7 @@ impl ServiceBuilder {
             #[allow(unused)]
             impl #struct_name {
                 #visibility const ATTRIBUTE_COUNT: usize = #attribute_count;
+                #visibility const CCCD_COUNT: usize = #cccd_count;
 
                 #visibility fn new<M, const MAX_ATTRIBUTES: usize>(table: &mut trouble_host::attribute::AttributeTable<'_, M, MAX_ATTRIBUTES>) -> Self
                 where
