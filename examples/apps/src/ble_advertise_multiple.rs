@@ -25,7 +25,8 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let stack = trouble_host::new(controller, &mut resources);
+    let stack = stack.set_random_address(address);
     let Host {
         mut peripheral,
         mut runner,

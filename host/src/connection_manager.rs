@@ -11,6 +11,8 @@ use crate::connection::{Connection, ConnectionEventData};
 #[cfg(feature = "gatt")]
 use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
+#[cfg(feature = "security")]
+use crate::security_manager::SecurityManager;
 use crate::{Error, config};
 
 struct State<'d> {
@@ -73,6 +75,8 @@ pub(crate) struct ConnectionManager<'d> {
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
     tx_pool: &'d dyn Pool,
+    #[cfg(feature = "security")]
+    pub(crate) security_manager: SecurityManager,
 }
 
 impl<'d> ConnectionManager<'d> {
@@ -97,6 +101,8 @@ impl<'d> ConnectionManager<'d> {
             outbound: Channel::new(),
             #[cfg(feature = "gatt")]
             tx_pool,
+            #[cfg(feature = "security")]
+            security_manager: SecurityManager::new(),
         }
     }
 
@@ -548,6 +554,97 @@ impl<'d> ConnectionManager<'d> {
         }
         mtu
     }
+
+    pub(crate) fn get_encrypted(&self, index: u8) -> bool {
+        #[cfg(feature = "security")]
+        {
+            self.state.borrow().connections[index as usize].encrypted
+        }
+        #[cfg(not(feature = "security"))]
+        false
+    }
+
+    pub(crate) fn handle_security_channel(
+        &self,
+        handle: ConnHandle,
+        packet: &crate::packet_pool::Packet,
+        payload_size: usize,
+    ) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            let state = self.state.borrow();
+            for storage in state.connections.iter() {
+                match storage.state {
+                    ConnectionState::Connected if storage.handle.unwrap() == handle => {
+                        if let Err(error) = self.security_manager.handle(packet, payload_size, self, storage) {
+                            error!("Failed to handle security manager packet, {:?}", error);
+                            return Err(error);
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_security_hci_event(&self, event: bt_hci::event::Event) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            self.security_manager.handle_event(&event)?;
+
+            if let bt_hci::event::Event::EncryptionChangeV1(event_data) = event {
+                self.with_connected_handle(event_data.handle, |storage| {
+                    storage.encrypted = event_data.enabled;
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) async fn handle_security_event<'h, C>(
+        &self,
+        host: &crate::host::BleHost<'h, C>,
+        _event: crate::security_manager::SecurityEventData,
+    ) -> Result<(), crate::BleHostError<C::Error>>
+    where
+        C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
+            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
+    {
+        use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
+        match _event {
+            crate::security_manager::SecurityEventData::SendLongTermKey(handle) => {
+                if let Some(ltk) = self.security_manager.get_long_term_key() {
+                    let _ = host.command(LeLongTermKeyRequestReply::new(handle, ltk)).await?;
+                } else {
+                    warn!("[host] Long term key request reply failed, no long term key")
+                }
+            }
+            crate::security_manager::SecurityEventData::EnableEncryption(handle) => {
+                if let Some(ltk) = self.security_manager.get_long_term_key() {
+                    host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk))
+                        .await?;
+                    info!("[host] Enable encryption")
+                } else {
+                    warn!("[host] Enable encryption failed, no long term key")
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) fn poll_security_events(
+        &self,
+        cx: &mut Context<'_>,
+    ) -> Poll<crate::security_manager::SecurityEventData> {
+        #[cfg(feature = "security")]
+        return self.security_manager.poll_events(cx);
+        #[cfg(not(feature = "security"))]
+        Poll::<()>::Pending
+    }
 }
 
 pub struct DisconnectRequest<'a, 'd> {
@@ -615,6 +712,8 @@ pub struct ConnectionStorage {
     pub refcount: u8,
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
+    #[cfg(feature = "security")]
+    pub encrypted: bool,
 }
 
 #[cfg(feature = "connection-metrics")]
@@ -681,6 +780,8 @@ impl ConnectionStorage {
         refcount: 0,
         #[cfg(feature = "connection-metrics")]
         metrics: Metrics::new(),
+        #[cfg(feature = "security")]
+        encrypted: false,
     };
 }
 
@@ -785,6 +886,9 @@ mod tests {
         let storage = Box::leak(Box::new([ConnectionStorage::DISCONNECTED; 3]));
         let events = Box::leak(Box::new([EventChannel::NEW; 3]));
         let pool = Box::leak(Box::new(PacketPool::<27, 8>::new()));
+        #[cfg(feature = "gatt")]
+        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool);
+        #[cfg(not(feature = "gatt"))]
         let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool);
         Box::leak(Box::new(mgr))
     }

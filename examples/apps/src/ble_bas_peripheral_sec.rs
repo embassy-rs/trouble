@@ -1,6 +1,7 @@
 use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::Timer;
+use rand_core::{CryptoRng, RngCore};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -20,7 +21,7 @@ struct Server {
 struct BatteryService {
     /// Battery Level
     #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]
-    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, name = "hello", read, value = "Battery Level")]
+    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, read, value = "Battery Level")]
     #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
     level: u8,
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", write, read, notify)]
@@ -28,18 +29,20 @@ struct BatteryService {
 }
 
 /// Run the BLE stack.
-pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
+pub async fn run<C, RNG, const L2CAP_MTU: usize>(controller: C, random_generator: &mut RNG)
 where
     C: Controller,
+    RNG: RngCore + CryptoRng,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
-    info!("Our address = {:?}", address);
+    info!("Our address = {}", address);
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources);
-    let stack = stack.set_random_address(address);
+    let stack = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .set_random_generator_seed(random_generator);
     let Host {
         mut peripheral, runner, ..
     } = stack.build();
@@ -121,23 +124,43 @@ async fn gatt_events_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<
                 match data.process(server).await {
                     // Server processing emits
                     Ok(Some(event)) => {
-                        match &event {
+                        let result = match &event {
                             GattEvent::Read(event) => {
                                 if event.handle() == level.handle {
                                     let value = server.get(&level);
                                     info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                                 }
+                                #[cfg(feature = "security")]
+                                if conn.encrypted() {
+                                    None
+                                } else {
+                                    Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                                }
+                                #[cfg(not(feature = "security"))]
+                                None
                             }
                             GattEvent::Write(event) => {
                                 if event.handle() == level.handle {
                                     info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                                 }
+                                #[cfg(feature = "security")]
+                                if conn.encrypted() {
+                                    None
+                                } else {
+                                    Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                                }
+                                #[cfg(not(feature = "security"))]
+                                None
                             }
-                        }
-
+                        };
                         // This step is also performed at drop(), but writing it explicitly is necessary
                         // in order to ensure reply is sent.
-                        match event.accept() {
+                        let result = if let Some(code) = result {
+                            event.reject(code)
+                        } else {
+                            event.accept()
+                        };
+                        match result {
                             Ok(reply) => {
                                 reply.send().await;
                             }

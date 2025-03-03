@@ -25,15 +25,28 @@ cortex-m-rt = "0.7.0"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
+rand_core = { version = "0.6"}
+rand_chacha = { version = "0.3", default-features = false }
 
 [build-dependencies]
 reqwest = { version = "0.12.9", features = ["blocking"]}
 
 [features]
 skip-cyw43-firmware = []
+security = [
+    "trouble-example-apps/security",
+]
 
 [profile.release]
 debug = 2
+
+[[bin]]
+name = "ble_bas_central_sec"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_sec"
+required-features = ["security"]
 
 [patch.crates-io]
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
