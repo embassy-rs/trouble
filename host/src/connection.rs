@@ -6,9 +6,15 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_time::Duration;
 
+#[cfg(feature = "gatt")]
+use embassy_sync::blocking_mutex::raw::RawMutex;
+
 use crate::connection_manager::ConnectionManager;
 use crate::pdu::Pdu;
 use crate::{BleHostError, Error, Stack};
+
+#[cfg(feature = "gatt")]
+use crate::prelude::{AttributeServer, GattConnection};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -80,31 +86,6 @@ pub struct ConnectParams {
     pub event_length: Duration,
     /// Supervision timeout.
     pub supervision_timeout: Duration,
-}
-
-#[cfg(not(feature = "gatt"))]
-/// A connection event.
-pub enum ConnectionEvent {
-    /// Connection disconnected.
-    Disconnected {
-        /// The reason (status code) for the disconnect.
-        reason: Status,
-    },
-}
-
-/// A connection event.
-#[cfg(feature = "gatt")]
-pub enum ConnectionEvent<'stack> {
-    /// Connection disconnected.
-    Disconnected {
-        /// The reason (status code) for the disconnect.
-        reason: Status,
-    },
-    /// GATT event.
-    Gatt {
-        /// The event that was returned
-        data: crate::gatt::GattData<'stack>,
-    },
 }
 
 pub(crate) enum ConnectionEventData {
@@ -191,24 +172,19 @@ impl<'stack> Connection<'stack> {
         self.manager.alloc_tx()
     }
 
-    /// Wait for next connection event.
+    /// Wait for next connection event data.
     #[cfg(not(feature = "gatt"))]
-    pub async fn next(&self) -> ConnectionEvent {
+    pub(crate) async fn next(&self) -> ConnectionEventData {
         match self.manager.next(self.index).await {
-            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
+            ConnectionEventData::Disconnected { reason } => ConnectionEventData::Disconnected { reason },
             ConnectionEventData::Gatt { data } => unreachable!(),
         }
     }
 
-    /// Wait for next connection event.
+    /// Wait for next connection event data.
     #[cfg(feature = "gatt")]
-    pub async fn next(&self) -> ConnectionEvent<'stack> {
-        match self.manager.next(self.index).await {
-            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
-            ConnectionEventData::Gatt { data } => ConnectionEvent::Gatt {
-                data: crate::gatt::GattData::new(data, self.clone()),
-            },
-        }
+    pub(crate) async fn next(&self) -> ConnectionEventData {
+        self.manager.next(self.index).await
     }
 
     /// Check if still connected
@@ -281,5 +257,14 @@ impl<'stack> Connection<'stack> {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Transform BLE connection into a `GattConnection`
+    #[cfg(feature = "gatt")]
+    pub fn to_gatt<'values, 'server, M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+        self,
+        server: &'server AttributeServer<'values, M, AT, CT, CN>,
+    ) -> GattConnection<'stack, 'server> {
+        GattConnection::new(self, server)
     }
 }

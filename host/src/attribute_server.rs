@@ -1,31 +1,210 @@
 use core::cell::RefCell;
 
-use bt_hci::param::ConnHandle;
+use bt_hci::param::BdAddr;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::att::{self, AttClient, AttCmd, AttErrorCode, AttReq};
-use crate::attribute::{AttributeData, AttributeTable};
+use crate::attribute::{Attribute, AttributeData, AttributeTable, CCCD};
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
 use crate::{Error, codec};
 
-const MAX_NOTIFICATIONS: usize = 4;
-pub(crate) struct NotificationTable<const ENTRIES: usize> {
-    state: [(u16, ConnHandle); ENTRIES],
+struct Client {
+    address: BdAddr,
+    is_connected: bool,
+}
+
+impl Default for Client {
+    fn default() -> Self {
+        Self {
+            address: BdAddr::default(),
+            is_connected: false,
+        }
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone)]
+struct CccdTable<const CT: usize> {
+    inner: [(u16, CCCD); CT],
+}
+
+impl<const CT: usize> Default for CccdTable<CT> {
+    fn default() -> Self {
+        Self {
+            inner: [(0, CCCD(0)); CT],
+        }
+    }
+}
+
+impl<const CT: usize> CccdTable<CT> {
+    fn add_handle(&mut self, cccd_handle: u16) {
+        for (handle, _) in self.inner.iter_mut() {
+            if *handle == 0 {
+                *handle = cccd_handle;
+                break;
+            }
+        }
+    }
+
+    fn disable_all(&mut self) {
+        for (_, value) in self.inner.iter_mut() {
+            value.disable();
+        }
+    }
+
+    fn get_raw(&self, cccd_handle: u16) -> Option<[u8; 2]> {
+        for (handle, value) in self.inner.iter() {
+            if *handle == cccd_handle {
+                return Some(value.raw().to_le_bytes());
+            }
+        }
+        None
+    }
+
+    fn set_notify(&mut self, cccd_handle: u16, is_enabled: bool) {
+        for (handle, value) in self.inner.iter_mut() {
+            if *handle == cccd_handle {
+                trace!("[cccd] set_notify({}) = {}", cccd_handle, is_enabled);
+                value.set_notify(is_enabled);
+                break;
+            }
+        }
+    }
+
+    fn should_notify(&self, cccd_handle: u16) -> bool {
+        for (handle, value) in self.inner.iter() {
+            if *handle == cccd_handle {
+                return value.should_notify();
+            }
+        }
+        false
+    }
+}
+
+struct CccdTables<M: RawMutex, const CT: usize, const CN: usize> {
+    state: Mutex<M, RefCell<[(Client, CccdTable<CT>); CN]>>,
+}
+
+impl<M: RawMutex, const CT: usize, const CN: usize> CccdTables<M, CT, CN> {
+    fn new<const A: usize>(att_table: &AttributeTable<'_, M, A>) -> Self {
+        let mut values: [(Client, CccdTable<CT>); CN] =
+            core::array::from_fn(|_| (Client::default(), CccdTable::default()));
+        let mut base_cccd_table = CccdTable::default();
+        att_table.iterate(|mut at| {
+            while let Some(att) = at.next() {
+                if let AttributeData::Cccd { .. } = att.data {
+                    base_cccd_table.add_handle(att.handle);
+                }
+            }
+        });
+        // add the base CCCD table for each potential connected client
+        for (_, table) in values.iter_mut() {
+            *table = base_cccd_table.clone();
+        }
+        Self {
+            state: Mutex::new(RefCell::new(values)),
+        }
+    }
+
+    fn connect(&self, peer_address: &BdAddr) {
+        self.state.lock(|n| {
+            trace!("[server] searching for peer {:?}", peer_address);
+            let mut n = n.borrow_mut();
+            let empty_slot = BdAddr::default();
+            for (client, table) in n.iter_mut() {
+                if client.address == *peer_address {
+                    // trace!("[server] found! table = {:?}", *table);
+                    client.is_connected = true;
+                    return;
+                } else if client.address == empty_slot {
+                    //  trace!("[server] empty slot: connecting");
+                    client.is_connected = true;
+                    client.address = *peer_address;
+                    return;
+                }
+            }
+            trace!("[server] all slots full...");
+            // if we got here all slots are full; replace the first disconnected client
+            for (client, table) in n.iter_mut() {
+                if !client.is_connected {
+                    trace!("[server] booting disconnected peer {:?}", client.address);
+                    client.is_connected = true;
+                    client.address = *peer_address;
+                    // erase the previous client's config
+                    table.disable_all();
+                    return;
+                }
+            }
+            // Should be unreachable if the max connections (CN) matches that defined
+            // in HostResources...
+            warn!("[server] unable to obtain CCCD slot");
+        })
+    }
+
+    fn disconnect(&self, peer_address: &BdAddr) {
+        self.state.lock(|n| {
+            let mut n = n.borrow_mut();
+            for (client, _) in n.iter_mut() {
+                if client.address == *peer_address {
+                    client.is_connected = false;
+                    break;
+                }
+            }
+        })
+    }
+
+    fn get_value(&self, peer_address: &BdAddr, cccd_handle: u16) -> Option<[u8; 2]> {
+        self.state.lock(|n| {
+            let n = n.borrow();
+            for (client, table) in n.iter() {
+                if client.address == *peer_address {
+                    return table.get_raw(cccd_handle);
+                }
+            }
+            None
+        })
+    }
+
+    fn set_notify(&self, peer_address: &BdAddr, cccd_handle: u16, is_enabled: bool) {
+        self.state.lock(|n| {
+            let mut n = n.borrow_mut();
+            for (client, table) in n.iter_mut() {
+                if client.address == *peer_address {
+                    table.set_notify(cccd_handle, is_enabled);
+                    break;
+                }
+            }
+        })
+    }
+
+    fn should_notify(&self, peer_address: &BdAddr, cccd_handle: u16) -> bool {
+        self.state.lock(|n| {
+            let n = n.borrow();
+            for (client, table) in n.iter() {
+                if client.address == *peer_address {
+                    return table.should_notify(cccd_handle);
+                }
+            }
+            false
+        })
+    }
 }
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct AttributeServer<'values, M: RawMutex, const MAX: usize> {
-    pub(crate) table: AttributeTable<'values, M, MAX>,
-    pub(crate) notification: Mutex<M, RefCell<NotificationTable<MAX_NOTIFICATIONS>>>,
+pub struct AttributeServer<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize> {
+    att_table: AttributeTable<'values, M, AT>,
+    cccd_tables: CccdTables<M, CT, CN>,
 }
 
 pub(crate) mod sealed {
     use super::*;
 
     pub trait DynamicAttributeServer {
+        fn connect(&self, connection: &Connection);
+        fn disconnect(&self, connection: &Connection);
         fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error>;
         fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool;
         fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
@@ -35,8 +214,21 @@ pub(crate) mod sealed {
 /// Type erased attribute server
 pub trait DynamicAttributeServer: sealed::DynamicAttributeServer {}
 
-impl<M: RawMutex, const MAX: usize> DynamicAttributeServer for AttributeServer<'_, M, MAX> {}
-impl<M: RawMutex, const MAX: usize> sealed::DynamicAttributeServer for AttributeServer<'_, M, MAX> {
+impl<M: RawMutex, const AT: usize, const CT: usize, const CN: usize> DynamicAttributeServer
+    for AttributeServer<'_, M, AT, CT, CN>
+{
+}
+impl<M: RawMutex, const AT: usize, const CT: usize, const CN: usize> sealed::DynamicAttributeServer
+    for AttributeServer<'_, M, AT, CT, CN>
+{
+    fn connect(&self, connection: &Connection) {
+        AttributeServer::connect(self, connection);
+    }
+
+    fn disconnect(&self, connection: &Connection) {
+        self.cccd_tables.disconnect(&connection.peer_address());
+    }
+
     fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error> {
         let res = AttributeServer::process(self, connection, packet, rx)?;
         Ok(res)
@@ -47,54 +239,62 @@ impl<M: RawMutex, const MAX: usize> sealed::DynamicAttributeServer for Attribute
     }
 
     fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error> {
-        self.table.set_raw(characteristic, input)
+        self.att_table.set_raw(characteristic, input)
     }
 }
 
-impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
+impl<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize> AttributeServer<'values, M, AT, CT, CN> {
     /// Create a new instance of the AttributeServer
-    pub fn new(table: AttributeTable<'values, M, MAX>) -> AttributeServer<'values, M, MAX> {
-        AttributeServer {
-            table,
-            notification: Mutex::new(RefCell::new(NotificationTable {
-                state: [(0, ConnHandle::new(0)); 4],
-            })),
+    pub fn new(att_table: AttributeTable<'values, M, AT>) -> AttributeServer<'values, M, AT, CT, CN> {
+        let cccd_tables = CccdTables::new(&att_table);
+        AttributeServer { att_table, cccd_tables }
+    }
+
+    pub(crate) fn connect(&self, connection: &Connection<'_>) {
+        self.cccd_tables.connect(&connection.peer_address());
+    }
+
+    pub(crate) fn should_notify(&self, connection: &Connection<'_>, cccd_handle: u16) -> bool {
+        self.cccd_tables.should_notify(&connection.peer_address(), cccd_handle)
+    }
+
+    fn read_attribute_data(
+        &self,
+        connection: &Connection<'_>,
+        offset: usize,
+        att: &mut Attribute<'values>,
+        data: &mut [u8],
+    ) -> Result<usize, AttErrorCode> {
+        if let AttributeData::Cccd { .. } = att.data {
+            // CCCD values for each connected client are held in the CCCD tables:
+            // the value is written back into att.data so att.read() has the final
+            // say when parsing at the requested offset.
+            if let Some(value) = self.cccd_tables.get_value(&connection.peer_address(), att.handle) {
+                let _ = att.write(0, value.as_slice());
+            }
         }
+        att.read(offset, data)
     }
 
-    pub(crate) fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool {
-        self.notification.lock(|n| {
-            let n = n.borrow();
-            for entry in n.state.iter() {
-                if entry.0 == cccd_handle && entry.1 == connection.handle() {
-                    return true;
-                }
+    fn write_attribute_data(
+        &self,
+        connection: &Connection<'_>,
+        offset: usize,
+        att: &mut Attribute<'values>,
+        data: &[u8],
+    ) -> Result<(), AttErrorCode> {
+        let err = att.write(offset, data);
+        if err.is_ok() {
+            if let AttributeData::Cccd {
+                notifications,
+                indications,
+            } = att.data
+            {
+                self.cccd_tables
+                    .set_notify(&connection.peer_address(), att.handle, notifications);
             }
-            false
-        })
-    }
-
-    fn set_notify(&self, conn: ConnHandle, cccd_handle: u16, enable: bool) {
-        self.notification.lock(|n| {
-            let mut n = n.borrow_mut();
-            if enable {
-                for entry in n.state.iter_mut() {
-                    if entry.0 == 0 {
-                        entry.0 = cccd_handle;
-                        entry.1 = conn;
-                        return;
-                    }
-                }
-            } else {
-                for entry in n.state.iter_mut() {
-                    if entry.0 == cccd_handle && entry.1 == conn {
-                        entry.0 = 0;
-                        entry.1 = ConnHandle::new(0);
-                        return;
-                    }
-                }
-            }
-        })
+        }
+        err
     }
 
     fn handle_read_by_type_req(
@@ -109,20 +309,20 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         let mut data = WriteCursor::new(buf);
 
         let (mut header, mut body) = data.split(2)?;
-        let err = self.table.iterate(|mut it| {
+        let err = self.att_table.iterate(|mut it| {
             let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
-                //trace!("Check attribute {:?} {}", att.uuid, att.handle);
+                // trace!("[read_by_type] Check attribute {:?} {}", att.uuid, att.handle);
                 if &att.uuid == attribute_type && att.handle >= start && att.handle <= end {
                     body.write(att.handle)?;
                     handle = att.handle;
 
-                    err = att.read(0, body.write_buf());
+                    err = self.read_attribute_data(connection, 0, att, body.write_buf());
                     if let Ok(len) = err {
                         body.commit(len)?;
                     }
 
-                    // debug!("found! {:?} {}", att.uuid, att.handle);
+                    // debug!("[read_by_type] found! {:?} {}", att.uuid, att.handle);
                     break;
                 }
             }
@@ -152,18 +352,17 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         let mut data = WriteCursor::new(buf);
 
         let (mut header, mut body) = data.split(2)?;
-        let err = self.table.iterate(|mut it| {
+        let err = self.att_table.iterate(|mut it| {
             let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
-                //            trace!("Check attribute {:x} {}", att.uuid, att.handle);
+                // trace!("[read_by_group] Check attribute {:x} {}", att.uuid, att.handle);
                 if &att.uuid == group_type && att.handle >= start && att.handle <= end {
-                    //debug!("found! {:x} {}", att.uuid, att.handle);
+                    // debug!("[read_by_group] found! {:x} {}", att.uuid, att.handle);
                     handle = att.handle;
 
                     body.write(att.handle)?;
                     body.write(att.last_handle_in_group)?;
-
-                    err = att.read(0, body.write_buf());
+                    err = self.read_attribute_data(connection, 0, att, body.write_buf());
                     if let Ok(len) = err {
                         body.commit(len)?;
                     }
@@ -188,11 +387,11 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
 
         data.write(att::ATT_READ_RSP)?;
 
-        let err = self.table.iterate(|mut it| {
+        let err = self.att_table.iterate(|mut it| {
             let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    err = att.read(0, data.write_buf());
+                    err = self.read_attribute_data(connection, 0, att, data.write_buf());
                     if let Ok(len) = err {
                         data.commit(len)?;
                     }
@@ -215,11 +414,11 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         handle: u16,
         data: &[u8],
     ) -> Result<usize, codec::Error> {
-        self.table.iterate(|mut it| {
+        self.att_table.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle {
                     // Write commands can't respond with an error.
-                    let _ = att.write(0, data);
+                    let _ = self.write_attribute_data(connection, 0, att, data);
                     break;
                 }
             }
@@ -234,20 +433,11 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         handle: u16,
         data: &[u8],
     ) -> Result<usize, codec::Error> {
-        let err = self.table.iterate(|mut it| {
+        let err = self.att_table.iterate(|mut it| {
             let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    err = att.write(0, data);
-                    if err.is_ok() {
-                        if let AttributeData::Cccd {
-                            notifications,
-                            indications,
-                        } = att.data
-                        {
-                            self.set_notify(connection.handle(), handle, notifications);
-                        }
-                    }
+                    err = self.write_attribute_data(connection, 0, att, data);
                     break;
                 }
             }
@@ -276,7 +466,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         let attr_type = Uuid::new_short(attr_type);
 
         w.write(att::ATT_FIND_BY_TYPE_VALUE_RSP)?;
-        self.table.iterate(|mut it| {
+        self.att_table.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle >= start && att.handle <= end && att.uuid == attr_type {
                     if let AttributeData::Service { uuid } = &att.data {
@@ -312,7 +502,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         header.write(att::ATT_FIND_INFORMATION_RSP)?;
         let mut t = 0;
 
-        self.table.iterate(|mut it| {
+        self.att_table.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle >= start && att.handle <= end {
                     if t == 0 {
@@ -367,11 +557,11 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         w.write(handle)?;
         w.write(offset)?;
 
-        let err = self.table.iterate(|mut it| {
+        let err = self.att_table.iterate(|mut it| {
             let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    err = att.write(offset as usize, value);
+                    err = self.write_attribute_data(connection, offset as usize, att, value);
                     w.append(value)?;
                     break;
                 }
@@ -401,11 +591,11 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         let mut w = WriteCursor::new(buf);
         w.write(att::ATT_READ_BLOB_RSP)?;
 
-        let err = self.table.iterate(|mut it| {
+        let err = self.att_table.iterate(|mut it| {
             let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 if att.handle == handle {
-                    err = att.read(offset as usize, w.write_buf());
+                    err = self.read_attribute_data(connection, offset as usize, att, w.write_buf());
                     if let Ok(n) = err {
                         w.commit(n)?;
                     }
@@ -421,12 +611,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
         }
     }
 
-    fn handle_read_multiple(
-        &self,
-        connection: &Connection,
-        buf: &mut [u8],
-        handles: &[u8],
-    ) -> Result<usize, codec::Error> {
+    fn handle_read_multiple(&self, buf: &mut [u8], handles: &[u8]) -> Result<usize, codec::Error> {
         let w = WriteCursor::new(buf);
         Self::error_response(
             w,
@@ -488,9 +673,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
                 self.handle_read_blob(connection, rx, *handle, *offset)?
             }
 
-            AttClient::Request(AttReq::ReadMultiple { handles }) => {
-                self.handle_read_multiple(connection, rx, handles)?
-            }
+            AttClient::Request(AttReq::ReadMultiple { handles }) => self.handle_read_multiple(rx, handles)?,
 
             AttClient::Confirmation(_) => 0,
         };
@@ -498,7 +681,7 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
     }
 
     /// Get a reference to the attribute table
-    pub fn table(&self) -> &AttributeTable<'values, M, MAX> {
-        &self.table
+    pub fn table(&self) -> &AttributeTable<'values, M, AT> {
+        &self.att_table
     }
 }

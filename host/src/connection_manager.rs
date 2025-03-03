@@ -929,10 +929,10 @@ mod tests {
         unwrap!(mgr.disconnected(ConnHandle::new(2), Status::UNSPECIFIED));
 
         // Check that we get an event
-        use crate::connection::ConnectionEvent;
+        use crate::connection::ConnectionEventData;
         assert!(matches!(
             block_on(peripheral.next()),
-            ConnectionEvent::Disconnected {
+            ConnectionEventData::Disconnected {
                 reason: Status::UNSPECIFIED
             }
         ));
