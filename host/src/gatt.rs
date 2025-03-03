@@ -68,7 +68,7 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
         match self.connection.next().await {
             ConnectionEventData::Disconnected { reason } => GattConnectionEvent::Disconnected { reason },
             ConnectionEventData::Gatt { data } => GattConnectionEvent::Gatt {
-                data: crate::gatt::GattData::new(data, &self),
+                data: crate::gatt::GattData::new(data, self),
             },
         }
     }

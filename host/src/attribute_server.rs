@@ -11,18 +11,10 @@ use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
 use crate::{Error, codec};
 
+#[derive(Default)]
 struct Client {
     address: BdAddr,
     is_connected: bool,
-}
-
-impl Default for Client {
-    fn default() -> Self {
-        Self {
-            address: BdAddr::default(),
-            is_connected: false,
-        }
-    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
