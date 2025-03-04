@@ -7,9 +7,6 @@ use embassy_futures::select::{Either, select};
 use crate::connection::{ConnectConfig, Connection, PhySet};
 use crate::{BleHostError, Error, Stack};
 
-use crate::connection::{ConnectConfig, Connection, PhySet};
-use crate::{BleHostError, Error, Stack};
-
 /// A type implementing the BLE central role.
 pub struct Central<'stack, C> {
     pub(crate) stack: &'stack Stack<'stack, C>,
