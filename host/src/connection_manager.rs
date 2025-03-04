@@ -11,13 +11,15 @@ use crate::connection::{Connection, ConnectionEventData};
 #[cfg(feature = "gatt")]
 use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
-use crate::{config, Error};
+use crate::{Error, config};
 
 struct State<'d> {
     connections: &'d mut [ConnectionStorage],
     central_waker: WakerRegistration,
     peripheral_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
+    #[cfg(feature = "controller-host-flow-control")]
+    completed_packets_waker: WakerRegistration,
     default_link_credits: usize,
     default_att_mtu: u16,
 }
@@ -86,6 +88,8 @@ impl<'d> ConnectionManager<'d> {
                 central_waker: WakerRegistration::new(),
                 peripheral_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
+                #[cfg(feature = "controller-host-flow-control")]
+                completed_packets_waker: WakerRegistration::new(),
                 default_link_credits: 0,
                 default_att_mtu,
             }),
@@ -160,6 +164,21 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
+    pub(crate) fn completed_packets(&self, _handle: ConnHandle, _amount: u16) {
+        #[cfg(feature = "controller-host-flow-control")]
+        self.with_mut(|state| {
+            let handle = _handle;
+            let amount = _amount;
+            for entry in state.connections.iter_mut() {
+                if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+                    entry.completed_packets += amount;
+                    state.completed_packets_waker.wake();
+                    break;
+                }
+            }
+        })
+    }
+
     pub(crate) fn request_handle_disconnect(&self, handle: ConnHandle, reason: DisconnectReason) {
         self.with_mut(|state| {
             for entry in state.connections.iter_mut() {
@@ -185,6 +204,44 @@ impl<'d> ConnectionManager<'d> {
                     reason,
                     state: &self.state,
                 });
+            }
+        }
+        Poll::Pending
+    }
+
+    pub(crate) fn poll_completed_packets<'m>(
+        &'m self,
+        _cursor: usize,
+        _cx: Option<&mut Context<'_>>,
+    ) -> Poll<CompletedPackets<'m, 'd>> {
+        #[cfg(feature = "controller-host-flow-control")]
+        {
+            let cursor = _cursor;
+            let cx = _cx;
+            let mut state = self.state.borrow_mut();
+            if let Some(cx) = cx {
+                state.completed_packets_waker.register(cx.waker());
+            }
+            let mut pos = cursor;
+            let end = if pos > 0 { pos - 1 } else { state.connections.len() - 1 };
+
+            loop {
+                let next = (pos + 1) % state.connections.len();
+                let storage = &state.connections[pos];
+                if let ConnectionState::Connected = storage.state {
+                    if storage.completed_packets > 0 {
+                        return Poll::Ready(CompletedPackets {
+                            index: pos,
+                            handle: storage.handle.unwrap(),
+                            amount: storage.completed_packets,
+                            state: &self.state,
+                        });
+                    }
+                }
+                if pos == end {
+                    break;
+                }
+                pos = next;
             }
         }
         Poll::Pending
@@ -266,6 +323,10 @@ impl<'d> ConnectionManager<'d> {
                 self.events[idx].clear();
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
+                #[cfg(feature = "controller-host-flow-control")]
+                {
+                    storage.completed_packets = 0;
+                }
                 storage.att_mtu = default_att_mtu;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
@@ -314,8 +375,7 @@ impl<'d> ConnectionManager<'d> {
                                 storage.state = ConnectionState::Connected;
                                 trace!(
                                     "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                                    handle,
-                                    role
+                                    handle, role
                                 );
                                 assert_eq!(storage.refcount, 0);
                                 state.inc_ref(idx as u8);
@@ -327,8 +387,7 @@ impl<'d> ConnectionManager<'d> {
                         assert_eq!(storage.refcount, 0);
                         trace!(
                             "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                            handle,
-                            role
+                            handle, role
                         );
 
                         assert_eq!(storage.refcount, 0);
@@ -513,6 +572,34 @@ impl DisconnectRequest<'_, '_> {
     }
 }
 
+pub(crate) struct CompletedPackets<'a, 'd> {
+    state: &'a RefCell<State<'d>>,
+    handle: ConnHandle,
+    amount: u16,
+    index: usize,
+}
+
+#[cfg(feature = "controller-host-flow-control")]
+impl CompletedPackets<'_, '_> {
+    pub(crate) fn amount(&self) -> u16 {
+        self.amount
+    }
+
+    pub(crate) fn handle(&self) -> ConnHandle {
+        self.handle
+    }
+
+    pub(crate) fn confirm(self) -> usize {
+        let mut state = self.state.borrow_mut();
+        let connection = &mut state.connections[self.index];
+        if connection.state == ConnectionState::Connected && connection.handle == Some(self.handle) {
+            connection.completed_packets = connection.completed_packets.saturating_sub(self.amount);
+        }
+
+        (self.index + 1) % state.connections.len()
+    }
+}
+
 #[derive(Debug)]
 pub struct ConnectionStorage {
     pub state: ConnectionState,
@@ -523,6 +610,8 @@ pub struct ConnectionStorage {
     pub att_mtu: u16,
     pub link_credits: usize,
     pub link_credit_waker: WakerRegistration,
+    #[cfg(feature = "controller-host-flow-control")]
+    pub completed_packets: u16,
     pub refcount: u8,
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
@@ -586,6 +675,8 @@ impl ConnectionStorage {
         peer_addr: None,
         att_mtu: 23,
         link_credits: 0,
+        #[cfg(feature = "controller-host-flow-control")]
+        completed_packets: 0,
         link_credit_waker: WakerRegistration::new(),
         refcount: 0,
         #[cfg(feature = "connection-metrics")]
@@ -596,30 +687,26 @@ impl ConnectionStorage {
 #[cfg(feature = "defmt")]
 impl defmt::Format for ConnectionStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
-        #[cfg(feature = "connection-metrics")]
         defmt::write!(
             f,
-            "state = {}, conn = {}, flow = {}, role = {}, peer = {:02x}, ref = {}, {}",
+            "state = {}, conn = {}, flow = {}",
             self.state,
             self.handle,
             self.link_credits,
-            self.role,
-            self.peer_addr,
-            self.refcount,
-            self.metrics
         );
 
-        #[cfg(not(feature = "connection-metrics"))]
+        #[cfg(feature = "controller-host-flow-control")]
+        defmt::write!(f, ", completed = {}", self.completed_packets);
         defmt::write!(
             f,
-            "state = {}, conn = {}, flow = {}, role = {}, peer = {:02x}, ref = {}",
-            self.state,
-            self.handle,
-            self.link_credits,
+            ", role = {}, peer = {:02x}, ref = {}",
             self.role,
             self.peer_addr,
-            self.refcount,
+            self.refcount
         );
+
+        #[cfg(feature = "connection-metrics")]
+        defmt::write!(", {}", self.metrics);
     }
 }
 

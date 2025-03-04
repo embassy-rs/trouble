@@ -20,7 +20,7 @@ struct Server {
 struct BatteryService {
     /// Battery Level
     #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]
-    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, read, value = "Battery Level")]
+    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, name = "hello", read, value = "Battery Level")]
     #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
     level: u8,
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", write, read, notify)]
@@ -119,15 +119,30 @@ async fn gatt_events_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<
                 // the protocol details
                 match data.process(server).await {
                     // Server processing emits
-                    Ok(Some(GattEvent::Read(event))) => {
-                        if event.handle() == level.handle {
-                            let value = server.get(&level);
-                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                    Ok(Some(event)) => {
+                        match &event {
+                            GattEvent::Read(event) => {
+                                if event.handle() == level.handle {
+                                    let value = server.get(&level);
+                                    info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                                }
+                            }
+                            GattEvent::Write(event) => {
+                                if event.handle() == level.handle {
+                                    info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                                }
+                            }
                         }
-                    }
-                    Ok(Some(GattEvent::Write(event))) => {
-                        if event.handle() == level.handle {
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+
+                        // This step is also performed at drop(), but writing it explicitly is necessary
+                        // in order to ensure reply is sent.
+                        match event.accept() {
+                            Ok(reply) => {
+                                reply.send().await;
+                            }
+                            Err(e) => {
+                                warn!("[gatt] error sending response: {:?}", e);
+                            }
                         }
                     }
                     Ok(_) => {}
@@ -151,7 +166,7 @@ async fn advertise<'a, C: Controller>(
     AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
+            AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
             AdStructure::CompleteLocalName(name.as_bytes()),
         ],
         &mut advertiser_data[..],

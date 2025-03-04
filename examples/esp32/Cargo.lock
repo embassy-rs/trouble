@@ -1290,6 +1290,7 @@ dependencies = [
  "log",
  "static_cell",
  "trouble-host-macros",
+ "zerocopy",
 ]
 
 [[package]]
@@ -1467,6 +1468,26 @@ version = "0.2.2"
 source = "git+https://github.com/esp-rs/esp-hal.git?rev=5d0145eca901f42cbebe1e41cde10e79afba3af8#5d0145eca901f42cbebe1e41cde10e79afba3af8"
 dependencies = [
  "darling",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcf01143b2dd5d134f11f545cf9f1431b13b749695cb33bcce051e7568f99478"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712c8386f4f4299382c9abee219bee7084f78fb939d88b6840fcc1320d5f6da2"
+dependencies = [
  "proc-macro2",
  "quote",
  "syn",

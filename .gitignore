@@ -1,6 +1,7 @@
 **/target
 **/target_ci
 Cargo.lock
+.idea
 megalinter-reports/
 # Mac Users
 .DS_Store

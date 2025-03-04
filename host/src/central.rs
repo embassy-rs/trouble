@@ -2,9 +2,10 @@
 use bt_hci::cmd::le::{LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn};
 use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
-#[cfg(feature = "controller-host-flow-control")]
-use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
+
+use crate::connection::{ConnectConfig, Connection, PhySet};
+use crate::{BleHostError, Error, Stack};
 
 use crate::connection::{ConnectConfig, Connection, PhySet};
 use crate::{BleHostError, Error, Stack};

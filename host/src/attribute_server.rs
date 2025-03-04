@@ -1,15 +1,15 @@
 use core::cell::RefCell;
 
 use bt_hci::param::ConnHandle;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use crate::att::{self, AttErrorCode, AttReq};
+use crate::att::{self, AttClient, AttCmd, AttErrorCode, AttReq};
 use crate::attribute::{AttributeData, AttributeTable};
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
-use crate::{codec, Error};
+use crate::{Error, codec};
 
 const MAX_NOTIFICATIONS: usize = 4;
 pub(crate) struct NotificationTable<const ENTRIES: usize> {
@@ -26,7 +26,7 @@ pub(crate) mod sealed {
     use super::*;
 
     pub trait DynamicAttributeServer {
-        fn process(&self, connection: &Connection, packet: &AttReq, rx: &mut [u8]) -> Result<Option<usize>, Error>;
+        fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error>;
         fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool;
         fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
     }
@@ -37,7 +37,7 @@ pub trait DynamicAttributeServer: sealed::DynamicAttributeServer {}
 
 impl<M: RawMutex, const MAX: usize> DynamicAttributeServer for AttributeServer<'_, M, MAX> {}
 impl<M: RawMutex, const MAX: usize> sealed::DynamicAttributeServer for AttributeServer<'_, M, MAX> {
-    fn process(&self, connection: &Connection, packet: &AttReq, rx: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error> {
         let res = AttributeServer::process(self, connection, packet, rx)?;
         Ok(res)
     }
@@ -286,7 +286,6 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
                             }
                             w.write(att.handle)?;
                             w.write(att.last_handle_in_group)?;
-                            w.write_ref(uuid)?;
                         }
                     }
                 }
@@ -441,57 +440,61 @@ impl<'values, M: RawMutex, const MAX: usize> AttributeServer<'values, M, MAX> {
     pub fn process(
         &self,
         connection: &Connection,
-        packet: &AttReq,
+        packet: &AttClient,
         rx: &mut [u8],
     ) -> Result<Option<usize>, codec::Error> {
         let len = match packet {
-            AttReq::ReadByType {
+            AttClient::Request(AttReq::ReadByType {
                 start,
                 end,
                 attribute_type,
-            } => self.handle_read_by_type_req(connection, rx, *start, *end, attribute_type)?,
+            }) => self.handle_read_by_type_req(connection, rx, *start, *end, attribute_type)?,
 
-            AttReq::ReadByGroupType { start, end, group_type } => {
+            AttClient::Request(AttReq::ReadByGroupType { start, end, group_type }) => {
                 self.handle_read_by_group_type_req(connection, rx, *start, *end, group_type)?
             }
-            AttReq::FindInformation {
+            AttClient::Request(AttReq::FindInformation {
                 start_handle,
                 end_handle,
-            } => self.handle_find_information(rx, *start_handle, *end_handle)?,
+            }) => self.handle_find_information(rx, *start_handle, *end_handle)?,
 
-            AttReq::Read { handle } => self.handle_read_req(connection, rx, *handle)?,
+            AttClient::Request(AttReq::Read { handle }) => self.handle_read_req(connection, rx, *handle)?,
 
-            AttReq::WriteCmd { handle, data } => {
+            AttClient::Command(AttCmd::Write { handle, data }) => {
                 self.handle_write_cmd(connection, rx, *handle, data)?;
                 0
             }
 
-            AttReq::Write { handle, data } => self.handle_write_req(connection, rx, *handle, data)?,
+            AttClient::Request(AttReq::Write { handle, data }) => {
+                self.handle_write_req(connection, rx, *handle, data)?
+            }
 
-            AttReq::ExchangeMtu { mtu } => 0, // Done outside,
+            AttClient::Request(AttReq::ExchangeMtu { mtu }) => 0, // Done outside,
 
-            AttReq::FindByTypeValue {
+            AttClient::Request(AttReq::FindByTypeValue {
                 start_handle,
                 end_handle,
                 att_type,
                 att_value,
-            } => self.handle_find_type_value(rx, *start_handle, *end_handle, *att_type, att_value)?,
+            }) => self.handle_find_type_value(rx, *start_handle, *end_handle, *att_type, att_value)?,
 
-            AttReq::PrepareWrite { handle, offset, value } => {
+            AttClient::Request(AttReq::PrepareWrite { handle, offset, value }) => {
                 self.handle_prepare_write(connection, rx, *handle, *offset, value)?
             }
 
-            AttReq::ExecuteWrite { flags } => self.handle_execute_write(rx, *flags)?,
+            AttClient::Request(AttReq::ExecuteWrite { flags }) => self.handle_execute_write(rx, *flags)?,
 
-            AttReq::ReadBlob { handle, offset } => self.handle_read_blob(connection, rx, *handle, *offset)?,
+            AttClient::Request(AttReq::ReadBlob { handle, offset }) => {
+                self.handle_read_blob(connection, rx, *handle, *offset)?
+            }
 
-            AttReq::ReadMultiple { handles } => self.handle_read_multiple(connection, rx, handles)?,
+            AttClient::Request(AttReq::ReadMultiple { handles }) => {
+                self.handle_read_multiple(connection, rx, handles)?
+            }
+
+            AttClient::Confirmation(_) => 0,
         };
-        if len > 0 {
-            Ok(Some(len))
-        } else {
-            Ok(None)
-        }
+        if len > 0 { Ok(Some(len)) } else { Ok(None) }
     }
 
     /// Get a reference to the attribute table

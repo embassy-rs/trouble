@@ -5,7 +5,7 @@ use embassy_time::Duration;
 
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::types::uuid::Uuid;
-use crate::{codec, Address};
+use crate::{Address, codec};
 
 /// Transmit power levels.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -365,15 +365,18 @@ pub enum AdStructure<'a> {
     Flags(u8),
 
     /// List of 16-bit service UUIDs.
-    ServiceUuids16(&'a [Uuid]),
+    /// The UUID data matches the ble network's endian order (should be little endian).
+    ServiceUuids16(&'a [[u8; 2]]),
 
     /// List of 128-bit service UUIDs.
-    ServiceUuids128(&'a [Uuid]),
+    /// The UUID data matches the ble network's endian order (should be little endian).
+    ServiceUuids128(&'a [[u8; 16]]),
 
     /// Service data with 16-bit service UUID.
+    /// The UUID data matches the ble network's endian order (should be little endian).
     ServiceData16 {
         /// The 16-bit service UUID.
-        uuid: u16,
+        uuid: [u8; 2],
         /// The associated service data. May be empty.
         data: &'a [u8],
     },
@@ -421,13 +424,13 @@ impl AdStructure<'_> {
             AdStructure::ServiceUuids16(uuids) => {
                 w.append(&[(uuids.len() * 2 + 1) as u8, 0x02])?;
                 for uuid in uuids.iter() {
-                    w.write_ref(uuid)?;
+                    w.write_ref(&Uuid::Uuid16(*uuid))?;
                 }
             }
             AdStructure::ServiceUuids128(uuids) => {
                 w.append(&[(uuids.len() * 16 + 1) as u8, 0x07])?;
                 for uuid in uuids.iter() {
-                    w.write_ref(uuid)?;
+                    w.write_ref(&Uuid::Uuid128(*uuid))?;
                 }
             }
             AdStructure::ShortenedLocalName(name) => {
@@ -440,7 +443,7 @@ impl AdStructure<'_> {
             }
             AdStructure::ServiceData16 { uuid, data } => {
                 w.append(&[(data.len() + 3) as u8, 0x16])?;
-                w.write(*uuid)?;
+                w.write(Uuid::Uuid16(*uuid))?;
                 w.append(data)?;
             }
             AdStructure::ManufacturerSpecificData {
@@ -480,13 +483,92 @@ impl<'d> AdStructureIter<'d> {
         }
         let code: u8 = self.cursor.read()?;
         let data = self.cursor.slice(len as usize - 1)?;
+        // These codes correspond to the table in 2.3 Common Data Types table `assigned_numbers/core/ad_types.yaml` from <https://www.bluetooth.com/specifications/assigned-numbers/>
+        // Look there for more information on each.
         match code {
+            // Flags
             0x01 => Ok(AdStructure::Flags(data[0])),
-            // 0x02 => unimplemented!(),
-            // 0x07 => unimplemented!(),
+            // Incomplete List of 16-bit Service or Service Class UUIDs
+            // 0x02 =>
+            // Complete List of 16-bit Service or Service Class UUIDs
+            0x03 => match zerocopy::FromBytes::ref_from_bytes(data) {
+                Ok(x) => Ok(AdStructure::ServiceUuids16(x)),
+                Err(e) => {
+                    let _ = zerocopy::SizeError::from(e);
+                    Err(codec::Error::InvalidValue)
+                }
+            },
+            // Incomplete List of 32-bit Service or Service Class UUIDs
+            // 0x04 =>
+            // Complete List of 32-bit Service or Service Class UUIDs
+            // 0x05
+            // Incomplete List of 128-bit Service or Service Class UUIDs
+            // 0x06
+            // Complete List of 128-bit Service or Service Class UUIDs
+            0x07 => match zerocopy::FromBytes::ref_from_bytes(data) {
+                Ok(x) => Ok(AdStructure::ServiceUuids128(x)),
+                Err(e) => {
+                    let _ = zerocopy::SizeError::from(e);
+                    Err(codec::Error::InvalidValue)
+                }
+            },
+            // Shortened Local Name
             0x08 => Ok(AdStructure::ShortenedLocalName(data)),
+            // Complete Local Name
             0x09 => Ok(AdStructure::CompleteLocalName(data)),
-            // 0x16 => unimplemented!(),
+            /*
+            0x0A Tx Power Level
+            0x0D Class of Device
+            0x0E Simple Pairing Hash C-192
+            0x0F Simple Pairing Randomizer R-192
+            0x10 Device ID Device: ID Profile (when used in EIR data)
+            0x10 Security Manager TK Value when used in OOB data blocks
+            0x11 Security Manager Out of Band Flags
+            0x12 Peripheral Connection Interval Range
+            0x14 List of 16-bit Service Solicitation UUIDs
+            0x15 List of 128-bit Service Solicitation UUIDs
+            */
+            // Service Data - 16-bit UUID
+            0x16 => {
+                if data.len() < 2 {
+                    return Err(codec::Error::InvalidValue);
+                }
+                let uuid = data[0..2].try_into().unwrap();
+                Ok(AdStructure::ServiceData16 { uuid, data: &data[2..] })
+            }
+            /*
+            0x17 Public Target Address
+            0x18 Random Target Address
+            0x19 Appearance
+            0x1A Advertising Interval
+            0x1B LE Bluetooth Device Address
+            0x1C LE Role
+            0x1D Simple Pairing Hash C-256
+            0x1E Simple Pairing Randomizer R-256
+            0x1F List of 32-bit Service Solicitation UUIDs
+            0x20 Service Data - 32-bit UUID
+            0x21 Service Data - 128-bit UUID
+            0x22 LE Secure Connections Confirmation Value
+            0x23 LE Secure Connections Random Value
+            0x24 URI
+            0x25 Indoor Positioning
+            0x26 Transport Discovery Data
+            0x27 LE Supported Features
+            0x28 Channel Map Update Indication
+            0x29 PB-ADV
+            0x2A Mesh Message
+            0x2B Mesh Beacon
+            0x2C BIGInfo
+            0x2D Broadcast_Code
+            0x2E Resolvable Set Identifier
+            0x2F Advertising Interval - long
+            0x30 Broadcast_Name
+            0x31 Encrypted Advertising Data
+            0x32 Periodic Advertising Response Timing
+            0x34 Electronic Shelf Label
+            0x3D 3D Information Data
+            */
+            // Manufacturer Specific Data
             0xff if data.len() >= 2 => Ok(AdStructure::ManufacturerSpecificData {
                 company_identifier: u16::from_le_bytes([data[0], data[1]]),
                 payload: &data[2..],
@@ -513,14 +595,16 @@ mod tests {
     #[test]
     fn adv_name_truncate() {
         let mut adv_data = [0; 31];
-        assert!(AdStructure::encode_slice(
-            &[
-                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                AdStructure::ServiceUuids16(&[Uuid::Uuid16([0x0f, 0x18])]),
-                AdStructure::CompleteLocalName(b"12345678901234567890123"),
-            ],
-            &mut adv_data[..],
-        )
-        .is_err());
+        assert!(
+            AdStructure::encode_slice(
+                &[
+                    AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                    AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
+                    AdStructure::CompleteLocalName(b"12345678901234567890123"),
+                ],
+                &mut adv_data[..],
+            )
+            .is_err()
+        );
     }
 }

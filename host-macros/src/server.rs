@@ -167,12 +167,13 @@ impl ServerBuilder {
                     })
                 }
 
-                #visibility fn get<T: trouble_host::types::gatt_traits::GattValue>(&self, characteristic: &trouble_host::attribute::Characteristic<T>) -> Result<T, trouble_host::Error> {
-                    self.server.table().get(characteristic)
+                #visibility fn get<T: trouble_host::attribute::AttributeHandle<Value = V>, V: FromGatt>(&self, attribute_handle: &T) -> Result<T::Value, Error> {
+                    self.server.table().get(attribute_handle)
                 }
 
-                #visibility fn set<T: trouble_host::types::gatt_traits::GattValue>(&self, characteristic: &trouble_host::attribute::Characteristic<T>, input: &T) -> Result<(), trouble_host::Error> {
-                    self.server.table().set(characteristic, input)
+                #visibility fn set<T: trouble_host::attribute::AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
+                    self.server.table().set(attribute_handle, input)
+
                 }
             }
 

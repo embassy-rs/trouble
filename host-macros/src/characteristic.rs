@@ -55,6 +55,8 @@ pub struct AccessArgs {
 pub struct DescriptorArgs {
     /// The UUID of the descriptor.
     pub uuid: TokenStream,
+    /// The name which will be used to identify the descriptor when accessing its attribute handle
+    pub name: Option<LitStr>,
     /// The initial value of the descriptor (&str).
     /// This is optional and can be used to set the initial value of the descriptor.
     pub default_value: Option<syn::Expr>,
@@ -166,6 +168,7 @@ impl CharacteristicArgs {
 impl DescriptorArgs {
     pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
         let mut uuid: Option<_> = None;
+        let mut name: Option<LitStr> = None;
         let mut read: Option<bool> = None;
         // let mut write: Option<bool> = None;
         // let mut capacity: Option<syn::Expr> = None;
@@ -180,6 +183,12 @@ impl DescriptorArgs {
                 .as_str()
             {
                 "uuid" => check_multi(&mut uuid, "uuid", &meta, parse_uuid(&meta)?)?,
+                "name" => {
+                    let value = meta
+                        .value()
+                        .map_err(|_| meta.error("'name' must be followed by '= [name]'. i.e. name = \"units\""))?;
+                    check_multi(&mut name, "name", &meta, value.parse()?)?
+                }
                 "read" => check_multi(&mut read, "read", &meta, true)?,
                 // "write" => check_multi(&mut write, "write", &meta, true)?,
                 // "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
@@ -196,7 +205,7 @@ impl DescriptorArgs {
                 "default_value" => return Err(meta.error("use 'value' for default value")),
                 other => {
                     return Err(meta.error(format!(
-                        "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, read, value"
+                        "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, name, read, value"
                     )));
                 }
             };
@@ -205,6 +214,7 @@ impl DescriptorArgs {
 
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Descriptor must have a UUID"))?,
+            name,
             default_value,
             capacity: None,
             access: AccessArgs {

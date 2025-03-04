@@ -5,17 +5,17 @@ use core::marker::PhantomData;
 
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 
+use crate::Error;
 use crate::att::AttErrorCode;
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::Connection;
-use crate::types::gatt_traits::GattValue;
+use crate::prelude::{AsGatt, Connection, FixedGattValue, FromGatt};
+use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
-use crate::Error;
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
@@ -359,7 +359,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             data: AttributeData::Service { uuid: service.uuid },
         });
         ServiceBuilder {
-            handle: AttributeHandle { handle },
+            handle,
             start: len,
             table: self,
         }
@@ -400,9 +400,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
     /// an error is returned
-    pub fn set<T: GattValue>(&self, characteristic: &Characteristic<T>, input: &T) -> Result<(), Error> {
-        let gatt_value = input.to_gatt();
-        self.set_raw(characteristic.handle, gatt_value)
+    pub fn set<T: AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
+        let gatt_value = input.as_gatt();
+        self.set_raw(attribute_handle.handle(), gatt_value)
     }
 
     /// Read the value of the characteristic and pass the value to the provided closure.
@@ -410,10 +410,10 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The return value of the closure is returned in this function and is assumed to be infallible.
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
-    pub fn get<T: GattValue>(&self, characteristic: &Characteristic<T>) -> Result<T, Error> {
+    pub fn get<T: AttributeHandle<Value = V>, V: FromGatt>(&self, attribute_handle: &T) -> Result<T::Value, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
-                if att.handle == characteristic.handle {
+                if att.handle == attribute_handle.handle() {
                     if let AttributeData::Data {
                         props,
                         value,
@@ -422,7 +422,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                     } = &mut att.data
                     {
                         let value = if *variable_len { &value[..*len as usize] } else { value };
-                        let v = <T as GattValue>::from_gatt(value).map_err(|_| Error::InvalidValue)?;
+                        let v = T::Value::from_gatt(value).map_err(|_| Error::InvalidValue)?;
                         return Ok(v);
                     }
                 }
@@ -434,7 +434,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// Return the characteristic which corresponds to the supplied value handle
     ///
     /// If no characteristic corresponding to the given value handle was found, returns an error
-    pub fn find_characteristic_by_value_handle<T: GattValue>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
+    pub fn find_characteristic_by_value_handle<T: AsGatt>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == handle {
@@ -471,28 +471,32 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 }
 
-/// Handle to an attribute in the attribute table.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct AttributeHandle {
-    pub(crate) handle: u16,
+/// A type which holds a handle to an attribute in the attribute table
+pub trait AttributeHandle {
+    /// The data type which the attribute contains
+    type Value: AsGatt;
+
+    /// Returns the attribute's handle
+    fn handle(&self) -> u16;
 }
 
-impl From<u16> for AttributeHandle {
-    fn from(handle: u16) -> Self {
-        Self { handle }
+impl<T: AsGatt> AttributeHandle for Characteristic<T> {
+    type Value = T;
+
+    fn handle(&self) -> u16 {
+        self.handle
     }
 }
 
 /// Builder for constructing GATT service definitions.
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
-    handle: AttributeHandle,
+    handle: u16,
     start: usize,
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
 impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
-    fn add_characteristic_internal<T: GattValue>(
+    fn add_characteristic_internal<T: AsGatt>(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
@@ -547,7 +551,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 
     /// Add a characteristic to this service with a refererence to a mutable storage buffer.
-    pub fn add_characteristic<T: GattValue, U: Into<Uuid>>(
+    pub fn add_characteristic<T: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
         props: &[CharacteristicProp],
@@ -555,7 +559,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         store: &'d mut [u8],
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         let props = props.into();
-        let bytes = value.to_gatt();
+        let bytes = value.as_gatt();
         store[..bytes.len()].copy_from_slice(bytes);
         let variable_len = T::MAX_SIZE != T::MIN_SIZE;
         let len = bytes.len() as u16;
@@ -572,7 +576,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 
     /// Add a characteristic to this service with a refererence to an immutable storage buffer.
-    pub fn add_characteristic_ro<T: GattValue, U: Into<Uuid>>(
+    pub fn add_characteristic_ro<T: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
         value: &'d T,
@@ -583,13 +587,13 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             props,
             AttributeData::ReadOnlyData {
                 props,
-                value: value.to_gatt(),
+                value: value.as_gatt(),
             },
         )
     }
 
     /// Finish construction of the service and return a handle.
-    pub fn build(self) -> AttributeHandle {
+    pub fn build(self) -> u16 {
         self.handle
     }
 }
@@ -611,14 +615,15 @@ impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
 /// A characteristic in the attribute table.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Characteristic<T: GattValue> {
-    pub(crate) cccd_handle: Option<u16>,
+pub struct Characteristic<T: AsGatt> {
+    /// Handle value assigned to the Client Characteristic Configuration Descriptor (if any)
+    pub cccd_handle: Option<u16>,
     /// Handle value assigned to this characteristic when it is added to the Gatt Attribute Table
     pub handle: u16,
     pub(crate) phantom: PhantomData<T>,
 }
 
-impl<T: GattValue> Characteristic<T> {
+impl<T: FromGatt> Characteristic<T> {
     /// Write a value to a characteristic, and notify a connection with the new value of the characteristic.
     ///
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
@@ -630,7 +635,7 @@ impl<T: GattValue> Characteristic<T> {
         connection: &Connection<'_>,
         value: &T,
     ) -> Result<(), Error> {
-        let value = value.to_gatt();
+        let value = value.as_gatt();
         server.table().set_raw(self.handle, value)?;
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
@@ -662,7 +667,7 @@ impl<T: GattValue> Characteristic<T> {
         server: &AttributeServer<'_, M, MAX>,
         value: &T,
     ) -> Result<(), Error> {
-        let value = value.to_gatt();
+        let value = value.as_gatt();
         server.table().set_raw(self.handle, value)?;
         Ok(())
     }
@@ -674,21 +679,37 @@ impl<T: GattValue> Characteristic<T> {
     pub fn get<M: RawMutex, const MAX: usize>(&self, server: &AttributeServer<'_, M, MAX>) -> Result<T, Error> {
         server.table().get(self)
     }
+
+    /// Returns the attribute handle for the characteristic's properties (if available)
+    pub fn cccd_handle(&self) -> Option<CharacteristicPropertiesHandle> {
+        self.cccd_handle.map(CharacteristicPropertiesHandle)
+    }
+}
+
+/// Attribute handle for a characteristic's properties
+pub struct CharacteristicPropertiesHandle(u16);
+
+impl AttributeHandle for CharacteristicPropertiesHandle {
+    type Value = CharacteristicProps;
+
+    fn handle(&self) -> u16 {
+        self.0
+    }
 }
 
 /// Builder for characteristics.
-pub struct CharacteristicBuilder<'r, 'd, T: GattValue, M: RawMutex, const MAX: usize> {
+pub struct CharacteristicBuilder<'r, 'd, T: AsGatt, M: RawMutex, const MAX: usize> {
     handle: Characteristic<T>,
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'d, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-    fn add_descriptor_internal(
+impl<'d, T: AsGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
+    fn add_descriptor_internal<DT: AsGatt>(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
         data: AttributeData<'d>,
-    ) -> DescriptorHandle {
+    ) -> Descriptor<DT> {
         let handle = self.table.handle;
         self.table.push(Attribute {
             uuid,
@@ -697,16 +718,19 @@ impl<'d, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 
             data,
         });
 
-        DescriptorHandle { handle }
+        Descriptor {
+            handle,
+            phantom: PhantomData,
+        }
     }
 
     /// Add a characteristic descriptor for this characteristic.
-    pub fn add_descriptor<U: Into<Uuid>>(
+    pub fn add_descriptor<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
         props: &[CharacteristicProp],
         data: &'d mut [u8],
-    ) -> DescriptorHandle {
+    ) -> Descriptor<DT> {
         let props = props.into();
         let len = data.len() as u16;
         self.add_descriptor_internal(
@@ -722,7 +746,7 @@ impl<'d, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> DescriptorHandle {
+    pub fn add_descriptor_ro<DT: AsGatt, U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> Descriptor<DT> {
         let props = [CharacteristicProp::Read].into();
         self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
     }
@@ -736,8 +760,17 @@ impl<'d, T: GattValue, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 
 /// Characteristic descriptor handle.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
-pub struct DescriptorHandle {
+pub struct Descriptor<T: AsGatt> {
     pub(crate) handle: u16,
+    phantom: PhantomData<T>,
+}
+
+impl<T: AsGatt> AttributeHandle for Descriptor<T> {
+    type Value = T;
+
+    fn handle(&self) -> u16 {
+        self.handle
+    }
 }
 
 /// Iterator over attributes.
@@ -805,6 +838,22 @@ impl CharacteristicProps {
             }
         }
         false
+    }
+}
+
+impl FixedGattValue for CharacteristicProps {
+    const SIZE: usize = 1;
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            return Err(FromGattError::InvalidLength);
+        }
+
+        Ok(CharacteristicProps(data[0]))
+    }
+
+    fn as_gatt(&self) -> &[u8] {
+        FixedGattValue::as_gatt(&self.0)
     }
 }
 
