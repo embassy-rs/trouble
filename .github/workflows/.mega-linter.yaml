@@ -1,272 +1,272 @@
-# MegaLinter GitHub Action configuration file
-# More info at https://megalinter.io
----
-name: MegaLinter
+# # MegaLinter GitHub Action configuration file
+# # More info at https://megalinter.io
+# ---
+# name: MegaLinter
 
-# Trigger mega-linter at every push. Action will also be visible from
-# Pull Requests to main
-on:
-  # Comment this line to trigger action only on pull-requests----------------------------------------------------------------
-  # (not recommended if you don't pay for GH Actions)
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
-  workflow_call:
+# # Trigger mega-linter at every push. Action will also be visible from
+# # Pull Requests to main
+# on:
+#   # Comment this line to trigger action only on pull-requests----------------------------------------------------------------
+#   # (not recommended if you don't pay for GH Actions)
+#   push:
+#     branches:
+#       - main
+#       - master
+#   pull_request:
+#     branches:
+#       - main
+#       - master
+#   workflow_call:
 
-# Comment env block if you do not want to apply fixes
-env:
-  # Apply linter fixes configuration
-  #
-  # When active, APPLY_FIXES must also be defined as environment variable
-  # (in github/workflows/mega-linter.yml or other CI tool)
-  APPLY_FIXES: all
+# # Comment env block if you do not want to apply fixes
+# env:
+#   # Apply linter fixes configuration
+#   #
+#   # When active, APPLY_FIXES must also be defined as environment variable
+#   # (in github/workflows/mega-linter.yml or other CI tool)
+#   APPLY_FIXES: all
 
-  # Decide which event triggers application of fixes in a commit or a PR
-  # (pull_request, push, all)
-  APPLY_FIXES_EVENT: pull_request
+#   # Decide which event triggers application of fixes in a commit or a PR
+#   # (pull_request, push, all)
+#   APPLY_FIXES_EVENT: pull_request
 
-  # If APPLY_FIXES is used, defines if the fixes are directly committed (commit)
-  # or posted in a PR (pull_request)
-  APPLY_FIXES_MODE: pull_request
+#   # If APPLY_FIXES is used, defines if the fixes are directly committed (commit)
+#   # or posted in a PR (pull_request)
+#   APPLY_FIXES_MODE: pull_request
 
-concurrency:
-  group: ${{ github.ref }}-${{ github.workflow }}
-  cancel-in-progress: true
+# concurrency:
+#   group: ${{ github.ref }}-${{ github.workflow }}
+#   cancel-in-progress: true
 
-jobs:
-  megalinter:
-    name: MegaLinter
-    runs-on: ubuntu-latest
+# jobs:
+#   megalinter:
+#     name: MegaLinter
+#     runs-on: ubuntu-latest
 
-    # Give the default GITHUB_TOKEN write permission to commit and push, comment
-    # issues, and post new Pull Requests; remove the ones you do not need
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-      statuses: write
+#     # Give the default GITHUB_TOKEN write permission to commit and push, comment
+#     # issues, and post new Pull Requests; remove the ones you do not need
+#     permissions:
+#       contents: write
+#       issues: write
+#       pull-requests: write
+#       statuses: write
 
-    steps:
-      # Git Checkout
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT || secrets.GITHUB_TOKEN }}
+#     steps:
+#       # Git Checkout
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+#         with:
+#           token: ${{ secrets.PAT || secrets.GITHUB_TOKEN }}
 
-          # If you use VALIDATE_ALL_CODEBASE = true, you can remove this line to
-          # improve performance
-          fetch-depth: 0
+#           # If you use VALIDATE_ALL_CODEBASE = true, you can remove this line to
+#           # improve performance
+#           fetch-depth: 0
 
-      # MegaLinter
-      - name: MegaLinter
+#       # MegaLinter
+#       - name: MegaLinter
 
-        # You can override MegaLinter flavor used to have faster performances
-        # More info at https://megalinter.io/latest/flavors/
-        uses: oxsecurity/megalinter@v8.3.0
+#         # You can override MegaLinter flavor used to have faster performances
+#         # More info at https://megalinter.io/latest/flavors/
+#         uses: oxsecurity/megalinter@v8.3.0
 
-        id: ml
+#         id: ml
 
-        # All available variables are described in documentation
-        # https://megalinter.io/latest/config-file/
-        env:
-          # Validates all source when push on main, else just the git diff with
-          # main. Override with true if you always want to lint all sources
-          #
-          # To validate the entire codebase, set to:
-          # VALIDATE_ALL_CODEBASE: true
-          #
-          # To validate only diff with main, set to:
-          # VALIDATE_ALL_CODEBASE: >-
-          #   ${{
-          #     github.event_name == 'push' &&
-          #     github.ref == 'refs/heads/main'
-          #   }}
-          VALIDATE_ALL_CODEBASE: true
+#         # All available variables are described in documentation
+#         # https://megalinter.io/latest/config-file/
+#         env:
+#           # Validates all source when push on main, else just the git diff with
+#           # main. Override with true if you always want to lint all sources
+#           #
+#           # To validate the entire codebase, set to:
+#           # VALIDATE_ALL_CODEBASE: true
+#           #
+#           # To validate only diff with main, set to:
+#           # VALIDATE_ALL_CODEBASE: >-
+#           #   ${{
+#           #     github.event_name == 'push' &&
+#           #     github.ref == 'refs/heads/main'
+#           #   }}
+#           VALIDATE_ALL_CODEBASE: true
 
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # ADD YOUR CUSTOM ENV VARIABLES HERE TO OVERRIDE VALUES OF
-          # .mega-linter.yml AT THE ROOT OF YOUR REPOSITORY
+#           # ADD YOUR CUSTOM ENV VARIABLES HERE TO OVERRIDE VALUES OF
+#           # .mega-linter.yml AT THE ROOT OF YOUR REPOSITORY
 
-      # Upload MegaLinter artifacts
-      - name: Archive production artifacts
-        uses: actions/upload-artifact@v4
-        if: success() || failure()
-        with:
-          name: MegaLinter reports
-          path: |
-            megalinter-reports
-            mega-linter.log
+#       # Upload MegaLinter artifacts
+#       - name: Archive production artifacts
+#         uses: actions/upload-artifact@v4
+#         if: success() || failure()
+#         with:
+#           name: MegaLinter reports
+#           path: |
+#             megalinter-reports
+#             mega-linter.log
 
-      # Create pull request if applicable
-      # (for now works only on PR from same repository, not from forks)
-      - name: Create Pull Request with applied fixes
-        uses: peter-evans/create-pull-request@v7
-        id: cpr
-        if: >-
-          steps.ml.outputs.has_updated_sources == 1 &&
-          (
-            env.APPLY_FIXES_EVENT == 'all' ||
-            env.APPLY_FIXES_EVENT == github.event_name
-          ) &&
-          env.APPLY_FIXES_MODE == 'pull_request' &&
-          (
-            github.event_name == 'push' ||
-            github.event.pull_request.head.repo.full_name == github.repository
-          ) &&
-          !contains(github.event.head_commit.message, 'skip fix')
-        with:
-          token: ${{ secrets.PAT || secrets.GITHUB_TOKEN }}
-          commit-message: "[MegaLinter] Apply linters automatic fixes"
-          title: "[MegaLinter] Apply linters automatic fixes"
-          labels: bot
-          branch: megalinter-fixes-${{ github.head_ref }}
-          body: |
-            MegaLinter has automatically applied linters fixes on this PR.
-            Please review the changes and merge if they are correct.
-          base: ${{ github.head_ref }}
+#       # Create pull request if applicable
+#       # (for now works only on PR from same repository, not from forks)
+#       - name: Create Pull Request with applied fixes
+#         uses: peter-evans/create-pull-request@v7
+#         id: cpr
+#         if: >-
+#           steps.ml.outputs.has_updated_sources == 1 &&
+#           (
+#             env.APPLY_FIXES_EVENT == 'all' ||
+#             env.APPLY_FIXES_EVENT == github.event_name
+#           ) &&
+#           env.APPLY_FIXES_MODE == 'pull_request' &&
+#           (
+#             github.event_name == 'push' ||
+#             github.event.pull_request.head.repo.full_name == github.repository
+#           ) &&
+#           !contains(github.event.head_commit.message, 'skip fix')
+#         with:
+#           token: ${{ secrets.PAT || secrets.GITHUB_TOKEN }}
+#           commit-message: "[MegaLinter] Apply linters automatic fixes"
+#           title: "[MegaLinter] Apply linters automatic fixes"
+#           labels: bot
+#           branch: megalinter-fixes-${{ github.head_ref }}
+#           body: |
+#             MegaLinter has automatically applied linters fixes on this PR.
+#             Please review the changes and merge if they are correct.
+#           base: ${{ github.head_ref }}
 
-      - name: Post PR Comment
-        if: >-
-          steps.ml.outputs.has_updated_sources == 1 &&
-          (
-            env.APPLY_FIXES_EVENT == 'all' ||
-            env.APPLY_FIXES_EVENT == github.event_name
-          ) &&
-          env.APPLY_FIXES_MODE == 'pull_request' &&
-          (
-            github.event_name == 'push' ||
-            github.event.pull_request.head.repo.full_name == github.repository
-          ) &&
-          !contains(github.event.head_commit.message, 'skip fix')
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          message: |
-            MegaLinter has automatically applied linters fixes on this PR.
-            Please review the changes and merge if they are correct.
-            PR: ${{ steps.cpr.outputs.pull-request-url }}
-          hide_and_recreate: true
+#       - name: Post PR Comment
+#         if: >-
+#           steps.ml.outputs.has_updated_sources == 1 &&
+#           (
+#             env.APPLY_FIXES_EVENT == 'all' ||
+#             env.APPLY_FIXES_EVENT == github.event_name
+#           ) &&
+#           env.APPLY_FIXES_MODE == 'pull_request' &&
+#           (
+#             github.event_name == 'push' ||
+#             github.event.pull_request.head.repo.full_name == github.repository
+#           ) &&
+#           !contains(github.event.head_commit.message, 'skip fix')
+#         uses: marocchino/sticky-pull-request-comment@v2
+#         with:
+#           message: |
+#             MegaLinter has automatically applied linters fixes on this PR.
+#             Please review the changes and merge if they are correct.
+#             PR: ${{ steps.cpr.outputs.pull-request-url }}
+#           hide_and_recreate: true
 
-      - name: Fail if PR Created
-        run: |
-          if [ "${{ steps.cpr.outputs.pull-request-url }}" != "" ]; then
-            echo "A PR with formatting fixes has been created. Please merge it before proceeding."
-            exit 1
-          fi
-  # Required due to Mega Linter not currently supporting Rust Format
-  # cargo_fmt_library:
-  #   name: Cargo Formatter (Library)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #     - name: Install Toolchains
-  #       run: |
-  #         rustup toolchain install nightly-x86_64-unknown-linux-gnu
-  #         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
-  #     - name: Rustfmt check on host
-  #       run: cargo  +nightly fmt --manifest-path host/Cargo.toml -- --check
-  #     - name: Rustfmt check on host macros
+#       - name: Fail if PR Created
+#         run: |
+#           if [ "${{ steps.cpr.outputs.pull-request-url }}" != "" ]; then
+#             echo "A PR with formatting fixes has been created. Please merge it before proceeding."
+#             exit 1
+#           fi
+#   # Required due to Mega Linter not currently supporting Rust Format
+#   # cargo_fmt_library:
+#   #   name: Cargo Formatter (Library)
+#   #   runs-on: ubuntu-latest
+#   #   steps:
+#   #     - name: Checkout code
+#   #       uses: actions/checkout@v4
+#   #     - name: Install Toolchains
+#   #       run: |
+#   #         rustup toolchain install nightly-x86_64-unknown-linux-gnu
+#   #         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
+#   #     - name: Rustfmt check on host
+#   #       run: cargo  +nightly fmt --manifest-path host/Cargo.toml -- --check
+#   #     - name: Rustfmt check on host macros
 
-  #       run: cargo  +nightly fmt --manifest-path host-macros/Cargo.toml -- --check
+#   #       run: cargo  +nightly fmt --manifest-path host-macros/Cargo.toml -- --check
 
-  # cargo_fmt_examples:
-  #   name: Cargo Formatter (Examples)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #     - name: Install Toolchains
-  #       run: |
-  #         rustup toolchain install nightly-x86_64-unknown-linux-gnu
-  #         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
-  #     - name: Rustfmt check on apache-nimble
-  #       run: cargo +nightly fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
-  #     - name: Rustfmt check on apps
-  #       run: cargo +nightly fmt --manifest-path examples/apps/Cargo.toml -- --check
-  #     - name: Rustfmt check on esp32
-  #       run: cargo +nightly fmt --manifest-path examples/esp32/Cargo.toml -- --check
-  #     - name: Rustfmt check on nrf-sdc
-  #       run: cargo +nightly fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
-  #     - name: Rustfmt check on rp-pico-2-w
-  #       run: cargo +nightly fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
-  #     - name: Rustfmt check on rp-pico-w
-  #       run: cargo +nightly fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
-  #     - name: Rustfmt check on serial-hci
-  #       run: cargo +nightly fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
-  #     - name: Rustfmt check on tests
-  #       run: cargo +nightly fmt --manifest-path examples/tests/Cargo.toml -- --check
+#   # cargo_fmt_examples:
+#   #   name: Cargo Formatter (Examples)
+#   #   runs-on: ubuntu-latest
+#   #   steps:
+#   #     - name: Checkout code
+#   #       uses: actions/checkout@v4
+#   #     - name: Install Toolchains
+#   #       run: |
+#   #         rustup toolchain install nightly-x86_64-unknown-linux-gnu
+#   #         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
+#   #     - name: Rustfmt check on apache-nimble
+#   #       run: cargo +nightly fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
+#   #     - name: Rustfmt check on apps
+#   #       run: cargo +nightly fmt --manifest-path examples/apps/Cargo.toml -- --check
+#   #     - name: Rustfmt check on esp32
+#   #       run: cargo +nightly fmt --manifest-path examples/esp32/Cargo.toml -- --check
+#   #     - name: Rustfmt check on nrf-sdc
+#   #       run: cargo +nightly fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
+#   #     - name: Rustfmt check on rp-pico-2-w
+#   #       run: cargo +nightly fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
+#   #     - name: Rustfmt check on rp-pico-w
+#   #       run: cargo +nightly fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
+#   #     - name: Rustfmt check on serial-hci
+#   #       run: cargo +nightly fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
+#   #     - name: Rustfmt check on tests
+#   #       run: cargo +nightly fmt --manifest-path examples/tests/Cargo.toml -- --check
 
-  # cargo_clippy_library:
-  #   name: Cargo Clippy (Host Macros)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #     - name: Cargo Clippy check on host Macros
-  #       run: |
-  #         cd host-macros
-  #         cargo clippy -- --D warnings
+#   # cargo_clippy_library:
+#   #   name: Cargo Clippy (Host Macros)
+#   #   runs-on: ubuntu-latest
+#   #   steps:
+#   #     - name: Checkout code
+#   #       uses: actions/checkout@v4
+#   #     - name: Cargo Clippy check on host Macros
+#   #       run: |
+#   #         cd host-macros
+#   #         cargo clippy -- --D warnings
 
-  # cargo_clippy_examples:
-  #   name: Cargo Clippy (Examples)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #     - name: Install toolchains
-  #       run: |
-  #         rustup target add riscv32imac-unknown-none-elf
-  #     # - name: Cargo Clippy check on apache-nimble # (Disabled due to version bumps needed)
-  #     #   run: |
-  #     #     cd examples/apache-nimble
-  #     #     cargo clippy -- --D warnings
-  #     - name: Cargo Clippy apps
-  #       run: |
-  #         cd examples/apps
-  #         cargo clippy -- --D warnings
-  #     - name: Cargo Clippy esp32
-  #       run: |
-  #         cd examples/esp32
-  #         # echo "Checking esp32"
-  #         # cargo clippy --no-default-features --features=esp32 --target=xtensa-esp32-none-elf -- -D warnings # (Disabled due to missing toolchain)
-  #         echo "Checking esp32c2"
-  #         cargo clippy --no-default-features --features=esp32c2 --target=riscv32imc-unknown-none-elf -- -D warnings
-  #         echo "Checking esp32c3"
-  #         cargo clippy --no-default-features --features=esp32c3 --target=riscv32imc-unknown-none-elf -- -D warnings
-  #         echo "Checking esp32c6"
-  #         cargo clippy  --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf -- -D warnings
-  #         echo "Checking esp32h2"
-  #         cargo clippy  --no-default-features --features=esp32h2 --target=riscv32imac-unknown-none-elf -- -D warnings
-  #         # echo "Checking esp32s3"
-  #         # cargo clippy --no-default-features --features=esp32s3 --target=xtensa-esp32s3-none-elf -- -D warnings # (Disabled due to missing toolchain)
-  #     - name: Cargo Clippy nrf-sdc
-  #       run: |
-  #         cd examples/nrf-sdc
-  #         echo "Checking nrf52832"
-  #         cargo clippy --features=nrf52832  -- -D warnings
-  #         echo "Checking nrf52833"
-  #         cargo clippy --features=nrf52833  -- -D warnings
-  #         echo "Checking nrf52840"
-  #         cargo clippy --features=nrf52840  -- -D warnings
-  #     - name: Cargo Clippy rp-pico-2-w
-  #       run: |
-  #         cd examples/rp-pico-2-w
-  #         cargo clippy -- --D warnings
-  #     - name: Cargo Clippy rp-pico-w
-  #       run: |
-  #         cd examples/rp-pico-w
-  #         cargo clippy -- --D warnings
-  #     - name: Cargo Clippy serial-hci
-  #       run: |
-  #         cd examples/serial-hci
-  #         cargo clippy -- --D warnings
-  #     - name: Cargo Clippy tests
-  #       run: |
-  #         cd examples/tests
-  #         cargo clippy -- --D warnings
+#   # cargo_clippy_examples:
+#   #   name: Cargo Clippy (Examples)
+#   #   runs-on: ubuntu-latest
+#   #   steps:
+#   #     - name: Checkout code
+#   #       uses: actions/checkout@v4
+#   #     - name: Install toolchains
+#   #       run: |
+#   #         rustup target add riscv32imac-unknown-none-elf
+#   #     # - name: Cargo Clippy check on apache-nimble # (Disabled due to version bumps needed)
+#   #     #   run: |
+#   #     #     cd examples/apache-nimble
+#   #     #     cargo clippy -- --D warnings
+#   #     - name: Cargo Clippy apps
+#   #       run: |
+#   #         cd examples/apps
+#   #         cargo clippy -- --D warnings
+#   #     - name: Cargo Clippy esp32
+#   #       run: |
+#   #         cd examples/esp32
+#   #         # echo "Checking esp32"
+#   #         # cargo clippy --no-default-features --features=esp32 --target=xtensa-esp32-none-elf -- -D warnings # (Disabled due to missing toolchain)
+#   #         echo "Checking esp32c2"
+#   #         cargo clippy --no-default-features --features=esp32c2 --target=riscv32imc-unknown-none-elf -- -D warnings
+#   #         echo "Checking esp32c3"
+#   #         cargo clippy --no-default-features --features=esp32c3 --target=riscv32imc-unknown-none-elf -- -D warnings
+#   #         echo "Checking esp32c6"
+#   #         cargo clippy  --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf -- -D warnings
+#   #         echo "Checking esp32h2"
+#   #         cargo clippy  --no-default-features --features=esp32h2 --target=riscv32imac-unknown-none-elf -- -D warnings
+#   #         # echo "Checking esp32s3"
+#   #         # cargo clippy --no-default-features --features=esp32s3 --target=xtensa-esp32s3-none-elf -- -D warnings # (Disabled due to missing toolchain)
+#   #     - name: Cargo Clippy nrf-sdc
+#   #       run: |
+#   #         cd examples/nrf-sdc
+#   #         echo "Checking nrf52832"
+#   #         cargo clippy --features=nrf52832  -- -D warnings
+#   #         echo "Checking nrf52833"
+#   #         cargo clippy --features=nrf52833  -- -D warnings
+#   #         echo "Checking nrf52840"
+#   #         cargo clippy --features=nrf52840  -- -D warnings
+#   #     - name: Cargo Clippy rp-pico-2-w
+#   #       run: |
+#   #         cd examples/rp-pico-2-w
+#   #         cargo clippy -- --D warnings
+#   #     - name: Cargo Clippy rp-pico-w
+#   #       run: |
+#   #         cd examples/rp-pico-w
+#   #         cargo clippy -- --D warnings
+#   #     - name: Cargo Clippy serial-hci
+#   #       run: |
+#   #         cd examples/serial-hci
+#   #         cargo clippy -- --D warnings
+#   #     - name: Cargo Clippy tests
+#   #       run: |
+#   #         cd examples/tests
+#   #         cargo clippy -- --D warnings

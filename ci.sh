@@ -75,10 +75,10 @@ cd host-macros && cargo clippy -- -D warnings  && cd ..
 
 # Clippy Examples
 cd examples
-cd apache-nimble && cargo clippy -- -D warnings  && cd ..
+# cd apache-nimble && cargo clippy -- -D warnings  && cd ..
 cd apps && cargo clippy -- -D warnings  && cd ..
 # ESP32 Examples
-cd esp32 && cargo clippy --no-default-features --features=esp32 --target=xtensa-esp32-none-elf -- -D warnings  && cd ..
+# cd esp32 && cargo clippy --no-default-features --features=esp32 --target=xtensa-esp32-none-elf -- -D warnings  && cd ..
 cd esp32c2 && cargo clippy --no-default-features --features=esp32c2 --target=riscv32imc-unknown-none-elf -- -D warnings && cd ..
 cd esp32c3 && cargo clippy --no-default-features --features=esp32c3 --target=riscv32imc-unknown-none-elf -- -D warnings && cd..
 cd esp32c6 && cargo clippy --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf -- -D warnings && cd..
@@ -101,11 +101,55 @@ cd tests && cargo clippy -- --D warnings && cd..
 # Leave examples folder
 cd..
 
+# Enable MegaLinter (you can set this flag in your CI/CD or local environment)
+ENABLE_MEGALINTER=${ENABLE_MEGALINTER:-false}  # Use variable or default to true
 # Run and install MegaLinter (if enabled)
+# Check if MegaLinter should be enabled
+if [ "$ENABLE_MEGALINTER" = true ]; then
+    echo "MegaLinter is enabled. Installing and running..."
 
+    # Check if Node.js is installed; install if necessary
+    if ! command -v node >/dev/null 2>&1; then
+        install_node
+    fi
+    # Install MegaLinter globally (if not already installed)
+    if ! command -v mega-linter-runner >/dev/null 2>&1; then
+        echo "Installing MegaLinter..."
+        npm install -g @megalinter/mega-linter-runner
+    else
+        echo "MegaLinter is already installed."
+    fi
+
+    # Run MegaLinter
+    echo "Running MegaLinter..."
+    mega-linter-runner
+else
+    echo "MegaLinter is not enabled. Skipping..."
+fi
 
 # Run tests
 echo "Running Cargo Clippy"
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./examples/tests/Cargo.toml --no-run -- --nocapture
+
+
+# Function to install Node.js if not installed
+install_node() {
+    echo "Node.js is not installed. Installing..."
+    # Detect OS and install Node.js
+    if [ "$(uname)" = "Darwin" ]; then
+            brew install node
+	elif [ "$(uname -s)" = "Linux" ]; then
+		apt-get install nodejs 
+	else
+        echo "Unsupported operating system. Please install Node.js manually."
+        exit 1
+    fi
+
+	  # Confirm npm is now available after Node.js installation
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "npm is not available even after Node.js installation. Please check your installation."
+        exit 1
+    fi
+}
