@@ -14,10 +14,8 @@ use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
 use bt_hci::FromHciBytesError;
-use bt_hci::FromHciBytesError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::param::{AddrKind, BdAddr};
 use bt_hci::param::{AddrKind, BdAddr};
 
 use crate::att::AttErrorCode;
