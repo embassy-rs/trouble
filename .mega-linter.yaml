@@ -14,7 +14,7 @@ APPLY_FIXES: all
 # If you use ENABLE_LINTERS variable, all other linters will be disabled by default
 ENABLE_LINTERS:
   - ACTION_ACTIONLINT
-  - RUST_CLIPPY
+  # - RUST_CLIPPY # Removed as doing inside ci.sh
   - MARKDOWN_MARKDOWNLINT
   - MARKDOWN_MARKDOWN_LINK_CHECK
   - MARKDOWN_MARKDOWN_TABLE_FORMATTER

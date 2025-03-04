@@ -52,6 +52,53 @@ cargo batch \
     --- build --release --manifest-path examples/rp-pico-2-w/Cargo.toml --target thumbv8m.main-none-eabihf --features skip-cyw43-firmware
 #    --- build --release --manifest-path examples/apache-nimble/Cargo.toml --target thumbv7em-none-eabihf
 
+# Run Cargo fmt
+cargo batch  \
+	# Core Library
+	--- fmt --manifest-path host/Cargo.toml -- --check
+	--- fmt --manifest-path host-macros/Cargo.toml -- --check
+	# Examples
+	--- fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
+	--- fmt --manifest-path examples/apps/Cargo.toml -- --check
+	--- fmt --manifest-path examples/esp32/Cargo.toml -- --check
+	--- fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
+	--- fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
+	--- fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
+	--- fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
+	--- fmt --manifest-path examples/tests/Cargo.toml -- --check
+
+# Clippy Main Library
+cd host && cargo clippy -- -D warnings && cd ..
+cd host-macros && cargo clippy -- -D warnings  && cd ..
+
+# Clippy Examples
+cd examples
+cd apache-nimble && cargo clippy -- -D warnings  && cd ..
+cd apps && cargo clippy -- -D warnings  && cd ..
+# ESP32 Examples
+cd esp32 && cargo clippy --no-default-features --features=esp32 --target=xtensa-esp32-none-elf -- -D warnings  && cd ..
+cd esp32c2 && cargo clippy --no-default-features --features=esp32c2 --target=riscv32imc-unknown-none-elf -- -D warnings && cd ..
+cd esp32c3 && cargo clippy --no-default-features --features=esp32c3 --target=riscv32imc-unknown-none-elf -- -D warnings && cd..
+cd esp32c6 && cargo clippy --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf -- -D warnings && cd..
+cd esp32h2 && cargo clippy  --no-default-features --features=esp32h2 --target=riscv32imac-unknown-none-elf -- -D warnings && cd..
+cd esp32s3 && cargo clippy --no-default-features --features=esp32s3 --target=xtensa-esp32s3-none-elf -- -D warnings && cd..
+# nrf-sdc
+cd nrf-sdc
+cargo clippy --features=nrf52832  -- -D warnings
+cargo clippy --features=nrf52833  -- -D warnings
+cargo clippy --features=nrf52840  -- -D warnings
+cd..
+# rp-pico-2-w
+cd rp-pico-2-w && cargo clippy -- --D warnings && cd..
+# rp-pico-w
+cd rp-pico-w && cargo clippy -- --D warnings && cd..
+# serial-hci
+cd serial-hci && cargo clippy -- --D warnings && cd..
+# tests
+cd tests && cargo clippy -- --D warnings && cd..
+# Leave examples folder
+cd..
+
 # Run tests
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture

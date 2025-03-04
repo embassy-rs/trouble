@@ -159,114 +159,114 @@ jobs:
             exit 1
           fi
   # Required due to Mega Linter not currently supporting Rust Format
-  cargo_fmt_library:
-    name: Cargo Formatter (Library)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install Toolchains
-        run: |
-          rustup toolchain install nightly-x86_64-unknown-linux-gnu
-          rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
-      - name: Rustfmt check on host
-        run: cargo  +nightly fmt --manifest-path host/Cargo.toml -- --check
-      - name: Rustfmt check on host macros
+  # cargo_fmt_library:
+  #   name: Cargo Formatter (Library)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #     - name: Install Toolchains
+  #       run: |
+  #         rustup toolchain install nightly-x86_64-unknown-linux-gnu
+  #         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
+  #     - name: Rustfmt check on host
+  #       run: cargo  +nightly fmt --manifest-path host/Cargo.toml -- --check
+  #     - name: Rustfmt check on host macros
 
-        run: cargo  +nightly fmt --manifest-path host-macros/Cargo.toml -- --check
+  #       run: cargo  +nightly fmt --manifest-path host-macros/Cargo.toml -- --check
 
-  cargo_fmt_examples:
-    name: Cargo Formatter (Examples)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install Toolchains
-        run: |
-          rustup toolchain install nightly-x86_64-unknown-linux-gnu
-          rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
-      - name: Rustfmt check on apache-nimble
-        run: cargo +nightly fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
-      - name: Rustfmt check on apps
-        run: cargo +nightly fmt --manifest-path examples/apps/Cargo.toml -- --check
-      - name: Rustfmt check on esp32
-        run: cargo +nightly fmt --manifest-path examples/esp32/Cargo.toml -- --check
-      - name: Rustfmt check on nrf-sdc
-        run: cargo +nightly fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
-      - name: Rustfmt check on rp-pico-2-w
-        run: cargo +nightly fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
-      - name: Rustfmt check on rp-pico-w
-        run: cargo +nightly fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
-      - name: Rustfmt check on serial-hci
-        run: cargo +nightly fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
-      - name: Rustfmt check on tests
-        run: cargo +nightly fmt --manifest-path examples/tests/Cargo.toml -- --check
+  # cargo_fmt_examples:
+  #   name: Cargo Formatter (Examples)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #     - name: Install Toolchains
+  #       run: |
+  #         rustup toolchain install nightly-x86_64-unknown-linux-gnu
+  #         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
+  #     - name: Rustfmt check on apache-nimble
+  #       run: cargo +nightly fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
+  #     - name: Rustfmt check on apps
+  #       run: cargo +nightly fmt --manifest-path examples/apps/Cargo.toml -- --check
+  #     - name: Rustfmt check on esp32
+  #       run: cargo +nightly fmt --manifest-path examples/esp32/Cargo.toml -- --check
+  #     - name: Rustfmt check on nrf-sdc
+  #       run: cargo +nightly fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
+  #     - name: Rustfmt check on rp-pico-2-w
+  #       run: cargo +nightly fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
+  #     - name: Rustfmt check on rp-pico-w
+  #       run: cargo +nightly fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
+  #     - name: Rustfmt check on serial-hci
+  #       run: cargo +nightly fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
+  #     - name: Rustfmt check on tests
+  #       run: cargo +nightly fmt --manifest-path examples/tests/Cargo.toml -- --check
 
-  cargo_clippy_library:
-    name: Cargo Clippy (Host Macros)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Cargo Clippy check on host Macros
-        run: |
-          cd host-macros
-          cargo clippy -- --D warnings
+  # cargo_clippy_library:
+  #   name: Cargo Clippy (Host Macros)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #     - name: Cargo Clippy check on host Macros
+  #       run: |
+  #         cd host-macros
+  #         cargo clippy -- --D warnings
 
-  cargo_clippy_examples:
-    name: Cargo Clippy (Examples)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install toolchains
-        run: |
-          rustup target add riscv32imac-unknown-none-elf
-      # - name: Cargo Clippy check on apache-nimble # (Disabled due to version bumps needed)
-      #   run: |
-      #     cd examples/apache-nimble
-      #     cargo clippy -- --D warnings
-      - name: Cargo Clippy apps
-        run: |
-          cd examples/apps
-          cargo clippy -- --D warnings
-      - name: Cargo Clippy esp32
-        run: |
-          cd examples/esp32
-          # echo "Checking esp32"
-          # cargo clippy --no-default-features --features=esp32 --target=xtensa-esp32-none-elf -- -D warnings # (Disabled due to missing toolchain)
-          echo "Checking esp32c2"
-          cargo clippy --no-default-features --features=esp32c2 --target=riscv32imc-unknown-none-elf -- -D warnings
-          echo "Checking esp32c3"
-          cargo clippy --no-default-features --features=esp32c3 --target=riscv32imc-unknown-none-elf -- -D warnings
-          echo "Checking esp32c6"
-          cargo clippy  --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf -- -D warnings
-          echo "Checking esp32h2"
-          cargo clippy  --no-default-features --features=esp32h2 --target=riscv32imac-unknown-none-elf -- -D warnings
-          # echo "Checking esp32s3"
-          # cargo clippy --no-default-features --features=esp32s3 --target=xtensa-esp32s3-none-elf -- -D warnings # (Disabled due to missing toolchain)
-      - name: Cargo Clippy nrf-sdc
-        run: |
-          cd examples/nrf-sdc
-          echo "Checking nrf52832"
-          cargo clippy --features=nrf52832  -- -D warnings
-          echo "Checking nrf52833"
-          cargo clippy --features=nrf52833  -- -D warnings
-          echo "Checking nrf52840"
-          cargo clippy --features=nrf52840  -- -D warnings
-      - name: Cargo Clippy rp-pico-2-w
-        run: |
-          cd examples/rp-pico-2-w
-          cargo clippy -- --D warnings
-      - name: Cargo Clippy rp-pico-w
-        run: |
-          cd examples/rp-pico-w
-          cargo clippy -- --D warnings
-      - name: Cargo Clippy serial-hci
-        run: |
-          cd examples/serial-hci
-          cargo clippy -- --D warnings
-      - name: Cargo Clippy tests
-        run: |
-          cd examples/tests
-          cargo clippy -- --D warnings
+  # cargo_clippy_examples:
+  #   name: Cargo Clippy (Examples)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #     - name: Install toolchains
+  #       run: |
+  #         rustup target add riscv32imac-unknown-none-elf
+  #     # - name: Cargo Clippy check on apache-nimble # (Disabled due to version bumps needed)
+  #     #   run: |
+  #     #     cd examples/apache-nimble
+  #     #     cargo clippy -- --D warnings
+  #     - name: Cargo Clippy apps
+  #       run: |
+  #         cd examples/apps
+  #         cargo clippy -- --D warnings
+  #     - name: Cargo Clippy esp32
+  #       run: |
+  #         cd examples/esp32
+  #         # echo "Checking esp32"
+  #         # cargo clippy --no-default-features --features=esp32 --target=xtensa-esp32-none-elf -- -D warnings # (Disabled due to missing toolchain)
+  #         echo "Checking esp32c2"
+  #         cargo clippy --no-default-features --features=esp32c2 --target=riscv32imc-unknown-none-elf -- -D warnings
+  #         echo "Checking esp32c3"
+  #         cargo clippy --no-default-features --features=esp32c3 --target=riscv32imc-unknown-none-elf -- -D warnings
+  #         echo "Checking esp32c6"
+  #         cargo clippy  --no-default-features --features=esp32c6 --target=riscv32imac-unknown-none-elf -- -D warnings
+  #         echo "Checking esp32h2"
+  #         cargo clippy  --no-default-features --features=esp32h2 --target=riscv32imac-unknown-none-elf -- -D warnings
+  #         # echo "Checking esp32s3"
+  #         # cargo clippy --no-default-features --features=esp32s3 --target=xtensa-esp32s3-none-elf -- -D warnings # (Disabled due to missing toolchain)
+  #     - name: Cargo Clippy nrf-sdc
+  #       run: |
+  #         cd examples/nrf-sdc
+  #         echo "Checking nrf52832"
+  #         cargo clippy --features=nrf52832  -- -D warnings
+  #         echo "Checking nrf52833"
+  #         cargo clippy --features=nrf52833  -- -D warnings
+  #         echo "Checking nrf52840"
+  #         cargo clippy --features=nrf52840  -- -D warnings
+  #     - name: Cargo Clippy rp-pico-2-w
+  #       run: |
+  #         cd examples/rp-pico-2-w
+  #         cargo clippy -- --D warnings
+  #     - name: Cargo Clippy rp-pico-w
+  #       run: |
+  #         cd examples/rp-pico-w
+  #         cargo clippy -- --D warnings
+  #     - name: Cargo Clippy serial-hci
+  #       run: |
+  #         cd examples/serial-hci
+  #         cargo clippy -- --D warnings
+  #     - name: Cargo Clippy tests
+  #       run: |
+  #         cd examples/tests
+  #         cargo clippy -- --D warnings
