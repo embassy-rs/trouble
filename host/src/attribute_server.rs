@@ -19,19 +19,19 @@ struct Client {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone)]
-struct CccdTable<const CT: usize> {
-    inner: [(u16, CCCD); CT],
+struct CccdTable<const ENTRIES: usize> {
+    inner: [(u16, CCCD); ENTRIES],
 }
 
-impl<const CT: usize> Default for CccdTable<CT> {
+impl<const ENTRIES: usize> Default for CccdTable<ENTRIES> {
     fn default() -> Self {
         Self {
-            inner: [(0, CCCD(0)); CT],
+            inner: [(0, CCCD(0)); ENTRIES],
         }
     }
 }
 
-impl<const CT: usize> CccdTable<CT> {
+impl<const ENTRIES: usize> CccdTable<ENTRIES> {
     fn add_handle(&mut self, cccd_handle: u16) {
         for (handle, _) in self.inner.iter_mut() {
             if *handle == 0 {
@@ -76,13 +76,13 @@ impl<const CT: usize> CccdTable<CT> {
     }
 }
 
-struct CccdTables<M: RawMutex, const CT: usize, const CN: usize> {
-    state: Mutex<M, RefCell<[(Client, CccdTable<CT>); CN]>>,
+struct CccdTables<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> {
+    state: Mutex<M, RefCell<[(Client, CccdTable<CCCD_MAX>); CONN_MAX]>>,
 }
 
-impl<M: RawMutex, const CT: usize, const CN: usize> CccdTables<M, CT, CN> {
-    fn new<const A: usize>(att_table: &AttributeTable<'_, M, A>) -> Self {
-        let mut values: [(Client, CccdTable<CT>); CN] =
+impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CCCD_MAX, CONN_MAX> {
+    fn new<const ATT_MAX: usize>(att_table: &AttributeTable<'_, M, ATT_MAX>) -> Self {
+        let mut values: [(Client, CccdTable<CCCD_MAX>); CONN_MAX] =
             core::array::from_fn(|_| (Client::default(), CccdTable::default()));
         let mut base_cccd_table = CccdTable::default();
         att_table.iterate(|mut at| {
@@ -101,7 +101,7 @@ impl<M: RawMutex, const CT: usize, const CN: usize> CccdTables<M, CT, CN> {
         }
     }
 
-    fn connect(&self, peer_address: &BdAddr) {
+    fn connect(&self, peer_address: &BdAddr) -> Result<(), Error> {
         self.state.lock(|n| {
             trace!("[server] searching for peer {:?}", peer_address);
             let mut n = n.borrow_mut();
@@ -110,12 +110,12 @@ impl<M: RawMutex, const CT: usize, const CN: usize> CccdTables<M, CT, CN> {
                 if client.address == *peer_address {
                     // trace!("[server] found! table = {:?}", *table);
                     client.is_connected = true;
-                    return;
+                    return Ok(());
                 } else if client.address == empty_slot {
                     //  trace!("[server] empty slot: connecting");
                     client.is_connected = true;
                     client.address = *peer_address;
-                    return;
+                    return Ok(());
                 }
             }
             trace!("[server] all slots full...");
@@ -127,12 +127,13 @@ impl<M: RawMutex, const CT: usize, const CN: usize> CccdTables<M, CT, CN> {
                     client.address = *peer_address;
                     // erase the previous client's config
                     table.disable_all();
-                    return;
+                    return Ok(());
                 }
             }
-            // Should be unreachable if the max connections (CN) matches that defined
+            // Should be unreachable if the max connections (CONN_MAX) matches that defined
             // in HostResources...
             warn!("[server] unable to obtain CCCD slot");
+            Err(Error::ConnectionLimitReached)
         })
     }
 
@@ -186,16 +187,16 @@ impl<M: RawMutex, const CT: usize, const CN: usize> CccdTables<M, CT, CN> {
 }
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct AttributeServer<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize> {
-    att_table: AttributeTable<'values, M, AT>,
-    cccd_tables: CccdTables<M, CT, CN>,
+pub struct AttributeServer<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> {
+    att_table: AttributeTable<'values, M, ATT_MAX>,
+    cccd_tables: CccdTables<M, CCCD_MAX, CONN_MAX>,
 }
 
 pub(crate) mod sealed {
     use super::*;
 
     pub trait DynamicAttributeServer {
-        fn connect(&self, connection: &Connection);
+        fn connect(&self, connection: &Connection) -> Result<(), Error>;
         fn disconnect(&self, connection: &Connection);
         fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error>;
         fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool;
@@ -206,15 +207,15 @@ pub(crate) mod sealed {
 /// Type erased attribute server
 pub trait DynamicAttributeServer: sealed::DynamicAttributeServer {}
 
-impl<M: RawMutex, const AT: usize, const CT: usize, const CN: usize> DynamicAttributeServer
-    for AttributeServer<'_, M, AT, CT, CN>
+impl<M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> DynamicAttributeServer
+    for AttributeServer<'_, M, ATT_MAX, CCCD_MAX, CONN_MAX>
 {
 }
-impl<M: RawMutex, const AT: usize, const CT: usize, const CN: usize> sealed::DynamicAttributeServer
-    for AttributeServer<'_, M, AT, CT, CN>
+impl<M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> sealed::DynamicAttributeServer
+    for AttributeServer<'_, M, ATT_MAX, CCCD_MAX, CONN_MAX>
 {
-    fn connect(&self, connection: &Connection) {
-        AttributeServer::connect(self, connection);
+    fn connect(&self, connection: &Connection) -> Result<(), Error> {
+        AttributeServer::connect(self, connection)
     }
 
     fn disconnect(&self, connection: &Connection) {
@@ -235,15 +236,19 @@ impl<M: RawMutex, const AT: usize, const CT: usize, const CN: usize> sealed::Dyn
     }
 }
 
-impl<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize> AttributeServer<'values, M, AT, CT, CN> {
+impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
+    AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX>
+{
     /// Create a new instance of the AttributeServer
-    pub fn new(att_table: AttributeTable<'values, M, AT>) -> AttributeServer<'values, M, AT, CT, CN> {
+    pub fn new(
+        att_table: AttributeTable<'values, M, ATT_MAX>,
+    ) -> AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX> {
         let cccd_tables = CccdTables::new(&att_table);
         AttributeServer { att_table, cccd_tables }
     }
 
-    pub(crate) fn connect(&self, connection: &Connection<'_>) {
-        self.cccd_tables.connect(&connection.peer_address());
+    pub(crate) fn connect(&self, connection: &Connection<'_>) -> Result<(), Error> {
+        self.cccd_tables.connect(&connection.peer_address())
     }
 
     pub(crate) fn should_notify(&self, connection: &Connection<'_>, cccd_handle: u16) -> bool {
@@ -673,7 +678,7 @@ impl<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize> At
     }
 
     /// Get a reference to the attribute table
-    pub fn table(&self) -> &AttributeTable<'values, M, AT> {
+    pub fn table(&self) -> &AttributeTable<'values, M, ATT_MAX> {
         &self.att_table
     }
 }

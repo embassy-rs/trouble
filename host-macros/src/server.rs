@@ -8,7 +8,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
-use syn::{parse_quote, Expr, Result};
+use syn::{Expr, Result, parse_quote};
 
 #[derive(Default)]
 pub(crate) struct ServerArgs {
@@ -75,13 +75,9 @@ impl ServerBuilder {
     }
 
     /// Construct the macro blueprint for the server struct.
-    pub fn build(self) -> Result<TokenStream2> {
+    pub fn build(self) -> TokenStream2 {
         let name = &self.properties.ident;
         let visibility = &self.properties.vis;
-
-        let connections_max = self.arguments.connections_max.ok_or(Error::custom(
-            "Server must have a max number of connections (i.e. `#[gatt_server(connections_max = 1)]`)",
-        ))?;
 
         let mutex_type = self.arguments.mutex_type.unwrap_or(syn::Type::Verbatim(quote!(
             embassy_sync::blocking_mutex::raw::NoopRawMutex
@@ -131,7 +127,13 @@ impl ServerBuilder {
             parse_quote!(0 #code_cccd_summation)
         };
 
-        Ok(quote! {
+        let connections_max = if let Some(value) = self.arguments.connections_max {
+            value
+        } else {
+            parse_quote!(1)
+        };
+
+        quote! {
             const _ATTRIBUTE_TABLE_SIZE: usize = #attribute_table_size;
             // This pattern causes the assertion to happen at compile time
             const _: () = {
@@ -215,6 +217,6 @@ impl ServerBuilder {
                 }
             }
 
-        })
+        }
     }
 }

@@ -90,7 +90,7 @@ async fn gatt_client_server() {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
-                    let conn = acceptor.accept().await?.to_gatt(&server);
+                    let conn = acceptor.accept().await?.with_attribute_server(&server)?;
                     println!("[peripheral] connected");
                     let mut writes = 0;
                     while !done {
@@ -99,8 +99,8 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            GattConnectionEvent::Gatt { data } => {
-                                if let Ok(Some(GattEvent::Write(event))) = data.process().await {
+                            GattConnectionEvent::Gatt { event } => {
+                                if let Ok(GattEvent::Write(event)) = event {
                                     let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
                                     assert_eq!(characteristic.handle, event.handle());
                                     event.accept().unwrap().send().await;

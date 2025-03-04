@@ -10,7 +10,7 @@ const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
 // GATT Server definition
-#[gatt_server(connections_max = CONNECTIONS_MAX)]
+#[gatt_server]
 struct Server {
     battery_service: BatteryService,
 }
@@ -109,48 +109,33 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_>) ->
                 info!("[gatt] disconnected: {:?}", reason);
                 break;
             }
-            GattConnectionEvent::Gatt { data } => {
-                // We can choose to handle event directly without an attribute table
-                // let req = data.incoming();
-                // ..
-                // data.reply(Ok(AttRsp::Error { .. }))
-
-                // But to simplify things, process it in the GATT server that handles
-                // the protocol details
-                match data.process().await {
-                    // Server processing emits
-                    Ok(Some(event)) => {
-                        match &event {
-                            GattEvent::Read(event) => {
-                                if event.handle() == level.handle {
-                                    let value = server.get(&level);
-                                    info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-                                }
-                            }
-                            GattEvent::Write(event) => {
-                                if event.handle() == level.handle {
-                                    info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
-                                }
+            GattConnectionEvent::Gatt { event } => match event {
+                Ok(event) => {
+                    match &event {
+                        GattEvent::Read(event) => {
+                            if event.handle() == level.handle {
+                                let value = server.get(&level);
+                                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                             }
                         }
-
-                        // This step is also performed at drop(), but writing it explicitly is necessary
-                        // in order to ensure reply is sent.
-                        match event.accept() {
-                            Ok(reply) => {
-                                reply.send().await;
-                            }
-                            Err(e) => {
-                                warn!("[gatt] error sending response: {:?}", e);
+                        GattEvent::Write(event) => {
+                            if event.handle() == level.handle {
+                                info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                             }
                         }
                     }
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!("[gatt] error processing event: {:?}", e);
+
+                    // This step is also performed at drop(), but writing it explicitly is necessary
+                    // in order to ensure reply is sent.
+                    match event.accept() {
+                        Ok(reply) => {
+                            reply.send().await;
+                        }
+                        Err(e) => warn!("[gatt] error sending response: {:?}", e),
                     }
                 }
-            }
+                Err(e) => warn!("[gatt] error processing event: {:?}", e),
+            },
         }
     }
     info!("[gatt] task finished");
@@ -182,8 +167,7 @@ async fn advertise<'a, 'b, C: Controller>(
         )
         .await?;
     info!("[adv] advertising");
-    let conn = advertiser.accept().await?;
-    let conn = GattConnection::new(conn, server);
+    let conn = advertiser.accept().await?.with_attribute_server(server)?;
     info!("[adv] connection established");
     Ok(conn)
 }

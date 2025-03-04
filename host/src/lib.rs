@@ -174,6 +174,8 @@ pub enum Error {
     NoPermits,
     /// Connection is disconnected.
     Disconnected,
+    /// Connection limit has been reached.
+    ConnectionLimitReached,
     /// Other error.
     Other,
 }

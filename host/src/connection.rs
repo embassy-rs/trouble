@@ -88,6 +88,31 @@ pub struct ConnectParams {
     pub supervision_timeout: Duration,
 }
 
+#[cfg(not(feature = "gatt"))]
+/// A connection event.
+pub enum ConnectionEvent {
+    /// Connection disconnected.
+    Disconnected {
+        /// The reason (status code) for the disconnect.
+        reason: Status,
+    },
+}
+
+/// A connection event.
+#[cfg(feature = "gatt")]
+pub enum ConnectionEvent<'stack> {
+    /// Connection disconnected.
+    Disconnected {
+        /// The reason (status code) for the disconnect.
+        reason: Status,
+    },
+    /// GATT event.
+    Gatt {
+        /// The event that was returned
+        data: crate::gatt::GattData<'stack>,
+    },
+}
+
 pub(crate) enum ConnectionEventData {
     /// Connection disconnected.
     Disconnected {
@@ -172,19 +197,24 @@ impl<'stack> Connection<'stack> {
         self.manager.alloc_tx()
     }
 
-    /// Wait for next connection event data.
+    /// Wait for next connection event.
     #[cfg(not(feature = "gatt"))]
-    pub(crate) async fn next(&self) -> ConnectionEventData {
+    pub async fn next(&self) -> ConnectionEvent {
         match self.manager.next(self.index).await {
-            ConnectionEventData::Disconnected { reason } => ConnectionEventData::Disconnected { reason },
+            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
             ConnectionEventData::Gatt { data } => unreachable!(),
         }
     }
 
-    /// Wait for next connection event data.
+    /// Wait for next connection event.
     #[cfg(feature = "gatt")]
-    pub(crate) async fn next(&self) -> ConnectionEventData {
-        self.manager.next(self.index).await
+    pub async fn next(&self) -> ConnectionEvent<'stack> {
+        match self.manager.next(self.index).await {
+            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
+            ConnectionEventData::Gatt { data } => ConnectionEvent::Gatt {
+                data: crate::gatt::GattData::new(data, self.clone()),
+            },
+        }
     }
 
     /// Check if still connected
@@ -261,10 +291,17 @@ impl<'stack> Connection<'stack> {
 
     /// Transform BLE connection into a `GattConnection`
     #[cfg(feature = "gatt")]
-    pub fn to_gatt<'values, 'server, M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn with_attribute_server<
+        'values,
+        'server,
+        M: RawMutex,
+        const ATT_MAX: usize,
+        const CCCD_MAX: usize,
+        const CONN_MAX: usize,
+    >(
         self,
-        server: &'server AttributeServer<'values, M, AT, CT, CN>,
-    ) -> GattConnection<'stack, 'server> {
-        GattConnection::new(self, server)
+        server: &'server AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX>,
+    ) -> Result<GattConnection<'stack, 'server>, Error> {
+        GattConnection::try_new(self, server)
     }
 }

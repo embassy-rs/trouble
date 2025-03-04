@@ -16,16 +16,17 @@ use heapless::Vec;
 use crate::att::{self, ATT_HANDLE_VALUE_NTF, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns};
 use crate::attribute::{AttributeData, CCCD, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
-use crate::connection::{Connection, ConnectionEventData};
+use crate::connection::Connection;
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
+use crate::prelude::ConnectionEvent;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
 use crate::{BleHostError, Error, Stack, config};
 
 /// A GATT connection event.
-pub enum GattConnectionEvent<'stack, 'server, 'conn> {
+pub enum GattConnectionEvent<'stack, 'server> {
     /// Connection disconnected.
     Disconnected {
         /// The reason (status code) for the disconnect.
@@ -34,7 +35,7 @@ pub enum GattConnectionEvent<'stack, 'server, 'conn> {
     /// GATT event.
     Gatt {
         /// The event that was returned
-        data: crate::gatt::GattData<'stack, 'server, 'conn>,
+        event: Result<GattEvent<'stack, 'server>, Error>,
     },
 }
 
@@ -54,22 +55,71 @@ impl Drop for GattConnection<'_, '_> {
 impl<'stack, 'server> GattConnection<'stack, 'server> {
     /// Creates a GATT connection from the given BLE connection and `AttributeServer`:
     /// this will register the client within the server's CCCD table.
-    pub fn new<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+    pub(crate) fn try_new<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
         connection: Connection<'stack>,
         server: &'server AttributeServer<'values, M, AT, CT, CN>,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         trace!("[gatt {}] connecting to server", connection.handle().raw());
-        server.connect(&connection);
-        Self { connection, server }
+        server.connect(&connection)?;
+        Ok(Self { connection, server })
     }
 
-    /// Wait for the next connection event.
-    pub async fn next<'conn>(&'conn self) -> GattConnectionEvent<'stack, 'server, 'conn> {
-        match self.connection.next().await {
-            ConnectionEventData::Disconnected { reason } => GattConnectionEvent::Disconnected { reason },
-            ConnectionEventData::Gatt { data } => GattConnectionEvent::Gatt {
-                data: crate::gatt::GattData::new(data, self),
-            },
+    /// Wait for the next GATT connection event.
+    ///
+    /// Uses the attribute server to handle the protocol.
+    pub async fn next(&self) -> GattConnectionEvent<'stack, 'server> {
+        loop {
+            match self.connection.next().await {
+                ConnectionEvent::Disconnected { reason } => return GattConnectionEvent::Disconnected { reason },
+                ConnectionEvent::Gatt { data } => match self.process(data).await {
+                    Ok(event) => match event {
+                        Some(event) => return GattConnectionEvent::Gatt { event: Ok(event) },
+                        None => continue,
+                    },
+                    Err(e) => return GattConnectionEvent::Gatt { event: Err(e) },
+                },
+            }
+        }
+    }
+
+    async fn process(&self, mut data: GattData<'_>) -> Result<Option<GattEvent<'stack, 'server>>, Error> {
+        let att = data.incoming();
+        match att {
+            AttClient::Request(AttReq::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
+                value_handle: handle,
+                pdu: data.pdu.take(),
+                connection: self.connection.clone(),
+                server: self.server,
+            }))),
+
+            AttClient::Command(AttCmd::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
+                value_handle: handle,
+                pdu: data.pdu.take(),
+                connection: self.connection.clone(),
+                server: self.server,
+            }))),
+
+            AttClient::Request(AttReq::Read { handle }) => Ok(Some(GattEvent::Read(ReadEvent {
+                value_handle: handle,
+                pdu: data.pdu.take(),
+                connection: self.connection.clone(),
+                server: self.server,
+            }))),
+
+            AttClient::Request(AttReq::ReadBlob { handle, offset }) => Ok(Some(GattEvent::Read(ReadEvent {
+                value_handle: handle,
+                pdu: data.pdu.take(),
+                connection: self.connection.clone(),
+                server: self.server,
+            }))),
+            _ => {
+                // Process it now since the user will not
+                if let Some(pdu) = data.pdu.as_ref() {
+                    let reply = process_accept(pdu, &self.connection, self.server)?;
+                    reply.send().await;
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -80,20 +130,20 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
 }
 
 /// A GATT payload ready for processing.
-pub struct GattData<'stack, 'server, 'conn> {
+pub struct GattData<'stack> {
     pdu: Option<Pdu>,
-    connection: &'conn GattConnection<'stack, 'server>,
+    connection: Connection<'stack>,
 }
 
-impl Drop for GattData<'_, '_, '_> {
+impl Drop for GattData<'_> {
     fn drop(&mut self) {
         if let Some(pdu) = self.pdu.take() {
-            self.connection.raw().completed_packets(1);
+            self.connection.completed_packets(1);
         }
     }
 }
-impl<'stack, 'server, 'conn> GattData<'stack, 'server, 'conn> {
-    pub(crate) fn new(pdu: Pdu, connection: &'conn GattConnection<'stack, 'server>) -> Self {
+impl<'stack> GattData<'stack> {
+    pub(crate) fn new(pdu: Pdu, connection: Connection<'stack>) -> Self {
         Self {
             pdu: Some(pdu),
             connection,
@@ -115,9 +165,8 @@ impl<'stack, 'server, 'conn> GattData<'stack, 'server, 'conn> {
 
     /// Respond directly to request.
     pub async fn reply(self, rsp: AttRsp<'_>) -> Result<(), Error> {
-        let connection = self.connection.raw();
-        let pdu = send(connection, AttServer::Response(rsp))?;
-        connection.send(pdu).await;
+        let pdu = send(&self.connection, AttServer::Response(rsp))?;
+        self.connection.send(pdu).await;
         Ok(())
     }
 
@@ -127,58 +176,17 @@ impl<'stack, 'server, 'conn> GattData<'stack, 'server, 'conn> {
         connection.send(pdu).await;
         Ok(())
     }
-
-    /// Handle the GATT data.
-    ///
-    /// May return an event that should be replied/processed. Uses the attribute server to
-    /// handle the protocol.
-    pub async fn process(mut self) -> Result<Option<GattEvent<'stack, 'server, 'conn>>, Error> {
-        let att = self.incoming();
-        match att {
-            AttClient::Request(AttReq::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
-                value_handle: handle,
-                pdu: self.pdu.take(),
-                connection: self.connection,
-            }))),
-
-            AttClient::Command(AttCmd::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
-                value_handle: handle,
-                pdu: self.pdu.take(),
-                connection: self.connection,
-            }))),
-
-            AttClient::Request(AttReq::Read { handle }) => Ok(Some(GattEvent::Read(ReadEvent {
-                value_handle: handle,
-                pdu: self.pdu.take(),
-                connection: self.connection,
-            }))),
-
-            AttClient::Request(AttReq::ReadBlob { handle, offset }) => Ok(Some(GattEvent::Read(ReadEvent {
-                value_handle: handle,
-                pdu: self.pdu.take(),
-                connection: self.connection,
-            }))),
-            _ => {
-                // Process it now since the user will not
-                if let Some(pdu) = self.pdu.as_ref() {
-                    let reply = process_accept(pdu, self.connection)?;
-                    reply.send().await;
-                }
-                Ok(None)
-            }
-        }
-    }
 }
 
 /// An event returned while processing GATT requests.
-pub enum GattEvent<'stack, 'server, 'conn> {
+pub enum GattEvent<'stack, 'server> {
     /// A characteristic was read.
-    Read(ReadEvent<'stack, 'server, 'conn>),
+    Read(ReadEvent<'stack, 'server>),
     /// A characteristic was written.
-    Write(WriteEvent<'stack, 'server, 'conn>),
+    Write(WriteEvent<'stack, 'server>),
 }
 
-impl<'stack, 'server, 'conn> GattEvent<'stack, 'server, 'conn> {
+impl<'stack, 'server> GattEvent<'stack, 'server> {
     /// Accept the event, making it processed by the server.
     pub fn accept(self) -> Result<Reply<'stack>, Error> {
         match self {
@@ -197,13 +205,14 @@ impl<'stack, 'server, 'conn> GattEvent<'stack, 'server, 'conn> {
 }
 
 /// An event returned while processing GATT requests.
-pub struct ReadEvent<'stack, 'server, 'conn> {
+pub struct ReadEvent<'stack, 'server> {
     value_handle: u16,
-    connection: &'conn GattConnection<'stack, 'server>,
+    connection: Connection<'stack>,
+    server: &'server dyn DynamicAttributeServer,
     pdu: Option<Pdu>,
 }
 
-impl<'stack> ReadEvent<'stack, '_, '_> {
+impl<'stack> ReadEvent<'stack, '_> {
     /// Characteristic handle that was read
     pub fn handle(&self) -> u16 {
         self.value_handle
@@ -214,32 +223,33 @@ impl<'stack> ReadEvent<'stack, '_, '_> {
     /// Automatically called if drop() is invoked.
     pub fn accept(mut self) -> Result<Reply<'stack>, Error> {
         let handle = self.handle();
-        process(&mut self.pdu, handle, self.connection, Ok(()))
+        process(&mut self.pdu, handle, &self.connection, self.server, Ok(()))
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
     pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack>, Error> {
         let handle = self.handle();
-        process(&mut self.pdu, handle, self.connection, Err(err))
+        process(&mut self.pdu, handle, &self.connection, self.server, Err(err))
     }
 }
 
-impl Drop for ReadEvent<'_, '_, '_> {
+impl Drop for ReadEvent<'_, '_> {
     fn drop(&mut self) {
         let handle = self.handle();
-        let _ = process(&mut self.pdu, handle, self.connection, Ok(()));
+        let _ = process(&mut self.pdu, handle, &self.connection, self.server, Ok(()));
     }
 }
 
 /// An event returned while processing GATT requests.
-pub struct WriteEvent<'stack, 'server, 'conn> {
+pub struct WriteEvent<'stack, 'server> {
     /// Characteristic handle that was written.
     value_handle: u16,
     pdu: Option<Pdu>,
-    connection: &'conn GattConnection<'stack, 'server>,
+    connection: Connection<'stack>,
+    server: &'server dyn DynamicAttributeServer,
 }
 
-impl<'stack> WriteEvent<'stack, '_, '_> {
+impl<'stack> WriteEvent<'stack, '_> {
     /// Characteristic handle that was read
     pub fn handle(&self) -> u16 {
         self.value_handle
@@ -261,45 +271,46 @@ impl<'stack> WriteEvent<'stack, '_, '_> {
     /// Automatically called if drop() is invoked.
     pub fn accept(mut self) -> Result<Reply<'stack>, Error> {
         let handle = self.handle();
-        process(&mut self.pdu, handle, self.connection, Ok(()))
+        process(&mut self.pdu, handle, &self.connection, self.server, Ok(()))
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
     pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack>, Error> {
         let handle = self.handle();
-        process(&mut self.pdu, handle, self.connection, Err(err))
+        process(&mut self.pdu, handle, &self.connection, self.server, Err(err))
     }
 }
 
-impl Drop for WriteEvent<'_, '_, '_> {
+impl Drop for WriteEvent<'_, '_> {
     fn drop(&mut self) {
         let handle = self.handle();
-        let _ = process(&mut self.pdu, handle, self.connection, Ok(()));
+        let _ = process(&mut self.pdu, handle, &self.connection, self.server, Ok(()));
     }
 }
 
-fn process<'stack, 'server>(
+fn process<'stack>(
     pdu: &mut Option<Pdu>,
     handle: u16,
-    connection: &GattConnection<'stack, 'server>,
+    connection: &Connection<'stack>,
+    server: &dyn DynamicAttributeServer,
     result: Result<(), AttErrorCode>,
 ) -> Result<Reply<'stack>, Error> {
-    let connection_raw = connection.raw();
     if let Some(pdu) = pdu.take() {
         let res = match result {
-            Ok(_) => process_accept(&pdu, connection),
-            Err(code) => process_reject(&pdu, handle, connection_raw, code),
+            Ok(_) => process_accept(&pdu, connection, server),
+            Err(code) => process_reject(&pdu, handle, connection, code),
         };
-        connection_raw.completed_packets(1);
+        connection.completed_packets(1);
         res
     } else {
-        Ok(Reply::new(connection_raw.clone(), None))
+        Ok(Reply::new(connection.clone(), None))
     }
 }
 
-fn process_accept<'stack, 'server>(
+fn process_accept<'stack>(
     pdu: &Pdu,
-    connection: &GattConnection<'stack, 'server>,
+    connection: &Connection<'stack>,
+    server: &dyn DynamicAttributeServer,
 ) -> Result<Reply<'stack>, Error> {
     // - The PDU is decodable, as it was already decoded once before adding it to the connection queue
     // - The PDU is of type `Att::Client` because only those types of PDUs are added to the connection queue
@@ -307,8 +318,6 @@ fn process_accept<'stack, 'server>(
     let Att::Client(att) = att else {
         unreachable!("Expected Att::Client, got {:?}", att)
     };
-    let server = connection.server;
-    let connection = connection.raw();
     let mut tx = connection.alloc_tx()?;
     let mut w = WriteCursor::new(tx.as_mut());
     let (mut header, mut data) = w.split(4)?;
