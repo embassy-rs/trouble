@@ -8,6 +8,7 @@ if ! command -v cargo-batch &>/dev/null; then
 	chmod +x "$HOME"/.cargo/bin/cargo-batch
 fi
 
+
 export RUSTFLAGS=-Dwarnings
 export DEFMT_LOG=trace
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
@@ -31,7 +32,7 @@ cargo batch \
 	--- build --release --manifest-path examples/serial-hci/Cargo.toml \
 	--- build --release --manifest-path examples/tests/Cargo.toml \
 	--- build --release --manifest-path examples/rp-pico-w/Cargo.toml --target thumbv6m-none-eabi --features skip-cyw43-firmware \
-	--- build --release --manifest-path examples/rp-pico-2-w/Cargo.toml --target thumbv8m.main-none-eabihf --features skip-cyw43-firmware
+	--- build --release --manifest-path examples/rp-pico-2-w/Cargo.toml --target thumbv8m.main-none-eabihf --features skip-cyw43-firmware \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features peripheral \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features central \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features central,scan \
@@ -54,18 +55,16 @@ cargo batch \
 
 # Run Cargo fmt
 cargo batch  \
-	# Core Library
-	--- fmt --manifest-path host/Cargo.toml -- --check
-	--- fmt --manifest-path host-macros/Cargo.toml -- --check
-	# Examples
-	--- fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check
-	--- fmt --manifest-path examples/apps/Cargo.toml -- --check
-	--- fmt --manifest-path examples/esp32/Cargo.toml -- --check
-	--- fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check
-	--- fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check
-	--- fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check
-	--- fmt --manifest-path examples/serial-hci/Cargo.toml -- --check
-	--- fmt --manifest-path examples/tests/Cargo.toml -- --check
+	--- fmt --manifest-path host/Cargo.toml -- --check \
+	--- fmt --manifest-path host-macros/Cargo.toml -- --check \
+	--- fmt --manifest-path examples/apache-nimble/Cargo.toml -- --check \
+	--- fmt --manifest-path examples/apps/Cargo.toml -- --check \
+	--- fmt --manifest-path examples/esp32/Cargo.toml -- --check \
+	--- fmt --manifest-path examples/nrf-sdc/Cargo.toml -- --check \
+	--- fmt --manifest-path examples/rp-pico-2-w/Cargo.toml -- --check \
+	--- fmt --manifest-path examples/rp-pico-w/Cargo.toml -- --check \
+	--- fmt --manifest-path examples/serial-hci/Cargo.toml -- --check \
+	--- fmt --manifest-path examples/tests/Cargo.toml -- --check \
 
 # Clippy Main Library
 cd host && cargo clippy -- -D warnings && cd ..
@@ -98,6 +97,10 @@ cd serial-hci && cargo clippy -- --D warnings && cd..
 cd tests && cargo clippy -- --D warnings && cd..
 # Leave examples folder
 cd..
+
+# Run MegaLinter (if enabled)
+
+
 
 # Run tests
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
