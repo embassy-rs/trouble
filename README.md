@@ -55,6 +55,15 @@ See `examples` for example applications for different BLE controllers.
 
 Since a lot of the examples demo the same BLE functionality, they only contain basic wiring specific to the BLE controller, and share the 'business logic' within the `examples/apps` folder.
 
+## Linting Process
+
+The project uses a variety of linters through the use of cargo and [MegaLinter](https://github.com/oxsecurity/megalinter). In order to use these locally, you simply run the [ci.sh](./ci.sh) file which will install the necessary tools.
+If you want to  use MegaLinter as well, you must set the following environment variable:
+
+```yaml
+ENABLE_MEGALINTER: true
+```
+
 ## License
 
 Trouble is licensed under either of

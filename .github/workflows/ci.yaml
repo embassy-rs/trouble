@@ -8,11 +8,11 @@ on:
     tags:
       - "v*"
   pull_request:
-  
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    env: 
+    env:
       ENABLE_MEGALINTER: true
     steps:
       - uses: actions/checkout@v4
