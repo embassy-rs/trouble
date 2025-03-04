@@ -15,7 +15,7 @@ export CARGO_NET_GIT_FETCH_WITH_CLI=true
 if [[ -z "${CARGO_TARGET_DIR}" ]]; then
 	export CARGO_TARGET_DIR=target_ci
 fi
-
+echo "Running Cargo Build"
 cargo batch \
 	--- build --release --manifest-path host/Cargo.toml --no-default-features --features peripheral \
 	--- build --release --manifest-path host/Cargo.toml --no-default-features --features central \
@@ -54,6 +54,7 @@ cargo batch \
 #    --- build --release --manifest-path examples/apache-nimble/Cargo.toml --target thumbv7em-none-eabihf
 
 # Run Cargo fmt
+echo "Running Cargo fmt"
 cargo batch  \
 	--- fmt --manifest-path host/Cargo.toml -- --check \
 	--- fmt --manifest-path host-macros/Cargo.toml -- --check \
@@ -66,7 +67,9 @@ cargo batch  \
 	--- fmt --manifest-path examples/serial-hci/Cargo.toml -- --check \
 	--- fmt --manifest-path examples/tests/Cargo.toml -- --check \
 
+
 # Clippy Main Library
+echo "Running Cargo Clippy"
 cd host && cargo clippy -- -D warnings && cd ..
 cd host-macros && cargo clippy -- -D warnings  && cd ..
 
@@ -98,11 +101,11 @@ cd tests && cargo clippy -- --D warnings && cd..
 # Leave examples folder
 cd..
 
-# Run MegaLinter (if enabled)
-
+# Run and install MegaLinter (if enabled)
 
 
 # Run tests
+echo "Running Cargo Clippy"
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./examples/tests/Cargo.toml --no-run -- --nocapture
