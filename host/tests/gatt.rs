@@ -65,7 +65,7 @@ async fn gatt_client_server() {
                 &mut storage[..]
             ).build();
 
-        let server = AttributeServer::<NoopRawMutex, 10>::new(table);
+        let server = AttributeServer::<NoopRawMutex, 10, 1, CONNECTIONS_MAX>::new(table);
         select! {
             r = runner.run() => {
                 r
@@ -90,17 +90,17 @@ async fn gatt_client_server() {
                         adv_data: &adv_data[..],
                         scan_data: &scan_data[..],
                     }).await?;
-                    let conn = acceptor.accept().await?;
+                    let conn = acceptor.accept().await?.with_attribute_server(&server)?;
                     println!("[peripheral] connected");
                     let mut writes = 0;
                     while !done {
                         match conn.next().await {
-                            ConnectionEvent::Disconnected { reason } => {
+                            GattConnectionEvent::Disconnected { reason } => {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            ConnectionEvent::Gatt { data } => {
-                                if let Ok(Some(GattEvent::Write(event))) = data.process(&server).await {
+                            GattConnectionEvent::Gatt { event } => {
+                                if let Ok(GattEvent::Write(event)) = event {
                                     let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
                                     assert_eq!(characteristic.handle, event.handle());
                                     event.accept().unwrap().send().await;

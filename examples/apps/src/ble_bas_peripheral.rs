@@ -52,7 +52,7 @@ where
 
     let _ = join(ble_task(runner), async {
         loop {
-            match advertise("Trouble Example", &mut peripheral).await {
+            match advertise("Trouble Example", &mut peripheral, &server).await {
                 Ok(conn) => {
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let a = gatt_events_task(&server, &conn);
@@ -101,56 +101,41 @@ async fn ble_task<C: Controller>(mut runner: Runner<'_, C>) {
 ///
 /// This function will handle the GATT events and process them.
 /// This is how we interact with read and write requests.
-async fn gatt_events_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<(), Error> {
+async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_>) -> Result<(), Error> {
     let level = server.battery_service.level;
     loop {
         match conn.next().await {
-            ConnectionEvent::Disconnected { reason } => {
+            GattConnectionEvent::Disconnected { reason } => {
                 info!("[gatt] disconnected: {:?}", reason);
                 break;
             }
-            ConnectionEvent::Gatt { data } => {
-                // We can choose to handle event directly without an attribute table
-                // let req = data.request();
-                // ..
-                // data.reply(conn, Ok(AttRsp::Error { .. }))
-
-                // But to simplify things, process it in the GATT server that handles
-                // the protocol details
-                match data.process(server).await {
-                    // Server processing emits
-                    Ok(Some(event)) => {
-                        match &event {
-                            GattEvent::Read(event) => {
-                                if event.handle() == level.handle {
-                                    let value = server.get(&level);
-                                    info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-                                }
-                            }
-                            GattEvent::Write(event) => {
-                                if event.handle() == level.handle {
-                                    info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
-                                }
+            GattConnectionEvent::Gatt { event } => match event {
+                Ok(event) => {
+                    match &event {
+                        GattEvent::Read(event) => {
+                            if event.handle() == level.handle {
+                                let value = server.get(&level);
+                                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                             }
                         }
-
-                        // This step is also performed at drop(), but writing it explicitly is necessary
-                        // in order to ensure reply is sent.
-                        match event.accept() {
-                            Ok(reply) => {
-                                reply.send().await;
-                            }
-                            Err(e) => {
-                                warn!("[gatt] error sending response: {:?}", e);
+                        GattEvent::Write(event) => {
+                            if event.handle() == level.handle {
+                                info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                             }
                         }
                     }
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!("[gatt] error processing event: {:?}", e);
+
+                    // This step is also performed at drop(), but writing it explicitly is necessary
+                    // in order to ensure reply is sent.
+                    match event.accept() {
+                        Ok(reply) => {
+                            reply.send().await;
+                        }
+                        Err(e) => warn!("[gatt] error sending response: {:?}", e),
                     }
                 }
-            }
+                Err(e) => warn!("[gatt] error processing event: {:?}", e),
+            },
         }
     }
     info!("[gatt] task finished");
@@ -158,10 +143,11 @@ async fn gatt_events_task(server: &Server<'_>, conn: &Connection<'_>) -> Result<
 }
 
 /// Create an advertiser to use to connect to a BLE Central, and wait for it to connect.
-async fn advertise<'a, C: Controller>(
+async fn advertise<'a, 'b, C: Controller>(
     name: &'a str,
     peripheral: &mut Peripheral<'a, C>,
-) -> Result<Connection<'a>, BleHostError<C::Error>> {
+    server: &'b Server<'_>,
+) -> Result<GattConnection<'a, 'b>, BleHostError<C::Error>> {
     let mut advertiser_data = [0; 31];
     AdStructure::encode_slice(
         &[
@@ -181,7 +167,7 @@ async fn advertise<'a, C: Controller>(
         )
         .await?;
     info!("[adv] advertising");
-    let conn = advertiser.accept().await?;
+    let conn = advertiser.accept().await?.with_attribute_server(server)?;
     info!("[adv] connection established");
     Ok(conn)
 }
@@ -190,18 +176,18 @@ async fn advertise<'a, C: Controller>(
 /// This task will notify the connected central of a counter value every 2 seconds.
 /// It will also read the RSSI value every 2 seconds.
 /// and will stop when the connection is closed by the central or an error occurs.
-async fn custom_task<C: Controller>(server: &Server<'_>, conn: &Connection<'_>, stack: &Stack<'_, C>) {
+async fn custom_task<C: Controller>(server: &Server<'_>, conn: &GattConnection<'_, '_>, stack: &Stack<'_, C>) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
     loop {
         tick = tick.wrapping_add(1);
         info!("[custom_task] notifying connection of tick {}", tick);
-        if level.notify(server, conn, &tick).await.is_err() {
+        if level.notify(conn, &tick).await.is_err() {
             info!("[custom_task] error notifying connection");
             break;
         };
         // read RSSI (Received Signal Strength Indicator) of the connection.
-        if let Ok(rssi) = conn.rssi(stack).await {
+        if let Ok(rssi) = conn.raw().rssi(stack).await {
             info!("[custom_task] RSSI: {:?}", rssi);
         } else {
             info!("[custom_task] error getting RSSI");

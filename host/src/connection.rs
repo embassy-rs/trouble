@@ -6,9 +6,15 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_time::Duration;
 
+#[cfg(feature = "gatt")]
+use embassy_sync::blocking_mutex::raw::RawMutex;
+
 use crate::connection_manager::ConnectionManager;
 use crate::pdu::Pdu;
 use crate::{BleHostError, Error, Stack};
+
+#[cfg(feature = "gatt")]
+use crate::prelude::{AttributeServer, GattConnection};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -281,5 +287,21 @@ impl<'stack> Connection<'stack> {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Transform BLE connection into a `GattConnection`
+    #[cfg(feature = "gatt")]
+    pub fn with_attribute_server<
+        'values,
+        'server,
+        M: RawMutex,
+        const ATT_MAX: usize,
+        const CCCD_MAX: usize,
+        const CONN_MAX: usize,
+    >(
+        self,
+        server: &'server AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX>,
+    ) -> Result<GattConnection<'stack, 'server>, Error> {
+        GattConnection::try_new(self, server)
     }
 }

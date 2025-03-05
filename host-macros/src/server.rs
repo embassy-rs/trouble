@@ -8,12 +8,14 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
-use syn::{parse_quote, Expr, Result};
+use syn::{Expr, Result, parse_quote};
 
 #[derive(Default)]
 pub(crate) struct ServerArgs {
     mutex_type: Option<syn::Type>,
     attribute_table_size: Option<Expr>,
+    cccd_table_size: Option<Expr>,
+    connections_max: Option<Expr>,
 }
 
 impl ServerArgs {
@@ -42,11 +44,21 @@ impl ServerArgs {
                 })?;
                 self.attribute_table_size = Some(buffer.parse()?);
             }
-            other => {
-                return Err(meta.error(format!(
-                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, attribute_table_size"
-            )))
+            "cccd_table_size" => {
+                let buffer = meta.value().map_err(|_| {
+                    Error::custom("cccd_table_size must be followed by `= [size]`. e.g. cccd_table_size = 4".to_string())
+                })?;
+                self.cccd_table_size = Some(buffer.parse()?);
             }
+            "connections_max" => {
+                let buffer = meta.value().map_err(|_| {
+                    Error::custom("connections_max must be followed by `= [size]`. e.g. connections_max = 1".to_string())
+                })?;
+                self.connections_max = Some(buffer.parse()?);
+            }
+            other => return Err(meta.error(format!(
+                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, attribute_table_size, cccd_table_size, connections_max"
+            ))),
         }
         Ok(())
     }
@@ -75,6 +87,7 @@ impl ServerBuilder {
         let mut code_service_init = TokenStream2::new();
         let mut code_server_populate = TokenStream2::new();
         let mut code_attribute_summation = TokenStream2::new();
+        let mut code_cccd_summation = TokenStream2::new();
         for service in &self.properties.fields {
             let vis = &service.vis;
             let service_span = service.span();
@@ -95,6 +108,10 @@ impl ServerBuilder {
 
             code_attribute_summation.extend(quote_spanned! {service_span=>
                + #service_type::ATTRIBUTE_COUNT
+            });
+
+            code_cccd_summation.extend(quote_spanned! {service_span=>
+               + #service_type::CCCD_COUNT
             })
         }
 
@@ -104,16 +121,30 @@ impl ServerBuilder {
             parse_quote!(trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation)
         };
 
+        let cccd_table_size = if let Some(value) = self.arguments.cccd_table_size {
+            value
+        } else {
+            parse_quote!(0 #code_cccd_summation)
+        };
+
+        let connections_max = if let Some(value) = self.arguments.connections_max {
+            value
+        } else {
+            parse_quote!(1)
+        };
+
         quote! {
             const _ATTRIBUTE_TABLE_SIZE: usize = #attribute_table_size;
             // This pattern causes the assertion to happen at compile time
             const _: () = {
                 core::assert!(_ATTRIBUTE_TABLE_SIZE >= trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation, "Specified attribute table size is insufficient. Please increase attribute_table_size or remove the argument entirely to allow automatic sizing of the attribute table.");
             };
+            const _CCCD_TABLE_SIZE: usize = #cccd_table_size;
+            const _CONNECTIONS_MAX: usize = #connections_max;
 
             #visibility struct #name<'values>
             {
-                server: trouble_host::prelude::AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>,
+                server: trouble_host::prelude::AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE, _CCCD_TABLE_SIZE, _CONNECTIONS_MAX>,
                 #code_service_definition
             }
 
@@ -179,7 +210,7 @@ impl ServerBuilder {
 
             impl<'values> core::ops::Deref for #name<'values>
             {
-                type Target = trouble_host::prelude::AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE>;
+                type Target = trouble_host::prelude::AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE, _CCCD_TABLE_SIZE, _CONNECTIONS_MAX>;
 
                 fn deref(&self) -> &Self::Target {
                     &self.server
