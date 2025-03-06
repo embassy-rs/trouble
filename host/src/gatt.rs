@@ -71,54 +71,13 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
         loop {
             match self.connection.next().await {
                 ConnectionEvent::Disconnected { reason } => return GattConnectionEvent::Disconnected { reason },
-                ConnectionEvent::Gatt { data } => match self.process(data).await {
+                ConnectionEvent::Gatt { data } => match data.process(self.server).await {
                     Ok(event) => match event {
                         Some(event) => return GattConnectionEvent::Gatt { event: Ok(event) },
                         None => continue,
                     },
                     Err(e) => return GattConnectionEvent::Gatt { event: Err(e) },
                 },
-            }
-        }
-    }
-
-    async fn process(&self, mut data: GattData<'_>) -> Result<Option<GattEvent<'stack, 'server>>, Error> {
-        let att = data.incoming();
-        match att {
-            AttClient::Request(AttReq::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
-                value_handle: handle,
-                pdu: data.pdu.take(),
-                connection: self.connection.clone(),
-                server: self.server,
-            }))),
-
-            AttClient::Command(AttCmd::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
-                value_handle: handle,
-                pdu: data.pdu.take(),
-                connection: self.connection.clone(),
-                server: self.server,
-            }))),
-
-            AttClient::Request(AttReq::Read { handle }) => Ok(Some(GattEvent::Read(ReadEvent {
-                value_handle: handle,
-                pdu: data.pdu.take(),
-                connection: self.connection.clone(),
-                server: self.server,
-            }))),
-
-            AttClient::Request(AttReq::ReadBlob { handle, offset }) => Ok(Some(GattEvent::Read(ReadEvent {
-                value_handle: handle,
-                pdu: data.pdu.take(),
-                connection: self.connection.clone(),
-                server: self.server,
-            }))),
-            _ => {
-                // Process it now since the user will not
-                if let Some(pdu) = data.pdu.as_ref() {
-                    let reply = process_accept(pdu, &self.connection, self.server)?;
-                    reply.send().await;
-                }
-                Ok(None)
             }
         }
     }
@@ -175,6 +134,54 @@ impl<'stack> GattData<'stack> {
         let pdu = send(connection, AttServer::Unsolicited(uns))?;
         connection.send(pdu).await;
         Ok(())
+    }
+
+    /// Handle the GATT data.
+    ///
+    /// May return an event that should be replied/processed. Uses the provided
+    /// attribute server to handle the protocol.
+    pub async fn process<'m>(
+        mut self,
+        server: &'m dyn DynamicAttributeServer,
+    ) -> Result<Option<GattEvent<'stack, 'm>>, Error> {
+        let att = self.incoming();
+        match att {
+            AttClient::Request(AttReq::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
+                value_handle: handle,
+                pdu: self.pdu.take(),
+                connection: self.connection.clone(),
+                server,
+            }))),
+
+            AttClient::Command(AttCmd::Write { handle, data: _ }) => Ok(Some(GattEvent::Write(WriteEvent {
+                value_handle: handle,
+                pdu: self.pdu.take(),
+                connection: self.connection.clone(),
+                server,
+            }))),
+
+            AttClient::Request(AttReq::Read { handle }) => Ok(Some(GattEvent::Read(ReadEvent {
+                value_handle: handle,
+                pdu: self.pdu.take(),
+                connection: self.connection.clone(),
+                server,
+            }))),
+
+            AttClient::Request(AttReq::ReadBlob { handle, offset }) => Ok(Some(GattEvent::Read(ReadEvent {
+                value_handle: handle,
+                pdu: self.pdu.take(),
+                connection: self.connection.clone(),
+                server,
+            }))),
+            _ => {
+                // Process it now since the user will not
+                if let Some(pdu) = self.pdu.as_ref() {
+                    let reply = process_accept(pdu, &self.connection, server)?;
+                    reply.send().await;
+                }
+                Ok(None)
+            }
+        }
     }
 }
 
