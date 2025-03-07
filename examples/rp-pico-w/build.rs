@@ -48,7 +48,7 @@ fn download_cyw43_firmware() {
         "43439A0_clm.bin",
         "LICENSE-permissive-binary-license-1.0.txt",
         "README.md",
-        ];
+    ];
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", download_folder);

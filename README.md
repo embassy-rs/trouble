@@ -47,10 +47,22 @@ See `examples` for example applications for different BLE controllers.
 * `serial-hci` which runs on std using a controller attached via a serial port (Such as [this Zephyr sample](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/samples/bluetooth/hci_uart/README.html)).
 * `apache-nimble` which uses the controller from the [NimBLE stack](https://github.com/apache/mynewt-nimble) through high-level bindings from the [`apache-nimble`](https://github.com/benbrittain/apache-nimble-sys) crate.
 * `esp32` which uses the BLE controller in the [esp-hal](https://github.com/esp-rs/esp-hal).
+<!-- markdown-link-check-disable -->
+<!-- Raspberry Pi Links show up as broken even though they work -->
 * `rp-pico-w` which uses the BLE controller in the [Raspberry Pi Pico W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-w).
 * `rp-pico-2-w` which uses the BLE controller in the [Raspberry Pi Pico 2 W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-2-w).
+<!-- markdown-link-check-enable -->
 
 Since a lot of the examples demo the same BLE functionality, they only contain basic wiring specific to the BLE controller, and share the 'business logic' within the `examples/apps` folder.
+
+## Linting Process
+
+The project uses a variety of linters through the use of cargo and [MegaLinter](https://github.com/oxsecurity/megalinter). In order to use these locally, you simply run the [ci.sh](./ci.sh) file which will install the necessary tools.
+If you want to  use MegaLinter as well, you must set the following environment variable:
+
+```yaml
+ENABLE_MEGALINTER: true
+```
 
 ## License
 
