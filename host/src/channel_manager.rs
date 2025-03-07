@@ -334,12 +334,12 @@ impl<'d> ChannelManager<'d> {
     /// Handle incoming L2CAP signal
     pub(crate) fn signal(&self, conn: ConnHandle, data: &[u8]) -> Result<(), Error> {
         let (header, data) = L2capSignalHeader::from_hci_bytes(data)?;
-        //trace!(
-        //    "[l2cap][conn = {:?}] received signal (req {}) code {:?}",
-        //    conn,
-        //    header.identifier,
-        //    header.code
-        //);
+        trace!(
+            "[l2cap][conn = {:?}] received signal (req {}) code {:?}",
+            conn,
+            header.identifier,
+            header.code
+        );
         match header.code {
             L2capSignalCode::LeCreditConnReq => {
                 let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
