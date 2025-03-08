@@ -9,7 +9,7 @@ use rand_core::RngCore;
 use crate::Address;
 
 /// LE Secure Connections Long Term Key.
-#[derive(Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
 pub struct LongTermKey(pub u128);
@@ -20,12 +20,35 @@ impl LongTermKey {
     pub const fn new(k: u128) -> Self {
         Self(k)
     }
+    /// Creates a Long Term Key from a `[u8; 16]` value in little endian.
+    #[inline(always)]
+    pub const fn from_le_bytes(k: [u8; 16]) -> Self {
+        Self(u128::from_le_bytes(k))
+    }
+    /// Creates a Long Term Key from a `[u8; 16]` value in little endian.
+    #[inline(always)]
+    pub const fn to_le_bytes(self) -> [u8; 16] {
+        self.0.to_le_bytes()
+    }
 }
 
 impl From<&LongTermKey> for u128 {
     #[inline(always)]
     fn from(k: &LongTermKey) -> Self {
         k.0
+    }
+}
+
+impl core::fmt::Display for LongTermKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for LongTermKey {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{:016x}", self.0)
     }
 }
 

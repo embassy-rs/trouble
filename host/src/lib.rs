@@ -12,13 +12,20 @@ use bt_hci::FromHciBytesError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
+#[cfg(feature = "security")]
+use heapless::Vec;
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
+#[cfg(feature = "security")]
+pub use crate::security_manager::{BondInformation, LongTermKey};
 use rand_core::{CryptoRng, RngCore};
+
+/// Number of bonding information stored
+pub(crate) const BI_COUNT: usize = 10; // Should be configurable
 
 mod fmt;
 
@@ -546,5 +553,20 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     /// Log status information of the host
     pub fn log_status(&self, verbose: bool) {
         self.host.log_status(verbose);
+    }
+
+    #[cfg(feature = "security")]
+    /// Get bonded devices
+    pub fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
+        self.host
+            .connections
+            .security_manager
+            .add_bond_information(bond_information)
+    }
+
+    #[cfg(feature = "security")]
+    /// Get bonded devices
+    pub fn get_bond_information(&self) -> Vec<BondInformation, BI_COUNT> {
+        self.host.connections.security_manager.get_bond_information()
     }
 }

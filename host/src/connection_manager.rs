@@ -78,7 +78,7 @@ pub(crate) struct ConnectionManager<'d> {
     #[cfg(feature = "gatt")]
     tx_pool: &'d dyn Pool,
     #[cfg(feature = "security")]
-    pub(crate) security_manager: SecurityManager,
+    pub(crate) security_manager: SecurityManager<{ crate::BI_COUNT }>,
 }
 
 impl<'d> ConnectionManager<'d> {
@@ -638,7 +638,9 @@ impl<'d> ConnectionManager<'d> {
 
                 if let Some(address) = address {
                     if let Some(ltk) = self.security_manager.get_peer_long_term_key(address) {
-                        let _ = host.command(LeLongTermKeyRequestReply::new(handle, ltk)).await?;
+                        let _ = host
+                            .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
+                            .await?;
                     } else {
                         warn!("[host] Long term key request reply failed, no long term key")
                     }
@@ -662,7 +664,7 @@ impl<'d> ConnectionManager<'d> {
 
                 if let Some(address) = address {
                     if let Some(ltk) = self.security_manager.get_peer_long_term_key(address) {
-                        host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk))
+                        host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
                             .await?;
                     } else {
                         warn!("[host] Enable encryption failed, no long term key")

@@ -11,7 +11,7 @@ use core::{cell::RefCell, ops::DerefMut};
 
 use bt_hci::event::Event;
 use bt_hci::event::le::LeEvent;
-use bt_hci::param::{ConnHandle, LeConnRole};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -30,6 +30,7 @@ use crate::{
     types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER,
 };
 
+pub use crypto::LongTermKey;
 pub use types::Reason;
 
 use crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
@@ -47,27 +48,50 @@ pub(crate) enum SecurityEventData {
     TimerChange,
 }
 
-/// Bonding data
-struct BondData {
+/// Bond Information
+#[derive(Clone, PartialEq)]
+pub struct BondInformation {
     /// Long Term Key (LTK)
-    ltk: [u8; 16],
+    ltk: LongTermKey,
     /// Device address
-    address: Address,
+    address: BdAddr,
     // Identity Resolving Key (IRK)?
     // Connection Signature Resolving Key (CSRK)?
 }
 
+impl BondInformation {
+    /// Create a BondInformation
+    pub fn new(address: BdAddr, ltk: LongTermKey) -> Self {
+        Self { ltk, address }
+    }
+}
+
+impl core::fmt::Display for BondInformation {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let a = Address::random(self.address.into_inner());
+        write!(f, "Address {} LTK {}", a, self.ltk)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for BondInformation {
+    fn format(&self, fmt: defmt::Formatter) {
+        let a = Address::random(self.address.into_inner());
+        defmt::write!(fmt, "Address {} LTK {}", a, self.ltk)
+    }
+}
+
 /// Security manager data
-struct SecurityManagerData {
+struct SecurityManagerData<const BOND_COUNT: usize> {
     /// Local device address
     local_address: Option<Address>,
     /// Current bonds with other devices
-    bond: Vec<BondData, 10>,
+    bond: Vec<BondInformation, BOND_COUNT>,
     /// Random generator seeded
     random_generator_seeded: bool,
 }
 
-impl SecurityManagerData {
+impl<const BOND_COUNT: usize> SecurityManagerData<BOND_COUNT> {
     /// Create a new security manager data structure
     pub(crate) fn new() -> Self {
         Self {
@@ -284,11 +308,11 @@ impl PairingData {
 // ----- Key Distribution (HCI) -----
 
 /// Security manager that handles SM packet
-pub struct SecurityManager {
+pub struct SecurityManager<const BOND_COUNT: usize> {
     /// Random generator
     rng: RefCell<ChaCha12Rng>,
     /// Security manager data
-    state: RefCell<SecurityManagerData>,
+    state: RefCell<SecurityManagerData<BOND_COUNT>>,
     /// Current state of the pairing
     pairing_state: RefCell<PairingData>,
     /// Received events
@@ -303,7 +327,7 @@ enum TimerCommand {
     Start,
 }
 
-impl SecurityManager {
+impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Create a new SecurityManager
     pub(crate) fn new() -> Self {
         let random_seed = [0u8; 32];
@@ -329,9 +353,10 @@ impl SecurityManager {
     }
 
     /// Get the long term key for peer
-    pub(crate) fn get_peer_long_term_key(&self, address: Address) -> Option<[u8; 16]> {
+    pub(crate) fn get_peer_long_term_key(&self, address: Address) -> Option<LongTermKey> {
+        trace!("[security manager] Find long term key for {}", address);
         self.state.borrow().bond.iter().find_map(|bond| {
-            if bond.address.addr == address.addr {
+            if bond.address == address.addr {
                 Some(bond.ltk)
             } else {
                 None
@@ -347,6 +372,21 @@ impl SecurityManager {
     /// Has the random generator been seeded?
     pub(crate) fn get_random_generator_seeded(&self) -> bool {
         self.state.borrow().random_generator_seeded
+    }
+
+    /// Add a bonded device
+    pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
+        let a = Address::random(bond_information.address.into_inner());
+        trace!("[security manager] Add bond for {}", a);
+        match self.state.borrow_mut().bond.push(bond_information) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(Error::OutOfMemory),
+        }
+    }
+
+    /// Get bonded devices
+    pub(crate) fn get_bond_information(&self) -> Vec<BondInformation, BOND_COUNT> {
+        Vec::from_slice(self.state.borrow().bond.as_slice()).unwrap()
     }
 
     /// Handle packet
@@ -481,35 +521,50 @@ impl SecurityManager {
     /// Initiate pairing
     pub fn initiate(&self, connection: &Connection) -> Result<(), Error> {
         if connection.role() == LeConnRole::Central {
-            // Send pairing request
-            let local_features = PairingFeatures {
-                io_capabilities: IoCapabilities::DisplayYesNo,
-                security_properties: AuthReq::new(BondingFlag::Bonding),
-                ..Default::default()
-            };
-
-            let mut packet = TxPacket::new(connection.alloc_tx()?, Command::PairingRequest)?;
-
-            let payload = packet.payload_mut();
-
-            local_features.encode(payload).map_err(|_| Error::InvalidValue)?;
-
-            match connection.try_send(packet.into_pdu()) {
-                Ok(()) => (),
-                Err(error) => {
-                    error!("[security manager] Failed to respond to request {:?}", error);
-                    return Err(error);
+            let peer_address = connection.peer_address();
+            if let Some(ltk) = self.get_peer_long_term_key(Address {
+                addr: peer_address,
+                kind: AddrKind::RANDOM,
+            }) {
+                self.try_send_event(SecurityEventData::EnableEncryption(connection.handle()))?;
+                {
+                    let mut pairing_state = self.pairing_state.borrow_mut();
+                    pairing_state.role = connection.role();
+                    pairing_state.handle = Some(connection.handle());
+                    pairing_state.state = PairingState::SecurityChangeEvent;
                 }
-            }
-
-            {
-                let mut pairing_state = self.pairing_state.borrow_mut();
-                pairing_state.role = connection.role();
-                pairing_state.handle = Some(connection.handle());
-                pairing_state.state = PairingState::Request;
-                pairing_state.local_features = Some(local_features);
-                pairing_state.method = PairingMethod::LeSecureConnectionNumericComparison;
                 self.timer_reset()?;
+            } else {
+                // Send pairing request
+                let local_features = PairingFeatures {
+                    io_capabilities: IoCapabilities::DisplayYesNo,
+                    security_properties: AuthReq::new(BondingFlag::Bonding),
+                    ..Default::default()
+                };
+
+                let mut packet = TxPacket::new(connection.alloc_tx()?, Command::PairingRequest)?;
+
+                let payload = packet.payload_mut();
+
+                local_features.encode(payload).map_err(|_| Error::InvalidValue)?;
+
+                match connection.try_send(packet.into_pdu()) {
+                    Ok(()) => (),
+                    Err(error) => {
+                        error!("[security manager] Failed to respond to request {:?}", error);
+                        return Err(error);
+                    }
+                }
+
+                {
+                    let mut pairing_state = self.pairing_state.borrow_mut();
+                    pairing_state.role = connection.role();
+                    pairing_state.handle = Some(connection.handle());
+                    pairing_state.state = PairingState::Request;
+                    pairing_state.local_features = Some(local_features);
+                    pairing_state.method = PairingMethod::LeSecureConnectionNumericComparison;
+                    self.timer_reset()?;
+                }
             }
         } else {
             // Send sequrity request to central
@@ -1027,7 +1082,7 @@ impl SecurityManager {
             (pairing_state.role, local_check)
         };
         if role == LeConnRole::Central {
-            self.store_pairing();
+            self.store_pairing()?;
             self.try_send_event(SecurityEventData::EnableEncryption(handle))?;
         } else {
             let mut packet = self.prepare_packet(Command::PairingDhKeyCheck, connections)?;
@@ -1043,7 +1098,7 @@ impl SecurityManager {
                     return Err(error);
                 }
             }
-            self.store_pairing();
+            self.store_pairing()?;
         }
         {
             let mut pairing_state = self.pairing_state.borrow_mut();
@@ -1097,16 +1152,43 @@ impl SecurityManager {
         Ok(())
     }
 
-    fn store_pairing(&self) {
+    fn store_pairing(&self) -> Result<(), Error> {
         let pairing_state = self.pairing_state.borrow();
-        let ltk_bytes = pairing_state.ltk.map(|ltk| ltk.to_le_bytes()).unwrap();
-        let bond = BondData {
-            address: pairing_state.peer_address.unwrap(),
-            ltk: ltk_bytes,
-        };
-        match self.state.borrow_mut().bond.push(bond) {
-            Ok(_) => (),
-            Err(_) => error!("[security manager] Failed to store bond"),
+        if let (Some(ltk), Some(peer_address)) = (pairing_state.ltk, pairing_state.peer_address) {
+            let ltk = LongTermKey(ltk);
+            let bond = BondInformation {
+                address: peer_address.addr,
+                ltk,
+            };
+
+            let bonds = &mut self.state.borrow_mut().bond;
+
+            let mut replaced = false;
+            for bond in bonds.iter_mut() {
+                if bond.address == peer_address.addr {
+                    bond.ltk = ltk;
+                    replaced = true;
+                    trace!("[security manager] Replaced bond for {}", peer_address);
+                    break;
+                }
+            }
+            if !replaced {
+                match bonds.push(bond) {
+                    Ok(_) => {
+                        trace!("[security manager] Added bond for {}", peer_address);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("[security manager] Failed to store bond");
+                        Err(Error::OutOfMemory)
+                    }
+                }
+            } else {
+                Ok(())
+            }
+        } else {
+            error!("[security manager] Failed to store bond, no pairing information");
+            Err(Error::InvalidState)
         }
     }
 
