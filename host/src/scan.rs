@@ -136,10 +136,25 @@ impl<'d, C: Controller> Scanner<'d, C> {
 }
 
 /// Handle to an active advertiser which can accept connections.
+///
+/// # Warning
+/// If `ScanSession::wait_idle` is not used to drop the `ScanSession` then future attempts to send commands over the HCI (such as `central.connect`) may error for an indeterminate time later.
 pub struct ScanSession<'d, const EXTENDED: bool> {
     command_state: &'d CommandState<bool>,
     deadline: Option<Instant>,
     done: bool,
+}
+
+impl<const EXTENDED: bool> ScanSession<'_, EXTENDED> {
+    /// Cancel the `ScanSession` and wait until commands can be sent again.
+    ///
+    /// # Warning
+    /// If this is not used to drop the `ScanSession` then future attempts to send commands over the HCI (such as `central.connect`) may error for an indeterminate time later.
+    pub async fn wait_idle(self) {
+        let Self { command_state, .. } = self;
+        drop(self); // drop self which sends the cancel request.
+        command_state.wait_idle().await // wait until commands can be sent again.
+    }
 }
 
 impl<const EXTENDED: bool> Drop for ScanSession<'_, EXTENDED> {
