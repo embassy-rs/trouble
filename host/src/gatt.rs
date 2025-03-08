@@ -701,6 +701,7 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
             AttRsp::ReadByType { mut it } => {
                 if let Some(Ok((handle, item))) = it.next() {
                     // As defined in the bluetooth spec [3.3.3.3. Client Characteristic Configuration](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/generic-attribute-profile--gatt-.html#UUID-09487be3-178b-eeca-f49f-f783e8d462f6)
+                    // "The Client Characteristic Configuration declaration is an optional characteristic descriptor" and
                     // "The default value for the Client Characteristic Configuration descriptor value shall be 0x0000."
                     if item.is_empty() {
                         Ok((handle, CCCD(0)))
