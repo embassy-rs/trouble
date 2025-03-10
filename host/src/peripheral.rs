@@ -106,6 +106,38 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         })
     }
 
+    /// Update the advertisment adv_data and/or scan_data. Does not change any
+    /// other advertising parameters. If no advertising is active, this will not
+    /// produce any observable effect. This is typically useful when
+    /// implementing a BLE beacon that only broadcasts advertisement data and
+    /// does not accept any connections.
+    pub async fn update_adv_data<'k>(&mut self, data: Advertisement<'k>) -> Result<(), BleHostError<C::Error>>
+    where
+        C: for<'t> ControllerCmdSync<LeSetAdvData>
+            + ControllerCmdSync<LeSetAdvParams>
+            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+    {
+        let host = &self.stack.host;
+        let data: RawAdvertisement = data.into();
+        if !data.props.legacy_adv() {
+            return Err(Error::InvalidValue.into());
+        }
+        if !data.adv_data.is_empty() {
+            let mut buf = [0; 31];
+            let to_copy = data.adv_data.len().min(buf.len());
+            buf[..to_copy].copy_from_slice(&data.adv_data[..to_copy]);
+            host.command(LeSetAdvData::new(to_copy as u8, buf)).await?;
+        }
+        if !data.scan_data.is_empty() {
+            let mut buf = [0; 31];
+            let to_copy = data.scan_data.len().min(buf.len());
+            buf[..to_copy].copy_from_slice(&data.scan_data[..to_copy]);
+            host.command(LeSetScanResponseData::new(to_copy as u8, buf)).await?;
+        }
+        Ok(())
+    }
+
     /// Starts sending BLE advertisements according to the provided config.
     ///
     /// The handles are required to provide the storage while advertising, and
