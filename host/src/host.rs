@@ -932,9 +932,10 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                         trace!("[host] cancel connection create");
                         // trace!("[host] cancelling create connection");
                         if host.command(LeCreateConnCancel::new()).await.is_err() {
-                            // Signal to ensure no one is stuck
-                            host.connect_command_state.canceled();
+                            warn!("[host] error cancelling connection");
                         }
+                        // Signal to ensure no one is stuck
+                        host.connect_command_state.canceled();
                     }
                     Either3::Second(ext) => {
                         trace!("[host] disabling advertising");
