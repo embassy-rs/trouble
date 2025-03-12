@@ -1,13 +1,13 @@
 //! nifty utility borrowed from serde :)
 //!
-//! https://github.com/serde-rs/serde/blob/master/serde_derive/src/internals/ctxt.rs
+//! <https://github.com/serde-rs/serde/blob/master/serde_derive/src/internals/ctxt.rs>
 
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::thread;
 
 use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 
 /// A type to collect errors together and format them.
 ///

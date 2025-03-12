@@ -1,13 +1,8 @@
-//! Trouble is a Bluetooth Low Energy (BLE) Host implementation that communicates
-//! with a controller over any transport implementing the traits from the `bt-hci`
-//! crate.
-//!
-//! Trouble can run on embedded devices (`no_std`) and be configured to consume
-//! as little resources are needed depending on your required configuration.
 #![no_std]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(clippy::needless_lifetimes)]
+#![doc = include_str!("../../README.md")]
 #![warn(missing_docs)]
 
 use core::mem::MaybeUninit;
