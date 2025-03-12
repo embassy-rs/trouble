@@ -58,8 +58,8 @@ pub(crate) mod mock_controller;
 pub(crate) mod host;
 use host::{AdvHandleState, BleHost, HostMetrics, Runner};
 
-#[allow(missing_docs)]
 pub mod prelude {
+    //! Convenience include of most commonly used types.
     pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role};
     pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
