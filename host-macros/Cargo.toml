@@ -7,6 +7,11 @@ description = "An async Rust BLE host - Derive macros crate"
 keywords = ["no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 
+[package.metadata.embassy_docs]
+src_base = "https://github.com/embassy-rs/trouble-host-macros/blob/v$VERSION/src/"
+src_base_git = "https://github.com/embassy-rs/trouble-host-macros/blob/$COMMIT/src/"
+target = "thumbv7em-none-eabi"
+
 [dependencies]
 syn = { version = "^2", features = ["full", "extra-traits"] }
 quote = "1.0.7"
