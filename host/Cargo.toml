@@ -8,6 +8,12 @@ keywords = ["no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 resolver = "2"
 
+[package.metadata.embassy_docs]
+src_base = "https://github.com/embassy-rs/trouble-host/blob/v$VERSION/src/"
+src_base_git = "https://github.com/embassy-rs/trouble-host/blob/$COMMIT/src/"
+features = ["defmt"]
+target = "thumbv7em-none-eabi"
+
 [dependencies]
 bt-hci = { version = "0.2", features = ["embassy-time", "uuid"] }
 embedded-io = { version = "0.6" }
