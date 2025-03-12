@@ -30,7 +30,6 @@ jobs:
           mv rust-toolchain-nightly.toml rust-toolchain.toml
           mkdir crates
           docserver-builder -i host -o crates/trouble-host/git.zup
-          docserver-builder -i host-macros -o crates/trouble-host-macros/git.zup
 
       - name: upload
         run: |
