@@ -1,7 +1,7 @@
 use futures::future::join;
 use std::time::Duration;
 use tokio::select;
-use trouble_example_tests::{serial, TestContext};
+use trouble_example_tests::{TestContext, serial};
 use trouble_host::prelude::*;
 
 #[tokio::test]
@@ -17,7 +17,20 @@ async fn ble_l2cap_peripheral_nrf52() {
         .await;
 }
 
-/*#[tokio::test]
+#[tokio::test]
+async fn ble_l2cap_peripheral_rp_pico_w() {
+    let _ = pretty_env_logger::try_init();
+    let firmware = "bins/rp-pico-w/ble_l2cap_peripheral";
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(run_l2cap_peripheral_test(
+            &[("target", "rp2040"), ("board", "rp-pico-w")],
+            firmware,
+        ))
+        .await;
+}
+
+#[tokio::test]
 async fn ble_l2cap_peripheral_esp32c3() {
     let _ = pretty_env_logger::try_init();
     let firmware = "bins/esp32/ble_l2cap_peripheral";
@@ -28,7 +41,7 @@ async fn ble_l2cap_peripheral_esp32c3() {
             firmware,
         ))
         .await;
-}*/
+}
 
 async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     let ctx = TestContext::new();

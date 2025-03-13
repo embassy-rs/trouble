@@ -9,11 +9,19 @@
       }
     },
     {
+      "chip": "RP2040",
+      "probe": "2e8a:000c:E6633861A382B438",
+      "labels": {
+        "target": "rp2040",
+        "board": "rp-pico-w"
+      }
+    },
+    {
       "chip": "esp32c3",
       "probe": "303a:1001:60:55:F9:BF:A9:44",
       "labels": {
         "target": "esp32",
-	"board": "esp-rust-board"
+        "board": "esp-rust-board"
       }
     }
   ]
