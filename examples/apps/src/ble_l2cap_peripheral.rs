@@ -6,7 +6,7 @@ use trouble_host::prelude::*;
 const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
-const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
+const L2CAP_CHANNELS_MAX: usize = 1;
 
 pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where

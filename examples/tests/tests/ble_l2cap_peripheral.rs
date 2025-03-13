@@ -1,9 +1,9 @@
 use futures::future::join;
+use std::io::Write;
 use std::time::Duration;
 use tokio::select;
 use trouble_example_tests::{TestContext, serial};
 use trouble_host::prelude::*;
-use std::io::Write;
 
 #[tokio::test]
 async fn ble_l2cap_peripheral_nrf52() {

@@ -63,7 +63,7 @@ async fn main(spawner: Spawner) {
     unwrap!(spawner.spawn(cyw43_task(runner)));
     control.init(clm).await;
 
-    let controller: ExternalController<_, 10> = ExternalController::new(bt_device);
+    let controller: ExternalController<_, 40> = ExternalController::new(bt_device);
 
-    ble_l2cap_peripheral::run::<_, 128>(controller).await;
+    ble_l2cap_peripheral::run::<_, 251>(controller).await;
 }
