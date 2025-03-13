@@ -9,7 +9,7 @@ if ! command -v cargo-batch &> /dev/null; then
 fi
 
 export RUSTFLAGS=-Dwarnings
-export DEFMT_LOG=trace
+export DEFMT_LOG=info,trouble_host=trace
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
 if [[ -z "${CARGO_TARGET_DIR}" ]]; then
     export CARGO_TARGET_DIR=target_ci
