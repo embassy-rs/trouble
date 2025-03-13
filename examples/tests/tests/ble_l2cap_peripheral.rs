@@ -118,6 +118,7 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
                 let mut logfile = ctx.logfile(labels).unwrap();
                 for line in log.lines {
                     logfile.write(line.as_bytes()).unwrap();
+                    logfile.write(b"\n").unwrap();
                 }
             }
             assert!(false);
