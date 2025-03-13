@@ -112,7 +112,12 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
         Err(_) => {
             println!("Test timed out");
             token2.cancel();
-            let _ = tokio::time::timeout(Duration::from_secs(1), dut).await;
+            let log = tokio::time::timeout(Duration::from_secs(5), dut).await;
+            if let Ok(Ok(Ok(log))) = log {
+                for line in log.lines {
+                    log::warn!("{}", line);
+                }
+            }
             assert!(false);
         }
         Ok((p, c)) => {
