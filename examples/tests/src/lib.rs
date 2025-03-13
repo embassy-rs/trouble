@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use hilbench_agent::ProbeConfig;
 use probe::DeviceUnderTest;
+use std::fs::File;
 
 pub mod probe;
 pub mod serial;
@@ -29,5 +30,17 @@ impl TestContext {
             .select(labels)
             .ok_or(anyhow!("Unable to find DUT for {:?}", labels))?;
         Ok(DeviceUnderTest::new(target))
+    }
+
+    pub fn logfile(&self, labels: &[(&str, &str)]) -> Result<File, anyhow::Error> {
+        for (key, value) in labels {
+            if *key == "board" {
+                let fname = format!("{}.log", value);
+                log::info!("Created log file '{}'", fname);
+                let f = File::create(fname)?;
+                return Ok(f);
+            }
+        }
+        Err(anyhow::anyhow!("No 'board' label found, unable to create log file"))
     }
 }
