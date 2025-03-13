@@ -595,12 +595,13 @@ impl<'d> ChannelManager<'d> {
         };
 
         // Pre-request
+        let mut sender = ble.try_l2cap(conn, len, n_packets)?;
 
         // Segment using mps
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        ble.try_l2cap(conn, (len - 4) as u16, 1)?.try_send(&p_buf[..len])?;
+        sender.try_send(&p_buf[..len])?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
@@ -608,7 +609,7 @@ impl<'d> ChannelManager<'d> {
 
         for (i, chunk) in chunks.enumerate() {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            ble.try_l2cap(conn, (len - 4) as u16, 1)?.try_send(&p_buf[..len])?;
+            sender.try_send(&p_buf[..len])?;
             grant.confirm(1);
         }
         Ok(())
