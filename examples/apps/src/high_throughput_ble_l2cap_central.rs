@@ -38,8 +38,8 @@ where
 
     let config = ConnectConfig {
         connect_params: ConnectParams{
-            min_connection_interval: Duration::from_micros(30_000),
-            max_connection_interval: Duration::from_micros(30_000),
+            min_connection_interval: Duration::from_micros(80_000),
+            max_connection_interval: Duration::from_micros(80_000),
             max_latency: 0,
             event_length: Duration::from_millis(4000),
             supervision_timeout: Duration::from_millis(8000),
@@ -70,10 +70,10 @@ where
             let phy_mask = PhyMask::new().set_le_2m_preferred(true);
             stack.async_command(LeSetPhy::new(conn.handle(), AllPhys::default(), phy_mask.clone(), phy_mask, PhyOptions::S2CodingPreferred)).await.unwrap();
 
-            const PAYLOAD_LEN: usize = ((251-4)*20)-2;
+            const PAYLOAD_LEN: usize = 2510 - 6;
 
             let l2cap_channel_config = L2capChannelConfig {
-                mtu: 251,
+                mtu: 2510,
                 flow_policy: CreditFlowPolicy::Every(50),
                 initial_credits: Some(200),
             };
@@ -84,7 +84,6 @@ where
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                info!("Sending data to l2cap channel with MTU: {}", L2CAP_MTU);
                 ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
             }
             info!("Sent data, waiting for them to be sent back");

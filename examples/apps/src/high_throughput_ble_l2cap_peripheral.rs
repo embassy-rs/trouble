@@ -65,7 +65,7 @@ where
             }
 
             let l2cap_channel_config = L2capChannelConfig {
-                mtu: 251,
+                mtu: 2510,
                 flow_policy: CreditFlowPolicy::Every(50),
                 initial_credits: Some(200),
             };
@@ -77,7 +77,7 @@ where
             info!("L2CAP channel accepted");
 
             // Size of payload we're expecting
-            const PAYLOAD_LEN: usize = ((251-4)*20)-2;
+            const PAYLOAD_LEN: usize = 2510 - 6;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
                 let len = ch1.receive(&stack, &mut rx).await.unwrap();

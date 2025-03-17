@@ -51,5 +51,5 @@ async fn main() {
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
 
-    high_throughput_ble_l2cap_central::run::<_, 251>(controller).await;
+    high_throughput_ble_l2cap_central::run::<_, 2510>(controller).await;
 }
