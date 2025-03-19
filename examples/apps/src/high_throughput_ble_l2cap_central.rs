@@ -2,9 +2,7 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
 use trouble_host::prelude::*;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-use bt_hci::cmd::le::{LeSetPhy, LeReadPhyReturn, LeSetDataLength, LeReadPhy, LeReadBufferSize,
-                      LeReadMaxDataLength, LeReadLocalSupportedFeatures,
-                      LeWriteSuggestedDefaultDataLength, LeReadSuggestedDefaultDataLength};
+use bt_hci::cmd::le::{LeSetPhy, LeSetDataLength, LeReadLocalSupportedFeatures};
 use bt_hci::param::{AllPhys, PhyMask, PhyOptions};
 
 /// Max number of connections

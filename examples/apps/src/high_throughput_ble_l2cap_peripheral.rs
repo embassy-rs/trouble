@@ -1,7 +1,7 @@
 use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
 use trouble_host::prelude::*;
-use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeReadMaxDataLength, LeSetDataLength, LeWriteSuggestedDefaultDataLength};
+use bt_hci::cmd::le::LeReadLocalSupportedFeatures;
 use bt_hci::controller::ControllerCmdSync;
 
 /// Max number of connections
