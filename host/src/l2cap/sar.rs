@@ -2,9 +2,9 @@ use core::cell::RefCell;
 
 use bt_hci::param::ConnHandle;
 
-use crate::Error;
 use crate::packet_pool::Packet;
 use crate::types::l2cap::L2capHeader;
+use crate::Error;
 
 pub(crate) struct AssembledPacket {
     packet: Packet,

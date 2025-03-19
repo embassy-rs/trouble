@@ -1,8 +1,8 @@
 //! A packet pool for allocating and freeing packet buffers with quality of service policy.
 use core::cell::RefCell;
 
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 
 struct PacketBuf<const MTU: usize> {
     buf: [u8; MTU],

@@ -5,7 +5,7 @@ use embassy_time::Duration;
 
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::types::uuid::Uuid;
-use crate::{Address, codec};
+use crate::{codec, Address};
 
 /// Transmit power levels.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -595,16 +595,14 @@ mod tests {
     #[test]
     fn adv_name_truncate() {
         let mut adv_data = [0; 31];
-        assert!(
-            AdStructure::encode_slice(
-                &[
-                    AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                    AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
-                    AdStructure::CompleteLocalName(b"12345678901234567890123"),
-                ],
-                &mut adv_data[..],
-            )
-            .is_err()
-        );
+        assert!(AdStructure::encode_slice(
+            &[
+                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
+                AdStructure::CompleteLocalName(b"12345678901234567890123"),
+            ],
+            &mut adv_data[..],
+        )
+        .is_err());
     }
 }

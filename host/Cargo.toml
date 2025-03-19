@@ -1,7 +1,7 @@
 [package]
 name = "trouble-host"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "An async Rust BLE host"
 license = "Apache-2.0 OR MIT"
 keywords = ["no-std"]

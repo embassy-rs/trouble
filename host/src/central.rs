@@ -2,7 +2,7 @@
 use bt_hci::cmd::le::{LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn};
 use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{select, Either};
 
 use crate::connection::{ConnectConfig, Connection, PhySet};
 use crate::{BleHostError, Error, Stack};
