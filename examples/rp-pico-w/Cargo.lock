@@ -2396,6 +2396,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-io",
  "heapless",
+ "rand_core",
  "static_cell",
  "trouble-host",
 ]
@@ -2412,6 +2413,7 @@ dependencies = [
  "embedded-io",
  "futures",
  "heapless",
+ "rand_core",
  "static_cell",
  "trouble-host-macros",
  "zerocopy",

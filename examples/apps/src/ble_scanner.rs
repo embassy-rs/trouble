@@ -9,9 +9,8 @@ use trouble_host::prelude::*;
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 1;
-const L2CAP_MTU: usize = 27;
 
-pub async fn run<C>(controller: C)
+pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where
     C: Controller + ControllerCmdSync<LeSetScanParams>,
 {
@@ -20,8 +19,10 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
 
     info!("Our address = {:?}", address);
+
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+
     let Host {
         central, mut runner, ..
     } = stack.build();

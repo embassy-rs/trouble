@@ -15,7 +15,9 @@ features = ["defmt", "peripheral", "central", "gatt", "scan", "derive"]
 target = "thumbv7em-none-eabi"
 
 [dependencies]
+aes = { version = "0.8.2", optional = true }
 bt-hci = { version = "0.2", features = ["embassy-time", "uuid"] }
+cmac = { version = "0.7.2", optional = true }
 embedded-io = { version = "0.6" }
 embassy-sync = "0.6.2"
 embassy-time = "0.4"
@@ -23,6 +25,9 @@ embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.8"
 trouble-host-macros = { path = "../host-macros", version = "0.1.0", optional = true }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arithmetic"], optional = true }
+rand_core = "0.6"
+rand_chacha = { version = "0.3", default-features = false, optional = true }
 static_cell = "2.1.0"
 zerocopy = "0.8.21"
 
@@ -42,7 +47,10 @@ tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] }  # needed for CI builds
 rand = "0.8.5"
+rand_core = { version = "0.6", features = ["getrandom"]}
 heapless = "0.8.0"
+embassy-executor = { version = "0.7", features = ["arch-std", "executor-thread"]}
+embassy-time = { version = "0.4", features = ["std"]}
 
 
 [features]
@@ -63,6 +71,10 @@ derive = ["trouble-host-macros"]
 controller-host-flow-control = []
 # Enable additional connection metrics
 connection-metrics = []
+security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:rand_chacha", "gatt" ]
+# For development. Disable security manager cryptographically secure pseudorandom number
+# generator (CSPRNG) to require a cryptographically secure seed
+dev-disable-csprng-seed-requirement = []
 
 default = ["peripheral", "central", "gatt", "derive"]
 
