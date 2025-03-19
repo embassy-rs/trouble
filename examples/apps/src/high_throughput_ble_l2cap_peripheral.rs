@@ -1,5 +1,5 @@
 use embassy_futures::join::join;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use trouble_host::prelude::*;
 use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeReadMaxDataLength, LeSetDataLength, LeWriteSuggestedDefaultDataLength};
 use bt_hci::controller::ControllerCmdSync;
@@ -13,7 +13,7 @@ const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where
     C: Controller
-    + ControllerCmdSync<LeSetDataLength>,
+    + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
     // Hardcoded peripheral address
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
@@ -35,10 +35,15 @@ where
         .unwrap();
 
     let mut scan_data = [0; 31];
-    AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
+    AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"TroubleHT")], &mut scan_data[..]).unwrap();
 
     let _ = join(runner.run(), async {
         loop {
+            // Check that the controller used supports the necessary features for high throughput.
+            let res = stack.command(LeReadLocalSupportedFeatures::new()).await.unwrap();
+            assert!(res.supports_le_data_packet_length_extension());
+            assert!(res.supports_le_2m_phy());
+
             info!("Advertising, waiting for connection...");
             let advertiser = peripheral
                 .advertise(
@@ -54,18 +59,9 @@ where
 
             info!("Connection established");
 
-            let res = stack.command(LeSetDataLength::new(conn.handle(), 251, 2120)).await;
-            match res {
-                Ok(_) => {
-                    info!("LeSetDataLength OK");
-                }
-                Err(e) => {
-                    info!("LeSetDataLength error: {:?}", e);
-                }
-            }
-
             let l2cap_channel_config = L2capChannelConfig {
-                mtu: 2510,
+                mtu: L2CAP_MTU as u16,
+                // Ensure there will be enough credits to send data throughout the entire connection event.
                 flow_policy: CreditFlowPolicy::Every(50),
                 initial_credits: Some(200),
             };
@@ -78,8 +74,9 @@ where
 
             // Size of payload we're expecting
             const PAYLOAD_LEN: usize = 2510 - 6;
+            const NUM_PAYLOADS: u8 = 40;
             let mut rx = [0; PAYLOAD_LEN];
-            for i in 0..10 {
+            for i in 0..NUM_PAYLOADS {
                 let len = ch1.receive(&stack, &mut rx).await.unwrap();
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
@@ -87,11 +84,19 @@ where
 
             info!("L2CAP data received, echoing");
             Timer::after(Duration::from_secs(1)).await;
-            for i in 0..10 {
+
+            let start = Instant::now();
+
+            for i in 0..NUM_PAYLOADS {
                 let tx = [i; PAYLOAD_LEN];
                 ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
             }
-            info!("L2CAP data echoed");
+
+            let duration = start.elapsed();
+
+            info!("L2CAP data of {} bytes echoed at {} kbps.",
+                (PAYLOAD_LEN as u64 * NUM_PAYLOADS as u64),
+                ((PAYLOAD_LEN as u64 * NUM_PAYLOADS as u64 * 8).div_ceil(duration.as_millis())));
 
             Timer::after(Duration::from_secs(60)).await;
         }

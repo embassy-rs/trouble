@@ -14,7 +14,7 @@ This example requires specific hardware and HCI firmware configurations that can
 Any specific target requirements will be outlined is this readme.
 
 Here we will look at some of the configurations that can be used to achieve high a throughput, 
-their effects and how to set them.
+their effects and optimum values.
 
 ### Theoretical background
 
@@ -68,11 +68,30 @@ This scheduled radio activity significantly reduces power usage compared to keep
 
 *Figure 4: Connection events and connection interval. [Obtained from bluetooth.com](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/architecture,-mixing,-and-conventions/architecture.html#UUID-3ca385af-187d-8221-1114-504a7b3c6091)*
 
-Since Bluetooth 5.0, Bluetooth controllers can half the time required to send the same information.
-This is called 2M PHY, as opposed to 1M PHY.
-This allows the radio to send data quicker and spend more time sleeping.
+Since Bluetooth 5.0, Bluetooth controllers can double the symbol transmission rate from 1Mbps, known as 1M PHY, to 
+2Mbps, known as 2M PHY.
 
-By understanding these configurations, we can now modify them to forgo the objective of energy conservation in favour of maximising throughput.
+By understanding these configurations, we can adjust them to prioritize throughput over energy conservation.
+
+### Default configurations
+
+A default BLE configuration optimised for backwards compatibility and energy conservation, like the `ble_l2cap` examples,
+would have a PDU size of 27 and a high connection interval.
+The Bluetooth packet timeline in Figure 5 depicts multiple packets being sent in one connection event.
+Blue represents useful data being sent.
+
+![](assets/default_BLE-connection_event.png)
+
+*Figure 5: Packets set during a connection event*
+
+The Bluetooth packet timeline in Figure 6 depicts bluetooth packets sent in different connection events.
+Notice the white gaps in both figures.
+To maximise throughput, we need to increase the ratio of blue in these diagrams.
+
+![](assets/default_BLE-connection_events.png)
+
+*Figure 6: Packets set during multiple connection events*
+
 The following sections describe how these configurations can be modified to maximise throughput.
 
 ### Data Length Extension
@@ -92,7 +111,7 @@ The following diagram shows the packets when PDU = 251 and L2CAP MTU = 252.
 
 ![](assets/PDU-251_L2CAP-MTU-252.png)
 
-*Figure 5: Effects of suboptimal settings for PDU (251) and L2CAP MTU (252)*
+*Figure 7: Effects of suboptimal settings for PDU (251) and L2CAP MTU (252)*
 
 Hence, it is important to choose an L2CAP MTU value that can neatly fit into a number of PDU packets.
 If the PDU length is set to 251, then the L2CAP MTU should be set to some multiple of this.
@@ -122,7 +141,7 @@ before receiving the next batch from the host. See diagram below.
 
 ![](assets/L2CAP_MTU_uses_all_buffers.png)
 
-*Figure 6: 1M PHY and L2CAP MTU set to 5020, consuming all controller buffers*
+*Figure 8: 1M PHY and L2CAP MTU set to 5020, consuming all controller buffers*
 
 However, if we allow a few extra buffers, the host will be abel to send more data to the controller before it 
 exhausts the data from the previous message.
@@ -130,7 +149,7 @@ This will cause the radio to stay awake.
 
 ![](assets/L2CAP_MTU_uses_half_of_buffers.png)
 
-*Figure 7: 2M PHY and L2CAP MTU set to 2510, consuming half of the controller buffers*
+*Figure 9: 2M PHY and L2CAP MTU set to 2510, consuming half of the controller buffers*
 
 ### Service Data Unit size
 
@@ -149,4 +168,4 @@ possibly lower throughput in noisy environments as when connections are dropped,
 
 Once the host and controller are set up to continuously send data, the final major improvement is to set up the radios  to use 2M PHY.
 This allows the radio to send double the data while the radios are sending data.
-The change from 1M PHY in figure 6 to 2M PHY in figure 7 is denoted by the doubling of the packet height.
+The change from 1M PHY in Figure 8 to 2M PHY in Figure 9 is denoted by the doubling of the packet height.

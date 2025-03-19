@@ -1,5 +1,5 @@
 use embassy_futures::join::join;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use trouble_host::prelude::*;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::cmd::le::{LeSetPhy, LeReadPhyReturn, LeSetDataLength, LeReadPhy, LeReadBufferSize,
@@ -16,6 +16,7 @@ const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where
     C: Controller
+    + ControllerCmdSync<LeSetDataLength>
     + ControllerCmdAsync<LeSetPhy>
     + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
@@ -38,20 +39,12 @@ where
 
     let config = ConnectConfig {
         connect_params: ConnectParams{
-            min_connection_interval: Duration::from_micros(80_000),
-            max_connection_interval: Duration::from_micros(80_000),
-            max_latency: 0,
-            event_length: Duration::from_millis(4000),
-            supervision_timeout: Duration::from_millis(8000),
+            min_connection_interval: Duration::from_millis(80),
+            max_connection_interval: Duration::from_millis(80),
             ..Default::default()
         },
         scan_config: ScanConfig {
-            // active: true,
             filter_accept_list: &[(target.kind, &target.addr)],
-            phys: PhySet::M2,
-            // interval: Duration::from_secs(1),
-            // window: Duration::from_secs(1),
-            // timeout: Duration::from_secs(0),
             ..Default::default()
         },
     };
@@ -67,13 +60,21 @@ where
             let conn = central.connect(&config).await.unwrap();
             info!("Connected, creating l2cap channel");
 
-            let phy_mask = PhyMask::new().set_le_2m_preferred(true);
-            stack.async_command(LeSetPhy::new(conn.handle(), AllPhys::default(), phy_mask.clone(), phy_mask, PhyOptions::S2CodingPreferred)).await.unwrap();
+            // Once connected, request a change in the PDU data length.
+            if let Err(e) = stack.command(LeSetDataLength::new(conn.handle(), 251, 2120)).await {
+                error!("LeSetDataLength error {:?}", e);
+            }
 
-            const PAYLOAD_LEN: usize = 2510 - 6;
+            // and request changing the physical link to 2M PHY.
+            // *Note* Change to the PDU data length and PHY can also be initiated by the peripheral.
+            let phy_mask = PhyMask::new().set_le_2m_preferred(true);
+            if let Err(e) = stack.async_command(LeSetPhy::new(conn.handle(), AllPhys::default(), phy_mask.clone(), phy_mask, PhyOptions::S2CodingPreferred)).await {
+                error!("LeSetPhy error {:?}", e);
+            }
 
             let l2cap_channel_config = L2capChannelConfig {
-                mtu: 2510,
+                mtu: L2CAP_MTU as u16,
+                // Ensure there will be enough credits to send data throughout the entire connection event.
                 flow_policy: CreditFlowPolicy::Every(50),
                 initial_credits: Some(200),
             };
@@ -81,14 +82,31 @@ where
             let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &l2cap_channel_config)
                 .await
                 .unwrap();
+
+            // Wait for the ratios to switch to 2M PHY.
+            // If we do not wait, communication will still occur at 1M for the first 500 ms.
+            Timer::after(Duration::from_secs(1)).await;
+
             info!("New l2cap channel created, sending some data!");
-            for i in 0..10 {
+
+            const PAYLOAD_LEN: usize = 2510 - 6;
+            const NUM_PAYLOADS: u8 = 40;
+
+            let start = Instant::now();
+
+            for i in 0..NUM_PAYLOADS {
                 let tx = [i; PAYLOAD_LEN];
                 ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
             }
-            info!("Sent data, waiting for them to be sent back");
+
+            let duration = start.elapsed();
+
+            info!("Sent {} bytes at {} kbps, waiting for them to be sent back.",
+                (PAYLOAD_LEN as u64 * NUM_PAYLOADS as u64),
+                ((PAYLOAD_LEN as u64 * NUM_PAYLOADS as u64 * 8).div_ceil(duration.as_millis())));
+
             let mut rx = [0; PAYLOAD_LEN];
-            for i in 0..10 {
+            for i in 0..NUM_PAYLOADS {
                 let len = ch1.receive(&stack, &mut rx).await.unwrap();
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);

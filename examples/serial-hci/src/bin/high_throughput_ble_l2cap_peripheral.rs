@@ -51,5 +51,7 @@ async fn main() {
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
 
+    // Setting the L2CAP MTU to be ten times the size of the PDU.
+    // This size of the L2CAP MTU does not consume all the controller buffers.
     high_throughput_ble_l2cap_peripheral::run::<_, 2510>(controller).await;
 }
