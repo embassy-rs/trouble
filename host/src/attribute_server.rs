@@ -1,15 +1,15 @@
 use core::cell::RefCell;
 
 use bt_hci::param::BdAddr;
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 
 use crate::att::{self, AttClient, AttCmd, AttErrorCode, AttReq};
 use crate::attribute::{Attribute, AttributeData, AttributeTable, CCCD};
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
-use crate::{Error, codec};
+use crate::{codec, Error};
 
 #[derive(Default)]
 struct Client {
@@ -674,7 +674,11 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
             AttClient::Confirmation(_) => 0,
         };
-        if len > 0 { Ok(Some(len)) } else { Ok(None) }
+        if len > 0 {
+            Ok(Some(len))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get a reference to the attribute table

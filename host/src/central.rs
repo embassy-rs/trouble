@@ -2,7 +2,7 @@
 use bt_hci::cmd::le::{LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn};
 use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{select, Either};
 
 use crate::connection::{ConnectConfig, Connection, PhySet};
 use crate::{BleHostError, Error, Stack};
@@ -141,6 +141,19 @@ impl<'stack, C: Controller> Central<'stack, C> {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Initiate pairing
+    #[cfg(feature = "security")]
+    pub async fn pairing(&self, connection: &Connection<'stack>) -> Result<(), BleHostError<C::Error>> {
+        let sm = &self.stack.host.connections.security_manager;
+        sm.initiate(connection)?;
+        let reason = sm.get_result().await;
+        if reason == crate::security_manager::Reason::Success {
+            Ok(())
+        } else {
+            Err(BleHostError::BleHost(Error::Security(reason)))
+        }
     }
 }
 

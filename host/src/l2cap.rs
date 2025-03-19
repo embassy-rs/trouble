@@ -1,5 +1,5 @@
 //! L2CAP channels.
-use bt_hci::controller::{Controller, blocking};
+use bt_hci::controller::{blocking, Controller};
 
 pub use crate::channel_manager::CreditFlowPolicy;
 use crate::channel_manager::{ChannelIndex, DynamicChannelManager};

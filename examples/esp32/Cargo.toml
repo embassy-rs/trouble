@@ -1,7 +1,7 @@
 [package]
 name = "trouble-esp32-examples"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
@@ -25,6 +25,10 @@ esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6"
 esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-wifi/esp32h2"]
 esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3", "esp-println/esp32s3", "esp-wifi/esp32s3"]
 
+security = [
+    "trouble-example-apps/security",
+]
+
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
@@ -38,6 +42,14 @@ incremental = false
 lto = 'thin'
 opt-level = 3
 overflow-checks = false
+
+[[bin]]
+name = "ble_bas_central_sec"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_sec"
+required-features = ["security"]
 
 [patch.crates-io]
 esp-wifi = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}

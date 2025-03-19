@@ -6,7 +6,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, LeConnRole, Operation};
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{select, Either};
 
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
 use crate::connection::Connection;

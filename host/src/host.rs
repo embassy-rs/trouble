@@ -8,25 +8,28 @@ use core::task::Poll;
 
 use bt_hci::cmd::controller_baseband::{
     HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
+    SetEventMaskPage2,
 };
+use bt_hci::cmd::info::ReadBdAddr;
 use bt_hci::cmd::le::{
-    LeConnUpdate, LeCreateConnCancel, LeReadBufferSize, LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask,
-    LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr, LeSetScanEnable,
+    LeConnUpdate, LeCreateConnCancel, LeEnableEncryption, LeLongTermKeyRequestReply, LeReadBufferSize,
+    LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask, LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr,
+    LeSetScanEnable,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync, blocking};
+use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
 use bt_hci::param::{
-    AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, FilterDuplicates, LeConnRole,
-    LeEventMask, Status,
+    AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, EventMaskPage2, FilterDuplicates,
+    LeConnRole, LeEventMask, Status,
 };
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{Either3, Either4, select3, select4};
+use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -43,10 +46,13 @@ use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
+#[cfg(feature = "security")]
+use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SIGNAL, L2capHeader, L2capSignal, L2capSignalHeader,
+    L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
+    L2CAP_CID_LE_U_SIGNAL,
 };
-use crate::{Address, BleHostError, Error, Stack, att, config};
+use crate::{att, config, Address, BleHostError, Error, Stack};
 
 /// A BLE Host.
 ///
@@ -68,7 +74,6 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) rx_pool: &'d dyn Pool,
     #[cfg(feature = "gatt")]
     pub(crate) tx_pool: &'d dyn Pool,
-
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
@@ -266,13 +271,15 @@ where
                     #[cfg(feature = "defmt")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x}",
-                        handle, peer_addr
+                        handle,
+                        peer_addr
                     );
 
                     #[cfg(feature = "log")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x?}",
-                        handle, peer_addr
+                        handle,
+                        peer_addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
@@ -305,7 +312,8 @@ where
 
                 // Ignore channels we don't support
                 if header.channel < L2CAP_CID_DYN_START
-                    && !(&[L2CAP_CID_LE_U_SIGNAL, L2CAP_CID_ATT].contains(&header.channel))
+                    && !(&[L2CAP_CID_LE_U_SIGNAL, L2CAP_CID_ATT, L2CAP_CID_LE_U_SECURITY_MANAGER]
+                        .contains(&header.channel))
                 {
                     warn!("[host] unsupported l2cap channel id {}", header.channel);
                     return Err(Error::NotSupported);
@@ -400,6 +408,10 @@ where
             }
             L2CAP_CID_LE_U_SIGNAL => {
                 panic!("le signalling channel was fragmented, impossible!");
+            }
+            L2CAP_CID_LE_U_SECURITY_MANAGER => {
+                self.connections
+                    .handle_security_channel(acl.handle(), &packet, usize::from(header.length))?;
             }
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, packet) {
                 Ok(_) => {
@@ -579,6 +591,7 @@ impl<'d, C: Controller> Runner<'d, C> {
     where
         C: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
+            + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
@@ -592,7 +605,10 @@ impl<'d, C: Controller> Runner<'d, C> {
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<LeReadBufferSize>,
+            + ControllerCmdSync<LeReadBufferSize>
+            + ControllerCmdSync<LeLongTermKeyRequestReply>
+            + ControllerCmdAsync<LeEnableEncryption>
+            + ControllerCmdSync<ReadBdAddr>,
     {
         let dummy = DummyHandler;
         self.run_with_handler(&dummy).await
@@ -603,6 +619,7 @@ impl<'d, C: Controller> Runner<'d, C> {
     where
         C: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
+            + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<LeReadFilterAcceptListSize>
@@ -616,7 +633,10 @@ impl<'d, C: Controller> Runner<'d, C> {
             + ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
-            + ControllerCmdSync<LeReadBufferSize>,
+            + ControllerCmdSync<LeReadBufferSize>
+            + ControllerCmdSync<LeLongTermKeyRequestReply>
+            + ControllerCmdAsync<LeEnableEncryption>
+            + ControllerCmdSync<ReadBdAddr>,
     {
         let control_fut = self.control.run();
         let rx_fut = self.rx.run_with_handler(event_handler);
@@ -697,7 +717,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                 },
                 Ok(ControllerToHostPacket::Event(event)) => {
                     match event {
-                        Event::Le(event) => match event {
+                        Event::Le(ref le_event) => match le_event {
                             LeEvent::LeConnectionComplete(e) => {
                                 if !host.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
                                     let _ = host
@@ -734,6 +754,14 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                 #[cfg(feature = "scan")]
                                 {
                                     event_handler.on_adv_reports(data.reports.iter());
+                                }
+                            }
+                            LeEvent::LeLongTermKeyRequest(_) => {
+                                host.connections.handle_security_hci_event(event)?;
+                            }
+                            LeEvent::LePhyUpdateComplete(event) => {
+                                if let Err(e) = event.status.to_result() {
+                                    warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
                                 }
                             }
                             _ => {
@@ -780,6 +808,9 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                         Event::Vendor(vendor) => {
                             event_handler.on_vendor(&vendor);
                         }
+                        Event::EncryptionChangeV1(_) => {
+                            host.connections.handle_security_hci_event(event)?;
+                        }
                         // Ignore
                         _ => {}
                     }
@@ -800,6 +831,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
     where
         C: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
+            + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
@@ -813,7 +845,10 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             + ControllerCmdSync<LeSetScanEnable>
             + ControllerCmdSync<LeSetExtScanEnable>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<LeReadBufferSize>,
+            + ControllerCmdSync<LeReadBufferSize>
+            + ControllerCmdSync<LeLongTermKeyRequestReply>
+            + ControllerCmdAsync<LeEnableEncryption>
+            + ControllerCmdSync<ReadBdAddr>,
     {
         let host = &self.stack.host;
         Reset::new().exec(&host.controller).await?;
@@ -828,10 +863,15 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                 .enable_conn_request(true)
                 .enable_conn_complete(true)
                 .enable_hardware_error(true)
-                .enable_disconnection_complete(true),
+                .enable_disconnection_complete(true)
+                .enable_encryption_change_v1(true),
         )
         .exec(&host.controller)
         .await?;
+
+        SetEventMaskPage2::new(EventMaskPage2::new().enable_encryption_change_v2(true))
+            .exec(&host.controller)
+            .await?;
 
         LeSetEventMask::new(
             LeEventMask::new()
@@ -840,7 +880,9 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                 .enable_le_adv_set_terminated(true)
                 .enable_le_adv_report(true)
                 .enable_le_scan_timeout(true)
-                .enable_le_ext_adv_report(true),
+                .enable_le_ext_adv_report(true)
+                .enable_le_long_term_key_request(true)
+                .enable_le_phy_update_complete(true),
         )
         .exec(&host.controller)
         .await?;
@@ -885,6 +927,20 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
 
         #[allow(unused_mut)]
         let mut completed_packets_cursor = 0;
+
+        let device_address = host.command(ReadBdAddr::new()).await?;
+        if *device_address.raw() != [0, 0, 0, 0, 0, 0] {
+            let device_address = Address {
+                kind: AddrKind::PUBLIC,
+                addr: device_address,
+            };
+            info!("[host] Device Address {}", device_address);
+            if host.address.is_none() {
+                #[cfg(feature = "security")]
+                host.connections.security_manager.set_local_address(device_address);
+            }
+        }
+
         loop {
             match select4(
                 poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
@@ -893,10 +949,18 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                     host.connections
                         .poll_completed_packets(completed_packets_cursor, Some(cx))
                 }),
-                select3(
+                select4(
                     poll_fn(|cx| host.connect_command_state.poll_cancelled(cx)),
                     poll_fn(|cx| host.advertise_command_state.poll_cancelled(cx)),
                     poll_fn(|cx| host.scan_command_state.poll_cancelled(cx)),
+                    #[cfg(feature = "security")]
+                    {
+                        host.connections.poll_security_events()
+                    },
+                    #[cfg(not(feature = "security"))]
+                    {
+                        poll_fn(|cx| Poll::<()>::Pending)
+                    },
                 ),
             )
             .await
@@ -928,7 +992,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                     }
                 }
                 Either4::Fourth(states) => match states {
-                    Either3::First(_) => {
+                    Either4::First(_) => {
                         trace!("[host] cancel connection create");
                         // trace!("[host] cancelling create connection");
                         if host.command(LeCreateConnCancel::new()).await.is_err() {
@@ -937,7 +1001,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                         // Signal to ensure no one is stuck
                         host.connect_command_state.canceled();
                     }
-                    Either3::Second(ext) => {
+                    Either4::Second(ext) => {
                         trace!("[host] disabling advertising");
                         if ext {
                             host.command(LeSetExtAdvEnable::new(false, &[])).await?
@@ -946,7 +1010,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                         }
                         host.advertise_command_state.canceled();
                     }
-                    Either3::Third(ext) => {
+                    Either4::Third(ext) => {
                         trace!("[host] disabling scanning");
                         if ext {
                             // TODO: A bit opinionated but not more than before
@@ -961,6 +1025,16 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                             host.command(LeSetScanEnable::new(false, false)).await?;
                         }
                         host.scan_command_state.canceled();
+                    }
+                    Either4::Fourth(request) => {
+                        #[cfg(feature = "security")]
+                        {
+                            let event_data = match request {
+                                Ok(e) => e,
+                                Err(_) => SecurityEventData::Timeout,
+                            };
+                            host.connections.handle_security_event(host, event_data).await?;
+                        }
                     }
                 },
             }

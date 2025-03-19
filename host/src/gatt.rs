@@ -13,8 +13,8 @@ use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use heapless::Vec;
 
-use crate::att::{self, ATT_HANDLE_VALUE_NTF, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns};
-use crate::attribute::{AttributeData, CCCD, Characteristic, CharacteristicProp, Uuid};
+use crate::att::{self, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
+use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionManager;
@@ -23,7 +23,7 @@ use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-use crate::{BleHostError, Error, Stack, config};
+use crate::{config, BleHostError, Error, Stack};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server> {

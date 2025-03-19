@@ -6,12 +6,16 @@ use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
+#[cfg(feature = "security")]
+use embassy_time::TimeoutError;
 
 use crate::connection::{Connection, ConnectionEventData};
 #[cfg(feature = "gatt")]
 use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
-use crate::{Error, config};
+#[cfg(feature = "security")]
+use crate::security_manager::{SecurityEventData, SecurityManager};
+use crate::{config, Error};
 
 struct State<'d> {
     connections: &'d mut [ConnectionStorage],
@@ -73,6 +77,8 @@ pub(crate) struct ConnectionManager<'d> {
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
     tx_pool: &'d dyn Pool,
+    #[cfg(feature = "security")]
+    pub(crate) security_manager: SecurityManager<{ crate::BI_COUNT }>,
 }
 
 impl<'d> ConnectionManager<'d> {
@@ -97,6 +103,8 @@ impl<'d> ConnectionManager<'d> {
             outbound: Channel::new(),
             #[cfg(feature = "gatt")]
             tx_pool,
+            #[cfg(feature = "security")]
+            security_manager: SecurityManager::new(),
         }
     }
 
@@ -301,6 +309,11 @@ impl<'d> ConnectionManager<'d> {
                 let _ = self.events[idx].try_send(ConnectionEventData::Disconnected { reason });
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
+                #[cfg(feature = "security")]
+                {
+                    storage.encrypted = false;
+                    let _ = self.security_manager.disconnect(h);
+                }
                 return Ok(());
             }
         }
@@ -375,7 +388,8 @@ impl<'d> ConnectionManager<'d> {
                                 storage.state = ConnectionState::Connected;
                                 trace!(
                                     "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                                    handle, role
+                                    handle,
+                                    role
                                 );
                                 assert_eq!(storage.refcount, 0);
                                 state.inc_ref(idx as u8);
@@ -387,7 +401,8 @@ impl<'d> ConnectionManager<'d> {
                         assert_eq!(storage.refcount, 0);
                         trace!(
                             "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                            handle, role
+                            handle,
+                            role
                         );
 
                         assert_eq!(storage.refcount, 0);
@@ -548,6 +563,131 @@ impl<'d> ConnectionManager<'d> {
         }
         mtu
     }
+
+    pub(crate) fn get_encrypted(&self, index: u8) -> bool {
+        #[cfg(feature = "security")]
+        {
+            self.state.borrow().connections[index as usize].encrypted
+        }
+        #[cfg(not(feature = "security"))]
+        false
+    }
+
+    pub(crate) fn handle_security_channel(
+        &self,
+        handle: ConnHandle,
+        packet: &crate::packet_pool::Packet,
+        payload_size: usize,
+    ) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            let state = self.state.borrow();
+            for storage in state.connections.iter() {
+                match storage.state {
+                    ConnectionState::Connected if storage.handle.unwrap() == handle => {
+                        if let Err(error) = self.security_manager.handle(packet, payload_size, self, storage) {
+                            error!("Failed to handle security manager packet, {:?}", error);
+                            return Err(error);
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_security_hci_event(&self, event: bt_hci::event::Event) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            self.security_manager.handle_event(&event)?;
+
+            if let bt_hci::event::Event::EncryptionChangeV1(event_data) = event {
+                self.with_connected_handle(event_data.handle, |storage| {
+                    storage.encrypted = event_data.enabled;
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) async fn handle_security_event<'h, C>(
+        &self,
+        host: &crate::host::BleHost<'h, C>,
+        _event: crate::security_manager::SecurityEventData,
+    ) -> Result<(), crate::BleHostError<C::Error>>
+    where
+        C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
+            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
+    {
+        use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
+        match _event {
+            crate::security_manager::SecurityEventData::SendLongTermKey(handle) => {
+                let address = self.state.borrow().connections.iter().find_map(|connection| {
+                    match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
+                        (Some(connection_handle), Some(addr), Some(kind)) => {
+                            if handle == connection_handle {
+                                Some(crate::Address { addr, kind })
+                            } else {
+                                None
+                            }
+                        }
+                        (_, _, _) => None,
+                    }
+                });
+
+                if let Some(address) = address {
+                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(address) {
+                        let _ = host
+                            .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
+                            .await?;
+                    } else {
+                        warn!("[host] Long term key request reply failed, no long term key")
+                    }
+                } else {
+                    warn!("[host] Long term key request reply failed, unknown peer")
+                }
+            }
+            crate::security_manager::SecurityEventData::EnableEncryption(handle) => {
+                let address = self.state.borrow().connections.iter().find_map(|connection| {
+                    match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
+                        (Some(connection_handle), Some(addr), Some(kind)) => {
+                            if handle == connection_handle {
+                                Some(crate::Address { addr, kind })
+                            } else {
+                                None
+                            }
+                        }
+                        (_, _, _) => None,
+                    }
+                });
+
+                if let Some(address) = address {
+                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(address) {
+                        host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
+                            .await?;
+                    } else {
+                        warn!("[host] Enable encryption failed, no long term key")
+                    }
+                } else {
+                    warn!("[host] Enable encryption failed, unknown peer")
+                }
+            }
+            crate::security_manager::SecurityEventData::Timeout => {
+                warn!("[host] Pairing timeout");
+                self.security_manager.cancel_timeout()?;
+            }
+            crate::security_manager::SecurityEventData::TimerChange => (),
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) fn poll_security_events(&self) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> {
+        self.security_manager.poll_events()
+    }
 }
 
 pub struct DisconnectRequest<'a, 'd> {
@@ -615,6 +755,8 @@ pub struct ConnectionStorage {
     pub refcount: u8,
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
+    #[cfg(feature = "security")]
+    pub encrypted: bool,
 }
 
 #[cfg(feature = "connection-metrics")]
@@ -681,6 +823,8 @@ impl ConnectionStorage {
         refcount: 0,
         #[cfg(feature = "connection-metrics")]
         metrics: Metrics::new(),
+        #[cfg(feature = "security")]
+        encrypted: false,
     };
 }
 
