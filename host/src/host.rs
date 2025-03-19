@@ -757,6 +757,11 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             LeEvent::LeLongTermKeyRequest(_) => {
                                 host.connections.handle_security_hci_event(event)?;
                             }
+                            LeEvent::LePhyUpdateComplete(event) => {
+                                if let Err(e) = event.status.to_result() {
+                                    warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
+                                }
+                            }
                             _ => {
                                 warn!("Unknown LE event!");
                             }
@@ -874,7 +879,8 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                 .enable_le_adv_report(true)
                 .enable_le_scan_timeout(true)
                 .enable_le_ext_adv_report(true)
-                .enable_le_long_term_key_request(true),
+                .enable_le_long_term_key_request(true)
+                .enable_le_phy_update_complete(true),
         )
         .exec(&host.controller)
         .await?;
