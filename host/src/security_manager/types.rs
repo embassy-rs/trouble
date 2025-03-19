@@ -1,8 +1,7 @@
-use crate::Error;
-
 use super::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::codec::{Decode, Encode, Type};
 use crate::security_manager::crypto::IoCap;
+use crate::Error;
 
 /// Pairing Failed Reason
 // ([Vol 3] Part H, Section 3.5.5).

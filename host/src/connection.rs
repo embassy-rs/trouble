@@ -4,17 +4,15 @@ use bt_hci::cmd::le::LeConnUpdate;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
-use embassy_time::Duration;
-
 #[cfg(feature = "gatt")]
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
 use crate::pdu::Pdu;
-use crate::{BleHostError, Error, Stack};
-
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
+use crate::{BleHostError, Error, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {

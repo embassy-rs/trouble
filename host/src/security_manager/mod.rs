@@ -6,13 +6,16 @@ mod constants;
 mod crypto;
 mod types;
 
+use core::cell::RefCell;
 use core::future::{poll_fn, Future};
-use core::{cell::RefCell, ops::DerefMut};
+use core::ops::DerefMut;
 
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
+pub use crypto::LongTermKey;
+use crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
@@ -20,21 +23,15 @@ use embassy_time::{Duration, Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
+pub use types::Reason;
+use types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
 
 use crate::codec::{Decode, Encode};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage};
+use crate::pdu::Pdu;
 use crate::prelude::Connection;
-use crate::{
-    connection_manager::{ConnectionManager, ConnectionStorage},
-    pdu::Pdu,
-    types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER,
-    Address, Error,
-};
-
-pub use crypto::LongTermKey;
-pub use types::Reason;
-
-use crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
-use types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
+use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
+use crate::{Address, Error};
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {

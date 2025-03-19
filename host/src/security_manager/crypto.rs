@@ -3,8 +3,7 @@
 
 use cmac::digest;
 use p256::ecdh;
-use rand_core::CryptoRng;
-use rand_core::RngCore;
+use rand_core::{CryptoRng, RngCore};
 
 use crate::Address;
 
@@ -229,7 +228,8 @@ impl SecretKey {
 
     /// Computes the associated public key.
     pub fn public_key(&self) -> PublicKey {
-        use p256::elliptic_curve::sec1::{Coordinates::Uncompressed, ToEncodedPoint};
+        use p256::elliptic_curve::sec1::Coordinates::Uncompressed;
+        use p256::elliptic_curve::sec1::ToEncodedPoint;
         let p = p256::PublicKey::from_secret_scalar(&self.0).to_encoded_point(false);
         match p.coordinates() {
             Uncompressed { x, y } => PublicKey {
