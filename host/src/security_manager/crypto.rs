@@ -3,8 +3,7 @@
 
 use cmac::digest;
 use p256::ecdh;
-use rand_core::CryptoRng;
-use rand_core::RngCore;
+use rand_core::{CryptoRng, RngCore};
 
 use crate::Address;
 
@@ -229,7 +228,8 @@ impl SecretKey {
 
     /// Computes the associated public key.
     pub fn public_key(&self) -> PublicKey {
-        use p256::elliptic_curve::sec1::{Coordinates::Uncompressed, ToEncodedPoint};
+        use p256::elliptic_curve::sec1::Coordinates::Uncompressed;
+        use p256::elliptic_curve::sec1::ToEncodedPoint;
         let p = p256::PublicKey::from_secret_scalar(&self.0).to_encoded_point(false);
         match p.coordinates() {
             Uncompressed { x, y } => PublicKey {
@@ -250,7 +250,7 @@ impl SecretKey {
             return None; // TODO: Compile-time option for debug-only mode
         }
 
-        let (x, y) = (&pk.x.0.0.into(), &pk.y.0.into());
+        let (x, y) = (&pk.x.0 .0.into(), &pk.y.0.into());
         let rep = p256::EncodedPoint::from_affine_coordinates(x, y, false);
         let lpk = p256::PublicKey::from_secret_scalar(&self.0);
         // Constant-time ops not required:
@@ -296,7 +296,7 @@ impl PublicKey {
     #[allow(clippy::unreadable_literal)]
     #[allow(clippy::unusual_byte_groupings)]
     fn is_debug(&self) -> bool {
-        let (x, y) = (&self.x.0.0, &self.y.0);
+        let (x, y) = (&self.x.0 .0, &self.y.0);
         x[..16] == u128::to_be_bytes(0x20b003d2_f297be2c_5e2c83a7_e9f9a5b9)
             && x[16..] == u128::to_be_bytes(0xeff49111_acf4fddb_cc030148_0e359de6)
             && y[..16] == u128::to_be_bytes(0xdc809c49_652aeb6d_63329abf_5a52155c)
@@ -334,7 +334,7 @@ impl PublicKeyX {
     /// Returns the coordinate in big-endian byte order.
     #[inline(always)]
     pub(super) const fn as_be_bytes(&self) -> &[u8; core::mem::size_of::<Self>()] {
-        &self.0.0
+        &self.0 .0
     }
 }
 

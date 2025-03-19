@@ -18,7 +18,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync, blocking};
+use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
@@ -29,7 +29,7 @@ use bt_hci::param::{
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{Either3, Either4, select3, select4};
+use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -49,10 +49,10 @@ use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL, L2capHeader,
-    L2capSignal, L2capSignalHeader,
+    L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
+    L2CAP_CID_LE_U_SIGNAL,
 };
-use crate::{Address, BleHostError, Error, Stack, att, config};
+use crate::{att, config, Address, BleHostError, Error, Stack};
 
 /// A BLE Host.
 ///
@@ -271,13 +271,15 @@ where
                     #[cfg(feature = "defmt")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x}",
-                        handle, peer_addr
+                        handle,
+                        peer_addr
                     );
 
                     #[cfg(feature = "log")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x?}",
-                        handle, peer_addr
+                        handle,
+                        peer_addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
@@ -757,6 +759,11 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             LeEvent::LeLongTermKeyRequest(_) => {
                                 host.connections.handle_security_hci_event(event)?;
                             }
+                            LeEvent::LePhyUpdateComplete(event) => {
+                                if let Err(e) = event.status.to_result() {
+                                    warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
+                                }
+                            }
                             _ => {
                                 warn!("Unknown LE event!");
                             }
@@ -874,7 +881,8 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
                 .enable_le_adv_report(true)
                 .enable_le_scan_timeout(true)
                 .enable_le_ext_adv_report(true)
-                .enable_le_long_term_key_request(true),
+                .enable_le_long_term_key_request(true)
+                .enable_le_phy_update_complete(true),
         )
         .exec(&host.controller)
         .await?;
