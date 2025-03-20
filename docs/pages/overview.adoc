@@ -1,0 +1,23 @@
+= Introduction
+
+TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification.
+
+A BLE Host is one side of the Host Controller Interface (HCI). The BLE specification defines the software of a BLE implementation in terms of a `controller` (lower layer) and a `host` (upper layer).
+
+These communicate via a standardized protocol, that may run over different transports such as as UART, USB or a custom in-memory IPC implementation.
+
+The advantage of this split is that the Host can be reused for different controller implementations. This means that
+you can write BLE applications that can work on different hardware due to the HCI interface.
+
+Trouble uses the `bt-hci` crate for the HCI interface, which means that any controller implementing the traits in `bt-hci` can work with Trouble. At present, the
+following controllers are available:
+
+* link:https://github.com/alexmoon/nrf-sdc[nRF Softdevice Controller]
+* link:https://docs.zephyrproject.org/latest/samples/bluetooth/hci_uart/README.html[UART HCI]
+* link:https://github.com/embassy-rs/embassy/tree/main/cyw43[Raspberry Pi Pico W]
+* link:https://github.com/benbrittain/apache-nimble-sys[Apache NimBLE Controller]
+* link:https://github.com/esp-rs/esp-hal[ESP32]
+
+The link:https://github.com/embassy-rs/trouble/tree/main/examples[examples] show how you can use Trouble with the different controllers.
+
+The APIs available in Trouble are documented in link:https://docs.embassy.dev/trouble-host/git/default/index.html[rustdoc].

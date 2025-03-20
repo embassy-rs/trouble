@@ -1,0 +1,36 @@
+= Concepts
+
+A few BLE concepts frequently used in Trouble are explained here.
+
+== Central
+
+A BLE central is a device that can scan and connect to other BLE devices. Usually the central is a more powerful device like a phone or a PC,
+but there are no restrictions on this, and battery powered embedded devices may also act as a central.
+
+== Peripheral
+
+A BLE Peripheral is a device that advertises its presence and may be connected to. Common examples include heart rate monitors, fitness trackers, and smart sensors. Peripherals may use *GATT (Generic Attribute Profile)* to expose services and characteristics, but can also
+support l2cap connection oriented channels.
+
+== Communication Process
+
+1. The Peripheral advertises its presence using *advertising packets*.
+2. The Central scans for nearby Peripherals and initiates a connection.
+3. Once connected, both the central and peripheral may open an l2cap channel and/or a GATT server/client.
+
+== Addresses
+
+Every BLE device is identified by a unique *Bluetooth Device Address*, which is a 48-bit identifier similar to a MAC address. BLE addresses are categorized into two main types: *Public* and *Random*.
+
+=== Public Address
+
+A Public Address is globally unique and assigned by the IEEE. It remains constant and is typically used by devices requiring a stable identifier.
+
+=== Random Address
+
+A Random Address can be *static* or *dynamic*:
+
+- *Static Random Address*: Remains fixed until the device restarts or resets.
+- *Private Random Address*: Changes periodically for privacy purposes. It can be *Resolvable* (can be linked to the original device using an Identity Resolving Key) or *Non-Resolvable* (completely anonymous).
+
+Random addresses enhance privacy by preventing device tracking.
