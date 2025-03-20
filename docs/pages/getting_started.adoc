@@ -36,7 +36,7 @@ they generally do not need to be changed from the defaults.
 
 == HostResources
 
-The `HostResources` type holds refererences to all packets, connections, channels and other data used by Trouble. The following
+The `HostResources` type holds references to all packets, connections, channels and other data used by Trouble. The following
 generic parameters can be set:
 
 * CONNS - max number of BLE connections supported.
