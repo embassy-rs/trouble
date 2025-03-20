@@ -11,9 +11,9 @@ Throughput of around 1.4 Mbps have been measured with some of the more aggressiv
 It is important to note that these configurations compromise on energy conservation.
 
 This example requires specific hardware and HCI firmware configurations that can support the configurations used.
-Any specific target requirements will be outlined is this readme.
+Any specific target requirements will be outlined in the target readme.
 
-Here we will look at some of the configurations that can be used to achieve high a throughput, 
+Here we will look at some of the configurations that can be used to achieve high throughput, 
 their effects and optimum values.
 
 ### Theoretical background
@@ -32,7 +32,8 @@ The structure of the Data Physical Channel PDU is shown below.
 *Figure 1: Data Physical Channel PDU. [Obtained from bluetooth.com](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/low-energy-controller/link-layer-specification.html#UUID-bdffe63c-9d5a-e80c-b833-1bec7946f005)*
 
 Since Bluetooth 4.2, the maximum size of the PDU payload, plus the MIC if included, has increased from 27 to 251 bytes.
-The maximum size of the PDU to be used in a connection, also known as the Maximum Transmission Unit (MTU), is negotiated. 
+The maximum size of the PDU to be used in a connection, also known as the Maximum Transmission Unit (MTU), is negotiated 
+between the central and peripheral device upon establishing a connection. 
 The length of this payload is described in the PDU header.
 
 A data physical channel PDU payload can be a Logic Link (LL) Data PDU or a LL Control PDU.
@@ -48,10 +49,10 @@ which is the case for these examples, the L2CAP data has the following structure
 Figure 2: L2CAP PDU format in Basic L2CAP mode on connection-oriented channels (field sizes in bits). [Obtained from bluetooth.com](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/logical-link-control-and-adaptation-protocol-specification.html#UUID-3ec8360b-1e1c-07fa-7a2b-27eef555dda0)*
 
 The L2CAP PDU length describes the length of the information payload.
-The maximum size of the information payload is 65533.
+The maximum size of the information payload is 65533 bytes.
 This limit setting is known as the L2CAP MTU.
 Notably, this can be larger than the maximum size of the PDU payload.
-L2CAP payloads larger than the maximum size of the PDU payload will be fragmented by the MTU before sent over the air.
+L2CAP payloads larger than the maximum size of the PDU payload will be fragmented into chunks no longer than the PDU MTU before being sent over the air.
 
 ![Example of fragmentation processes in a device with a BR/EDR Controller and USB HCI transport](assets/L2CAP_fregmentation.png)
 
@@ -99,7 +100,7 @@ The following sections describe how these configurations can be modified to maxi
 Since Bluetooth 4.2, the maximum PDU size has increased from 27 to 251.
 For better throughput, a higher PDU should be used as
 1. there will be fewer header bytes per packet of data
-2. more data is set in one go, reducing the waiting time required between sending consecutive packets.
+2. more data is sent in one go, reducing the waiting time required between sending consecutive packets.
 
 To set this we use the HCI command [`LeSetDataLength`](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host-controller-interface/host-controller-interface-functional-specification.html#UUID-242f8446-8cd1-8293-a341-b09354bae550) with `tx_octets = 251` and `tx_time = 2120`.
 
@@ -125,7 +126,7 @@ The maximum size of the L2CAP MTU is 65533, however, this may be limited by the 
 
 The size of the PDU and the maximum number of fragments an L2CAP PDU can be broken into may be limited by the HCI firmware.
 For example, in the serial-hci example, the HCI UART Bluetooth dongle firmware's default has 3 27-byte long buffers.
-Hence, L2CAP PDUs grater than $ 27 \times 3 $ cannot be handled by the HCI firmware.
+Hence, L2CAP PDUs greater than $ 27 \times 3 $ cannot be handled by the HCI firmware.
 These firmware configurations may be improved.
 If this is required for your target, check the target's example readme for more information on how to do this.
 
