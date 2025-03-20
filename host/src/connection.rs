@@ -372,7 +372,7 @@ impl<'stack> Connection<'stack> {
     pub async fn update_connection_params<T>(
         &self,
         stack: &Stack<'_, T>,
-        params: ConnectParams,
+        params: &ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdAsync<LeConnUpdate>,
