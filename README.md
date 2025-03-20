@@ -34,6 +34,10 @@ The implementation has the following functionality working:
 
 See the [issues](https://github.com/embassy-rs/trouble/issues) for a list of TODOs.
 
+## Documentation
+
+See the [documentation](https://embassy.dev/trouble) and the [rustdoc](https://docs.embassy.dev/trouble-host/git/default/index.html).
+
 ## Minimum supported Rust version (MSRV)
 
 Trouble is guaranteed to compile on stable Rust 1.80 and up. It *might*

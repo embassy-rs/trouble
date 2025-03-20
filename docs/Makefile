@@ -1,6 +1,6 @@
 all:
 	asciidoctor -d book -D book/ index.adoc
-	#cp -r images book
+	cp -r images book
 
 clean:
 	rm -rf book
