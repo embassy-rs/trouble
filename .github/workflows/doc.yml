@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v2
       - name: Install asciidoctor
         run: |
-          apt-get install asciidoctor
+          sudo apt-get install asciidoctor
 
       - name: build
         run: |
