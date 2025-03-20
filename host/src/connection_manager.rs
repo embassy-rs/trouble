@@ -687,7 +687,9 @@ impl<'d> ConnectionManager<'d> {
     }
 
     #[cfg(feature = "security")]
-    pub(crate) fn poll_security_events(&self) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_> {
+    pub(crate) fn poll_security_events(
+        &self,
+    ) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_> {
         self.security_manager.poll_events()
     }
 }
