@@ -34,12 +34,12 @@ use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
+use embassy_time::Duration;
 use futures::pin_mut;
 
 use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
 use crate::command::CommandState;
-#[cfg(feature = "gatt")]
 use crate::connection::ConnectionEventData;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
 use crate::cursor::WriteCursor;
@@ -762,6 +762,33 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             LeEvent::LePhyUpdateComplete(event) => {
                                 if let Err(e) = event.status.to_result() {
                                     warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
+                                } else {
+                                    let _ = host.connections.post_handle_event(
+                                        event.handle,
+                                        ConnectionEventData::PhyUpdated {
+                                            tx_phy: event.tx_phy,
+                                            rx_phy: event.rx_phy,
+                                        },
+                                    );
+                                }
+                            }
+                            LeEvent::LeConnectionUpdateComplete(event) => {
+                                if let Err(e) = event.status.to_result() {
+                                    warn!(
+                                        "[host] error updating connection parameters for {:?}: {:?}",
+                                        event.handle, e
+                                    );
+                                } else {
+                                    let _ = host.connections.post_handle_event(
+                                        event.handle,
+                                        ConnectionEventData::ConnectionParamsUpdated {
+                                            conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
+                                            peripheral_latency: event.peripheral_latency,
+                                            supervision_timeout: Duration::from_micros(
+                                                event.supervision_timeout.as_micros(),
+                                            ),
+                                        },
+                                    );
                                 }
                             }
                             _ => {
@@ -877,6 +904,7 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             LeEventMask::new()
                 .enable_le_conn_complete(true)
                 .enable_le_enhanced_conn_complete(true)
+                .enable_le_conn_update_complete(true)
                 .enable_le_adv_set_terminated(true)
                 .enable_le_adv_report(true)
                 .enable_le_scan_timeout(true)
