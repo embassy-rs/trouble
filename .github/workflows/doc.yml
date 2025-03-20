@@ -8,6 +8,35 @@ env:
   BUILDER_THREADS: '1'
 
 jobs:
+  book:
+    runs-on: ubuntu-latest
+
+    # This will ensure at most one doc build job is running at a time
+    # If another job is already running, the new job will wait.
+    # If another job is already waiting, it'll be canceled.
+    # This means some commits will be skipped, but that's fine because
+    # we only care that the latest gets built.
+    concurrency: book
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install asciidoctor
+        run: |
+          sudo apt-get install asciidoctor
+
+      - name: build
+        run: |
+          cd docs
+          make
+
+      - name: upload
+        run: |
+          mkdir -p build
+          mv docs/book build/trouble
+          tar -C build -cf trouble.tar trouble
+          .ci/book.sh
+        env:
+          KUBECONFIG: ${{secrets.KUBECONFIG}}
   doc:
     runs-on: ubuntu-latest
 
@@ -33,7 +62,6 @@ jobs:
 
       - name: upload
         run: |
-          mkdir -p ~/.kube
-          echo "${{secrets.KUBECONFIG}}" > ~/.kube/config
-          POD=$(kubectl -n embassy get po -l app=docserver -o jsonpath={.items[0].metadata.name})
-          kubectl cp crates $POD:/data
+          .ci/doc.sh
+        env:
+          KUBECONFIG: ${{secrets.KUBECONFIG}}

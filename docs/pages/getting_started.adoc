@@ -1,0 +1,98 @@
+= Getting started
+
+This example walks through the various configuration options you can use for a trouble application and how you can create
+a basic instance of Trouble. For more advanced examples, see the link:https://github.com/embassy-rs/trouble/tree/main/examples[examples].
+
+A trouble application needs two pieces of configuration:
+
+* Cargo features specified on the `trouble-host` crate.
+* Generics specified on the `HostResources` type.
+
+== Cargo features
+
+The following features enable/disable features in the host:
+
+* central - enables the central BLE role, allowing the devices to create connections.
+* scan - extends the central BLE role allowing the device to scan for devices.
+* peripheral - enables the peripheral BLE role, allowing the device to advertise its presence.
+* gatt - enables GATT client and server support.
+* derive - enables macros for defining GATT services.
+* security - enables support for the security manager for pairing/bonding.
+* controller-host-flow-control - enables controller-host flow control (not supported by all controllers).
+* connection-metrics - enable additional connection metrics that increases the per-connection RAM requirements.
+
+The following features configure queue sizes and memory pools (N is any number supported in the features list):
+
+* connection-event-queue-size-N - per-connection queue size of events (disconnects, gatt data).
+* l2cap-rx-queue-size-N - per-l2cap channel queue size of inbound data.
+* l2cap-tx-queue-size-N - per-l2cap channel queue size of outbound data.
+* l2cap-rx-packet-pool-size-N - memory pool of packets shared by all l2cap channels for inbound data.
+* l2cap-tx-packet-pool-size-N - memory pool of packets shared by all l2cap channels for outbound data.
+* gatt-client-notification-max-subscribers - GATT client max notification subscribers.
+* gatt-client-notification-queue-size-N - GATT client queue size for inbound notifications.
+
+A common question is why the above settings are not const generics, and the reason is that it would obfuscate the API too much, and
+they generally do not need to be changed from the defaults.
+
+== HostResources
+
+The `HostResources` type holds references to all packets, connections, channels and other data used by Trouble. The following
+generic parameters can be set:
+
+* CONNS - max number of BLE connections supported.
+* CHANNELS - max number of L2CAP channels supported (not including GATT).
+* L2CAP_MTU - max size of L2CAP payloads (affects GATT MTU as well).
+* ADV_SETS - max number of advertising sets (the default of 1 is appropriate for most applications).
+
+The following instance would allow you to have up to 4 connections and 2 l2cap channels with an MTU of 128:
+
+```
+let mut resources: HostResources<4, 2, 128, 1> = HostResources::new();
+```
+
+== Creating the stack
+
+With the resources defined, an instance of Trouble can be created using the `trouble_host::new()` function:
+
+```
+let stack: Stack<'_, MyController> = trouble_host::new(controller, &mut resources);
+```
+
+The `MyController` is the type for your particular hardware, for instance `SoftdeviceController` from the `nrf-sdc` crate.
+
+The `Stack` is a builder allowing you to set some properties of the host before creating it:
+
+* `set_random_address` for specifying a BLE random address (see xref:_random_address).
+* `set_random_generator_seed` for specifying the random seed used by the security manager (if enabled).
+
+
+Once properties are set, you can build the host:
+
+```
+let Host {
+    central,
+    peripheral,
+    runner,
+} = stack.build();
+```
+
+The presence `central` and `peripheral` fields depends on whether the corresponding cargo features are enabled.
+
+The `runner` is responsible for running the BLE host stack, and should be passed to an async task that typically runs forever. It will only
+consume CPU resources when there are work to do (accepting connections/channels, creating connections/channels, sending/receiving data).
+
+For instance, an `embassy` application would use it like this:
+
+```
+```
+
+== Summary
+
+Now that BLE stack is created, you can go create some awesome BLE applications. The link:https://github.com/embassy-rs/trouble/tree/main/examples[examples]
+cover the following:
+
+* Scanning for peripherals
+* Central connecting to peripherals and using the GATT client.
+* Central connecting to peripherals and creating L2CAP connection oriented channels.
+* Peripheral advertising and providing a GATT service.
+* Peripheral advertising and accepting L2CAP connection oriented channels.
