@@ -34,14 +34,9 @@ jobs:
           mkdir -p build
           mv docs/book build/trouble
           tar -C build -cf trouble.tar trouble
-          mkdir -p ~/.kube
-          echo "${{secrets.KUBECONFIG}}" > ~/.kube/config
-          POD=$(kubectl -n embassy get po -l app=website -o jsonpath={.items[0].metadata.name})
-          kubectl cp crates $POD:/data
-          kubectl exec $POD -- mkdir -p /usr/share/nginx/html
-          kubectl cp trouble.tar $POD:/usr/share/nginx/html/
-          kubectl exec $POD -- find /usr/share/nginx/html
-          kubectl exec $POD -- tar -C /usr/share/nginx/html -xvf /usr/share/nginx/html/trouble.tar
+          .ci/book.sh
+        env:
+          KUBECONFIG: ${{secrets.KUBECONFIG}}
   doc:
     runs-on: ubuntu-latest
 
@@ -67,7 +62,4 @@ jobs:
 
       - name: upload
         run: |
-          mkdir -p ~/.kube
-          echo "${{secrets.KUBECONFIG}}" > ~/.kube/config
-          POD=$(kubectl -n embassy get po -l app=docserver -o jsonpath={.items[0].metadata.name})
-          kubectl cp crates $POD:/data
+          .ci/doc.sh
