@@ -1,0 +1,172 @@
+# Examples
+
+The example logic can be found in the `app` directory.
+The different target directories contain the required setup code for the different targets.
+Any target specific documentation can be found in the respective target directory.
+
+## High throughput example
+
+The high throughput example showcases optimum configuration settings for achieving high throughput. 
+Throughput of around 1.4 Mbps have been measured with some of the more aggressive configurations.  
+It is important to note that these configurations compromise on energy conservation.
+
+This example requires specific hardware and HCI firmware configurations that can support the configurations used.
+Any specific target requirements will be outlined in the target readme.
+
+Here we will look at some of the configurations that can be used to achieve high throughput, 
+their effects and optimum values.
+
+### Theoretical background
+
+In order to understand what configurations need to be set and how, we will require some understanding of the Bluetooth hardware and lower layers of the software stack.
+
+A Bluetooth controller, the actual physical radio, sends packets of data called the Protocol Data Unit (PDU).
+In Bluetooth communication, there are a number of different PDUs used with different physical channels for different
+purposes such as advertising and data transfer. These PDUs have different structures.
+For our example, we only need to focus on the [Data Physical Channel PDU](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/low-energy-controller/link-layer-specification.html#UUID-bdffe63c-9d5a-e80c-b833-1bec7946f005).
+As the name suggests, this is used in the transfer of data.
+The structure of the Data Physical Channel PDU is shown below.
+
+![Data Physical Channel PDU](assets/PDU.png)
+
+*Figure 1: Data Physical Channel PDU. [Obtained from bluetooth.com](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/low-energy-controller/link-layer-specification.html#UUID-bdffe63c-9d5a-e80c-b833-1bec7946f005)*
+
+Since Bluetooth 4.2, the maximum size of the PDU payload, plus the MIC if included, has increased from 27 to 251 bytes.
+The maximum size of the PDU to be used in a connection, also known as the Maximum Transmission Unit (MTU), is negotiated 
+between the central and peripheral device upon establishing a connection. 
+The length of this payload is described in the PDU header.
+
+A data physical channel PDU payload can be a Logic Link (LL) Data PDU or a LL Control PDU.
+These are differentiated by the LLID header bits.
+For the purpose of these examples, we shall focus further on the LL data PDU. 
+The payload of an LL data PDU contains Logical Link Control and Adaptation Protocol (L2CAP) data.
+
+In a [connection oriented channel](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/logical-link-control-and-adaptation-protocol-specification.html#UUID-3ec8360b-1e1c-07fa-7a2b-27eef555dda0),
+which is the case for these examples, the L2CAP data has the following structure. 
+
+![L2CAP PDU format in Basic L2CAP mode on connection-oriented channels (field sizes in bits)](assets/L2CAP_PDU.png)
+
+Figure 2: L2CAP PDU format in Basic L2CAP mode on connection-oriented channels (field sizes in bits). [Obtained from bluetooth.com](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/logical-link-control-and-adaptation-protocol-specification.html#UUID-3ec8360b-1e1c-07fa-7a2b-27eef555dda0)*
+
+The L2CAP PDU length describes the length of the information payload.
+The maximum size of the information payload is 65533 bytes.
+This limit setting is known as the L2CAP MTU.
+Notably, this can be larger than the maximum size of the PDU payload.
+L2CAP payloads larger than the maximum size of the PDU payload will be fragmented into chunks no longer than the PDU MTU before being sent over the air.
+
+![Example of fragmentation processes in a device with a BR/EDR Controller and USB HCI transport](assets/L2CAP_fregmentation.png)
+
+*Figure 3: Example of fragmentation processes in a device with a BR/EDR Controller and USB HCI transport. [Obtained from bluetooth.com](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/logical-link-control-and-adaptation-protocol-specification.html#UUID-41e67506-14c0-035a-5943-21c9aa6474b7)*
+
+The primary goal of Bluetooth Low Energy (BLE) is to minimize energy consumption.
+BLE achieves this efficiency by keeping the radio off for the majority of the time, and only activating it when necessary.
+For instance, after a connection is established, data transfer occurs periodically during synchronized time windows called connection events.
+These events are separated by a negotiated time interval known as the connection interval.
+During each connection event, the central and peripheral radios briefly wake up to exchange data packets and then return to an idle state until the next event.
+This scheduled radio activity significantly reduces power usage compared to keeping the radio active continuously.
+
+![Connection events and connection interval](assets/connection_interval.png)
+
+*Figure 4: Connection events and connection interval. [Obtained from bluetooth.com](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/architecture,-mixing,-and-conventions/architecture.html#UUID-3ca385af-187d-8221-1114-504a7b3c6091)*
+
+Since Bluetooth 5.0, Bluetooth controllers can double the symbol transmission rate from 1Mbps, known as 1M PHY, to 
+2Mbps, known as 2M PHY.
+
+By understanding these configurations, we can adjust them to prioritize throughput over energy conservation.
+
+### Default configurations
+
+A default BLE configuration optimised for backwards compatibility and energy conservation, like the `ble_l2cap` examples,
+would have a PDU size of 27 and a high connection interval.
+The Bluetooth packet timeline in Figure 5 depicts multiple packets being sent in one connection event.
+Blue represents useful data being sent.
+
+![](assets/default_BLE-connection_event.png)
+
+*Figure 5: Packets set during a connection event*
+
+The Bluetooth packet timeline in Figure 6 depicts bluetooth packets sent in different connection events.
+Notice the white gaps in both figures.
+To maximise throughput, we need to increase the ratio of blue in these diagrams.
+
+![](assets/default_BLE-connection_events.png)
+
+*Figure 6: Packets set during multiple connection events*
+
+The following sections describe how these configurations can be modified to maximise throughput.
+
+### Data Length Extension
+
+Since Bluetooth 4.2, the maximum PDU size has increased from 27 to 251.
+For better throughput, a higher PDU should be used as
+1. there will be fewer header bytes per packet of data
+2. more data is sent in one go, reducing the waiting time required between sending consecutive packets.
+
+To set this we use the HCI command [`LeSetDataLength`](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host-controller-interface/host-controller-interface-functional-specification.html#UUID-242f8446-8cd1-8293-a341-b09354bae550) with `tx_octets = 251` and `tx_time = 2120`.
+
+### L2CAP MTU
+
+Choosing the correct value for the L2CAP MTU can have a significant impact on throughput. 
+If an L2CAP payload is larger than the PDU by 1 byte, this will be fragmented into two packets, one of size PDU and the other of size 1.
+The following diagram shows the packets when PDU = 251 and L2CAP MTU = 252.
+
+![](assets/PDU-251_L2CAP-MTU-252.png)
+
+*Figure 7: Effects of suboptimal settings for PDU (251) and L2CAP MTU (252)*
+
+Hence, it is important to choose an L2CAP MTU value that can neatly fit into a number of PDU packets.
+If the PDU length is set to 251, then the L2CAP MTU should be set to some multiple of this.
+
+One other thing to note is that an L2CAP payload has 6 bytes of header.
+This means that for a smaller L2CAP MTU, more bytes are used for headers than service data.
+
+The maximum size of the L2CAP MTU is 65533, however, this may be limited by the controller resources, see the next section.
+
+### HCI controller configuration
+
+The size of the PDU and the maximum number of fragments an L2CAP PDU can be broken into may be limited by the HCI firmware.
+For example, in the serial-hci example, the HCI UART Bluetooth dongle firmware's default has 3 27-byte long buffers.
+Hence, L2CAP PDUs greater than $ 27 \times 3 $ cannot be handled by the HCI firmware.
+These firmware configurations may be improved.
+If this is required for your target, check the target's example readme for more information on how to do this.
+
+To calculate the maximum L2CAP MTU allowed by the controller, we can multiply the size and number of available buffers.
+At its max, the HCI UART Bluetooth dongle firmware can have 20 251-byte long buffers.
+Hence, the largest possible L2CAP MTU supported by this firmware is 5020 bytes.
+
+However, it can be beneficial not set the L2CAP MTU to this maximum.
+If the L2CAP MTU is set to the maximum buffer space available to the controller, 
+the host will only be able to send a new packet once the all the buffers are free.
+This might cause the controller to switch off the radio until the next connection event once it has exhausted all the buffers, 
+before receiving the next batch from the host. See diagram below.
+
+![](assets/L2CAP_MTU_uses_all_buffers.png)
+
+*Figure 8: 1M PHY and L2CAP MTU set to 5020, consuming all controller buffers*
+
+However, if we allow a few extra buffers, the host will be abel to send more data to the controller before it 
+exhausts the data from the previous message.
+This will cause the radio to stay awake.
+
+![](assets/L2CAP_MTU_uses_half_of_buffers.png)
+
+*Figure 9: 2M PHY and L2CAP MTU set to 2510, consuming half of the controller buffers*
+
+### Service Data Unit size
+
+If it can be controlled, such as when having a lot of available data to send, we can improve our throughput by sending 
+data that neatly fits in L2CAP payloads.
+Since an L2CAP payload has 6 bytes of header, this can be achieved by sending data that is a multiple of the L2CAP MTU - 6.
+
+### Connection Interval
+
+If the L2CAP MTU is set such that it allows the host to constantly keep some controller buffers occupied, 
+the controller will keep sending data until just before a new connection event is scheduled.
+In this scenario, it makes sense to use a longer connection interval, however, this would increase latency and 
+possibly lower throughput in noisy environments as when connections are dropped, the radio will idle until the next connection event.
+
+### PHY
+
+Once the host and controller are set up to continuously send data, the final major improvement is to set up the radios  to use 2M PHY.
+This allows the radio to send double the data while the radios are sending data.
+The change from 1M PHY in Figure 8 to 2M PHY in Figure 9 is denoted by the doubling of the packet height.

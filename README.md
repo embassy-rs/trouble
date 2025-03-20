@@ -52,6 +52,8 @@ See `examples` for example applications for different BLE controllers.
 
 Since a lot of the examples demo the same BLE functionality, they only contain basic wiring specific to the BLE controller, and share the 'business logic' within the `examples/apps` folder.
 
+More information on these examples can be found is the [examples/README.md](examples/README.md).
+
 ## License
 
 Trouble is licensed under either of
