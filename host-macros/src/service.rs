@@ -203,11 +203,9 @@ impl ServiceBuilder {
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let (#char_name, #(#named_descriptors),*) = {
                 static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
-                let mut val = <#ty>::default(); // constrain the type of the value here
-                val = #default_value; // update the temporary value with our new default
                 let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
                 let mut builder = service
-                    .add_characteristic(#uuid, &[#(#properties),*], val, store);
+                    .add_characteristic(#uuid, &[#(#properties),*], #default_value, store);
                 #code_descriptors
 
                 (builder.build(), #(#named_descriptors),*)

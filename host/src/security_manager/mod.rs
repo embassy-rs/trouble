@@ -1213,7 +1213,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Poll for security manager work
-    pub(crate) fn poll_events(&self) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> {
+    pub(crate) fn poll_events(
+        &self,
+    ) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_, BOND_COUNT> {
         // try to pop an event from the channel
         poll_fn(|cx| self.events.poll_receive(cx)).with_deadline(*self.timer_expires.borrow())
     }
