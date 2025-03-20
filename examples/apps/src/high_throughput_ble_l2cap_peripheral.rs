@@ -31,8 +31,7 @@ where
     AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
         &mut adv_data[..],
-    )
-        .unwrap();
+    ).unwrap();
 
     let mut scan_data = [0; 31];
     AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"TroubleHT")], &mut scan_data[..]).unwrap();
@@ -40,7 +39,7 @@ where
     let _ = join(runner.run(), async {
         loop {
             // Check that the controller used supports the necessary features for high throughput.
-            let res = stack.command(LeReadLocalSupportedFeatures::new()).await.unwrap();
+            let res = stack.command(LeReadLocalSupportedFeatures::new()).await.expect("LeReadLocalSupportedFeatures command failed");
             assert!(res.supports_le_data_packet_length_extension());
             assert!(res.supports_le_2m_phy());
 
@@ -53,9 +52,8 @@ where
                         scan_data: &scan_data[..],
                     },
                 )
-                .await
-                .unwrap();
-            let conn = advertiser.accept().await.unwrap();
+                .await.expect("Advertising failed");
+            let conn = advertiser.accept().await.expect("Connection failed");
 
             info!("Connection established");
 
@@ -67,8 +65,7 @@ where
             };
 
             let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &l2cap_channel_config)
-                .await
-                .unwrap();
+                .await.expect("L2capChannel create failed");
 
             info!("L2CAP channel accepted");
 
@@ -77,7 +74,7 @@ where
             const NUM_PAYLOADS: u8 = 40;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..NUM_PAYLOADS {
-                let len = ch1.receive(&stack, &mut rx).await.unwrap();
+                let len = ch1.receive(&stack, &mut rx).await.expect("L2CAP receive failed");
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }
@@ -89,7 +86,7 @@ where
 
             for i in 0..NUM_PAYLOADS {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
+                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.expect("L2CAP send failed");
             }
 
             let duration = start.elapsed();

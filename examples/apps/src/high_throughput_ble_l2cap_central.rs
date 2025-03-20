@@ -51,24 +51,21 @@ where
     let _ = join(runner.run(), async {
         loop {
             // Check that the controller used supports the necessary features for high throughput.
-            let res = stack.command(LeReadLocalSupportedFeatures::new()).await.unwrap();
+            let res = stack.command(LeReadLocalSupportedFeatures::new()).await.expect("LeReadLocalSupportedFeatures command failed");
             assert!(res.supports_le_data_packet_length_extension());
             assert!(res.supports_le_2m_phy());
 
-            let conn = central.connect(&config).await.unwrap();
+            let conn = central.connect(&config).await.expect("Connect failed");
             info!("Connected, creating l2cap channel");
 
             // Once connected, request a change in the PDU data length.
-            if let Err(e) = stack.command(LeSetDataLength::new(conn.handle(), 251, 2120)).await {
-                error!("LeSetDataLength error {:?}", e);
-            }
+            stack.command(LeSetDataLength::new(conn.handle(), 251, 2120)).await.expect("LeSetDataLength command failed");
 
             // and request changing the physical link to 2M PHY.
             // *Note* Change to the PDU data length and PHY can also be initiated by the peripheral.
             let phy_mask = PhyMask::new().set_le_2m_preferred(true);
-            if let Err(e) = stack.async_command(LeSetPhy::new(conn.handle(), AllPhys::default(), phy_mask.clone(), phy_mask, PhyOptions::S2CodingPreferred)).await {
-                error!("LeSetPhy error {:?}", e);
-            }
+            stack.async_command(LeSetPhy::new(conn.handle(), AllPhys::default(), phy_mask.clone(), phy_mask, PhyOptions::S2CodingPreferred))
+                .await.expect("LeSetPhy command failed");
 
             let l2cap_channel_config = L2capChannelConfig {
                 mtu: L2CAP_MTU as u16,
@@ -78,8 +75,7 @@ where
             };
 
             let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &l2cap_channel_config)
-                .await
-                .unwrap();
+                .await.expect("L2capChannel create failed");
 
             // Wait for the ratios to switch to 2M PHY.
             // If we do not wait, communication will still occur at 1M for the first 500 ms.
@@ -94,7 +90,7 @@ where
 
             for i in 0..NUM_PAYLOADS {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
+                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.expect("L2CAP send failed");
             }
 
             let duration = start.elapsed();
@@ -105,7 +101,7 @@ where
 
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..NUM_PAYLOADS {
-                let len = ch1.receive(&stack, &mut rx).await.unwrap();
+                let len = ch1.receive(&stack, &mut rx).await.expect("L2CAP receive failed");
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }
