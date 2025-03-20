@@ -118,6 +118,7 @@ async fn gatt_client_server() {
                                     }
                                 }
                             }
+                            _ => {}
                         }
                     }
                 }
