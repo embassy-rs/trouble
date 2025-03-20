@@ -1,0 +1,5 @@
+= Frequently Asked Questions
+
+These are a list of unsorted, commonly asked questions and answers.
+
+Please feel free to add items to link:https://github.com/embassy-rs/trouble/edit/main/docs/pages/faq.adoc[this page], especially if someone in the chat answered a question for you!
