@@ -63,3 +63,5 @@ jobs:
       - name: upload
         run: |
           .ci/doc.sh
+        env:
+          KUBECONFIG: ${{secrets.KUBECONFIG}}
