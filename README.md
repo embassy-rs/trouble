@@ -34,6 +34,10 @@ The implementation has the following functionality working:
 
 See the [issues](https://github.com/embassy-rs/trouble/issues) for a list of TODOs.
 
+## Documentation
+
+See the [documentation](https://embassy.dev/trouble) and the [rustdoc](https://docs.embassy.dev/trouble-host/git/default/index.html).
+
 ## Minimum supported Rust version (MSRV)
 
 Trouble is guaranteed to compile on stable Rust 1.80 and up. It *might*
@@ -51,6 +55,8 @@ See `examples` for example applications for different BLE controllers.
 * `rp-pico-2-w` which uses the BLE controller in the [Raspberry Pi Pico 2 W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-2-w).
 
 Since a lot of the examples demo the same BLE functionality, they only contain basic wiring specific to the BLE controller, and share the 'business logic' within the `examples/apps` folder.
+
+More information on these examples can be found is the [examples/README.md](examples/README.md).
 
 ## License
 

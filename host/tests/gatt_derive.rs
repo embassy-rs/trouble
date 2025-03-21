@@ -146,6 +146,7 @@ async fn gatt_client_server() {
                                     }
                                 }
                             }
+                            _ => {}
                         }
                     }
                     // NOTE: Ensure that adapter gets polled again
