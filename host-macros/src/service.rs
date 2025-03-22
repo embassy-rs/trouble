@@ -196,18 +196,16 @@ impl ServiceBuilder {
         let properties = set_access_properties(access);
         let uuid = characteristic.args.uuid;
         let default_value = match characteristic.args.default_value {
-            Some(val) => quote!(#val),        // if set by user
-            None => quote!(<#ty>::default()), // or default otherwise
+            Some(val) => quote!(#val),                                       // if set by user
+            None => quote_spanned!(characteristic.span => <#ty>::default()), // or default otherwise
         };
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let (#char_name, #(#named_descriptors),*) = {
                 static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
-                let mut val = <#ty>::default(); // constrain the type of the value here
-                val = #default_value; // update the temporary value with our new default
                 let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
                 let mut builder = service
-                    .add_characteristic(#uuid, &[#(#properties),*], val, store);
+                    .add_characteristic(#uuid, &[#(#properties),*], #default_value, store);
                 #code_descriptors
 
                 (builder.build(), #(#named_descriptors),*)
