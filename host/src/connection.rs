@@ -1,9 +1,11 @@
 //! BLE connection.
 
-use bt_hci::cmd::le::LeConnUpdate;
+use bt_hci::cmd::le::{LeConnUpdate, LeReadPhy, LeSetPhy};
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
+use bt_hci::param::{
+    AddrKind, AllPhys, BdAddr, ConnHandle, DisconnectReason, LeConnRole, PhyKind, PhyMask, PhyOptions, Status,
+};
 #[cfg(feature = "gatt")]
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
@@ -94,6 +96,22 @@ pub enum ConnectionEvent {
         /// The reason (status code) for the disconnect.
         reason: Status,
     },
+    /// The phy settings was updated for this connection.
+    PhyUpdated {
+        /// The TX phy.
+        tx_phy: PhyKind,
+        /// The RX phy.
+        rx_phy: PhyKind,
+    },
+    /// The phy settings was updated for this connection.
+    ConnectionParamsUpdated {
+        /// Connection interval.
+        conn_interval: Duration,
+        /// Peripheral latency.
+        peripheral_latency: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
+    },
 }
 
 /// A connection event.
@@ -104,6 +122,22 @@ pub enum ConnectionEvent<'stack> {
         /// The reason (status code) for the disconnect.
         reason: Status,
     },
+    /// The phy settings was updated for this connection.
+    PhyUpdated {
+        /// The TX phy.
+        tx_phy: PhyKind,
+        /// The RX phy.
+        rx_phy: PhyKind,
+    },
+    /// The phy settings was updated for this connection.
+    ConnectionParamsUpdated {
+        /// Connection interval.
+        conn_interval: Duration,
+        /// Peripheral latency.
+        peripheral_latency: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
+    },
     /// GATT event.
     Gatt {
         /// The event that was returned
@@ -112,14 +146,19 @@ pub enum ConnectionEvent<'stack> {
 }
 
 pub(crate) enum ConnectionEventData {
-    /// Connection disconnected.
     Disconnected {
-        /// The reason (status code) for the disconnect.
         reason: Status,
     },
-    /// GATT event.
+    PhyUpdated {
+        tx_phy: PhyKind,
+        rx_phy: PhyKind,
+    },
+    ConnectionParamsUpdated {
+        conn_interval: Duration,
+        peripheral_latency: u16,
+        supervision_timeout: Duration,
+    },
     Gatt {
-        /// The event that was returned
         data: Pdu,
     },
 }
@@ -200,6 +239,16 @@ impl<'stack> Connection<'stack> {
     pub async fn next(&self) -> ConnectionEvent {
         match self.manager.next(self.index).await {
             ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
+            ConnectionEventData::ConnectionParamsUpdated {
+                conn_interval,
+                peripheral_latency,
+                supervision_timeout,
+            } => ConnectionEvent::ConnectionParamsUpdated {
+                conn_interval,
+                peripheral_latency,
+                supervision_timeout,
+            },
+            ConnectionEventData::PhyUpdated { tx_phy, rx_phy } => ConnectionEvent::PhyUpdated { tx_phy, rx_phy },
             ConnectionEventData::Gatt { data } => unreachable!(),
         }
     }
@@ -209,6 +258,16 @@ impl<'stack> Connection<'stack> {
     pub async fn next(&self) -> ConnectionEvent<'stack> {
         match self.manager.next(self.index).await {
             ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
+            ConnectionEventData::ConnectionParamsUpdated {
+                conn_interval,
+                peripheral_latency,
+                supervision_timeout,
+            } => ConnectionEvent::ConnectionParamsUpdated {
+                conn_interval,
+                peripheral_latency,
+                supervision_timeout,
+            },
+            ConnectionEventData::PhyUpdated { tx_phy, rx_phy } => ConnectionEvent::PhyUpdated { tx_phy, rx_phy },
             ConnectionEventData::Gatt { data } => ConnectionEvent::Gatt {
                 data: crate::gatt::GattData::new(data, self.clone()),
             },
@@ -261,11 +320,59 @@ impl<'stack> Connection<'stack> {
         Ok(ret.rssi)
     }
 
+    /// Update phy for this connection.
+    ///
+    /// This updates both TX and RX phy of the connection. For more fine grained control,
+    /// use the LeSetPhy HCI command directly.
+    pub async fn set_phy<T>(&self, stack: &Stack<'_, T>, phy: PhyKind) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdAsync<LeSetPhy>,
+    {
+        let all_phys = AllPhys::new()
+            .set_has_no_rx_phy_preference(false)
+            .set_has_no_tx_phy_preference(false);
+        let mut mask = PhyMask::new()
+            .set_le_coded_preferred(false)
+            .set_le_1m_preferred(false)
+            .set_le_2m_preferred(false);
+        let mut options = PhyOptions::default();
+        match phy {
+            PhyKind::Le2M => {
+                mask = mask.set_le_2m_preferred(true);
+            }
+            PhyKind::Le1M => {
+                mask = mask.set_le_1m_preferred(true);
+            }
+            PhyKind::LeCoded => {
+                mask = mask.set_le_coded_preferred(true);
+                options = PhyOptions::S8CodingPreferred;
+            }
+            PhyKind::LeCodedS2 => {
+                mask = mask.set_le_coded_preferred(true);
+                options = PhyOptions::S2CodingPreferred;
+            }
+        }
+        stack
+            .host
+            .async_command(LeSetPhy::new(self.handle(), all_phys, mask, mask, options))
+            .await?;
+        Ok(())
+    }
+
+    /// Read the current phy used for the connection.
+    pub async fn read_phy<T>(&self, stack: &Stack<'_, T>) -> Result<(PhyKind, PhyKind), BleHostError<T::Error>>
+    where
+        T: ControllerCmdSync<LeReadPhy>,
+    {
+        let res = stack.host.command(LeReadPhy::new(self.handle())).await?;
+        Ok((res.tx_phy, res.rx_phy))
+    }
+
     /// Update connection parameters for this connection.
     pub async fn update_connection_params<T>(
         &self,
         stack: &Stack<'_, T>,
-        params: ConnectParams,
+        params: &ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdAsync<LeConnUpdate>,

@@ -13,4 +13,5 @@ Welcome to the Trouble Documentation. This page is for everyone who wants to use
 include::pages/overview.adoc[leveloffset = 1]
 include::pages/concepts.adoc[leveloffset = 1]
 include::pages/getting_started.adoc[leveloffset = 1]
+include::pages/performance.adoc[leveloffset = 1]
 include::pages/faq.adoc[leveloffset = 1]

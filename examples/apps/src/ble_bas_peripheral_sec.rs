@@ -163,6 +163,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_>) ->
                 }
                 Err(e) => warn!("[gatt] error processing event: {:?}", e),
             },
+            _ => {}
         }
     }
     info!("[gatt] task finished");

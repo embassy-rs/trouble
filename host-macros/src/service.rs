@@ -196,8 +196,8 @@ impl ServiceBuilder {
         let properties = set_access_properties(access);
         let uuid = characteristic.args.uuid;
         let default_value = match characteristic.args.default_value {
-            Some(val) => quote!(#val),        // if set by user
-            None => quote!(<#ty>::default()), // or default otherwise
+            Some(val) => quote!(#val),                                       // if set by user
+            None => quote_spanned!(characteristic.span => <#ty>::default()), // or default otherwise
         };
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>

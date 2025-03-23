@@ -5,12 +5,13 @@ use core::marker::PhantomData;
 
 use att::AttErrorCode;
 use bt_hci::controller::Controller;
-use bt_hci::param::{ConnHandle, Status};
+use bt_hci::param::{ConnHandle, PhyKind, Status};
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
+use embassy_time::Duration;
 use heapless::Vec;
 
 use crate::att::{self, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
@@ -31,6 +32,22 @@ pub enum GattConnectionEvent<'stack, 'server> {
     Disconnected {
         /// The reason (status code) for the disconnect.
         reason: Status,
+    },
+    /// The phy settings was updated for this connection.
+    PhyUpdated {
+        /// The TX phy.
+        tx_phy: PhyKind,
+        /// The RX phy.
+        rx_phy: PhyKind,
+    },
+    /// The phy settings was updated for this connection.
+    ConnectionParamsUpdated {
+        /// Connection interval.
+        conn_interval: Duration,
+        /// Peripheral latency.
+        peripheral_latency: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
     },
     /// GATT event.
     Gatt {
@@ -71,6 +88,20 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
         loop {
             match self.connection.next().await {
                 ConnectionEvent::Disconnected { reason } => return GattConnectionEvent::Disconnected { reason },
+                ConnectionEvent::ConnectionParamsUpdated {
+                    conn_interval,
+                    peripheral_latency,
+                    supervision_timeout,
+                } => {
+                    return GattConnectionEvent::ConnectionParamsUpdated {
+                        conn_interval,
+                        peripheral_latency,
+                        supervision_timeout,
+                    };
+                }
+                ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
+                    return GattConnectionEvent::PhyUpdated { tx_phy, rx_phy };
+                }
                 ConnectionEvent::Gatt { data } => match data.process(self.server).await {
                     Ok(event) => match event {
                         Some(event) => return GattConnectionEvent::Gatt { event: Ok(event) },
