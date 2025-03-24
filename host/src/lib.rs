@@ -112,6 +112,16 @@ mod attribute_server;
 pub mod gatt;
 
 /// A BLE address.
+/// Every BLE device is identified by a unique *Bluetooth Device Address*, which is a 48-bit identifier similar to a MAC address. BLE addresses are categorized into two main types: *Public* and *Random*.
+///
+/// A Public Address is globally unique and assigned by the IEEE. It remains constant and is typically used by devices requiring a stable identifier.
+///
+/// A Random Address can be *static* or *dynamic*:
+///
+/// - *Static Random Address*: Remains fixed until the device restarts or resets.
+/// - *Private Random Address*: Changes periodically for privacy purposes. It can be *Resolvable* (can be linked to the original device using an Identity Resolving Key) or *Non-Resolvable* (completely anonymous).
+///
+/// Random addresses enhance privacy by preventing device tracking.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Address {
     /// Address type.
