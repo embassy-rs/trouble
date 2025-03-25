@@ -652,48 +652,39 @@ impl<'d> ConnectionManager<'d> {
                     warn!("[host] Long term key request reply failed, unknown peer")
                 }
             }
-            crate::security_manager::SecurityEventData::EnableEncryption(handle) => {
-                let address = self.state.borrow().connections.iter().find_map(|connection| {
-                    match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
-                        (Some(connection_handle), Some(addr), Some(kind)) => {
-                            if handle == connection_handle {
-                                Some(crate::Address { addr, kind })
-                            } else {
-                                None
+            crate::security_manager::SecurityEventData::EnableEncryption(handle, bond_info) => {
+                let connection_data =
+                    self.state
+                        .borrow()
+                        .connections
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, connection)| {
+                            match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
+                                (Some(connection_handle), Some(addr), Some(kind)) => {
+                                    if handle == connection_handle {
+                                        Some((index, connection.role, crate::Address { addr, kind }))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                (_, _, _) => None,
                             }
-                        }
-                        (_, _, _) => None,
-                    }
-                });
-
-                if let Some(address) = address {
+                        });
+                if let Some((index, role, address)) = connection_data {
                     if let Some(ltk) = self.security_manager.get_peer_long_term_key(address) {
-                        host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
-                            .await?;
+                        if let Some(LeConnRole::Central) = role {
+                            host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
+                                .await?;
+                        }
+                        // Emit the bonded event after enabling encryption
+                        self.post_event(index as u8, ConnectionEventData::Bonded { bond_info })
+                            .await;
                     } else {
                         warn!("[host] Enable encryption failed, no long term key")
                     }
                 } else {
                     warn!("[host] Enable encryption failed, unknown peer")
-                }
-            }
-            crate::security_manager::SecurityEventData::Bonded(handle, bond_info) => {
-                info!("[host] Bonded with peer");
-                // Find the index of current connection, post bonded event
-                if let Some(index) = self.state.borrow().connections.iter().position(|connection| {
-                    match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
-                        (Some(connection_handle), Some(addr), Some(kind)) => {
-                            if handle == connection_handle {
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        (_, _, _) => false,
-                    }
-                }) {
-                    self.post_event(index as u8, ConnectionEventData::Bonded { bond_info })
-                        .await;
                 }
             }
             crate::security_manager::SecurityEventData::Timeout => {
