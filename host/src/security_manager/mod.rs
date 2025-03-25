@@ -38,9 +38,7 @@ pub(crate) enum SecurityEventData {
     /// A long term key request has been issued
     SendLongTermKey(ConnHandle),
     /// Enable encryption on channel
-    EnableEncryption(ConnHandle),
-    /// Bonded with peer
-    Bonded(ConnHandle, BondInformation),
+    EnableEncryption(ConnHandle, BondInformation),
     /// Pairing timeout
     Timeout,
     /// Oairing timer changed
@@ -525,7 +523,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 addr: peer_address,
                 kind: AddrKind::RANDOM,
             }) {
-                self.try_send_event(SecurityEventData::EnableEncryption(connection.handle()))?;
+                self.try_send_event(SecurityEventData::EnableEncryption(
+                    connection.handle(),
+                    BondInformation::new(peer_address, ltk),
+                ))?;
                 {
                     let mut pairing_state = self.pairing_state.borrow_mut();
                     pairing_state.role = connection.role();
@@ -1082,8 +1083,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
         if role == LeConnRole::Central {
             let bond_info = self.store_pairing()?;
-            self.try_send_event(SecurityEventData::EnableEncryption(handle))?;
-            self.try_send_event(SecurityEventData::Bonded(handle, bond_info))?;
+            self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))?;
         } else {
             let mut packet = self.prepare_packet(Command::PairingDhKeyCheck, connections)?;
 
@@ -1099,7 +1099,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 }
             }
             let bond_info = self.store_pairing()?;
-            self.try_send_event(SecurityEventData::Bonded(handle, bond_info))?;
+            self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))?;
         }
         {
             let mut pairing_state = self.pairing_state.borrow_mut();
