@@ -677,6 +677,25 @@ impl<'d> ConnectionManager<'d> {
                     warn!("[host] Enable encryption failed, unknown peer")
                 }
             }
+            crate::security_manager::SecurityEventData::Bonded(handle, bond_info) => {
+                info!("[host] Bonded with peer");
+                // Find the index of current connection, post bonded event
+                if let Some(index) = self.state.borrow().connections.iter().position(|connection| {
+                    match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
+                        (Some(connection_handle), Some(addr), Some(kind)) => {
+                            if handle == connection_handle {
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        (_, _, _) => false,
+                    }
+                }) {
+                    self.post_event(index as u8, ConnectionEventData::Bonded { bond_info })
+                        .await;
+                }
+            }
             crate::security_manager::SecurityEventData::Timeout => {
                 warn!("[host] Pairing timeout");
                 self.security_manager.cancel_timeout()?;

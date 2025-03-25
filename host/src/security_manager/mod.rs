@@ -39,6 +39,8 @@ pub(crate) enum SecurityEventData {
     SendLongTermKey(ConnHandle),
     /// Enable encryption on channel
     EnableEncryption(ConnHandle),
+    /// Bonded with peer
+    Bonded(ConnHandle, BondInformation),
     /// Pairing timeout
     Timeout,
     /// Oairing timer changed
@@ -46,12 +48,12 @@ pub(crate) enum SecurityEventData {
 }
 
 /// Bond Information
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BondInformation {
     /// Long Term Key (LTK)
-    ltk: LongTermKey,
+    pub ltk: LongTermKey,
     /// Device address
-    address: BdAddr,
+    pub address: BdAddr,
     // Identity Resolving Key (IRK)?
     // Connection Signature Resolving Key (CSRK)?
 }
@@ -1079,8 +1081,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             (pairing_state.role, local_check)
         };
         if role == LeConnRole::Central {
-            self.store_pairing()?;
+            let bond_info = self.store_pairing()?;
             self.try_send_event(SecurityEventData::EnableEncryption(handle))?;
+            self.try_send_event(SecurityEventData::Bonded(handle, bond_info))?;
         } else {
             let mut packet = self.prepare_packet(Command::PairingDhKeyCheck, connections)?;
 
@@ -1095,7 +1098,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     return Err(error);
                 }
             }
-            self.store_pairing()?;
+            let bond_info = self.store_pairing()?;
+            self.try_send_event(SecurityEventData::Bonded(handle, bond_info))?;
         }
         {
             let mut pairing_state = self.pairing_state.borrow_mut();
@@ -1149,7 +1153,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
-    fn store_pairing(&self) -> Result<(), Error> {
+    fn store_pairing(&self) -> Result<BondInformation, Error> {
         let pairing_state = self.pairing_state.borrow();
         if let (Some(ltk), Some(peer_address)) = (pairing_state.ltk, pairing_state.peer_address) {
             let ltk = LongTermKey(ltk);
@@ -1170,10 +1174,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 }
             }
             if !replaced {
-                match bonds.push(bond) {
+                match bonds.push(bond.clone()) {
                     Ok(_) => {
                         trace!("[security manager] Added bond for {}", peer_address);
-                        Ok(())
+                        Ok(bond)
                     }
                     Err(e) => {
                         error!("[security manager] Failed to store bond");
@@ -1181,7 +1185,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     }
                 }
             } else {
-                Ok(())
+                Ok(bond)
             }
         } else {
             error!("[security manager] Failed to store bond, no pairing information");

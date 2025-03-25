@@ -14,7 +14,7 @@ use crate::connection_manager::ConnectionManager;
 use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
-use crate::{BleHostError, Error, Stack};
+use crate::{BleHostError, BondInformation, Error, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -112,6 +112,11 @@ pub enum ConnectionEvent {
         /// Supervision timeout.
         supervision_timeout: Duration,
     },
+    /// Bonded event.
+    Bonded {
+        /// Bond info for this connection
+        bond_info: BondInformation,
+    },
 }
 
 /// A connection event.
@@ -138,6 +143,11 @@ pub enum ConnectionEvent<'stack> {
         /// Supervision timeout.
         supervision_timeout: Duration,
     },
+    /// Bonded event.
+    Bonded {
+        /// Bond info for this connection
+        bond_info: BondInformation,
+    },
     /// GATT event.
     Gatt {
         /// The event that was returned
@@ -157,6 +167,9 @@ pub(crate) enum ConnectionEventData {
         conn_interval: Duration,
         peripheral_latency: u16,
         supervision_timeout: Duration,
+    },
+    Bonded {
+        bond_info: BondInformation,
     },
     Gatt {
         data: Pdu,
@@ -268,6 +281,7 @@ impl<'stack> Connection<'stack> {
                 supervision_timeout,
             },
             ConnectionEventData::PhyUpdated { tx_phy, rx_phy } => ConnectionEvent::PhyUpdated { tx_phy, rx_phy },
+            ConnectionEventData::Bonded { bond_info } => ConnectionEvent::Bonded { bond_info },
             ConnectionEventData::Gatt { data } => ConnectionEvent::Gatt {
                 data: crate::gatt::GattData::new(data, self.clone()),
             },

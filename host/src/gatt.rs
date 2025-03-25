@@ -24,7 +24,7 @@ use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, BleHostError, Error, Stack};
+use crate::{config, BleHostError, BondInformation, Error, Stack};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server> {
@@ -48,6 +48,11 @@ pub enum GattConnectionEvent<'stack, 'server> {
         peripheral_latency: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
+    },
+    /// Bonded event.
+    Bonded {
+        /// Bond info for this connection
+        bond_info: BondInformation,
     },
     /// GATT event.
     Gatt {
@@ -101,6 +106,9 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
                 }
                 ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
                     return GattConnectionEvent::PhyUpdated { tx_phy, rx_phy };
+                }
+                ConnectionEvent::Bonded { bond_info } => {
+                    return GattConnectionEvent::Bonded { bond_info };
                 }
                 ConnectionEvent::Gatt { data } => match data.process(self.server).await {
                     Ok(event) => match event {
