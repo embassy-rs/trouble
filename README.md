@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml/badge.svg)](https://github.com/embassy-rs/trouble/actions/workflows/ci.yaml)
 
-TrouBLE is a Bluetooth Low Energy (BLE) Host implementation written in Rust, with a future goal of qualification. The initial implementation was based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adapted to work with types and traits from [`bt-hci`](https://github.com/embassy-rs/bt-hci) and adding support for more of the BLE specification such as L2CAP connection oriented channels.  The current implementation also takes strong inspiration from the [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) project.
+TrouBLE is a Bluetooth Low Energy (BLE) Host implementation for embedded devices written in Rust, with a future goal of qualification. The initial implementation was based on [`bleps`](https://github.com/bjoernQ/bleps) but has been adapted to work with types and traits from [`bt-hci`](https://github.com/embassy-rs/bt-hci) and adding support for more of the BLE specification such as L2CAP connection oriented channels.  The current implementation also takes strong inspiration from the [`nrf-softdevice`](https://github.com/embassy-rs/nrf-softdevice) project.
 
 ## What is a Host?
 
