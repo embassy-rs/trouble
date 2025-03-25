@@ -7,6 +7,7 @@ license = "Apache-2.0 OR MIT"
 keywords = ["no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 resolver = "2"
+readme = "README.md"
 
 [package.metadata.embassy_docs]
 src_base = "https://github.com/embassy-rs/trouble-host/blob/v$VERSION/src/"

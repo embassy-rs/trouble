@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(clippy::needless_lifetimes)]
-#![doc = include_str!("../../README.md")]
+#![doc = include_str!(concat!("../../", env!("CARGO_PKG_README")))]
 #![warn(missing_docs)]
 
 use core::mem::MaybeUninit;
