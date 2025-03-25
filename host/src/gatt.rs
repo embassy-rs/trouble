@@ -22,9 +22,11 @@ use crate::connection_manager::ConnectionManager;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
+#[cfg(feature = "security")]
+use crate::security_manager::BondInformation;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, BleHostError, BondInformation, Error, Stack};
+use crate::{config, BleHostError, Error, Stack};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server> {
@@ -49,6 +51,7 @@ pub enum GattConnectionEvent<'stack, 'server> {
         /// Supervision timeout.
         supervision_timeout: Duration,
     },
+    #[cfg(feature = "security")]
     /// Bonded event.
     Bonded {
         /// Bond info for this connection
@@ -107,6 +110,7 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
                 ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
                     return GattConnectionEvent::PhyUpdated { tx_phy, rx_phy };
                 }
+                #[cfg(feature = "security")]
                 ConnectionEvent::Bonded { bond_info } => {
                     return GattConnectionEvent::Bonded { bond_info };
                 }
