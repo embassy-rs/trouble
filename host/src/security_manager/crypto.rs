@@ -8,7 +8,7 @@ use rand_core::{CryptoRng, RngCore};
 use crate::Address;
 
 /// LE Secure Connections Long Term Key.
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
 pub struct LongTermKey(pub u128);
