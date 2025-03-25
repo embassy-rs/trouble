@@ -7,7 +7,7 @@ license = "Apache-2.0 OR MIT"
 keywords = ["no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 resolver = "2"
-readme = "README.md"
+readme = "../README.md"
 documentation = "https://docs.embassy.dev/trouble-host"
 repository = "https://github.com/embassy-rs/trouble"
 
