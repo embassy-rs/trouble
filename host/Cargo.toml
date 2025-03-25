@@ -8,6 +8,8 @@ keywords = ["no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 resolver = "2"
 readme = "README.md"
+documentation = "https://docs.embassy.dev/trouble-host"
+repository = "https://github.com/embassy-rs/trouble"
 
 [package.metadata.embassy_docs]
 src_base = "https://github.com/embassy-rs/trouble-host/blob/v$VERSION/src/"
