@@ -375,9 +375,38 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
         let a = Address::random(bond_information.address.into_inner());
         trace!("[security manager] Add bond for {}", a);
-        match self.state.borrow_mut().bond.push(bond_information) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(Error::OutOfMemory),
+        let index = self.state.borrow().bond.iter().position(|bond| bond.address == a.addr);
+        match index {
+            Some(index) => {
+                // Replace existing bond if it exists
+                self.state.borrow_mut().bond[index] = bond_information;
+                Ok(())
+            }
+            None => self
+                .state
+                .borrow_mut()
+                .bond
+                .push(bond_information)
+                .map_err(|_| Error::OutOfMemory),
+        }
+    }
+
+    /// Remove a bonded device
+    pub(crate) fn remove_bond_information(&self, address: BdAddr) -> Result<(), Error> {
+        let a = Address::random(address.into_inner());
+        trace!("[security manager] Remove bond for {}", a);
+        let index = self
+            .state
+            .borrow_mut()
+            .bond
+            .iter()
+            .position(|bond| bond.address == a.addr);
+        match index {
+            Some(index) => {
+                self.state.borrow_mut().bond.remove(index);
+                Ok(())
+            }
+            None => Err(Error::NotFound),
         }
     }
 

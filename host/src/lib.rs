@@ -575,6 +575,12 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     }
 
     #[cfg(feature = "security")]
+    /// Remove a bonded device
+    pub fn remove_bond_information(&self, address: BdAddr) -> Result<(), Error> {
+        self.host.connections.security_manager.remove_bond_information(address)
+    }
+
+    #[cfg(feature = "security")]
     /// Get bonded devices
     pub fn get_bond_information(&self) -> Vec<BondInformation, BI_COUNT> {
         self.host.connections.security_manager.get_bond_information()
