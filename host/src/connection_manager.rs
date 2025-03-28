@@ -622,16 +622,21 @@ impl<'d> ConnectionManager<'d> {
     ) -> Result<(), crate::BleHostError<C::Error>>
     where
         C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
-            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
+            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>
+            + crate::ControllerCmdSync<bt_hci::cmd::link_control::Disconnect>,
     {
-        use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
+        use bt_hci::cmd::{
+            le::{LeEnableEncryption, LeLongTermKeyRequestReply},
+            link_control::Disconnect,
+        };
+
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle) => {
-                let address = self.state.borrow().connections.iter().find_map(|connection| {
+                let conn_info = self.state.borrow().connections.iter().find_map(|connection| {
                     match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
                         (Some(connection_handle), Some(addr), Some(kind)) => {
                             if handle == connection_handle {
-                                Some(crate::Address { addr, kind })
+                                Some((connection_handle, crate::Address { addr, kind }))
                             } else {
                                 None
                             }
@@ -640,13 +645,17 @@ impl<'d> ConnectionManager<'d> {
                     }
                 });
 
-                if let Some(address) = address {
+                if let Some((conn, address)) = conn_info {
                     if let Some(ltk) = self.security_manager.get_peer_long_term_key(address) {
                         let _ = host
                             .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
                             .await?;
                     } else {
-                        warn!("[host] Long term key request reply failed, no long term key")
+                        warn!("[host] Long term key request reply failed, no long term key");
+                        // Send disconnect event to the controller
+                        host.command(Disconnect::new(conn, DisconnectReason::AuthenticationFailure))
+                            .await?;
+                        unwrap!(self.disconnected(conn, Status::AUTHENTICATION_FAILURE));
                     }
                 } else {
                     warn!("[host] Long term key request reply failed, unknown peer")
