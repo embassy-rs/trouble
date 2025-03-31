@@ -221,7 +221,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
     /// Accept any pending available connection.
     ///
     /// Accepts the next pending connection if there are any.
-    pub async fn try_accept(&mut self) -> Option<Connection<'d>> {
+    pub fn try_accept(&mut self) -> Option<Connection<'d>> {
         if let Poll::Ready(conn) = self
             .stack
             .host
