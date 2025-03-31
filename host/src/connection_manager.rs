@@ -625,10 +625,8 @@ impl<'d> ConnectionManager<'d> {
             + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>
             + crate::ControllerCmdSync<bt_hci::cmd::link_control::Disconnect>,
     {
-        use bt_hci::cmd::{
-            le::{LeEnableEncryption, LeLongTermKeyRequestReply},
-            link_control::Disconnect,
-        };
+        use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
+        use bt_hci::cmd::link_control::Disconnect;
 
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle) => {
