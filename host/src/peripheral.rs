@@ -1,4 +1,6 @@
 //! Functionality for the BLE peripheral role.
+use core::task::Poll;
+
 use bt_hci::cmd::le::{
     LeClearAdvSets, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
     LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanResponseData,
@@ -214,6 +216,22 @@ impl<'d, C: Controller> Peripheral<'d, C> {
             extended: true,
             done: false,
         })
+    }
+
+    /// Accept any pending available connection.
+    ///
+    /// Accepts the next pending connection if there are any.
+    pub async fn try_accept(&mut self) -> Option<Connection<'d>> {
+        if let Poll::Ready(conn) = self
+            .stack
+            .host
+            .connections
+            .poll_accept(LeConnRole::Peripheral, &[], None)
+        {
+            Some(conn)
+        } else {
+            None
+        }
     }
 }
 
