@@ -3,6 +3,7 @@
 
 pub(crate) mod fmt;
 
+pub mod ble_advertise;
 pub mod ble_advertise_multiple;
 pub mod ble_bas_central;
 pub mod ble_bas_central_sec;
