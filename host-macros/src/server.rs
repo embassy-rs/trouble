@@ -8,7 +8,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
-use syn::{Expr, Result, parse_quote};
+use syn::{parse_quote, Expr, Result};
 
 #[derive(Default)]
 pub(crate) struct ServerArgs {
@@ -204,7 +204,10 @@ impl ServerBuilder {
 
                 #visibility fn set<T: trouble_host::attribute::AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), trouble_host::Error> {
                     self.server.table().set(attribute_handle, input)
+                }
 
+                #visibility fn cccd_tables(&self, connection: &trouble_host::connection::Connection) -> Option<trouble_host::prelude::CccdTable<_CCCD_TABLE_SIZE>> {
+                    self.server.cccd_tables(connection)
                 }
             }
 

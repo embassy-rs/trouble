@@ -17,9 +17,10 @@ struct Client {
     is_connected: bool,
 }
 
+/// A table of CCCD values.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone)]
-struct CccdTable<const ENTRIES: usize> {
+pub struct CccdTable<const ENTRIES: usize> {
     inner: [(u16, CCCD); ENTRIES],
 }
 
@@ -76,6 +77,7 @@ impl<const ENTRIES: usize> CccdTable<ENTRIES> {
     }
 }
 
+/// A table of CCCD values for each connected client.
 struct CccdTables<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> {
     state: Mutex<M, RefCell<[(Client, CccdTable<CCCD_MAX>); CONN_MAX]>>,
 }
@@ -182,6 +184,18 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
                 }
             }
             false
+        })
+    }
+
+    fn get_cccd_table(&self, peer_address: &BdAddr) -> Option<CccdTable<CCCD_MAX>> {
+        self.state.lock(|n| {
+            let n = n.borrow();
+            for (client, table) in n.iter() {
+                if client.address == *peer_address {
+                    return Some(table.clone());
+                }
+            }
+            None
         })
     }
 }
@@ -684,5 +698,10 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
     /// Get a reference to the attribute table
     pub fn table(&self) -> &AttributeTable<'values, M, ATT_MAX> {
         &self.att_table
+    }
+
+    /// Get a reference to the CCCD tables
+    pub fn cccd_tables(&self, connection: &Connection) -> Option<CccdTable<CCCD_MAX>> {
+        self.cccd_tables.get_cccd_table(&connection.peer_address())
     }
 }
