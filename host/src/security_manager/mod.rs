@@ -30,6 +30,7 @@ use crate::codec::{Decode, Encode};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
 use crate::prelude::Connection;
+use crate::security_manager::types::UseOutOfBand;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error};
 
@@ -566,7 +567,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             } else {
                 // Send pairing request
                 let local_features = PairingFeatures {
-                    io_capabilities: IoCapabilities::DisplayYesNo,
+                    io_capabilities: IoCapabilities::NoInputNoOutput,
                     security_properties: AuthReq::new(BondingFlag::Bonding),
                     ..Default::default()
                 };
@@ -591,7 +592,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     pairing_state.handle = Some(connection.handle());
                     pairing_state.state = PairingState::Request;
                     pairing_state.local_features = Some(local_features);
-                    pairing_state.method = PairingMethod::LeSecureConnectionNumericComparison;
+                    pairing_state.method =
+                        self.choose_pairing_method(&pairing_state.local_features, &pairing_state.peer_features);
                     self.timer_reset()?;
                 }
             }
@@ -687,7 +689,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
         let local_features = PairingFeatures {
-            io_capabilities: IoCapabilities::DisplayYesNo,
+            io_capabilities: IoCapabilities::NoInputNoOutput,
             security_properties: AuthReq::new(BondingFlag::Bonding),
             ..Default::default()
         };
@@ -719,7 +721,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             pairing_state.peer_features = Some(peer_features);
             pairing_state.handle = Some(handle);
             pairing_state.state = PairingState::Response;
-            pairing_state.method = PairingMethod::LeSecureConnectionNumericComparison;
+            pairing_state.method =
+                self.choose_pairing_method(&pairing_state.local_features, &pairing_state.peer_features);
         }
 
         Ok(())
@@ -1281,5 +1284,41 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.timer_disable()?;
         self.result_signal.signal(reason);
         Ok(())
+    }
+
+    /// Choose pairing method
+    ///
+    /// https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host/generic-access-profile.html#UUID-9bec8715-4a79-31bd-f551-37336e9ff099_N1680553287676
+    fn choose_pairing_method(
+        &self,
+        local_features: &Option<PairingFeatures>,
+        peer_features: &Option<PairingFeatures>,
+    ) -> PairingMethod {
+        let local_features = local_features.unwrap_or_default();
+        let peer_features = peer_features.unwrap_or_default();
+
+        // Check if OOB data is present
+        if local_features.use_oob == UseOutOfBand::Present && peer_features.use_oob == UseOutOfBand::Present {
+            return PairingMethod::LeSecureConnectionOob;
+        }
+
+        // If both sides do not support secure connection, return None(JustWorks)
+        if !local_features.security_properties.secure_connection()
+            || !peer_features.security_properties.secure_connection()
+        {
+            return PairingMethod::None;
+        }
+
+        // Check IO capabilities and determine appropriate pairing method
+        match (local_features.io_capabilities, peer_features.io_capabilities) {
+            // When one device has only keyboard and the other has display capability, use Passkey Entry
+            (IoCapabilities::KeyboardOnly, IoCapabilities::DisplayOnly)
+            | (IoCapabilities::KeyboardOnly, IoCapabilities::DisplayYesNo)
+            | (IoCapabilities::KeyboardOnly, IoCapabilities::KeyboardOnly)
+            | (IoCapabilities::DisplayOnly, IoCapabilities::KeyboardOnly)
+            | (IoCapabilities::DisplayYesNo, IoCapabilities::KeyboardOnly) => PairingMethod::LeSecureConnectionPasskey,
+
+            _ => PairingMethod::LeSecureConnectionNumericComparison,
+        }
     }
 }
