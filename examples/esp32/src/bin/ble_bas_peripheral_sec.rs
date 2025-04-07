@@ -14,12 +14,8 @@ mod consts;
 #[esp_hal_embassy::main]
 async fn main(_s: Spawner) {
     esp_println::logger::init_logger_from_env();
-    let peripherals = esp_hal::init({
-        let mut config = esp_hal::Config::default();
-        config.cpu_clock = CpuClock::max();
-        config
-    });
-    esp_alloc::heap_allocator!(72 * 1024);
+    let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    esp_alloc::heap_allocator!(size: 72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
 
     let mut rng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);

@@ -7,13 +7,13 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 embassy-executor    = { version = "0.7.0", features = ["task-arena-size-32768"] }
 esp-backtrace = { version = "0.15", features = [ "exception-handler", "panic-handler", "println" ] }
-esp-hal = { version = "0.23.1", features = [ "unstable" ] }
-esp-hal-embassy = { version = "0.6.0" }
-esp-alloc = { version = "0.6.0" }
+esp-hal = { version = "1.0.0-beta.0", features = [ "unstable" ] }
+esp-hal-embassy = { version = "0.7.0" }
+esp-alloc = { version = "0.7.0" }
 esp-println = { version = "0.13.0", features = ["log"] }
-esp-wifi = { version = "0.12.0", features = [ "ble" ] }
+esp-wifi = { version = "0.13.0", features = [ "ble" ] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
-bt-hci = { version = "0.2" }
+bt-hci = { version = "0.3" }
 
 [features]
 default = ["esp32c3"]
@@ -52,9 +52,9 @@ name = "ble_bas_peripheral_sec"
 required-features = ["security"]
 
 [patch.crates-io]
-esp-wifi = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
-esp-backtrace = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
-esp-hal = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
-esp-hal-embassy = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
-esp-alloc = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
-esp-println = {git = "https://github.com/esp-rs/esp-hal.git", rev = "5d0145eca901f42cbebe1e41cde10e79afba3af8"}
+esp-wifi = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
+esp-backtrace = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
+esp-hal = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
+esp-hal-embassy = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
+esp-alloc = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
+esp-println = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
