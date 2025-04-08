@@ -318,9 +318,8 @@ impl ServiceBuilder {
                     quote_spanned! {characteristic.span=>
                         #identifier_assignment {
                             let value = #default_value;
-                            const CAPACITY: usize = if (#capacity) < 16 { 16 } else { #capacity }; // minimum capacity is 16 bytes
-                            static #name_screaming: static_cell::StaticCell<[u8; CAPACITY]> = static_cell::StaticCell::new();
-                            let store = #name_screaming.init([0; CAPACITY]);
+                            static #name_screaming: static_cell::StaticCell<[u8; #capacity]> = static_cell::StaticCell::new();
+                            let store = #name_screaming.init([0; #capacity]);
                             let value = trouble_host::types::gatt_traits::AsGatt::as_gatt(&value);
                             store[..value.len()].copy_from_slice(value);
                             builder.add_descriptor::<&[u8], _>(
