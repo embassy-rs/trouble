@@ -342,7 +342,8 @@ impl<'d> ConnectionManager<'d> {
                 {
                     storage.completed_packets = 0;
                 }
-                storage.att_mtu = default_att_mtu;
+                // Default ATT MTU is 23
+                storage.att_mtu = 23;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
                 storage.peer_addr.replace(peer_addr);
@@ -554,10 +555,12 @@ impl<'d> ConnectionManager<'d> {
 
     pub(crate) fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16 {
         let mut state = self.state.borrow_mut();
+        debug!("exchange_att_mtu: {}, current default: {}", mtu, state.default_att_mtu);
+        let default_att_mtu = state.default_att_mtu;
         for storage in state.connections.iter_mut() {
             match storage.state {
                 ConnectionState::Connected if storage.handle.unwrap() == conn => {
-                    storage.att_mtu = storage.att_mtu.min(mtu);
+                    storage.att_mtu = default_att_mtu.min(mtu);
                     return storage.att_mtu;
                 }
                 _ => {}
