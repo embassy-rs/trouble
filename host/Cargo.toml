@@ -74,6 +74,8 @@ derive = ["trouble-host-macros"]
 controller-host-flow-control = []
 # Enable additional connection metrics
 connection-metrics = []
+# Enable additional channel metrics
+channel-metrics = []
 security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:rand_chacha", "gatt" ]
 # For development. Disable security manager cryptographically secure pseudorandom number
 # generator (CSPRNG) to require a cryptographically secure seed

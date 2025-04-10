@@ -124,6 +124,8 @@ impl<'d> ChannelManager<'d> {
             if chan.state == ChannelState::Connected {
                 chan.state = ChannelState::Disconnecting;
                 let _ = self.inbound[index.0 as usize].close();
+                #[cfg(feature = "channel-metrics")]
+                chan.metrics.reset();
                 state.disconnect_waker.wake();
             }
         })
@@ -134,6 +136,8 @@ impl<'d> ChannelManager<'d> {
         for (idx, storage) in state.channels.iter_mut().enumerate() {
             if Some(conn) == storage.conn {
                 let _ = self.inbound[idx].close();
+                #[cfg(feature = "channel-metrics")]
+                storage.metrics.reset();
                 storage.close();
             }
         }
@@ -315,6 +319,8 @@ impl<'d> ChannelManager<'d> {
                 match storage.state {
                     ChannelState::Connected if header.channel == storage.cid => {
                         if storage.flow_control.available() == 0 {
+                            #[cfg(feature = "channel-metrics")]
+                            storage.metrics.blocked_receive();
                             // NOTE: This will trigger closing of the link, which might be a bit
                             // too strict. But it should be controllable via the credits given,
                             // which the remote should respect.
@@ -322,6 +328,8 @@ impl<'d> ChannelManager<'d> {
                             return Err(Error::OutOfMemory);
                         }
                         storage.flow_control.confirm_received(1);
+                        #[cfg(feature = "channel-metrics")]
+                        storage.metrics.received(1);
                     }
                     _ => {}
                 }
@@ -682,12 +690,12 @@ impl<'d> ChannelManager<'d> {
             }
             if credits <= chan.peer_credits {
                 chan.peer_credits -= credits;
+                #[cfg(feature = "channel-metrics")]
+                chan.metrics.sent(credits as usize);
                 return Poll::Ready(Ok(CreditGrant::new(&self.state, index, credits)));
             } else {
-                debug!(
-                    "[l2cap][poll_request_to_send][cid = {}]: not enough credits, requested {} available {}",
-                    chan.cid, credits, chan.peer_credits
-                );
+                #[cfg(feature = "channel-metrics")]
+                chan.metrics.blocked_send();
                 return Poll::Pending;
             }
         }
@@ -841,6 +849,64 @@ pub struct ChannelStorage {
     peer_cid: u16,
     peer_credits: u16,
     credit_waker: WakerRegistration,
+
+    #[cfg(feature = "channel-metrics")]
+    metrics: Metrics,
+}
+
+#[cfg(feature = "channel-metrics")]
+#[derive(Debug)]
+pub struct Metrics {
+    pub num_sent: usize,
+    pub num_received: usize,
+    pub blocked_send: usize,
+    pub blocked_receive: usize,
+}
+
+#[cfg(feature = "channel-metrics")]
+impl Metrics {
+    pub const fn new() -> Self {
+        Self {
+            num_sent: 0,
+            num_received: 0,
+            blocked_send: 0,
+            blocked_receive: 0,
+        }
+    }
+    pub fn sent(&mut self, num: usize) {
+        self.num_sent = self.num_sent.wrapping_add(num);
+    }
+
+    pub fn received(&mut self, num: usize) {
+        self.num_received = self.num_received.wrapping_add(num);
+    }
+
+    pub fn blocked_send(&mut self) {
+        self.blocked_send = self.blocked_send.wrapping_add(1);
+    }
+
+    pub fn blocked_receive(&mut self) {
+        self.blocked_receive = self.blocked_receive.wrapping_add(1);
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}
+
+#[cfg(feature = "channel-metrics")]
+#[cfg(feature = "defmt")]
+impl defmt::Format for Metrics {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "sent = {}, recvd = {}, blocked send = {}, blocked receive = {}",
+            self.num_sent,
+            self.num_received,
+            self.blocked_send,
+            self.blocked_receive,
+        );
+    }
 }
 
 #[cfg(feature = "defmt")]
@@ -859,6 +925,8 @@ impl defmt::Format for ChannelStorage {
             self.flow_control.available(),
             self.refcount,
         );
+        #[cfg(feature = "channel-metrics")]
+        defmt::write!(", {}", self.metrics);
     }
 }
 
@@ -876,6 +944,8 @@ impl ChannelStorage {
         peer_credits: 0,
         credit_waker: WakerRegistration::new(),
         refcount: 0,
+        #[cfg(feature = "channel-metrics")]
+        metrics: Metrics::new(),
     };
 
     fn close(&mut self) {
