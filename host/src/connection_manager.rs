@@ -496,12 +496,9 @@ impl<'d> ConnectionManager<'d> {
                         if let Some(cx) = cx {
                             storage.link_credit_waker.register(cx.waker());
                         }
-                        debug!(
-                            "[link][poll_request_to_send][conn = {}] requested {} available {}",
-                            handle.raw(),
-                            packets,
-                            storage.link_credits
-                        );
+                        #[cfg(feature = "connection-metrics")]
+                        storage.metrics.blocked_send();
+
                         return Poll::Pending;
                     }
                 }
@@ -787,6 +784,7 @@ pub struct Metrics {
     pub num_received: usize,
     pub last_sent: embassy_time::Instant,
     pub last_received: embassy_time::Instant,
+    pub blocked_sends: usize,
 }
 
 #[cfg(feature = "connection-metrics")]
@@ -797,6 +795,7 @@ impl Metrics {
             num_received: 0,
             last_sent: embassy_time::Instant::MIN,
             last_received: embassy_time::Instant::MIN,
+            blocked_sends: 0,
         }
     }
     pub fn sent(&mut self, num: usize) {
@@ -807,6 +806,10 @@ impl Metrics {
     pub fn received(&mut self, num: usize) {
         self.num_received = self.num_received.wrapping_add(num);
         self.last_received = embassy_time::Instant::now();
+    }
+
+    pub fn blocked_send(&mut self) {
+        self.blocked_sends = self.blocked_sends.wrapping_add(1);
     }
 
     pub fn reset(&mut self) {
@@ -820,11 +823,12 @@ impl defmt::Format for Metrics {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "sent = {}, since_sent = {} ms, recvd = {}, since_recvd = {} ms",
+            "sent = {}, since_sent = {} ms, recvd = {}, since_recvd = {} ms, blocked sends = {}",
             self.num_sent,
             self.last_sent.elapsed().as_millis(),
             self.num_received,
             self.last_received.elapsed().as_millis(),
+            self.blocked_sends,
         );
     }
 }
