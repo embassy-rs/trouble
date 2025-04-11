@@ -163,14 +163,14 @@ impl<'d> ChannelManager<'d> {
     }
 
     pub(crate) async fn accept<T: Controller>(
-        &self,
+        &'d self,
         conn: ConnHandle,
         psm: &[u16],
         mtu: u16,
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
-        ble: &BleHost<'_, T>,
-    ) -> Result<L2capChannel<'_>, BleHostError<T::Error>> {
+        ble: &BleHost<'d, T>,
+    ) -> Result<L2capChannel<'d>, BleHostError<T::Error>> {
         // Wait until we find a channel for our connection in the connecting state matching our PSM.
         let (channel, req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
@@ -226,14 +226,14 @@ impl<'d> ChannelManager<'d> {
     }
 
     pub(crate) async fn create<T: Controller>(
-        &self,
+        &'d self,
         conn: ConnHandle,
         psm: u16,
         mtu: u16,
         credit_flow: CreditFlowPolicy,
         initial_credits: Option<u16>,
         ble: &BleHost<'_, T>,
-    ) -> Result<L2capChannel<'_>, BleHostError<T::Error>> {
+    ) -> Result<L2capChannel<'d>, BleHostError<T::Error>> {
         let req_id = self.next_request_id();
         let mut credits = 0;
         let mut cid: u16 = 0;
@@ -266,12 +266,12 @@ impl<'d> ChannelManager<'d> {
     }
 
     fn poll_created<T: Controller>(
-        &self,
+        &'d self,
         conn: ConnHandle,
         idx: ChannelIndex,
         ble: &BleHost<'_, T>,
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<Result<L2capChannel<'_>, BleHostError<T::Error>>> {
+    ) -> Poll<Result<L2capChannel<'d>, BleHostError<T::Error>>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
             state.create_waker.register(cx.waker());
@@ -747,6 +747,23 @@ impl<'d> ChannelManager<'d> {
         let state = self.state.borrow();
         state.print(verbose);
     }
+
+    #[cfg(feature = "defmt")]
+    pub(crate) fn print(&self, index: ChannelIndex, f: defmt::Formatter) {
+        use defmt::Format;
+        self.with_mut(|state| {
+            let chan = &mut state.channels[index.0 as usize];
+            chan.format(f);
+        })
+    }
+
+    #[cfg(feature = "channel-metrics")]
+    pub(crate) fn metrics<F: FnOnce(&Metrics)>(&self, index: ChannelIndex, f: F) {
+        self.with_mut(|state| {
+            let state = &state.channels[index.0 as usize];
+            f(&state.metrics);
+        })
+    }
 }
 
 pub struct DisconnectRequest<'a, 'd> {
@@ -807,34 +824,6 @@ fn encode(data: &[u8], packet: &mut [u8], peer_cid: u16, header: Option<u16>) ->
     Ok(w.len())
 }
 
-pub(crate) trait DynamicChannelManager {
-    fn inc_ref(&self, index: ChannelIndex);
-    fn dec_ref(&self, index: ChannelIndex);
-    fn disconnect(&self, index: ChannelIndex);
-    #[cfg(feature = "defmt")]
-    fn print(&self, index: ChannelIndex, f: defmt::Formatter);
-}
-
-impl DynamicChannelManager for ChannelManager<'_> {
-    fn inc_ref(&self, index: ChannelIndex) {
-        ChannelManager::inc_ref(self, index)
-    }
-    fn dec_ref(&self, index: ChannelIndex) {
-        ChannelManager::dec_ref(self, index)
-    }
-    fn disconnect(&self, index: ChannelIndex) {
-        ChannelManager::disconnect(self, index)
-    }
-    #[cfg(feature = "defmt")]
-    fn print(&self, index: ChannelIndex, f: defmt::Formatter) {
-        use defmt::Format;
-        self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
-            chan.format(f);
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct ChannelStorage {
     state: ChannelState,
@@ -854,18 +843,23 @@ pub struct ChannelStorage {
     metrics: Metrics,
 }
 
+/// Metrics for this channel
 #[cfg(feature = "channel-metrics")]
 #[derive(Debug)]
 pub struct Metrics {
+    /// Number of sent l2cap packets.
     pub num_sent: usize,
+    /// Number of received l2cap packets.
     pub num_received: usize,
+    /// Number of l2cap packets blocked from sending.
     pub blocked_send: usize,
+    /// Number of l2cap packets blocked from receiving.
     pub blocked_receive: usize,
 }
 
 #[cfg(feature = "channel-metrics")]
 impl Metrics {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             num_sent: 0,
             num_received: 0,
@@ -873,23 +867,23 @@ impl Metrics {
             blocked_receive: 0,
         }
     }
-    pub fn sent(&mut self, num: usize) {
+    pub(crate) fn sent(&mut self, num: usize) {
         self.num_sent = self.num_sent.wrapping_add(num);
     }
 
-    pub fn received(&mut self, num: usize) {
+    pub(crate) fn received(&mut self, num: usize) {
         self.num_received = self.num_received.wrapping_add(num);
     }
 
-    pub fn blocked_send(&mut self) {
+    pub(crate) fn blocked_send(&mut self) {
         self.blocked_send = self.blocked_send.wrapping_add(1);
     }
 
-    pub fn blocked_receive(&mut self) {
+    pub(crate) fn blocked_receive(&mut self) {
         self.blocked_receive = self.blocked_receive.wrapping_add(1);
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         *self = Self::new();
     }
 }

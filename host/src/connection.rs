@@ -11,6 +11,8 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
+#[cfg(feature = "connection-metrics")]
+pub use crate::connection_manager::Metrics as ConnectionMetrics;
 use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
@@ -328,6 +330,12 @@ impl<'stack> Connection<'stack> {
     pub fn disconnect(&self) {
         self.manager
             .request_disconnect(self.index, DisconnectReason::RemoteUserTerminatedConn);
+    }
+
+    /// Read metrics for this connection
+    #[cfg(feature = "connection-metrics")]
+    pub fn metrics<F: FnOnce(&ConnectionMetrics)>(&self, f: F) {
+        self.manager.metrics(self.index, f);
     }
 
     /// The RSSI value for this connection.

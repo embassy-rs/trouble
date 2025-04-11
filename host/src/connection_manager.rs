@@ -709,6 +709,14 @@ impl<'d> ConnectionManager<'d> {
     ) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_> {
         self.security_manager.poll_events()
     }
+
+    #[cfg(feature = "connection-metrics")]
+    pub(crate) fn metrics<F: FnOnce(&Metrics)>(&self, index: u8, f: F) {
+        self.with_mut(|state| {
+            let state = &state.connections[index as usize];
+            f(&state.metrics);
+        })
+    }
 }
 
 pub struct DisconnectRequest<'a, 'd> {
@@ -780,19 +788,25 @@ pub struct ConnectionStorage {
     pub encrypted: bool,
 }
 
+/// Connection metrics
 #[cfg(feature = "connection-metrics")]
 #[derive(Debug)]
 pub struct Metrics {
+    /// Number of ACL packets sent for this connection.
     pub num_sent: usize,
+    /// Number of ACL packets received on this connection.
     pub num_received: usize,
+    /// Time of last sent packet.
     pub last_sent: embassy_time::Instant,
+    /// Time of last received packet.
     pub last_received: embassy_time::Instant,
+    /// Number of times a sender was blocked from sending.
     pub blocked_sends: usize,
 }
 
 #[cfg(feature = "connection-metrics")]
 impl Metrics {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             num_sent: 0,
             num_received: 0,
@@ -801,21 +815,21 @@ impl Metrics {
             blocked_sends: 0,
         }
     }
-    pub fn sent(&mut self, num: usize) {
+    pub(crate) fn sent(&mut self, num: usize) {
         self.num_sent = self.num_sent.wrapping_add(num);
         self.last_sent = embassy_time::Instant::now();
     }
 
-    pub fn received(&mut self, num: usize) {
+    pub(crate) fn received(&mut self, num: usize) {
         self.num_received = self.num_received.wrapping_add(num);
         self.last_received = embassy_time::Instant::now();
     }
 
-    pub fn blocked_send(&mut self) {
+    pub(crate) fn blocked_send(&mut self) {
         self.blocked_sends = self.blocked_sends.wrapping_add(1);
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         *self = Self::new();
     }
 }
