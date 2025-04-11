@@ -302,6 +302,11 @@ pub enum AttRsp<'d> {
         /// Iterator over the found handles
         it: FindByTypeValueIter<'d>,
     },
+    /// Find Information Response
+    FindInformation {
+        /// Iterator over the found handles and UUIDs
+        it: FindInformationIter<'d>,
+    },
     /// Error Response
     Error {
         /// Request opcode
@@ -408,6 +413,58 @@ impl<'d> ReadByTypeIter<'d> {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Copy, Clone)]
+enum FindInformationUuidFormat {
+    Uuid16 = 1,
+    Uuid128 = 2,
+}
+
+impl FindInformationUuidFormat {
+    fn num_bytes(self) -> usize {
+        match self {
+            Self::Uuid16 => 2,
+            Self::Uuid128 => 16,
+        }
+    }
+
+    fn from(format: u8) -> Result<Self, codec::Error> {
+        match format {
+            1 => Ok(Self::Uuid16),
+            2 => Ok(Self::Uuid128),
+            _ => Err(codec::Error::InvalidValue),
+        }
+    }
+}
+
+/// An Iterator-like type for iterating over the handle/UUID pairs in a Find Information Response
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Debug)]
+pub struct FindInformationIter<'d> {
+    /// Format type: 1 = 16-bit UUIDs, 2 = 128-bit UUIDs
+    format: FindInformationUuidFormat,
+    cursor: ReadCursor<'d>,
+}
+
+impl<'d> FindInformationIter<'d> {
+    /// Get the next pair of attribute handle and UUID
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<Result<(u16, Uuid), crate::Error>> {
+        let uuid_len = self.format.num_bytes();
+
+        if self.cursor.available() >= 2 + uuid_len {
+            let res = (|| {
+                let handle: u16 = self.cursor.read()?;
+                let uuid = Uuid::try_from(self.cursor.slice(uuid_len)?)?;
+                Ok((handle, uuid))
+            })();
+            Some(res)
+        } else {
+            None
+        }
+    }
+}
+
 impl<'d> AttServer<'d> {
     fn size(&self) -> usize {
         match self {
@@ -437,6 +494,7 @@ impl<'d> AttRsp<'d> {
         1 + match self {
             Self::ExchangeMtu { mtu: u16 } => 2,
             Self::FindByTypeValue { it } => it.cursor.len(),
+            Self::FindInformation { it } => 1 + it.cursor.len(), // 1 for format byte
             Self::Error { .. } => 4,
             Self::Read { data } => data.len(),
             Self::ReadByType { it } => it.cursor.len(),
@@ -457,6 +515,15 @@ impl<'d> AttRsp<'d> {
                 while let Some(Ok((start, end))) = it.next() {
                     w.write(start)?;
                     w.write(end)?;
+                }
+            }
+            Self::FindInformation { it } => {
+                w.write(ATT_FIND_INFORMATION_RSP)?;
+                w.write(it.format as u8)?;
+                let mut it = it.clone();
+                while let Some(Ok((handle, uuid))) = it.next() {
+                    w.write(handle)?;
+                    w.append(uuid.as_raw())?;
                 }
             }
             Self::Error { request, handle, code } => {
@@ -489,6 +556,12 @@ impl<'d> AttRsp<'d> {
         match opcode {
             ATT_FIND_BY_TYPE_VALUE_RSP => Ok(Self::FindByTypeValue {
                 it: FindByTypeValueIter { cursor: r },
+            }),
+            ATT_FIND_INFORMATION_RSP => Ok(Self::FindInformation {
+                it: FindInformationIter {
+                    format: FindInformationUuidFormat::from(r.read()?)?,
+                    cursor: r,
+                },
             }),
             ATT_EXCHANGE_MTU_RSP => {
                 let mtu: u16 = r.read()?;
@@ -599,6 +672,10 @@ impl<'d> AttReq<'d> {
                 att_type,
                 att_value,
             } => 6 + att_value.len(),
+            Self::FindInformation {
+                start_handle,
+                end_handle,
+            } => 4,
             Self::ReadByType {
                 start,
                 end,
@@ -627,6 +704,14 @@ impl<'d> AttReq<'d> {
                 w.write(*end_handle)?;
                 w.write(*att_type)?;
                 w.append(att_value)?;
+            }
+            Self::FindInformation {
+                start_handle,
+                end_handle,
+            } => {
+                w.write(ATT_FIND_INFORMATION_REQ)?;
+                w.write(*start_handle)?;
+                w.write(*end_handle)?;
             }
             Self::ReadByType {
                 start,

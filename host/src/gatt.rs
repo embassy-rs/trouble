@@ -15,7 +15,7 @@ use embassy_time::Duration;
 use heapless::Vec;
 
 use crate::att::{self, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
-use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
+use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionManager;
@@ -678,6 +678,8 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
         uuid: &Uuid,
     ) -> Result<Characteristic<T>, BleHostError<C::Error>> {
         let mut start: u16 = service.start;
+        let mut found_indicate_or_notify_uuid = Option::None;
+
         loop {
             let data = att::AttReq::ReadByType {
                 start,
@@ -698,20 +700,25 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
                             uuid: decl_uuid,
                         } = AttributeData::decode_declaration(item)?
                         {
-                            if *uuid == decl_uuid {
-                                // "notify" and "indicate" characteristic properties
-                                let cccd_handle =
-                                    if props.any(&[CharacteristicProp::Indicate, CharacteristicProp::Notify]) {
-                                        Some(self.get_characteristic_cccd(handle).await?.0)
-                                    } else {
-                                        None
-                                    };
-
+                            if let Some(start_handle) = found_indicate_or_notify_uuid {
                                 return Ok(Characteristic {
                                     handle,
-                                    cccd_handle,
+                                    cccd_handle: Some(self.get_characteristic_cccd(start_handle, handle).await?),
                                     phantom: PhantomData,
                                 });
+                            }
+
+                            if *uuid == decl_uuid {
+                                // If there are "notify" and "indicate" characteristic properties we need to find the
+                                // next characteristic so we can determine the search space for the CCCD
+                                if !props.any(&[CharacteristicProp::Indicate, CharacteristicProp::Notify]) {
+                                    return Ok(Characteristic {
+                                        handle,
+                                        cccd_handle: None,
+                                        phantom: PhantomData,
+                                    });
+                                }
+                                found_indicate_or_notify_uuid = Some(handle);
                             }
 
                             if handle == 0xFFFF {
@@ -723,44 +730,53 @@ impl<'reference, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usiz
                         }
                     }
                 }
-                AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
-                _ => {
-                    return Err(Error::InvalidValue.into());
-                }
+                AttRsp::Error { request, handle, code } => match code {
+                    att::AttErrorCode::ATTRIBUTE_NOT_FOUND => match found_indicate_or_notify_uuid {
+                        Some(handle) => {
+                            return Ok(Characteristic {
+                                handle,
+                                cccd_handle: Some(self.get_characteristic_cccd(handle, service.end).await?),
+                                phantom: PhantomData,
+                            })
+                        }
+                        None => return Err(Error::NotFound.into()),
+                    },
+                    _ => return Err(Error::Att(code).into()),
+                },
+                _ => return Err(Error::InvalidValue.into()),
             }
         }
     }
 
-    async fn get_characteristic_cccd(&self, char_handle: u16) -> Result<(u16, CCCD), BleHostError<C::Error>> {
-        let data = att::AttReq::ReadByType {
-            start: char_handle,
-            end: char_handle + 1,
-            attribute_type: CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
-        };
+    async fn get_characteristic_cccd(
+        &self,
+        char_start_handle: u16,
+        char_end_handle: u16,
+    ) -> Result<u16, BleHostError<C::Error>> {
+        let mut start_handle = char_start_handle;
 
-        let response = self.request(data).await?;
+        while start_handle <= char_end_handle {
+            let data = att::AttReq::FindInformation {
+                start_handle,
+                end_handle: char_end_handle,
+            };
 
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::ReadByType { mut it } => {
-                if let Some(Ok((handle, item))) = it.next() {
-                    // As defined in the bluetooth spec [3.3.3.3. Client Characteristic Configuration](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/generic-attribute-profile--gatt-.html#UUID-09487be3-178b-eeca-f49f-f783e8d462f6)
-                    // "The Client Characteristic Configuration declaration is an optional characteristic descriptor" and
-                    // "The default value for the Client Characteristic Configuration descriptor value shall be 0x0000."
-                    if item.is_empty() {
-                        Ok((handle, CCCD(0)))
-                    } else {
-                        Ok((
-                            handle,
-                            CCCD(u16::from_le_bytes(item.try_into().map_err(|_| Error::InvalidValue)?)),
-                        ))
+            let response = self.request(data).await?;
+
+            match Self::response(response.pdu.as_ref())? {
+                AttRsp::FindInformation { mut it } => {
+                    while let Some(Ok((handle, uuid))) = it.next() {
+                        if uuid == CLIENT_CHARACTERISTIC_CONFIGURATION.into() {
+                            return Ok(handle);
+                        }
+                        start_handle = handle + 1;
                     }
-                } else {
-                    Err(Error::NotFound.into())
                 }
+                AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
+                _ => return Err(Error::InvalidValue.into()),
             }
-            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::InvalidValue.into()),
         }
+        Err(Error::NotFound.into())
     }
 
     /// Read a characteristic described by a handle.
