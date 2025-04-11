@@ -920,7 +920,7 @@ impl defmt::Format for ChannelStorage {
             self.refcount,
         );
         #[cfg(feature = "channel-metrics")]
-        defmt::write!(", {}", self.metrics);
+        defmt::write!(f, ", {}", self.metrics);
     }
 }
 

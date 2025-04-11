@@ -892,7 +892,7 @@ impl defmt::Format for ConnectionStorage {
         );
 
         #[cfg(feature = "connection-metrics")]
-        defmt::write!(", {}", self.metrics);
+        defmt::write!(f, ", {}", self.metrics);
     }
 }
 
