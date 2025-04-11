@@ -375,7 +375,7 @@ fn process_accept<'stack>(
         let mtu = connection.get_att_mtu();
         data.commit(written)?;
         data.truncate(mtu as usize);
-        header.write(written as u16)?;
+        header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let len = header.len() + data.len();
         let pdu = Pdu::new(tx, len);
