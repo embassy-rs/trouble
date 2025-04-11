@@ -2,7 +2,9 @@
 use bt_hci::controller::{blocking, Controller};
 
 pub use crate::channel_manager::CreditFlowPolicy;
-use crate::channel_manager::{ChannelIndex, DynamicChannelManager};
+#[cfg(feature = "channel-metrics")]
+pub use crate::channel_manager::Metrics as ChannelMetrics;
+use crate::channel_manager::{ChannelIndex, ChannelManager};
 use crate::connection::Connection;
 use crate::{BleHostError, Stack};
 
@@ -11,19 +13,19 @@ pub(crate) mod sar;
 /// Handle representing an L2CAP channel.
 pub struct L2capChannel<'d> {
     index: ChannelIndex,
-    manager: &'d dyn DynamicChannelManager,
+    manager: &'d ChannelManager<'d>,
 }
 
 /// Handle representing an L2CAP channel write endpoint.
 pub struct L2capChannelWriter<'d> {
     index: ChannelIndex,
-    manager: &'d dyn DynamicChannelManager,
+    manager: &'d ChannelManager<'d>,
 }
 
 /// Handle representing an L2CAP channel write endpoint.
 pub struct L2capChannelReader<'d> {
     index: ChannelIndex,
-    manager: &'d dyn DynamicChannelManager,
+    manager: &'d ChannelManager<'d>,
 }
 
 #[cfg(feature = "defmt")]
@@ -89,7 +91,7 @@ impl Default for L2capChannelConfig {
 }
 
 impl<'d> L2capChannel<'d> {
-    pub(crate) fn new(index: ChannelIndex, manager: &'d dyn DynamicChannelManager) -> Self {
+    pub(crate) fn new(index: ChannelIndex, manager: &'d ChannelManager<'d>) -> Self {
         Self { index, manager }
     }
 
@@ -144,6 +146,12 @@ impl<'d> L2capChannel<'d> {
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
         stack.host.channels.receive(self.index, buf, &stack.host).await
+    }
+
+    /// Read metrics of the l2cap channel.
+    #[cfg(feature = "channel-metrics")]
+    pub fn metrics<F: FnOnce(&ChannelMetrics)>(&self, f: F) {
+        self.manager.metrics(self.index, f);
     }
 
     /// Await an incoming connection request matching the list of PSM.
@@ -239,6 +247,12 @@ impl<'d> L2capChannelReader<'d> {
     ) -> Result<usize, BleHostError<T::Error>> {
         stack.host.channels.receive(self.index, buf, &stack.host).await
     }
+
+    /// Read metrics of the l2cap channel.
+    #[cfg(feature = "channel-metrics")]
+    pub fn metrics<F: FnOnce(&ChannelMetrics)>(&self, f: F) {
+        self.manager.metrics(self.index, f);
+    }
 }
 
 impl<'d> L2capChannelWriter<'d> {
@@ -282,5 +296,11 @@ impl<'d> L2capChannelWriter<'d> {
             .host
             .channels
             .try_send(self.index, buf, &mut p_buf[..], &stack.host)
+    }
+
+    /// Read metrics of the l2cap channel.
+    #[cfg(feature = "channel-metrics")]
+    pub fn metrics<F: FnOnce(&ChannelMetrics)>(&self, f: F) {
+        self.manager.metrics(self.index, f);
     }
 }
