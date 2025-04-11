@@ -556,8 +556,8 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     }
 
     /// Read current host metrics
-    pub fn metrics<F: FnOnce(&HostMetrics)>(&self, f: F) {
-        self.host.metrics(f);
+    pub fn metrics<F: FnOnce(&HostMetrics) -> R, R>(&self, f: F) -> R {
+        self.host.metrics(f)
     }
 
     /// Log status information of the host

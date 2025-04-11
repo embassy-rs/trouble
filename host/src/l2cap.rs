@@ -150,8 +150,8 @@ impl<'d> L2capChannel<'d> {
 
     /// Read metrics of the l2cap channel.
     #[cfg(feature = "channel-metrics")]
-    pub fn metrics<F: FnOnce(&ChannelMetrics)>(&self, f: F) {
-        self.manager.metrics(self.index, f);
+    pub fn metrics<F: FnOnce(&ChannelMetrics) -> R, R>(&self, f: F) -> R {
+        self.manager.metrics(self.index, f)
     }
 
     /// Await an incoming connection request matching the list of PSM.
@@ -250,8 +250,8 @@ impl<'d> L2capChannelReader<'d> {
 
     /// Read metrics of the l2cap channel.
     #[cfg(feature = "channel-metrics")]
-    pub fn metrics<F: FnOnce(&ChannelMetrics)>(&self, f: F) {
-        self.manager.metrics(self.index, f);
+    pub fn metrics<F: FnOnce(&ChannelMetrics) -> R, R>(&self, f: F) -> R {
+        self.manager.metrics(self.index, f)
     }
 }
 
@@ -300,7 +300,7 @@ impl<'d> L2capChannelWriter<'d> {
 
     /// Read metrics of the l2cap channel.
     #[cfg(feature = "channel-metrics")]
-    pub fn metrics<F: FnOnce(&ChannelMetrics)>(&self, f: F) {
-        self.manager.metrics(self.index, f);
+    pub fn metrics<F: FnOnce(&ChannelMetrics) -> R, R>(&self, f: F) -> R {
+        self.manager.metrics(self.index, f)
     }
 }

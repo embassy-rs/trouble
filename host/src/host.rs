@@ -519,9 +519,9 @@ where
     }
 
     /// Read current host metrics
-    pub(crate) fn metrics<F: FnOnce(&HostMetrics)>(&self, f: F) {
+    pub(crate) fn metrics<F: FnOnce(&HostMetrics) -> R, R>(&self, f: F) -> R {
         let m = self.metrics.borrow();
-        f(&m);
+        f(&m)
     }
 
     /// Log status information of the host

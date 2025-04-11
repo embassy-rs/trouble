@@ -758,10 +758,10 @@ impl<'d> ChannelManager<'d> {
     }
 
     #[cfg(feature = "channel-metrics")]
-    pub(crate) fn metrics<F: FnOnce(&Metrics)>(&self, index: ChannelIndex, f: F) {
+    pub(crate) fn metrics<F: FnOnce(&Metrics) -> R, R>(&self, index: ChannelIndex, f: F) -> R {
         self.with_mut(|state| {
             let state = &state.channels[index.0 as usize];
-            f(&state.metrics);
+            f(&state.metrics)
         })
     }
 }

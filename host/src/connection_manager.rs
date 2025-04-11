@@ -711,10 +711,10 @@ impl<'d> ConnectionManager<'d> {
     }
 
     #[cfg(feature = "connection-metrics")]
-    pub(crate) fn metrics<F: FnOnce(&Metrics)>(&self, index: u8, f: F) {
+    pub(crate) fn metrics<F: FnOnce(&Metrics) -> R, R>(&self, index: u8, f: F) -> R {
         self.with_mut(|state| {
             let state = &state.connections[index as usize];
-            f(&state.metrics);
+            f(&state.metrics)
         })
     }
 }

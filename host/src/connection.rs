@@ -334,8 +334,8 @@ impl<'stack> Connection<'stack> {
 
     /// Read metrics for this connection
     #[cfg(feature = "connection-metrics")]
-    pub fn metrics<F: FnOnce(&ConnectionMetrics)>(&self, f: F) {
-        self.manager.metrics(self.index, f);
+    pub fn metrics<F: FnOnce(&ConnectionMetrics) -> R, R>(&self, f: F) -> R {
+        self.manager.metrics(self.index, f)
     }
 
     /// The RSSI value for this connection.
