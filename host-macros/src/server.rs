@@ -206,8 +206,12 @@ impl ServerBuilder {
                     self.server.table().set(attribute_handle, input)
                 }
 
-                #visibility fn cccd_tables(&self, connection: &trouble_host::connection::Connection) -> Option<trouble_host::prelude::CccdTable<_CCCD_TABLE_SIZE>> {
-                    self.server.cccd_tables(connection)
+                #visibility fn get_cccd_table(&self, connection: &trouble_host::connection::Connection) -> Option<trouble_host::prelude::CccdTable<_CCCD_TABLE_SIZE>> {
+                    self.server.get_cccd_table(connection)
+                }
+
+                #visibility fn set_cccd_table(&self, connection: &trouble_host::connection::Connection, table: trouble_host::prelude::CccdTable<_CCCD_TABLE_SIZE>) {
+                    self.server.set_cccd_table(connection, table);
                 }
             }
 

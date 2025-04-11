@@ -874,7 +874,7 @@ pub enum CCCDFlag {
 
 /// CCCD flag.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub struct CCCD(pub(crate) u16);
 
 impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
@@ -884,6 +884,12 @@ impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
             val |= prop as u16;
         }
         CCCD(val)
+    }
+}
+
+impl From<u16> for CCCD {
+    fn from(value: u16) -> Self {
+        CCCD(value)
     }
 }
 
