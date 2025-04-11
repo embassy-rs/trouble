@@ -19,7 +19,7 @@ struct Client {
 
 /// A table of CCCD values.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CccdTable<const ENTRIES: usize> {
     inner: [(u16, CCCD); ENTRIES],
 }
@@ -33,6 +33,16 @@ impl<const ENTRIES: usize> Default for CccdTable<ENTRIES> {
 }
 
 impl<const ENTRIES: usize> CccdTable<ENTRIES> {
+    /// Create a new CCCD table from an array of (handle, cccd) pairs.
+    pub fn new(cccd_values: [(u16, CCCD); ENTRIES]) -> Self {
+        Self { inner: cccd_values }
+    }
+
+    /// Get the inner array of (handle, cccd) pairs.
+    pub fn inner(&self) -> &[(u16, CCCD); ENTRIES] {
+        &self.inner
+    }
+
     fn add_handle(&mut self, cccd_handle: u16) {
         for (handle, _) in self.inner.iter_mut() {
             if *handle == 0 {
@@ -196,6 +206,19 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
                 }
             }
             None
+        })
+    }
+
+    fn set_cccd_table(&self, peer_address: &BdAddr, table: CccdTable<CCCD_MAX>) {
+        self.state.lock(|n| {
+            let mut n = n.borrow_mut();
+            for (client, t) in n.iter_mut() {
+                if client.address == *peer_address {
+                    trace!("Setting cccd table {:?} for {:?}", table, peer_address);
+                    *t = table;
+                    break;
+                }
+            }
         })
     }
 }
@@ -700,8 +723,13 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
         &self.att_table
     }
 
-    /// Get a reference to the CCCD tables
-    pub fn cccd_tables(&self, connection: &Connection) -> Option<CccdTable<CCCD_MAX>> {
+    /// Get the CCCD table for a connection
+    pub fn get_cccd_table(&self, connection: &Connection) -> Option<CccdTable<CCCD_MAX>> {
         self.cccd_tables.get_cccd_table(&connection.peer_address())
+    }
+
+    /// Set the CCCD table for a connection
+    pub fn set_cccd_table(&self, connection: &Connection, table: CccdTable<CCCD_MAX>) {
+        self.cccd_tables.set_cccd_table(&connection.peer_address(), table);
     }
 }
