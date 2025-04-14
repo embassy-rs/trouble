@@ -28,6 +28,12 @@ pub struct L2capChannelReader<'d> {
     manager: &'d ChannelManager<'d>,
 }
 
+/// Handle to an L2CAP channel for checking it's state.
+pub struct L2capChannelRef<'d> {
+    index: ChannelIndex,
+    manager: &'d ChannelManager<'d>,
+}
+
 #[cfg(feature = "defmt")]
 impl defmt::Format for L2capChannel<'_> {
     fn format(&self, f: defmt::Formatter<'_>) {
@@ -37,6 +43,12 @@ impl defmt::Format for L2capChannel<'_> {
 }
 
 impl Drop for L2capChannel<'_> {
+    fn drop(&mut self) {
+        self.manager.dec_ref(self.index);
+    }
+}
+
+impl Drop for L2capChannelRef<'_> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);
     }
@@ -253,6 +265,23 @@ impl<'d> L2capChannelReader<'d> {
     pub fn metrics<F: FnOnce(&ChannelMetrics) -> R, R>(&self, f: F) -> R {
         self.manager.metrics(self.index, f)
     }
+
+    /// Create a channel reference for the l2cap channel.
+    pub fn channel_ref(&mut self) -> L2capChannelRef<'d> {
+        self.manager.inc_ref(self.index);
+        L2capChannelRef {
+            index: self.index,
+            manager: self.manager,
+        }
+    }
+}
+
+impl<'d> L2capChannelRef<'d> {
+    #[cfg(feature = "channel-metrics")]
+    /// Read metrics of the l2cap channel.
+    pub fn metrics<F: FnOnce(&ChannelMetrics) -> R, R>(&self, f: F) -> R {
+        self.manager.metrics(self.index, f)
+    }
 }
 
 impl<'d> L2capChannelWriter<'d> {
@@ -302,5 +331,14 @@ impl<'d> L2capChannelWriter<'d> {
     #[cfg(feature = "channel-metrics")]
     pub fn metrics<F: FnOnce(&ChannelMetrics) -> R, R>(&self, f: F) -> R {
         self.manager.metrics(self.index, f)
+    }
+
+    /// Create a channel reference for the l2cap channel.
+    pub fn channel_ref(&mut self) -> L2capChannelRef<'d> {
+        self.manager.inc_ref(self.index);
+        L2capChannelRef {
+            index: self.index,
+            manager: self.manager,
+        }
     }
 }
