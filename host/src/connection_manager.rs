@@ -1,7 +1,7 @@
 use core::cell::RefCell;
-use core::future::poll_fn;
 #[cfg(feature = "security")]
 use core::future::Future;
+use core::future::poll_fn;
 use core::task::{Context, Poll};
 
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
@@ -17,7 +17,7 @@ use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
-use crate::{config, Error};
+use crate::{Error, config};
 
 struct State<'d> {
     connections: &'d mut [ConnectionStorage],
@@ -391,8 +391,7 @@ impl<'d> ConnectionManager<'d> {
                                 storage.state = ConnectionState::Connected;
                                 trace!(
                                     "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                                    handle,
-                                    role
+                                    handle, role
                                 );
                                 assert_eq!(storage.refcount, 0);
                                 state.inc_ref(idx as u8);
@@ -404,8 +403,7 @@ impl<'d> ConnectionManager<'d> {
                         assert_eq!(storage.refcount, 0);
                         trace!(
                             "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                            handle,
-                            role
+                            handle, role
                         );
 
                         assert_eq!(storage.refcount, 0);

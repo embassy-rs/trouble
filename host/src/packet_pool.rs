@@ -1,8 +1,8 @@
 //! A packet pool for allocating and freeing packet buffers with quality of service policy.
 use core::cell::RefCell;
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 struct PacketBuf<const MTU: usize> {
     buf: [u8; MTU],
@@ -101,21 +101,35 @@ impl<const MTU: usize, const N: usize> PacketPool<MTU, N> {
     }
 }
 
-/// Type erased packet pool
-pub(crate) trait Pool {
+/// Type representing a packet pool.
+pub trait Pool {
+    /// Create a new instance of a pool
+    fn new() -> Self
+    where
+        Self: Sized;
     /// Allocate a packet
     ///
     /// Returns None if out of memory.
     fn alloc(&self) -> Option<Packet>;
+
     /// Free a packet given it's reference.
     fn free(&self, r: PacketRef);
+
     /// Check for available packets.
     fn available(&self) -> usize;
+
     /// Check packet size.
     fn mtu(&self) -> usize;
+
+    /// Number of packets in this pool.
+    fn capacity(&self) -> usize;
 }
 
 impl<const MTU: usize, const N: usize> Pool for PacketPool<MTU, N> {
+    fn new() -> Self {
+        PacketPool::new()
+    }
+
     fn alloc(&self) -> Option<Packet> {
         PacketPool::alloc(self)
     }
@@ -131,16 +145,22 @@ impl<const MTU: usize, const N: usize> Pool for PacketPool<MTU, N> {
     fn mtu(&self) -> usize {
         MTU
     }
+
+    fn capacity(&self) -> usize {
+        N
+    }
 }
 
+/// A reference to a packet.
 #[repr(C)]
-pub(crate) struct PacketRef {
+pub struct PacketRef {
     idx: usize,
     buf: *mut [u8],
 }
 
+/// A packet reference to a packet and the pool it belongs to.
 #[repr(C)]
-pub(crate) struct Packet {
+pub struct Packet {
     p_ref: Option<PacketRef>,
     pool: *const dyn Pool,
 }

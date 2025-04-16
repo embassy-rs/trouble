@@ -7,11 +7,12 @@
 
 use core::mem::MaybeUninit;
 
+use crate::packet_pool::Pool;
 use advertise::AdvertisementDataError;
+use bt_hci::FromHciBytesError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
-use bt_hci::FromHciBytesError;
 #[cfg(feature = "security")]
 use heapless::Vec;
 use rand_core::{CryptoRng, RngCore};
@@ -20,7 +21,6 @@ use crate::att::AttErrorCode;
 use crate::channel_manager::{ChannelStorage, PacketChannel};
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
-use crate::packet_pool::PacketPool;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, LongTermKey};
 
@@ -41,7 +41,7 @@ mod command;
 pub mod config;
 mod connection_manager;
 mod cursor;
-pub mod packet_pool;
+mod packet_pool;
 mod pdu;
 #[cfg(feature = "peripheral")]
 pub mod peripheral;
@@ -79,6 +79,7 @@ pub mod prelude {
 
     pub use super::att::AttErrorCode;
     pub use super::{BleHostError, Controller, Error, Host, HostResources, Stack};
+    pub use crate::Address;
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
@@ -94,14 +95,13 @@ pub mod prelude {
     pub use crate::gatt::*;
     pub use crate::host::{ControlRunner, EventHandler, HostMetrics, Runner, RxRunner, TxRunner};
     pub use crate::l2cap::*;
-    pub use crate::packet_pool::PacketPool;
+    pub use crate::packet_pool::{PacketPool, Pool};
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
-    pub use crate::Address;
 }
 
 #[cfg(feature = "gatt")]
@@ -331,38 +331,38 @@ pub trait Controller:
 }
 
 impl<
-        C: bt_hci::controller::Controller
-            + embedded_io::ErrorType
-            + ControllerCmdSync<LeReadBufferSize>
-            + ControllerCmdSync<Disconnect>
-            + ControllerCmdSync<SetEventMask>
-            + ControllerCmdSync<SetEventMaskPage2>
-            + ControllerCmdSync<LeSetEventMask>
-            + ControllerCmdSync<LeSetRandomAddr>
-            + ControllerCmdSync<HostBufferSize>
-            + ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<LeReadFilterAcceptListSize>
-            + ControllerCmdSync<LeClearFilterAcceptList>
-            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
-            + ControllerCmdSync<SetControllerToHostFlowControl>
-            + ControllerCmdSync<Reset>
-            + ControllerCmdSync<ReadRssi>
-            + ControllerCmdSync<LeSetScanEnable>
-            + ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + ControllerCmdAsync<LeCreateConn>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
-            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<LeReadBufferSize>
-            + for<'t> ControllerCmdSync<LeSetAdvData>
-            + ControllerCmdSync<LeSetAdvParams>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>
-            + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>
-            + ControllerCmdSync<ReadBdAddr>,
-    > Controller for C
+    C: bt_hci::controller::Controller
+        + embedded_io::ErrorType
+        + ControllerCmdSync<LeReadBufferSize>
+        + ControllerCmdSync<Disconnect>
+        + ControllerCmdSync<SetEventMask>
+        + ControllerCmdSync<SetEventMaskPage2>
+        + ControllerCmdSync<LeSetEventMask>
+        + ControllerCmdSync<LeSetRandomAddr>
+        + ControllerCmdSync<HostBufferSize>
+        + ControllerCmdAsync<LeConnUpdate>
+        + ControllerCmdSync<LeReadFilterAcceptListSize>
+        + ControllerCmdSync<LeClearFilterAcceptList>
+        + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
+        + ControllerCmdSync<SetControllerToHostFlowControl>
+        + ControllerCmdSync<Reset>
+        + ControllerCmdSync<ReadRssi>
+        + ControllerCmdSync<LeSetScanEnable>
+        + ControllerCmdSync<LeSetExtScanEnable>
+        + ControllerCmdSync<LeCreateConnCancel>
+        + ControllerCmdAsync<LeCreateConn>
+        + for<'t> ControllerCmdSync<LeSetAdvEnable>
+        + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+        + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+        + ControllerCmdSync<LeReadBufferSize>
+        + for<'t> ControllerCmdSync<LeSetAdvData>
+        + ControllerCmdSync<LeSetAdvParams>
+        + for<'t> ControllerCmdSync<LeSetAdvEnable>
+        + for<'t> ControllerCmdSync<LeSetScanResponseData>
+        + ControllerCmdSync<LeLongTermKeyRequestReply>
+        + ControllerCmdAsync<LeEnableEncryption>
+        + ControllerCmdSync<ReadBdAddr>,
+> Controller for C
 {
 }
 
@@ -370,10 +370,10 @@ impl<
 ///
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize = 1> {
-    rx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }>>,
+pub struct HostResources<POOL: Pool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize = 1> {
+    rx_pool: MaybeUninit<POOL>,
     #[cfg(feature = "gatt")]
-    tx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }>>,
+    tx_pool: MaybeUninit<POOL>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
     events: MaybeUninit<[EventChannel; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
@@ -382,16 +382,16 @@ pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize> Default
-    for HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<POOL: Pool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize> Default
+    for HostResources<POOL, CONNS, CHANNELS, ADV_SETS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
-    HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<POOL: Pool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>
+    HostResources<POOL, CONNS, CHANNELS, ADV_SETS>
 {
     /// Create a new instance of host resources.
     pub const fn new() -> Self {
@@ -411,16 +411,9 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
 
 /// Create a new instance of the BLE host using the provided controller implementation and
 /// the resource configuration
-pub fn new<
-    'resources,
-    C: Controller,
-    const CONNS: usize,
-    const CHANNELS: usize,
-    const L2CAP_MTU: usize,
-    const ADV_SETS: usize,
->(
+pub fn new<'resources, C: Controller, POOL: Pool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>(
     controller: C,
-    resources: &'resources mut HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
+    resources: &'resources mut HostResources<POOL, CONNS, CHANNELS, ADV_SETS>,
 ) -> Stack<'resources, C> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         unsafe { core::mem::transmute(x) }
@@ -431,12 +424,11 @@ pub fn new<
     // - Internal lifetimes are elided (made 'static) to simplify API usage
     // - This _should_ be OK, because there are no references held to the resources
     //   when the stack is shut down.
-    use crate::packet_pool::Pool;
-    let rx_pool: &'resources dyn Pool = &*resources.rx_pool.write(PacketPool::new());
+    let rx_pool: &'resources dyn Pool = &*resources.rx_pool.write(POOL::new());
     let rx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(rx_pool) };
 
     #[cfg(feature = "gatt")]
-    let tx_pool: &'resources dyn Pool = &*resources.tx_pool.write(PacketPool::new());
+    let tx_pool: &'resources dyn Pool = &*resources.tx_pool.write(POOL::new());
     #[cfg(feature = "gatt")]
     let tx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(tx_pool) };
 

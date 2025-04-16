@@ -33,6 +33,7 @@ rand_core = "0.6"
 rand_chacha = { version = "0.3", default-features = false, optional = true }
 static_cell = "2.1.0"
 zerocopy = "0.8.21"
+atomic-pool = "2.0.0"
 
 # Logging
 log = { version = "0.4.16", optional = true }

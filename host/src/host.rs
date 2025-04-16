@@ -18,7 +18,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync, blocking};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
@@ -29,7 +29,7 @@ use bt_hci::param::{
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select3, select4, Either3, Either4};
+use embassy_futures::select::{Either3, Either4, select3, select4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -49,10 +49,10 @@ use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
-    L2CAP_CID_LE_U_SIGNAL,
+    L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL, L2capHeader,
+    L2capSignal, L2capSignalHeader,
 };
-use crate::{att, config, Address, BleHostError, Error, Stack};
+use crate::{Address, BleHostError, Error, Stack, att, config};
 
 /// A BLE Host.
 ///
@@ -271,15 +271,13 @@ where
                     #[cfg(feature = "defmt")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
 
                     #[cfg(feature = "log")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x?}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
@@ -319,11 +317,21 @@ where
                     return Err(Error::NotSupported);
                 }
 
-                // Avoids using the packet buffer for signalling packets
-                if header.channel == L2CAP_CID_LE_U_SIGNAL {
-                    assert!(data.len() == header.length as usize);
-                    self.channels.signal(acl.handle(), data)?;
-                    return Ok(());
+                match header.channel {
+                    // Avoids using the packet buffer for signalling packets
+                    L2CAP_CID_LE_U_SIGNAL => {
+                        assert!(data.len() == header.length as usize);
+                        self.channels.signal(acl.handle(), data)?;
+                        return Ok(());
+                    }
+                    // Check if upper layers have a fragment we can append to.
+                    other if other >= L2CAP_CID_DYN_START => {
+                        if self.channels.reassemble(header, data)? {
+                            return Ok(());
+                        }
+                    }
+                    // Fallback to regular alloc
+                    _ => {}
                 }
 
                 let Some(mut p) = self.rx_pool.alloc() else {
@@ -928,17 +936,12 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
 
         info!(
             "[host] configuring host buffers ({} packets of size {})",
-            config::L2CAP_RX_PACKET_POOL_SIZE,
+            host.rx_pool.capacity(),
             host.rx_pool.mtu()
         );
-        HostBufferSize::new(
-            host.rx_pool.mtu() as u16,
-            0,
-            config::L2CAP_RX_PACKET_POOL_SIZE as u16,
-            0,
-        )
-        .exec(&host.controller)
-        .await?;
+        HostBufferSize::new(host.rx_pool.mtu() as u16, 0, host.rx_pool.capacity() as u16, 0)
+            .exec(&host.controller)
+            .await?;
 
         #[cfg(feature = "controller-host-flow-control")]
         {

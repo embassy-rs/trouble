@@ -2,9 +2,9 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use bt_hci::controller::{blocking, Controller};
-use bt_hci::param::ConnHandle;
 use bt_hci::FromHciBytes;
+use bt_hci::controller::{Controller, blocking};
+use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
@@ -19,7 +19,7 @@ use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
     L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
 };
-use crate::{config, BleHostError, Error};
+use crate::{BleHostError, Error, config};
 
 const BASE_ID: u16 = 0x40;
 
@@ -35,7 +35,6 @@ struct State<'d> {
 pub struct ChannelManager<'d> {
     pool: &'d dyn Pool,
     state: RefCell<State<'d>>,
-    inbound: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
 }
 
 pub(crate) struct PacketChannel<const QLEN: usize> {
@@ -99,7 +98,6 @@ impl<'d> ChannelManager<'d> {
     pub fn new(
         pool: &'d dyn Pool,
         channels: &'d mut [ChannelStorage],
-        inbound: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
     ) -> Self {
         Self {
             pool,
@@ -110,7 +108,6 @@ impl<'d> ChannelManager<'d> {
                 create_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
             }),
-            inbound,
         }
     }
 
@@ -123,7 +120,7 @@ impl<'d> ChannelManager<'d> {
             let chan = &mut state.channels[index.0 as usize];
             if chan.state == ChannelState::Connected {
                 chan.state = ChannelState::Disconnecting;
-                let _ = self.inbound[index.0 as usize].close();
+                let _ = chan.inbound.close();
                 #[cfg(feature = "channel-metrics")]
                 chan.metrics.reset();
                 state.disconnect_waker.wake();
@@ -133,9 +130,9 @@ impl<'d> ChannelManager<'d> {
 
     pub(crate) fn disconnected(&self, conn: ConnHandle) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
-        for (idx, storage) in state.channels.iter_mut().enumerate() {
+        for storage in state.channels.iter_mut() {
             if Some(conn) == storage.conn {
-                let _ = self.inbound[idx].close();
+                let _ = storage.inbound.close();
                 #[cfg(feature = "channel-metrics")]
                 storage.metrics.reset();
                 storage.close();
@@ -148,10 +145,10 @@ impl<'d> ChannelManager<'d> {
 
     fn alloc<F: FnOnce(&mut ChannelStorage)>(&self, conn: ConnHandle, f: F) -> Result<ChannelIndex, Error> {
         let mut state = self.state.borrow_mut();
-        for (idx, storage) in state.channels.iter_mut().enumerate() {
+        for storage in state.channels.iter_mut() {
             if ChannelState::Disconnected == storage.state && storage.refcount == 0 {
                 // Ensure inbound is empty.
-                self.inbound[idx].clear();
+                storage.inbound.clear();
                 let cid: u16 = BASE_ID + idx as u16;
                 storage.conn = Some(conn);
                 storage.cid = cid;
@@ -303,6 +300,46 @@ impl<'d> ChannelManager<'d> {
         Poll::Pending
     }
 
+    /// Check if there is an inbound packet to be reassembled.
+    pub(crate) fn reassemble(&self, header: L2capHeader, data: &[u8]) -> Result<bool, Error> {
+        if header.channel < BASE_ID {
+            return Err(Error::InvalidChannelId);
+        }
+
+        let chan = (header.channel - BASE_ID) as usize;
+        if chan > self.inbound.len() {
+            return Err(Error::InvalidChannelId);
+        }
+
+        let (first, data) = packet.pdu.as_ref().split_at(2);
+        let remaining: u16 = u16::from_le_bytes([first[0], first[1]]);
+
+        let to_copy = data.len().min(buf.len());
+        buf[..to_copy].copy_from_slice(&data[..to_copy]);
+        let mut pos = to_copy;
+
+        let mut remaining = remaining as usize - data.len();
+
+        self.flow_control(chan, ble, packet.pdu.packet.as_mut()).await?;
+        drop(packet);
+
+        // We have some k-frames to reassemble
+        while remaining > 0 {
+            let mut packet = self.receive_pdu(&ble.connections, chan).await?;
+            let to_copy = packet.pdu.len.min(buf.len() - pos);
+            if to_copy > 0 {
+                buf[pos..pos + to_copy].copy_from_slice(&packet.pdu.as_ref()[..to_copy]);
+                pos += to_copy;
+            }
+            remaining -= packet.pdu.len;
+            self.flow_control(chan, ble, packet.pdu.packet.as_mut()).await?;
+        }
+
+        Ok(pos)
+
+        Ok(false)
+    }
+
     /// Dispatch an incoming L2CAP packet to the appropriate channel.
     pub(crate) fn dispatch(&self, header: L2capHeader, packet: Packet) -> Result<(), Error> {
         if header.channel < BASE_ID {
@@ -327,17 +364,20 @@ impl<'d> ChannelManager<'d> {
                             trace!("[l2cap][cid = {}] no credits available", header.channel);
                             return Err(Error::OutOfMemory);
                         }
-                        storage.flow_control.confirm_received(1);
-                        #[cfg(feature = "channel-metrics")]
-                        storage.metrics.received(1);
+                        if storage.inbound.try_send(Pdu::new(packet, header.length as usize)).is_ok() {
+                            storage.flow_control.confirm_received(1);
+                            #[cfg(feature = "channel-metrics")]
+                            storage.metrics.received(1);
+                        } else {
+                            return Err(Error::OutOfMemory);
+                        }
                     }
                     _ => {}
                 }
             }
             Ok(())
-        })?;
+        })
 
-        self.inbound[chan].try_send(Pdu::new(packet, header.length as usize))
     }
 
     /// Handle incoming L2CAP signal
@@ -380,16 +420,14 @@ impl<'d> ChannelManager<'d> {
                 let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
                 trace!(
                     "[l2cap][conn = {:?}] connection param update request: {:?}, ignored",
-                    conn,
-                    req
+                    conn, req
                 );
             }
             L2capSignalCode::ConnParamUpdateRes => {
                 let res = ConnParamUpdateRes::from_hci_bytes_complete(data)?;
                 trace!(
                     "[l2cap][conn = {:?}] connection param update response: {}",
-                    conn,
-                    res.result,
+                    conn, res.result,
                 );
             }
             r => {
@@ -474,7 +512,7 @@ impl<'d> ChannelManager<'d> {
         for (idx, storage) in state.channels.iter_mut().enumerate() {
             if cid == storage.cid {
                 storage.state = ChannelState::PeerDisconnecting;
-                let _ = self.inbound[idx].close();
+                let _ = storage.inbound.close();
                 state.disconnect_waker.wake();
                 break;
             }
@@ -837,7 +875,8 @@ pub struct ChannelStorage {
 
     peer_cid: u16,
     peer_credits: u16,
-    credit_waker: WakerRegistration,
+
+    inbound: PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>,
 
     #[cfg(feature = "channel-metrics")]
     metrics: Metrics,
@@ -1092,8 +1131,8 @@ mod tests {
     use bt_hci::param::{AddrKind, BdAddr, LeConnRole, Status};
 
     use super::*;
-    use crate::mock_controller::MockController;
     use crate::HostResources;
+    use crate::mock_controller::MockController;
 
     #[test]
     fn channel_refcount() {
