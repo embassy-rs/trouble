@@ -38,7 +38,7 @@ use embassy_time::Duration;
 use futures::pin_mut;
 
 use crate::att::{AttClient, AttServer};
-use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
+use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
 use crate::connection::ConnectionEventData;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
@@ -205,7 +205,6 @@ where
         connections: &'d mut [ConnectionStorage],
         events: &'d mut [EventChannel],
         channels: &'d mut [ChannelStorage],
-        channels_rx: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
         sar: &'d mut [SarType],
         advertise_handles: &'d mut [AdvHandleState],
     ) -> Self {
@@ -219,7 +218,7 @@ where
             #[cfg(not(feature = "gatt"))]
             connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4),
             reassembly: PacketReassembly::new(sar),
-            channels: ChannelManager::new(rx_pool, channels, channels_rx),
+            channels: ChannelManager::new(rx_pool, channels),
             rx_pool,
             #[cfg(feature = "gatt")]
             tx_pool,
