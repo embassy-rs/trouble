@@ -419,8 +419,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Handle packet
     pub(crate) fn handle(
         &self,
-        packet: &crate::packet_pool::Packet,
-        payload_size: usize,
+        pdu: Pdu,
         connections: &ConnectionManager,
         storage: &ConnectionStorage,
     ) -> Result<(), Error> {
@@ -437,9 +436,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let result = {
             let mut buffer = [0u8; 72];
             let size = {
-                let packet_payload = packet.as_ref();
-                let size = payload_size.min(buffer.len());
-                buffer[..size].copy_from_slice(&packet_payload[..size]);
+                let size = pdu.len.min(buffer.len());
+                buffer[..size].copy_from_slice(&pdu.as_ref()[..size]);
                 size
             };
             if size < 2 {

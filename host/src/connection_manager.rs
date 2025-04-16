@@ -15,8 +15,10 @@ use crate::connection::{Connection, ConnectionEventData};
 #[cfg(feature = "gatt")]
 use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
+use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
+use crate::types::l2cap::L2capHeader;
 use crate::{config, Error};
 
 struct State<'d> {
@@ -269,11 +271,11 @@ impl<'d> ConnectionManager<'d> {
         None
     }
 
-    pub(crate) fn with_connected_handle<F: FnOnce(&mut ConnectionStorage) -> Result<(), Error>>(
+    pub(crate) fn with_connected_handle<F: FnOnce(&mut ConnectionStorage) -> Result<R, Error>, R>(
         &self,
         h: ConnHandle,
         f: F,
-    ) -> Result<(), Error> {
+    ) -> Result<R, Error> {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match (storage.handle, &storage.state) {
@@ -301,11 +303,26 @@ impl<'d> ConnectionManager<'d> {
         self.with_connected_handle(h, |_storage| Ok(())).is_ok()
     }
 
+    pub(crate) fn reassemble_init(
+        &self,
+        h: ConnHandle,
+        header: L2capHeader,
+        p: crate::packet_pool::Packet,
+        initial: usize,
+    ) -> Result<(), Error> {
+        self.with_connected_handle(h, |storage| storage.reassembly.init(header, p, initial))
+    }
+
+    pub(crate) fn reassemble_fragment(&self, h: ConnHandle, data: &[u8]) -> Result<Option<(L2capHeader, Pdu)>, Error> {
+        self.with_connected_handle(h, |storage| storage.reassembly.update(data))
+    }
+
     pub(crate) fn disconnected(&self, h: ConnHandle, reason: Status) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
+                storage.reassembly.disconnected();
                 let _ = storage.events.try_send(ConnectionEventData::Disconnected { reason });
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
@@ -573,22 +590,18 @@ impl<'d> ConnectionManager<'d> {
         false
     }
 
-    pub(crate) fn handle_security_channel(
-        &self,
-        handle: ConnHandle,
-        packet: &crate::packet_pool::Packet,
-        payload_size: usize,
-    ) -> Result<(), Error> {
+    pub(crate) fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let state = self.state.borrow();
             for storage in state.connections.iter() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if let Err(error) = self.security_manager.handle(packet, payload_size, self, storage) {
+                        if let Err(error) = self.security_manager.handle(pdu, self, storage) {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
                         }
+                        break;
                     }
                     _ => (),
                 }
@@ -784,6 +797,7 @@ pub struct ConnectionStorage {
     #[cfg(feature = "security")]
     pub encrypted: bool,
     pub events: EventChannel,
+    pub reassembly: PacketReassembly,
 }
 
 /// Connection metrics
@@ -867,6 +881,7 @@ impl ConnectionStorage {
             #[cfg(feature = "security")]
             encrypted: false,
             events: EventChannel::NEW,
+            reassembly: PacketReassembly::new(),
         }
     }
 }
