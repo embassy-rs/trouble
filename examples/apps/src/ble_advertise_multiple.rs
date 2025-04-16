@@ -18,7 +18,7 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<0, 0, 27, 2> = HostResources::new();
+    let mut resources: HostResources<StandardConfig, 0, 0, 2> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut peripheral,

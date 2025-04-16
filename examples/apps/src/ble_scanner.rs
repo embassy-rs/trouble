@@ -1,6 +1,7 @@
+use core::cell::RefCell;
+
 use bt_hci::cmd::le::LeSetScanParams;
 use bt_hci::controller::ControllerCmdSync;
-use core::cell::RefCell;
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use heapless::Deque;
@@ -20,7 +21,8 @@ where
 
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<StandardConfig<L2CAP_MTU>, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
 
     let Host {

@@ -1,8 +1,8 @@
+use bt_hci::cmd::le::LeReadLocalSupportedFeatures;
+use bt_hci::controller::ControllerCmdSync;
 use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
 use trouble_host::prelude::*;
-use bt_hci::cmd::le::LeReadLocalSupportedFeatures;
-use bt_hci::controller::ControllerCmdSync;
 
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
@@ -12,14 +12,14 @@ const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
 pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where
-    C: Controller
-    + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+    C: Controller + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
     // Hardcoded peripheral address
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<StandardConfig<L2CAP_MTU>, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut peripheral,
@@ -31,7 +31,8 @@ where
     AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
         &mut adv_data[..],
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut scan_data = [0; 31];
     AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"TroubleHT")], &mut scan_data[..]).unwrap();
@@ -39,7 +40,10 @@ where
     let _ = join(runner.run(), async {
         loop {
             // Check that the controller used supports the necessary features for high throughput.
-            let res = stack.command(LeReadLocalSupportedFeatures::new()).await.expect("LeReadLocalSupportedFeatures command failed");
+            let res = stack
+                .command(LeReadLocalSupportedFeatures::new())
+                .await
+                .expect("LeReadLocalSupportedFeatures command failed");
             assert!(res.supports_le_data_packet_length_extension());
             assert!(res.supports_le_2m_phy());
 
@@ -52,7 +56,8 @@ where
                         scan_data: &scan_data[..],
                     },
                 )
-                .await.expect("Advertising failed");
+                .await
+                .expect("Advertising failed");
             let conn = advertiser.accept().await.expect("Connection failed");
 
             info!("Connection established");
@@ -65,7 +70,8 @@ where
             };
 
             let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &l2cap_channel_config)
-                .await.expect("L2capChannel create failed");
+                .await
+                .expect("L2capChannel create failed");
 
             info!("L2CAP channel accepted");
 
@@ -91,12 +97,14 @@ where
 
             let duration = start.elapsed();
 
-            info!("L2CAP data of {} bytes echoed at {} kbps.",
+            info!(
+                "L2CAP data of {} bytes echoed at {} kbps.",
                 (PAYLOAD_LEN as u64 * NUM_PAYLOADS as u64),
-                ((PAYLOAD_LEN as u64 * NUM_PAYLOADS as u64 * 8).div_ceil(duration.as_millis())));
+                ((PAYLOAD_LEN as u64 * NUM_PAYLOADS as u64 * 8).div_ceil(duration.as_millis()))
+            );
 
             Timer::after(Duration::from_secs(60)).await;
         }
     })
-        .await;
+    .await;
 }

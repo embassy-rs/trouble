@@ -1,7 +1,7 @@
 use core::cell::RefCell;
-use core::future::poll_fn;
 #[cfg(feature = "security")]
 use core::future::Future;
+use core::future::poll_fn;
 use core::task::{Context, Poll};
 
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
@@ -11,15 +11,15 @@ use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "security")]
 use embassy_time::TimeoutError;
 
+use crate::HostConfig;
 use crate::connection::{Connection, ConnectionEventData};
-#[cfg(feature = "gatt")]
-use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
+use crate::pool::Packet;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, Error};
+use crate::{Error, config};
 
 struct State<'d> {
     connections: &'d mut [ConnectionStorage],
@@ -75,21 +75,15 @@ impl EventChannel {
     }
 }
 
-pub(crate) struct ConnectionManager<'d> {
+pub(crate) struct ConnectionManager<'d, C: HostConfig> {
     state: RefCell<State<'d>>,
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
-    #[cfg(feature = "gatt")]
-    tx_pool: &'d dyn Pool,
     #[cfg(feature = "security")]
     pub(crate) security_manager: SecurityManager<{ crate::BI_COUNT }>,
 }
 
-impl<'d> ConnectionManager<'d> {
-    pub(crate) fn new(
-        connections: &'d mut [ConnectionStorage],
-        default_att_mtu: u16,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
-    ) -> Self {
+impl<'d, C: HostConfig> ConnectionManager<'d, C> {
+    pub(crate) fn new(connections: &'d mut [ConnectionStorage], default_att_mtu: u16) -> Self {
         Self {
             state: RefCell::new(State {
                 connections,
@@ -102,8 +96,6 @@ impl<'d> ConnectionManager<'d> {
                 default_att_mtu,
             }),
             outbound: Channel::new(),
-            #[cfg(feature = "gatt")]
-            tx_pool,
             #[cfg(feature = "security")]
             security_manager: SecurityManager::new(),
         }
@@ -307,7 +299,7 @@ impl<'d> ConnectionManager<'d> {
         &self,
         h: ConnHandle,
         header: L2capHeader,
-        p: crate::packet_pool::Packet,
+        p: Packet,
         initial: usize,
     ) -> Result<(), Error> {
         self.with_connected_handle(h, |storage| storage.reassembly.init(header, p, initial))
@@ -406,8 +398,7 @@ impl<'d> ConnectionManager<'d> {
                                 storage.state = ConnectionState::Connected;
                                 trace!(
                                     "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                                    handle,
-                                    role
+                                    handle, role
                                 );
                                 assert_eq!(storage.refcount, 0);
                                 state.inc_ref(idx as u8);
@@ -419,8 +410,7 @@ impl<'d> ConnectionManager<'d> {
                         assert_eq!(storage.refcount, 0);
                         trace!(
                             "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                            handle,
-                            role
+                            handle, role
                         );
 
                         assert_eq!(storage.refcount, 0);
@@ -626,13 +616,13 @@ impl<'d> ConnectionManager<'d> {
     }
 
     #[cfg(feature = "security")]
-    pub(crate) async fn handle_security_event<'h, C>(
+    pub(crate) async fn handle_security_event<'h, C: HostConfig>(
         &self,
         host: &crate::host::BleHost<'h, C>,
         _event: crate::security_manager::SecurityEventData,
     ) -> Result<(), crate::BleHostError<C::Error>>
     where
-        C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
+        C::Controller: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
             + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>
             + crate::ControllerCmdSync<bt_hci::cmd::link_control::Disconnect>,
     {
@@ -780,7 +770,10 @@ impl CompletedPackets<'_, '_> {
     }
 }
 
-pub struct ConnectionStorage {
+pub struct ConnectionStorage<P>
+where
+    P: Packet,
+{
     pub state: ConnectionState,
     pub handle: Option<ConnHandle>,
     pub role: Option<LeConnRole>,
@@ -796,8 +789,8 @@ pub struct ConnectionStorage {
     pub metrics: Metrics,
     #[cfg(feature = "security")]
     pub encrypted: bool,
-    pub events: EventChannel,
-    pub reassembly: PacketReassembly,
+    pub events: EventChannel<P>,
+    pub reassembly: PacketReassembly<P>,
 }
 
 /// Connection metrics
@@ -862,8 +855,8 @@ impl defmt::Format for Metrics {
     }
 }
 
-impl ConnectionStorage {
-    pub(crate) const fn new() -> ConnectionStorage {
+impl<P: Packet> ConnectionStorage<P> {
+    pub(crate) const fn new() -> ConnectionStorage<P> {
         ConnectionStorage {
             state: ConnectionState::Disconnected,
             handle: None,
@@ -880,13 +873,13 @@ impl ConnectionStorage {
             metrics: Metrics::new(),
             #[cfg(feature = "security")]
             encrypted: false,
-            events: EventChannel::NEW,
+            events: EventChannel::<P>::NEW,
             reassembly: PacketReassembly::new(),
         }
     }
 }
 
-impl core::fmt::Debug for ConnectionStorage {
+impl<P> core::fmt::Debug for ConnectionStorage<P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut d = f.debug_struct("ConnectionStorage");
         let d = d
@@ -902,7 +895,7 @@ impl core::fmt::Debug for ConnectionStorage {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for ConnectionStorage {
+impl<P> defmt::Format for ConnectionStorage<P> {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
@@ -989,8 +982,9 @@ impl Drop for PacketGrant<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::PacketPool;
+    use crate::{mock_controller::MockController, prelude::PacketPool};
     extern crate std;
+    use atomic_pool::pool;
     use std::boxed::Box;
 
     use embassy_futures::block_on;
@@ -998,7 +992,15 @@ mod tests {
     const ADDR_1: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
     const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
 
-    fn setup() -> &'static ConnectionManager<'static> {
+    pool!(pub TestPool: [[u8; 27]; 12]);
+    struct TestConfig;
+    impl HostConfig for TestConfig {
+        type Controller = MockController;
+        type TxPool = TestPool;
+        type RxPool = TestPool;
+    }
+
+    fn setup() -> &'static ConnectionManager<'static, TestConfig> {
         let storage = Box::leak(Box::new([const { ConnectionStorage::new() }; 3]));
         let pool = Box::leak(Box::new(PacketPool::<27, 8>::new()));
         let mgr = ConnectionManager::new(&mut storage[..], 23, pool);

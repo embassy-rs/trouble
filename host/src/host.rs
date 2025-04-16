@@ -18,7 +18,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync, blocking};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
@@ -29,7 +29,7 @@ use bt_hci::param::{
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select3, select4, Either3, Either4};
+use embassy_futures::select::{Either3, Either4, select3, select4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -37,21 +37,21 @@ use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::Duration;
 use futures::pin_mut;
 
+use crate::HostConfig;
 use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
 use crate::connection::ConnectionEventData;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
-use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
-    L2CAP_CID_LE_U_SIGNAL,
+    L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL, L2capHeader,
+    L2capSignal, L2capSignalHeader,
 };
-use crate::{att, config, Address, BleHostError, Error, Stack};
+use crate::{Address, BleHostError, Error, Stack, att, config};
 
 /// A BLE Host.
 ///
@@ -60,18 +60,15 @@ use crate::{att, config, Address, BleHostError, Error, Stack};
 ///
 /// The host performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
-pub(crate) struct BleHost<'d, T> {
+pub(crate) struct BleHost<'d, C: HostConfig> {
     initialized: OnceLock<InitialState>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
-    pub(crate) controller: T,
-    pub(crate) connections: ConnectionManager<'d>,
-    pub(crate) channels: ChannelManager<'d>,
+    pub(crate) controller: C::Controller,
+    pub(crate) connections: ConnectionManager<'d, C>,
+    pub(crate) channels: ChannelManager<'d, C>,
     #[cfg(feature = "gatt")]
     pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
-    pub(crate) rx_pool: &'d dyn Pool,
-    #[cfg(feature = "gatt")]
-    pub(crate) tx_pool: &'d dyn Pool,
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
@@ -189,7 +186,7 @@ pub struct HostMetrics {
 
 impl<'d, T> BleHost<'d, T>
 where
-    T: Controller,
+    T: HostConfig,
 {
     /// Create a new instance of the BLE host.
     ///
@@ -197,9 +194,7 @@ where
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        controller: T,
-        rx_pool: &'d dyn Pool,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
+        controller: T::Controller,
         connections: &'d mut [ConnectionStorage],
         channels: &'d mut [ChannelStorage],
         advertise_handles: &'d mut [AdvHandleState],
@@ -210,13 +205,8 @@ where
             metrics: RefCell::new(HostMetrics::default()),
             controller,
             #[cfg(feature = "gatt")]
-            connections: ConnectionManager::new(connections, rx_pool.mtu() as u16 - 4, tx_pool),
-            #[cfg(not(feature = "gatt"))]
-            connections: ConnectionManager::new(connections, rx_pool.mtu() as u16 - 4),
-            channels: ChannelManager::new(rx_pool, channels),
-            rx_pool,
-            #[cfg(feature = "gatt")]
-            tx_pool,
+            connections: ConnectionManager::new(connections, T::RxPool::MTU as u16 - 4),
+            channels: ChannelManager::new(channels),
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),
             advertise_state: AdvState::new(advertise_handles),
@@ -230,7 +220,7 @@ where
     pub(crate) async fn command<C>(&self, cmd: C) -> Result<C::Return, BleHostError<T::Error>>
     where
         C: SyncCmd,
-        T: ControllerCmdSync<C>,
+        T::Controller: ControllerCmdSync<C>,
     {
         let _ = self.initialized.get().await;
         let ret = cmd.exec(&self.controller).await?;
@@ -238,10 +228,10 @@ where
     }
 
     /// Run an async HCI command where the response will generate an event later.
-    pub(crate) async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Error>>
+    pub(crate) async fn async_command<C>(&self, cmd: C) -> Result<(), BleHostError<T::Controller::Error>>
     where
         C: AsyncCmd,
-        T: ControllerCmdAsync<C>,
+        T::Controller: ControllerCmdAsync<C>,
     {
         let _ = self.initialized.get().await;
         cmd.exec(&self.controller).await?;
@@ -265,15 +255,13 @@ where
                     #[cfg(feature = "defmt")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
 
                     #[cfg(feature = "log")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x?}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
@@ -430,7 +418,7 @@ where
         identifier: u8,
         signal: &D,
         p_buf: &mut [u8],
-    ) -> Result<(), BleHostError<T::Error>> {
+    ) -> Result<(), BleHostError<T::Controller::Error>> {
         //trace!(
         //    "[l2cap] sending control signal (req = {}) signal: {:?}",
         //    identifier,
@@ -466,7 +454,7 @@ where
         handle: ConnHandle,
         len: u16,
         n_packets: u16,
-    ) -> Result<L2capSender<'_, 'd, T>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, 'd, T>, BleHostError<T::Controller::Error>> {
         // Take into account l2cap header.
         let acl_max = self.initialized.get().await.acl_max as u16;
         let len = len + (4 * n_packets);
@@ -489,7 +477,7 @@ where
         handle: ConnHandle,
         len: u16,
         n_packets: u16,
-    ) -> Result<L2capSender<'_, 'd, T>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, 'd, T>, BleHostError<T::Controller::Error>> {
         let acl_max = self.initialized.try_get().map(|i| i.acl_max).unwrap_or(27) as u16;
         let len = len + (4 * n_packets);
         let n_acl = len.div_ceil(acl_max);

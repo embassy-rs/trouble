@@ -14,8 +14,8 @@ use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use embassy_time::Duration;
 use heapless::Vec;
 
-use crate::att::{self, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
-use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
+use crate::att::{self, ATT_HANDLE_VALUE_NTF, Att, AttClient, AttCmd, AttReq, AttRsp, AttServer, AttUns};
+use crate::attribute::{AttributeData, CCCD, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionManager;
@@ -26,7 +26,7 @@ use crate::prelude::ConnectionEvent;
 use crate::security_manager::BondInformation;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, BleHostError, Error, Stack};
+use crate::{BleHostError, Error, Stack, config};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server> {
@@ -132,9 +132,9 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
 }
 
 /// A GATT payload ready for processing.
-pub struct GattData<'stack> {
-    pdu: Option<Pdu>,
-    connection: Connection<'stack>,
+pub struct GattData<'stack, C: HostConfig> {
+    pdu: Option<Pdu<C::Packet>>,
+    connection: Connection<'stack, C>,
 }
 
 impl Drop for GattData<'_> {

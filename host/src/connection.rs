@@ -10,6 +10,7 @@ use bt_hci::param::{
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
+use crate::HostConfig;
 use crate::connection_manager::ConnectionManager;
 #[cfg(feature = "connection-metrics")]
 pub use crate::connection_manager::Metrics as ConnectionMetrics;
@@ -198,19 +199,19 @@ impl Default for ConnectParams {
 /// Handle to a BLE connection.
 ///
 /// When the last reference to a connection is dropped, the connection is automatically disconnected.
-pub struct Connection<'stack> {
+pub struct Connection<'stack, C: HostConfig> {
     index: u8,
-    manager: &'stack ConnectionManager<'stack>,
+    manager: &'stack ConnectionManager<'stack, C>,
 }
 
-impl Clone for Connection<'_> {
+impl Clone for Connection<'_, _> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
         Connection::new(self.index, self.manager)
     }
 }
 
-impl Drop for Connection<'_> {
+impl Drop for Connection<'_, _> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);
     }
@@ -250,7 +251,7 @@ impl<'stack> Connection<'stack> {
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) fn alloc_tx(&self) -> Result<crate::packet_pool::Packet, Error> {
+    pub(crate) fn alloc_tx(&self) -> Result<crate::pool::Packet, Error> {
         self.manager.alloc_tx()
     }
 

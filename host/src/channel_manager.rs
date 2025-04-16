@@ -2,24 +2,24 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use bt_hci::controller::{blocking, Controller};
-use bt_hci::param::ConnHandle;
 use bt_hci::FromHciBytes;
+use bt_hci::controller::{Controller, blocking};
+use bt_hci::param::ConnHandle;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
+use crate::HostConfig;
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::BleHost;
 use crate::l2cap::L2capChannel;
-use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
     L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
 };
-use crate::{config, BleHostError, Error};
+use crate::{BleHostError, Error, config};
 
 const BASE_ID: u16 = 0x40;
 
@@ -32,8 +32,7 @@ struct State<'d> {
 }
 
 /// Channel manager for L2CAP channels used directly by clients.
-pub struct ChannelManager<'d> {
-    pool: &'d dyn Pool,
+pub struct ChannelManager<'d, C: HostConfig> {
     state: RefCell<State<'d>>,
 }
 
@@ -94,10 +93,9 @@ impl State<'_> {
     }
 }
 
-impl<'d> ChannelManager<'d> {
-    pub fn new(pool: &'d dyn Pool, channels: &'d mut [ChannelStorage]) -> Self {
+impl<'d, C: HostConfig> ChannelManager<'d, C> {
+    pub fn new(channels: &'d mut [ChannelStorage]) -> Self {
         Self {
-            pool,
             state: RefCell::new(State {
                 next_req_id: 0,
                 channels,
@@ -376,16 +374,14 @@ impl<'d> ChannelManager<'d> {
                 let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
                 trace!(
                     "[l2cap][conn = {:?}] connection param update request: {:?}, ignored",
-                    conn,
-                    req
+                    conn, req
                 );
             }
             L2capSignalCode::ConnParamUpdateRes => {
                 let res = ConnParamUpdateRes::from_hci_bytes_complete(data)?;
                 trace!(
                     "[l2cap][conn = {:?}] connection param update response: {}",
-                    conn,
-                    res.result,
+                    conn, res.result,
                 );
             }
             r => {
@@ -844,7 +840,7 @@ pub struct ChannelStorage {
     peer_credits: u16,
     credit_waker: WakerRegistration,
 
-    inbound: PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>,
+    inbound: PacketChannel<P, { config::L2CAP_RX_QUEUE_SIZE }>,
 
     #[cfg(feature = "channel-metrics")]
     metrics: Metrics,
@@ -1102,13 +1098,13 @@ impl Drop for CreditGrant<'_, '_> {
     }
 }
 
-struct L2capPdu<'a, 'd> {
-    ble: &'a ConnectionManager<'d>,
+struct L2capPdu<'a, 'd, C: HostConfig> {
+    ble: &'a ConnectionManager<'d, C>,
     conn: ConnHandle,
     pdu: Pdu,
 }
 
-impl<'a, 'd> Drop for L2capPdu<'a, 'd> {
+impl<'a, 'd> Drop for L2capPdu<'a, 'd, _> {
     fn drop(&mut self) {
         self.ble.completed_packets(self.conn, 1);
     }
@@ -1122,11 +1118,11 @@ mod tests {
 
     use super::*;
     use crate::mock_controller::MockController;
-    use crate::HostResources;
+    use crate::prelude::*;
 
     #[test]
     fn channel_refcount() {
-        let mut resources: HostResources<2, 2, 27> = HostResources::new();
+        let mut resources: HostResources<2, 2> = HostResources::new();
         let ble = MockController::new();
 
         let builder = crate::new(ble, &mut resources);

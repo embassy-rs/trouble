@@ -1,37 +1,37 @@
 //! L2CAP channels.
-use bt_hci::controller::{blocking, Controller};
+use bt_hci::controller::{Controller, blocking};
 
 pub use crate::channel_manager::CreditFlowPolicy;
 #[cfg(feature = "channel-metrics")]
 pub use crate::channel_manager::Metrics as ChannelMetrics;
 use crate::channel_manager::{ChannelIndex, ChannelManager};
 use crate::connection::Connection;
-use crate::{BleHostError, Stack};
+use crate::{BleHostError, HostConfig, Stack};
 
 pub(crate) mod sar;
 
 /// Handle representing an L2CAP channel.
-pub struct L2capChannel<'d> {
+pub struct L2capChannel<'d, C: HostConfig> {
     index: ChannelIndex,
-    manager: &'d ChannelManager<'d>,
+    manager: &'d ChannelManager<'d, C>,
 }
 
 /// Handle representing an L2CAP channel write endpoint.
-pub struct L2capChannelWriter<'d> {
+pub struct L2capChannelWriter<'d, C: HostConfig> {
     index: ChannelIndex,
-    manager: &'d ChannelManager<'d>,
+    manager: &'d ChannelManager<'d, C>,
 }
 
 /// Handle representing an L2CAP channel write endpoint.
-pub struct L2capChannelReader<'d> {
+pub struct L2capChannelReader<'d, C: HostConfig> {
     index: ChannelIndex,
-    manager: &'d ChannelManager<'d>,
+    manager: &'d ChannelManager<'d, C>,
 }
 
 /// Handle to an L2CAP channel for checking it's state.
-pub struct L2capChannelRef<'d> {
+pub struct L2capChannelRef<'d, C: HostConfig> {
     index: ChannelIndex,
-    manager: &'d ChannelManager<'d>,
+    manager: &'d ChannelManager<'d, C>,
 }
 
 #[cfg(feature = "defmt")]
@@ -102,8 +102,8 @@ impl Default for L2capChannelConfig {
     }
 }
 
-impl<'d> L2capChannel<'d> {
-    pub(crate) fn new(index: ChannelIndex, manager: &'d ChannelManager<'d>) -> Self {
+impl<'d, C: HostConfig> L2capChannel<'d, C> {
+    pub(crate) fn new(index: ChannelIndex, manager: &'d ChannelManager<'d, C>) -> Self {
         Self { index, manager }
     }
 
@@ -118,11 +118,11 @@ impl<'d> L2capChannel<'d> {
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, waits until more credits are available.
-    pub async fn send<T: Controller, const TX_MTU: usize>(
+    pub async fn send<const TX_MTU: usize>(
         &mut self,
-        stack: &Stack<'_, T>,
+        stack: &Stack<'_, C>,
         buf: &[u8],
-    ) -> Result<(), BleHostError<T::Error>> {
+    ) -> Result<(), BleHostError<C::Controller::Error>> {
         let mut p_buf = [0u8; TX_MTU];
         stack
             .host
@@ -137,11 +137,11 @@ impl<'d> L2capChannel<'d> {
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, returns Error::Busy.
-    pub fn try_send<T: Controller + blocking::Controller, const TX_MTU: usize>(
+    pub fn try_send<const TX_MTU: usize>(
         &mut self,
-        stack: &Stack<'_, T>,
+        stack: &Stack<'_, C>,
         buf: &[u8],
-    ) -> Result<(), BleHostError<T::Error>> {
+    ) -> Result<(), BleHostError<C::Controller::Error>> {
         let mut p_buf = [0u8; TX_MTU];
         stack
             .host
@@ -152,11 +152,11 @@ impl<'d> L2capChannel<'d> {
     /// Receive data on this channel and copy it into the buffer.
     ///
     /// The length provided buffer slice must be equal or greater to the agreed MTU.
-    pub async fn receive<T: Controller>(
+    pub async fn receive(
         &mut self,
-        stack: &Stack<'_, T>,
+        stack: &Stack<'_, C>,
         buf: &mut [u8],
-    ) -> Result<usize, BleHostError<T::Error>> {
+    ) -> Result<usize, BleHostError<C::Controller::Error>> {
         stack.host.channels.receive(self.index, buf, &stack.host).await
     }
 
@@ -167,12 +167,12 @@ impl<'d> L2capChannel<'d> {
     }
 
     /// Await an incoming connection request matching the list of PSM.
-    pub async fn accept<T: Controller>(
-        stack: &'d Stack<'d, T>,
-        connection: &Connection<'_>,
+    pub async fn accept(
+        stack: &'d Stack<'d, C>,
+        connection: &Connection<'_, C>,
         psm: &[u16],
         config: &L2capChannelConfig,
-    ) -> Result<Self, BleHostError<T::Error>> {
+    ) -> Result<Self, BleHostError<C::Controller::Error>> {
         let handle = connection.handle();
         stack
             .host
@@ -189,12 +189,12 @@ impl<'d> L2capChannel<'d> {
     }
 
     /// Create a new connection request with the provided PSM.
-    pub async fn create<T: Controller>(
-        stack: &'d Stack<'d, T>,
-        connection: &Connection<'_>,
+    pub async fn create(
+        stack: &'d Stack<'d, C>,
+        connection: &Connection<'_, C>,
         psm: u16,
         config: &L2capChannelConfig,
-    ) -> Result<Self, BleHostError<T::Error>>
+    ) -> Result<Self, BleHostError<C::Controller::Error>>
 where {
         stack
             .host

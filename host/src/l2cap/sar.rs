@@ -1,7 +1,7 @@
 use bt_hci::param::ConnHandle;
 
-use crate::packet_pool::Packet;
 use crate::pdu::Pdu;
+use crate::pool::Packet;
 use crate::types::l2cap::L2capHeader;
 use crate::Error;
 

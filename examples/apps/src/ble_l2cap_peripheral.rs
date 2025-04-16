@@ -1,3 +1,4 @@
+use atomic_pool::pool;
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
@@ -8,6 +9,42 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
+type Buf = [u8; 27];
+
+pool!(pub BufPool: [Buf; 18]);
+
+struct AtomicPoolAlloc;
+
+impl Pool for AtomicPoolAlloc {
+    fn new() -> Self
+    where
+        Self: Sized,
+    {
+        Self
+    }
+
+    fn alloc(&self) -> Option<Packet> {
+        if let Some(mut buf) = Box::<BufPool>::new(Buf) {
+            let buf = buf.into_raw();
+            Some(Packet)
+        } else {
+            None
+        }
+    }
+
+    fn free(&self, r: PacketRef) {
+        todo!()
+    }
+
+    fn available(&self) -> usize {
+        todo!()
+    }
+
+    fn mtu(&self) -> usize {
+        todo!()
+    }
+}
+
 pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
 where
     C: Controller,
@@ -16,7 +53,8 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<StandardConfig<L2CAP_MTU>, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut peripheral,
