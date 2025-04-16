@@ -13,8 +13,8 @@ use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::BleHost;
 use crate::l2cap::L2capChannel;
-use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
+use crate::pool::Pool;
 use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
     L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
@@ -1122,11 +1122,17 @@ mod tests {
 
     use super::*;
     use crate::mock_controller::MockController;
-    use crate::HostResources;
+    use crate::prelude::*;
+
+    struct TestConfig;
+    impl HostResourcesConfig for TestConfig {
+        type TxPool = PacketPool<27, 8>;
+        type RxPool = PacketPool<27, 8>;
+    }
 
     #[test]
     fn channel_refcount() {
-        let mut resources: HostResources<2, 2, 27> = HostResources::new();
+        let mut resources: HostResources<TestConfig, 2, 2> = HostResources::new();
         let ble = MockController::new();
 
         let builder = crate::new(ble, &mut resources);

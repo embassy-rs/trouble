@@ -43,8 +43,8 @@ use crate::command::CommandState;
 use crate::connection::ConnectionEventData;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
-use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
+use crate::pool::Pool;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{

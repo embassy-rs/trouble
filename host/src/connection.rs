@@ -250,7 +250,7 @@ impl<'stack> Connection<'stack> {
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) fn alloc_tx(&self) -> Result<crate::packet_pool::Packet, Error> {
+    pub(crate) fn alloc_tx(&self) -> Result<crate::pool::Packet, Error> {
         self.manager.alloc_tx()
     }
 

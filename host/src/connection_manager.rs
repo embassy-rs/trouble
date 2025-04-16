@@ -12,9 +12,10 @@ use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::TimeoutError;
 
 use crate::connection::{Connection, ConnectionEventData};
-#[cfg(feature = "gatt")]
-use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
+use crate::pool::Packet;
+#[cfg(feature = "gatt")]
+use crate::pool::Pool;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
@@ -307,7 +308,7 @@ impl<'d> ConnectionManager<'d> {
         &self,
         h: ConnHandle,
         header: L2capHeader,
-        p: crate::packet_pool::Packet,
+        p: Packet,
         initial: usize,
     ) -> Result<(), Error> {
         self.with_connected_handle(h, |storage| storage.reassembly.init(header, p, initial))

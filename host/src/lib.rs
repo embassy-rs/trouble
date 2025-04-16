@@ -19,7 +19,6 @@ use rand_core::{CryptoRng, RngCore};
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
-use crate::packet_pool::PacketPool;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, LongTermKey};
 
@@ -44,6 +43,7 @@ pub mod packet_pool;
 mod pdu;
 #[cfg(feature = "peripheral")]
 pub mod peripheral;
+mod pool;
 #[cfg(feature = "security")]
 mod security_manager;
 pub mod types;
@@ -77,7 +77,7 @@ pub mod prelude {
     pub use trouble_host_macros::*;
 
     pub use super::att::AttErrorCode;
-    pub use super::{BleHostError, Controller, Error, Host, HostResources, Stack};
+    pub use super::{BleHostError, Controller, Error, Host, HostResources, HostResourcesConfig, Stack, StandardConfig};
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
@@ -96,6 +96,7 @@ pub mod prelude {
     pub use crate::packet_pool::PacketPool;
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
+    pub use crate::pool::Pool;
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]
@@ -365,29 +366,50 @@ impl<
 {
 }
 
+/// Configuration of host.
+pub trait HostResourcesConfig {
+    /// Packet pool used for outbound l2cap PDUs.
+    type TxPool: pool::Pool;
+    /// Packet pool used for inbound l2cap PDUs.
+    type RxPool: pool::Pool;
+}
+
+/// A standard host resources config based on a const generic l2cap mtu and config features.
+pub struct StandardConfig<const L2CAP_MTU: usize = 27>;
+
+impl<const L2CAP_MTU: usize> HostResourcesConfig for StandardConfig<L2CAP_MTU> {
+    type TxPool = crate::packet_pool::PacketPool<L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }>;
+    type RxPool = crate::packet_pool::PacketPool<L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }>;
+}
+
 /// HostResources holds the resources used by the host.
 ///
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize = 1> {
-    rx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }>>,
+pub struct HostResources<
+    CONFIG: HostResourcesConfig,
+    const CONNS: usize,
+    const CHANNELS: usize,
+    const ADV_SETS: usize = 1,
+> {
+    rx_pool: MaybeUninit<CONFIG::RxPool>,
     #[cfg(feature = "gatt")]
-    tx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }>>,
+    tx_pool: MaybeUninit<CONFIG::TxPool>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize> Default
-    for HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<CONFIG: HostResourcesConfig, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize> Default
+    for HostResources<CONFIG, CONNS, CHANNELS, ADV_SETS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
-    HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<CONFIG: HostResourcesConfig, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>
+    HostResources<CONFIG, CONNS, CHANNELS, ADV_SETS>
 {
     /// Create a new instance of host resources.
     pub const fn new() -> Self {
@@ -407,13 +429,13 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
 pub fn new<
     'resources,
     C: Controller,
+    CONFIG: HostResourcesConfig,
     const CONNS: usize,
     const CHANNELS: usize,
-    const L2CAP_MTU: usize,
     const ADV_SETS: usize,
 >(
     controller: C,
-    resources: &'resources mut HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
+    resources: &'resources mut HostResources<CONFIG, CONNS, CHANNELS, ADV_SETS>,
 ) -> Stack<'resources, C> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         unsafe { core::mem::transmute(x) }
@@ -424,12 +446,12 @@ pub fn new<
     // - Internal lifetimes are elided (made 'static) to simplify API usage
     // - This _should_ be OK, because there are no references held to the resources
     //   when the stack is shut down.
-    use crate::packet_pool::Pool;
-    let rx_pool: &'resources dyn Pool = &*resources.rx_pool.write(PacketPool::new());
+    use crate::pool::Pool;
+    let rx_pool: &'resources dyn Pool = &*resources.rx_pool.write(CONFIG::RxPool::new());
     let rx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(rx_pool) };
 
     #[cfg(feature = "gatt")]
-    let tx_pool: &'resources dyn Pool = &*resources.tx_pool.write(PacketPool::new());
+    let tx_pool: &'resources dyn Pool = &*resources.tx_pool.write(CONFIG::TxPool::new());
     #[cfg(feature = "gatt")]
     let tx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(tx_pool) };
 

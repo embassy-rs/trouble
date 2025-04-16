@@ -1,4 +1,4 @@
-use crate::packet_pool::Packet;
+use crate::pool::Packet;
 
 pub(crate) struct Pdu {
     pub packet: Packet,
