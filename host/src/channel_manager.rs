@@ -35,7 +35,6 @@ struct State<'d> {
 pub struct ChannelManager<'d> {
     pool: &'d dyn Pool,
     state: RefCell<State<'d>>,
-    inbound: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
 }
 
 pub(crate) struct PacketChannel<const QLEN: usize> {
@@ -62,8 +61,8 @@ impl<const QLEN: usize> PacketChannel<QLEN> {
         self.chan.try_send(Some(pdu)).map_err(|_| Error::OutOfMemory)
     }
 
-    pub async fn receive(&self) -> Option<Pdu> {
-        self.chan.receive().await
+    pub fn poll_receive(&self, cx: &mut Context<'_>) -> Poll<Option<Pdu>> {
+        self.chan.poll_receive(cx)
     }
 
     pub fn clear(&self) {
@@ -96,11 +95,7 @@ impl State<'_> {
 }
 
 impl<'d> ChannelManager<'d> {
-    pub fn new(
-        pool: &'d dyn Pool,
-        channels: &'d mut [ChannelStorage],
-        inbound: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
-    ) -> Self {
+    pub fn new(pool: &'d dyn Pool, channels: &'d mut [ChannelStorage]) -> Self {
         Self {
             pool,
             state: RefCell::new(State {
@@ -110,7 +105,6 @@ impl<'d> ChannelManager<'d> {
                 create_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
             }),
-            inbound,
         }
     }
 
@@ -123,7 +117,7 @@ impl<'d> ChannelManager<'d> {
             let chan = &mut state.channels[index.0 as usize];
             if chan.state == ChannelState::Connected {
                 chan.state = ChannelState::Disconnecting;
-                let _ = self.inbound[index.0 as usize].close();
+                let _ = chan.inbound.close();
                 #[cfg(feature = "channel-metrics")]
                 chan.metrics.reset();
                 state.disconnect_waker.wake();
@@ -133,9 +127,9 @@ impl<'d> ChannelManager<'d> {
 
     pub(crate) fn disconnected(&self, conn: ConnHandle) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
-        for (idx, storage) in state.channels.iter_mut().enumerate() {
+        for storage in state.channels.iter_mut() {
             if Some(conn) == storage.conn {
-                let _ = self.inbound[idx].close();
+                let _ = storage.inbound.close();
                 #[cfg(feature = "channel-metrics")]
                 storage.metrics.reset();
                 storage.close();
@@ -151,7 +145,7 @@ impl<'d> ChannelManager<'d> {
         for (idx, storage) in state.channels.iter_mut().enumerate() {
             if ChannelState::Disconnected == storage.state && storage.refcount == 0 {
                 // Ensure inbound is empty.
-                self.inbound[idx].clear();
+                storage.inbound.clear();
                 let cid: u16 = BASE_ID + idx as u16;
                 storage.conn = Some(conn);
                 storage.cid = cid;
@@ -310,11 +304,12 @@ impl<'d> ChannelManager<'d> {
         }
 
         let chan = (header.channel - BASE_ID) as usize;
-        if chan > self.inbound.len() {
-            return Err(Error::InvalidChannelId);
-        }
 
         self.with_mut(|state| {
+            if chan > state.channels.len() {
+                return Err(Error::InvalidChannelId);
+            }
+
             for (idx, storage) in state.channels.iter_mut().enumerate() {
                 match storage.state {
                     ChannelState::Connected if header.channel == storage.cid => {
@@ -330,14 +325,15 @@ impl<'d> ChannelManager<'d> {
                         storage.flow_control.confirm_received(1);
                         #[cfg(feature = "channel-metrics")]
                         storage.metrics.received(1);
+
+                        storage.inbound.try_send(Pdu::new(packet, header.length as usize))?;
+                        break;
                     }
                     _ => {}
                 }
             }
             Ok(())
-        })?;
-
-        self.inbound[chan].try_send(Pdu::new(packet, header.length as usize))
+        })
     }
 
     /// Handle incoming L2CAP signal
@@ -474,7 +470,7 @@ impl<'d> ChannelManager<'d> {
         for (idx, storage) in state.channels.iter_mut().enumerate() {
             if cid == storage.cid {
                 storage.state = ChannelState::PeerDisconnecting;
-                let _ = self.inbound[idx].close();
+                let _ = storage.inbound.close();
                 state.disconnect_waker.wake();
                 break;
             }
@@ -536,11 +532,21 @@ impl<'d> ChannelManager<'d> {
         ble: &'m ConnectionManager<'d>,
         chan: ChannelIndex,
     ) -> Result<L2capPdu<'m, 'd>, Error> {
-        let (conn, _, _) = self.connected_channel_params(chan)?;
-        match self.inbound[chan.0 as usize].receive().await {
-            Some(pdu) => Ok(L2capPdu { ble, conn, pdu }),
-            None => Err(Error::ChannelClosed),
-        }
+        poll_fn(|cx| {
+            let state = self.state.borrow();
+            let chan = &state.channels[chan.0 as usize];
+            if chan.state == ChannelState::Connected {
+                let conn = chan.conn.unwrap();
+                match chan.inbound.poll_receive(cx) {
+                    Poll::Ready(Some(pdu)) => Poll::Ready(Ok(L2capPdu { ble, conn, pdu })),
+                    Poll::Ready(None) => Poll::Ready(Err(Error::ChannelClosed)),
+                    Poll::Pending => Poll::Pending,
+                }
+            } else {
+                Poll::Ready(Err(Error::ChannelClosed))
+            }
+        })
+        .await
     }
 
     /// Send the provided buffer over a given l2cap channel.
@@ -824,7 +830,6 @@ fn encode(data: &[u8], packet: &mut [u8], peer_cid: u16, header: Option<u16>) ->
     Ok(w.len())
 }
 
-#[derive(Debug)]
 pub struct ChannelStorage {
     state: ChannelState,
     conn: Option<ConnHandle>,
@@ -838,6 +843,8 @@ pub struct ChannelStorage {
     peer_cid: u16,
     peer_credits: u16,
     credit_waker: WakerRegistration,
+
+    inbound: PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>,
 
     #[cfg(feature = "channel-metrics")]
     metrics: Metrics,
@@ -903,6 +910,25 @@ impl defmt::Format for Metrics {
     }
 }
 
+impl core::fmt::Debug for ChannelStorage {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("ChannelStorage");
+        let d = d
+            .field("state", &self.state)
+            .field("conn", &self.conn)
+            .field("cid", &self.cid)
+            .field("peer_cid", &self.peer_cid)
+            .field("mps", &self.mps)
+            .field("mtu", &self.mtu)
+            .field("peer_credits", &self.peer_credits)
+            .field("available", &self.flow_control.available())
+            .field("refcount", &self.refcount);
+        #[cfg(feature = "channel-metrics")]
+        let d = d.field("metrics", &self.metrics);
+        d.finish()
+    }
+}
+
 #[cfg(feature = "defmt")]
 impl defmt::Format for ChannelStorage {
     fn format(&self, f: defmt::Formatter<'_>) {
@@ -925,22 +951,25 @@ impl defmt::Format for ChannelStorage {
 }
 
 impl ChannelStorage {
-    pub(crate) const DISCONNECTED: ChannelStorage = ChannelStorage {
-        state: ChannelState::Disconnected,
-        conn: None,
-        cid: 0,
-        mps: 0,
-        mtu: 0,
-        psm: 0,
+    pub(crate) const fn new() -> ChannelStorage {
+        ChannelStorage {
+            state: ChannelState::Disconnected,
+            conn: None,
+            cid: 0,
+            mps: 0,
+            mtu: 0,
+            psm: 0,
 
-        flow_control: CreditFlowControl::new(CreditFlowPolicy::Every(1), 0),
-        peer_cid: 0,
-        peer_credits: 0,
-        credit_waker: WakerRegistration::new(),
-        refcount: 0,
-        #[cfg(feature = "channel-metrics")]
-        metrics: Metrics::new(),
-    };
+            flow_control: CreditFlowControl::new(CreditFlowPolicy::Every(1), 0),
+            peer_cid: 0,
+            peer_credits: 0,
+            credit_waker: WakerRegistration::new(),
+            refcount: 0,
+            inbound: PacketChannel::NEW,
+            #[cfg(feature = "channel-metrics")]
+            metrics: Metrics::new(),
+        }
+    }
 
     fn close(&mut self) {
         self.state = ChannelState::Disconnected;

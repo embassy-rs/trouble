@@ -17,7 +17,7 @@ use heapless::Vec;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
-use crate::channel_manager::{ChannelStorage, PacketChannel};
+use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::{ConnectionStorage, EventChannel};
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
@@ -377,7 +377,6 @@ pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
     events: MaybeUninit<[EventChannel; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
-    channels_rx: MaybeUninit<[PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>; CHANNELS]>,
     sar: MaybeUninit<[SarType; CONNS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
 }
@@ -403,7 +402,6 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
             events: MaybeUninit::uninit(),
             sar: MaybeUninit::uninit(),
             channels: MaybeUninit::uninit(),
-            channels_rx: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
         }
     }
@@ -451,13 +449,9 @@ pub fn new<
     let events: &mut [EventChannel] = &mut *resources.events.write([EventChannel::NEW; CONNS]);
     let events: &'resources mut [EventChannel] = unsafe { transmute_slice(events) };
 
-    let channels = &mut *resources.channels.write([ChannelStorage::DISCONNECTED; CHANNELS]);
+    let channels = &mut *resources.channels.write([const { ChannelStorage::new() }; CHANNELS]);
     let channels: &'static mut [ChannelStorage] = unsafe { transmute_slice(channels) };
 
-    let channels_rx: &mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>] =
-        &mut *resources.channels_rx.write([PacketChannel::NEW; CHANNELS]);
-    let channels_rx: &'static mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>] =
-        unsafe { transmute_slice(channels_rx) };
     let sar = &mut *resources.sar.write([const { None }; CONNS]);
     let sar: &'static mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>] = unsafe { transmute_slice(sar) };
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
@@ -470,7 +464,6 @@ pub fn new<
         connections,
         events,
         channels,
-        channels_rx,
         sar,
         advertise_handles,
     );
