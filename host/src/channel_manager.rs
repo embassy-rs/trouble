@@ -13,7 +13,7 @@ use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::BleHost;
 use crate::l2cap::L2capChannel;
-use crate::packet_pool::{Packet, Pool};
+use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
 use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
@@ -298,7 +298,7 @@ impl<'d> ChannelManager<'d> {
     }
 
     /// Dispatch an incoming L2CAP packet to the appropriate channel.
-    pub(crate) fn dispatch(&self, header: L2capHeader, packet: Packet) -> Result<(), Error> {
+    pub(crate) fn dispatch(&self, header: L2capHeader, pdu: Pdu) -> Result<(), Error> {
         if header.channel < BASE_ID {
             return Err(Error::InvalidChannelId);
         }
@@ -326,7 +326,7 @@ impl<'d> ChannelManager<'d> {
                         #[cfg(feature = "channel-metrics")]
                         storage.metrics.received(1);
 
-                        storage.inbound.try_send(Pdu::new(packet, header.length as usize))?;
+                        storage.inbound.try_send(pdu)?;
                         break;
                     }
                     _ => {}

@@ -19,7 +19,6 @@ use rand_core::{CryptoRng, RngCore};
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
-use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, LongTermKey};
@@ -376,7 +375,6 @@ pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_
     tx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }>>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
-    sar: MaybeUninit<[SarType; CONNS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
 }
 
@@ -398,7 +396,6 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
             #[cfg(feature = "gatt")]
             tx_pool: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
-            sar: MaybeUninit::uninit(),
             channels: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
         }
@@ -436,10 +433,6 @@ pub fn new<
     #[cfg(feature = "gatt")]
     let tx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(tx_pool) };
 
-    use bt_hci::param::ConnHandle;
-
-    use crate::l2cap::sar::AssembledPacket;
-    use crate::types::l2cap::L2capHeader;
     let connections: &mut [ConnectionStorage] =
         &mut *resources.connections.write([const { ConnectionStorage::new() }; CONNS]);
     let connections: &'resources mut [ConnectionStorage] = unsafe { transmute_slice(connections) };
@@ -447,8 +440,6 @@ pub fn new<
     let channels = &mut *resources.channels.write([const { ChannelStorage::new() }; CHANNELS]);
     let channels: &'static mut [ChannelStorage] = unsafe { transmute_slice(channels) };
 
-    let sar = &mut *resources.sar.write([const { None }; CONNS]);
-    let sar: &'static mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>] = unsafe { transmute_slice(sar) };
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
     let host: BleHost<'_, C> = BleHost::new(
@@ -458,7 +449,6 @@ pub fn new<
         tx_pool,
         connections,
         channels,
-        sar,
         advertise_handles,
     );
 

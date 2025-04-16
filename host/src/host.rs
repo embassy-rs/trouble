@@ -43,7 +43,6 @@ use crate::command::CommandState;
 use crate::connection::ConnectionEventData;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
-use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
 #[cfg(feature = "security")]
@@ -67,7 +66,6 @@ pub(crate) struct BleHost<'d, T> {
     pub(crate) address: Option<Address>,
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d>,
-    pub(crate) reassembly: PacketReassembly<'d>,
     pub(crate) channels: ChannelManager<'d>,
     #[cfg(feature = "gatt")]
     pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
@@ -204,7 +202,6 @@ where
         #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
         connections: &'d mut [ConnectionStorage],
         channels: &'d mut [ChannelStorage],
-        sar: &'d mut [SarType],
         advertise_handles: &'d mut [AdvHandleState],
     ) -> Self {
         Self {
@@ -216,7 +213,6 @@ where
             connections: ConnectionManager::new(connections, rx_pool.mtu() as u16 - 4, tx_pool),
             #[cfg(not(feature = "gatt"))]
             connections: ConnectionManager::new(connections, rx_pool.mtu() as u16 - 4),
-            reassembly: PacketReassembly::new(sar),
             channels: ChannelManager::new(rx_pool, channels),
             rx_pool,
             #[cfg(feature = "gatt")]
@@ -304,7 +300,7 @@ where
         let on_drop = OnDrop::new(|| {
             self.connections.completed_packets(handle, 1);
         });
-        let (header, mut packet) = match acl.boundary_flag() {
+        let (header, pdu) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
                 let (header, data) = L2capHeader::from_hci_bytes(acl.data())?;
 
@@ -331,15 +327,15 @@ where
                 p.as_mut()[..data.len()].copy_from_slice(data);
 
                 if header.length as usize != data.len() {
-                    self.reassembly.init(acl.handle(), header, p, data.len())?;
+                    self.connections.reassemble_init(acl.handle(), header, p, data.len())?;
                     return Ok(());
                 }
-                (header, p)
+                (header, Pdu::new(p, header.length as usize))
             }
             // Next (potentially last) in a fragment
             AclPacketBoundary::Continuing => {
                 // Get the existing fragment
-                if let Some((header, p)) = self.reassembly.update(acl.handle(), acl.data())? {
+                if let Some((header, p)) = self.connections.reassemble_fragment(acl.handle(), acl.data())? {
                     (header, p)
                 } else {
                     // Do not process yet
@@ -356,7 +352,7 @@ where
             L2CAP_CID_ATT => {
                 // Handle ATT MTU exchange here since it doesn't strictly require
                 // gatt to be enabled.
-                let a = att::Att::decode(&packet.as_ref()[..header.length as usize]);
+                let a = att::Att::decode(pdu.as_ref());
                 if let Ok(att::Att::Client(AttClient::Request(att::AttReq::ExchangeMtu { mtu }))) = a {
                     let mtu = self.connections.exchange_att_mtu(acl.handle(), mtu);
 
@@ -366,6 +362,7 @@ where
                         length: 3,
                     };
 
+                    let mut packet = pdu.packet;
                     let mut w = WriteCursor::new(packet.as_mut());
                     w.write_hci(&l2cap)?;
                     w.write(rsp)?;
@@ -381,17 +378,12 @@ where
                     #[cfg(feature = "gatt")]
                     match a {
                         Ok(att::Att::Client(_)) => {
-                            let event = ConnectionEventData::Gatt {
-                                data: Pdu::new(packet, header.length as usize),
-                            };
+                            let event = ConnectionEventData::Gatt { data: pdu };
                             self.connections.post_handle_event(acl.handle(), event)?;
                             on_drop.defuse();
                         }
                         Ok(att::Att::Server(_)) => {
-                            if let Err(e) = self
-                                .att_client
-                                .try_send((acl.handle(), Pdu::new(packet, header.length as usize)))
-                            {
+                            if let Err(e) = self.att_client.try_send((acl.handle(), pdu)) {
                                 return Err(Error::OutOfMemory);
                             }
                             on_drop.defuse();
@@ -408,10 +400,9 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                self.connections
-                    .handle_security_channel(acl.handle(), &packet, usize::from(header.length))?;
+                self.connections.handle_security_channel(acl.handle(), pdu)?;
             }
-            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, packet) {
+            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, pdu) {
                 Ok(_) => {
                     on_drop.defuse();
                 }
@@ -812,7 +803,6 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             .unwrap_or(Status::UNSPECIFIED);
                             let _ = host.connections.disconnected(handle, reason);
                             let _ = host.channels.disconnected(handle);
-                            host.reassembly.disconnected(handle);
                             let mut m = host.metrics.borrow_mut();
                             m.disconnect_events = m.disconnect_events.wrapping_add(1);
                         }
