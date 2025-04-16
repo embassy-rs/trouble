@@ -18,7 +18,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
-use crate::connection_manager::{ConnectionStorage, EventChannel};
+use crate::connection_manager::ConnectionStorage;
 use crate::l2cap::sar::SarType;
 use crate::packet_pool::PacketPool;
 #[cfg(feature = "security")]
@@ -375,7 +375,6 @@ pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_
     #[cfg(feature = "gatt")]
     tx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }>>,
     connections: MaybeUninit<[ConnectionStorage; CONNS]>,
-    events: MaybeUninit<[EventChannel; CONNS]>,
     channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
     sar: MaybeUninit<[SarType; CONNS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
@@ -399,7 +398,6 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
             #[cfg(feature = "gatt")]
             tx_pool: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
-            events: MaybeUninit::uninit(),
             sar: MaybeUninit::uninit(),
             channels: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
@@ -443,11 +441,8 @@ pub fn new<
     use crate::l2cap::sar::AssembledPacket;
     use crate::types::l2cap::L2capHeader;
     let connections: &mut [ConnectionStorage] =
-        &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
+        &mut *resources.connections.write([const { ConnectionStorage::new() }; CONNS]);
     let connections: &'resources mut [ConnectionStorage] = unsafe { transmute_slice(connections) };
-
-    let events: &mut [EventChannel] = &mut *resources.events.write([EventChannel::NEW; CONNS]);
-    let events: &'resources mut [EventChannel] = unsafe { transmute_slice(events) };
 
     let channels = &mut *resources.channels.write([const { ChannelStorage::new() }; CHANNELS]);
     let channels: &'static mut [ChannelStorage] = unsafe { transmute_slice(channels) };
@@ -462,7 +457,6 @@ pub fn new<
         #[cfg(feature = "gatt")]
         tx_pool,
         connections,
-        events,
         channels,
         sar,
         advertise_handles,

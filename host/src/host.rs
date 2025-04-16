@@ -41,7 +41,7 @@ use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
 use crate::connection::ConnectionEventData;
-use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::l2cap::sar::{PacketReassembly, SarType};
 use crate::packet_pool::Pool;
@@ -203,7 +203,6 @@ where
         rx_pool: &'d dyn Pool,
         #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
         connections: &'d mut [ConnectionStorage],
-        events: &'d mut [EventChannel],
         channels: &'d mut [ChannelStorage],
         sar: &'d mut [SarType],
         advertise_handles: &'d mut [AdvHandleState],
@@ -214,9 +213,9 @@ where
             metrics: RefCell::new(HostMetrics::default()),
             controller,
             #[cfg(feature = "gatt")]
-            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4, tx_pool),
+            connections: ConnectionManager::new(connections, rx_pool.mtu() as u16 - 4, tx_pool),
             #[cfg(not(feature = "gatt"))]
-            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4),
+            connections: ConnectionManager::new(connections, rx_pool.mtu() as u16 - 4),
             reassembly: PacketReassembly::new(sar),
             channels: ChannelManager::new(rx_pool, channels),
             rx_pool,

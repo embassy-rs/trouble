@@ -56,12 +56,12 @@ impl EventChannel {
     #[allow(clippy::declare_interior_mutable_const)]
     pub(crate) const NEW: EventChannel = EventChannel { chan: Channel::new() };
 
-    pub async fn receive(&self) -> ConnectionEventData {
-        self.chan.receive().await
+    pub fn poll_receive(&self, cx: &mut Context<'_>) -> Poll<ConnectionEventData> {
+        self.chan.poll_receive(cx)
     }
 
-    pub async fn send(&self, event: ConnectionEventData) {
-        self.chan.send(event).await;
+    pub fn poll_ready_to_send(&self, cx: &mut Context<'_>) -> Poll<()> {
+        self.chan.poll_ready_to_send(cx)
     }
 
     pub fn try_send(&self, event: ConnectionEventData) -> Result<(), Error> {
@@ -75,7 +75,6 @@ impl EventChannel {
 
 pub(crate) struct ConnectionManager<'d> {
     state: RefCell<State<'d>>,
-    events: &'d mut [EventChannel],
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "gatt")]
     tx_pool: &'d dyn Pool,
@@ -86,7 +85,6 @@ pub(crate) struct ConnectionManager<'d> {
 impl<'d> ConnectionManager<'d> {
     pub(crate) fn new(
         connections: &'d mut [ConnectionStorage],
-        events: &'d mut [EventChannel],
         default_att_mtu: u16,
         #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
     ) -> Self {
@@ -101,7 +99,6 @@ impl<'d> ConnectionManager<'d> {
                 default_link_credits: 0,
                 default_att_mtu,
             }),
-            events,
             outbound: Channel::new(),
             #[cfg(feature = "gatt")]
             tx_pool,
@@ -132,23 +129,24 @@ impl<'d> ConnectionManager<'d> {
     }
 
     pub(crate) async fn next(&self, index: u8) -> ConnectionEventData {
-        self.events[index as usize].receive().await
+        poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].events.poll_receive(cx))).await
     }
 
     pub(crate) async fn post_event(&self, index: u8, event: ConnectionEventData) {
-        self.events[index as usize].send(event).await
+        poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].events.poll_ready_to_send(cx))).await;
+        self.with_mut(|state| state.connections[index as usize].events.try_send(event).unwrap());
     }
 
     pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEventData) -> Result<(), Error> {
-        let index = self.with_mut(|state| {
-            for (index, entry) in state.connections.iter().enumerate() {
+        self.with_mut(|state| {
+            for entry in state.connections.iter() {
                 if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
-                    return Ok(index);
+                    entry.events.try_send(event)?;
+                    return Ok(());
                 }
             }
             Err(Error::NotFound)
-        })?;
-        self.events[index].try_send(event).map_err(|_| Error::OutOfMemory)
+        })
     }
 
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
@@ -308,7 +306,7 @@ impl<'d> ConnectionManager<'d> {
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
-                let _ = self.events[idx].try_send(ConnectionEventData::Disconnected { reason });
+                let _ = storage.events.try_send(ConnectionEventData::Disconnected { reason });
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
                 #[cfg(feature = "security")]
@@ -335,7 +333,7 @@ impl<'d> ConnectionManager<'d> {
         let default_att_mtu = state.default_att_mtu;
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 {
-                self.events[idx].clear();
+                storage.events.clear();
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
                 #[cfg(feature = "controller-host-flow-control")]
@@ -769,7 +767,6 @@ impl CompletedPackets<'_, '_> {
     }
 }
 
-#[derive(Debug)]
 pub struct ConnectionStorage {
     pub state: ConnectionState,
     pub handle: Option<ConnHandle>,
@@ -786,6 +783,7 @@ pub struct ConnectionStorage {
     pub metrics: Metrics,
     #[cfg(feature = "security")]
     pub encrypted: bool,
+    pub events: EventChannel,
 }
 
 /// Connection metrics
@@ -851,23 +849,41 @@ impl defmt::Format for Metrics {
 }
 
 impl ConnectionStorage {
-    pub(crate) const DISCONNECTED: ConnectionStorage = ConnectionStorage {
-        state: ConnectionState::Disconnected,
-        handle: None,
-        role: None,
-        peer_addr_kind: None,
-        peer_addr: None,
-        att_mtu: 23,
-        link_credits: 0,
-        #[cfg(feature = "controller-host-flow-control")]
-        completed_packets: 0,
-        link_credit_waker: WakerRegistration::new(),
-        refcount: 0,
+    pub(crate) const fn new() -> ConnectionStorage {
+        ConnectionStorage {
+            state: ConnectionState::Disconnected,
+            handle: None,
+            role: None,
+            peer_addr_kind: None,
+            peer_addr: None,
+            att_mtu: 23,
+            link_credits: 0,
+            #[cfg(feature = "controller-host-flow-control")]
+            completed_packets: 0,
+            link_credit_waker: WakerRegistration::new(),
+            refcount: 0,
+            #[cfg(feature = "connection-metrics")]
+            metrics: Metrics::new(),
+            #[cfg(feature = "security")]
+            encrypted: false,
+            events: EventChannel::NEW,
+        }
+    }
+}
+
+impl core::fmt::Debug for ConnectionStorage {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("ConnectionStorage");
+        let d = d
+            .field("state", &self.state)
+            .field("handle", &self.handle)
+            .field("role", &self.role)
+            .field("peer_addr", &self.peer_addr)
+            .field("refcount", &self.refcount);
         #[cfg(feature = "connection-metrics")]
-        metrics: Metrics::new(),
-        #[cfg(feature = "security")]
-        encrypted: false,
-    };
+        let d = d.field("metrics", &self.metrics);
+        d.finish()
+    }
 }
 
 #[cfg(feature = "defmt")]
@@ -968,10 +984,9 @@ mod tests {
     const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
 
     fn setup() -> &'static ConnectionManager<'static> {
-        let storage = Box::leak(Box::new([ConnectionStorage::DISCONNECTED; 3]));
-        let events = Box::leak(Box::new([EventChannel::NEW; 3]));
+        let storage = Box::leak(Box::new([const { ConnectionStorage::new() }; 3]));
         let pool = Box::leak(Box::new(PacketPool::<27, 8>::new()));
-        let mgr = ConnectionManager::new(&mut storage[..], &mut events[..], 23, pool);
+        let mgr = ConnectionManager::new(&mut storage[..], 23, pool);
         Box::leak(Box::new(mgr))
     }
 
