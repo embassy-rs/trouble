@@ -6,6 +6,7 @@ use core::future::poll_fn;
 use core::mem::MaybeUninit;
 use core::task::Poll;
 
+use crate::Packet;
 use bt_hci::cmd::controller_baseband::{
     HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
     SetEventMaskPage2,
@@ -18,7 +19,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync, blocking};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
@@ -29,7 +30,7 @@ use bt_hci::param::{
 #[cfg(feature = "controller-host-flow-control")]
 use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select3, select4, Either3, Either4};
+use embassy_futures::select::{Either3, Either4, select3, select4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -43,15 +44,14 @@ use crate::command::CommandState;
 use crate::connection::ConnectionEvent;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
-use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
-    L2CAP_CID_LE_U_SIGNAL,
+    L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL, L2capHeader,
+    L2capSignal, L2capSignalHeader,
 };
-use crate::{att, config, Address, BleHostError, Error, Stack};
+use crate::{Address, BleHostError, Error, Stack, att, config};
 
 /// A BLE Host.
 ///
@@ -60,18 +60,15 @@ use crate::{att, config, Address, BleHostError, Error, Stack};
 ///
 /// The host performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
-pub(crate) struct BleHost<'d, T> {
+pub(crate) struct BleHost<'d, T, P> {
     initialized: OnceLock<InitialState>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
     pub(crate) controller: T,
-    pub(crate) connections: ConnectionManager<'d>,
-    pub(crate) channels: ChannelManager<'d>,
+    pub(crate) connections: ConnectionManager<'d, P>,
+    pub(crate) channels: ChannelManager<'d, P>,
     #[cfg(feature = "gatt")]
-    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
-    pub(crate) rx_pool: &'d dyn Pool,
-    #[cfg(feature = "gatt")]
-    pub(crate) tx_pool: &'d dyn Pool,
+    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<P>), { config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
@@ -187,9 +184,10 @@ pub struct HostMetrics {
     pub rx_errors: u32,
 }
 
-impl<'d, T> BleHost<'d, T>
+impl<'d, T, P> BleHost<'d, T, P>
 where
     T: Controller,
+    P: Packet,
 {
     /// Create a new instance of the BLE host.
     ///
@@ -198,10 +196,8 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
-        rx_pool: &'d dyn Pool,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
-        connections: &'d mut [ConnectionStorage],
-        channels: &'d mut [ChannelStorage],
+        connections: &'d mut [ConnectionStorage<P>],
+        channels: &'d mut [ChannelStorage<P>],
         advertise_handles: &'d mut [AdvHandleState],
     ) -> Self {
         Self {
@@ -210,13 +206,10 @@ where
             metrics: RefCell::new(HostMetrics::default()),
             controller,
             #[cfg(feature = "gatt")]
-            connections: ConnectionManager::new(connections, rx_pool.mtu() as u16 - 4, tx_pool),
+            connections: ConnectionManager::new(connections, P::MTU as u16 - 4, tx_pool),
             #[cfg(not(feature = "gatt"))]
-            connections: ConnectionManager::new(connections, rx_pool.mtu() as u16 - 4),
-            channels: ChannelManager::new(rx_pool, channels),
-            rx_pool,
-            #[cfg(feature = "gatt")]
-            tx_pool,
+            connections: ConnectionManager::new(connections, P::MTU as u16 - 4),
+            channels: ChannelManager::new(channels),
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),
             advertise_state: AdvState::new(advertise_handles),
@@ -265,15 +258,13 @@ where
                     #[cfg(feature = "defmt")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
 
                     #[cfg(feature = "log")]
                     trace!(
                         "[host] connection with handle {:?} established to {:02x?}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
@@ -320,7 +311,7 @@ where
                     return Ok(());
                 }
 
-                let Some(mut p) = self.rx_pool.alloc() else {
+                let Some(mut p) = P::allocate() else {
                     info!("No memory for packets on channel {}", header.channel);
                     return Err(Error::OutOfMemory);
                 };

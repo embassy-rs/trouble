@@ -8,19 +8,19 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, LeConnRole, Operation};
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
 use crate::connection::Connection;
-use crate::{Address, BleHostError, Error, Stack};
+use crate::{Address, BleHostError, Error, Packet, Stack};
 
 /// Type which implements the BLE peripheral role.
-pub struct Peripheral<'d, C> {
-    stack: &'d Stack<'d, C>,
+pub struct Peripheral<'d, C, P> {
+    stack: &'d Stack<'d, C, P>,
 }
 
-impl<'d, C: Controller> Peripheral<'d, C> {
-    pub(crate) fn new(stack: &'d Stack<'d, C>) -> Self {
+impl<'d, C: Controller, P: Packet> Peripheral<'d, C, P> {
+    pub(crate) fn new(stack: &'d Stack<'d, C, P>) -> Self {
         Self { stack }
     }
 
@@ -29,7 +29,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         &mut self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
-    ) -> Result<Advertiser<'d, C>, BleHostError<C::Error>>
+    ) -> Result<Advertiser<'d, C, P>, BleHostError<C::Error>>
     where
         C: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
@@ -236,17 +236,17 @@ impl<'d, C: Controller> Peripheral<'d, C> {
 }
 
 /// Handle to an active advertiser which can accept connections.
-pub struct Advertiser<'d, C: Controller> {
-    stack: &'d Stack<'d, C>,
+pub struct Advertiser<'d, C, P> {
+    stack: &'d Stack<'d, C, P>,
     extended: bool,
     done: bool,
 }
 
-impl<'d, C: Controller> Advertiser<'d, C> {
+impl<'d, C: Controller, P: Packet> Advertiser<'d, C, P> {
     /// Accept the next peripheral connection for this advertiser.
     ///
     /// Returns Error::Timeout if advertiser stopped.
-    pub async fn accept(mut self) -> Result<Connection<'d>, Error> {
+    pub async fn accept(mut self) -> Result<Connection<'d, P>, Error> {
         let result = match select(
             self.stack.host.connections.accept(LeConnRole::Peripheral, &[]),
             self.stack.host.advertise_state.wait(),
@@ -261,7 +261,7 @@ impl<'d, C: Controller> Advertiser<'d, C> {
     }
 }
 
-impl<C: Controller> Drop for Advertiser<'_, C> {
+impl<C: Controller, P: Packet> Drop for Advertiser<'_, C, P> {
     fn drop(&mut self) {
         if !self.done {
             self.stack.host.advertise_command_state.cancel(self.extended);

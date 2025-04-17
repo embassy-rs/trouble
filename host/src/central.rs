@@ -2,23 +2,23 @@
 use bt_hci::cmd::le::{LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn};
 use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 
 use crate::connection::{ConnectConfig, Connection, PhySet};
-use crate::{BleHostError, Error, Stack};
+use crate::{BleHostError, Error, Packet, Stack};
 
 /// A type implementing the BLE central role.
-pub struct Central<'stack, C> {
-    pub(crate) stack: &'stack Stack<'stack, C>,
+pub struct Central<'stack, C, P> {
+    pub(crate) stack: &'stack Stack<'stack, C, P>,
 }
 
-impl<'stack, C: Controller> Central<'stack, C> {
-    pub(crate) fn new(stack: &'stack Stack<'stack, C>) -> Self {
+impl<'stack, C: Controller, P: Packet> Central<'stack, C, P> {
+    pub(crate) fn new(stack: &'stack Stack<'stack, C, P>) -> Self {
         Self { stack }
     }
 
     /// Attempt to create a connection with the provided config.
-    pub async fn connect(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'stack>, BleHostError<C::Error>>
+    pub async fn connect(&mut self, config: &ConnectConfig<'_>) -> Result<Connection<'stack, P>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -71,7 +71,7 @@ impl<'stack, C: Controller> Central<'stack, C> {
     pub async fn connect_ext(
         &mut self,
         config: &ConnectConfig<'_>,
-    ) -> Result<Connection<'stack>, BleHostError<C::Error>>
+    ) -> Result<Connection<'stack, P>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
@@ -145,7 +145,7 @@ impl<'stack, C: Controller> Central<'stack, C> {
 
     /// Initiate pairing
     #[cfg(feature = "security")]
-    pub async fn pairing(&self, connection: &Connection<'stack>) -> Result<(), BleHostError<C::Error>> {
+    pub async fn pairing(&self, connection: &Connection<'stack, P>) -> Result<(), BleHostError<C::Error>> {
         let sm = &self.stack.host.connections.security_manager;
         sm.initiate(connection)?;
         let reason = sm.get_result().await;

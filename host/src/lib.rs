@@ -8,10 +8,11 @@
 use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
+use bt_hci::FromHciBytesError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
-use bt_hci::FromHciBytesError;
+use core::ptr::NonNull;
 #[cfg(feature = "security")]
 use heapless::Vec;
 use rand_core::{CryptoRng, RngCore};
@@ -19,7 +20,6 @@ use rand_core::{CryptoRng, RngCore};
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
-use crate::packet_pool::PacketPool;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, LongTermKey};
 
@@ -40,7 +40,6 @@ mod command;
 pub mod config;
 mod connection_manager;
 mod cursor;
-pub mod packet_pool;
 mod pdu;
 #[cfg(feature = "peripheral")]
 pub mod peripheral;
@@ -78,6 +77,7 @@ pub mod prelude {
 
     pub use super::att::AttErrorCode;
     pub use super::{BleHostError, Controller, Error, Host, HostResources, Stack};
+    pub use crate::Address;
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
@@ -93,14 +93,12 @@ pub mod prelude {
     pub use crate::gatt::*;
     pub use crate::host::{ControlRunner, EventHandler, HostMetrics, Runner, RxRunner, TxRunner};
     pub use crate::l2cap::*;
-    pub use crate::packet_pool::PacketPool;
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
-    pub use crate::Address;
 }
 
 #[cfg(feature = "gatt")]
@@ -330,71 +328,99 @@ pub trait Controller:
 }
 
 impl<
-        C: bt_hci::controller::Controller
-            + embedded_io::ErrorType
-            + ControllerCmdSync<LeReadBufferSize>
-            + ControllerCmdSync<Disconnect>
-            + ControllerCmdSync<SetEventMask>
-            + ControllerCmdSync<SetEventMaskPage2>
-            + ControllerCmdSync<LeSetEventMask>
-            + ControllerCmdSync<LeSetRandomAddr>
-            + ControllerCmdSync<HostBufferSize>
-            + ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<LeReadFilterAcceptListSize>
-            + ControllerCmdSync<LeClearFilterAcceptList>
-            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
-            + ControllerCmdSync<SetControllerToHostFlowControl>
-            + ControllerCmdSync<Reset>
-            + ControllerCmdSync<ReadRssi>
-            + ControllerCmdSync<LeSetScanEnable>
-            + ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + ControllerCmdAsync<LeCreateConn>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
-            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<LeReadBufferSize>
-            + for<'t> ControllerCmdSync<LeSetAdvData>
-            + ControllerCmdSync<LeSetAdvParams>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>
-            + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>
-            + ControllerCmdSync<ReadBdAddr>,
-    > Controller for C
+    C: bt_hci::controller::Controller
+        + embedded_io::ErrorType
+        + ControllerCmdSync<LeReadBufferSize>
+        + ControllerCmdSync<Disconnect>
+        + ControllerCmdSync<SetEventMask>
+        + ControllerCmdSync<SetEventMaskPage2>
+        + ControllerCmdSync<LeSetEventMask>
+        + ControllerCmdSync<LeSetRandomAddr>
+        + ControllerCmdSync<HostBufferSize>
+        + ControllerCmdAsync<LeConnUpdate>
+        + ControllerCmdSync<LeReadFilterAcceptListSize>
+        + ControllerCmdSync<LeClearFilterAcceptList>
+        + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
+        + ControllerCmdSync<SetControllerToHostFlowControl>
+        + ControllerCmdSync<Reset>
+        + ControllerCmdSync<ReadRssi>
+        + ControllerCmdSync<LeSetScanEnable>
+        + ControllerCmdSync<LeSetExtScanEnable>
+        + ControllerCmdSync<LeCreateConnCancel>
+        + ControllerCmdAsync<LeCreateConn>
+        + for<'t> ControllerCmdSync<LeSetAdvEnable>
+        + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+        + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+        + ControllerCmdSync<LeReadBufferSize>
+        + for<'t> ControllerCmdSync<LeSetAdvData>
+        + ControllerCmdSync<LeSetAdvParams>
+        + for<'t> ControllerCmdSync<LeSetAdvEnable>
+        + for<'t> ControllerCmdSync<LeSetScanResponseData>
+        + ControllerCmdSync<LeLongTermKeyRequestReply>
+        + ControllerCmdAsync<LeEnableEncryption>
+        + ControllerCmdSync<ReadBdAddr>,
+> Controller for C
 {
+}
+
+/// A Packet is a byte buffer for packet data.
+/// Similar to a `Vec<u8>` it has a length and a capacity.
+/// The capacity however is the fixed value `MTU`.
+///
+/// You need to implement this trait to give the L2CAP driver
+/// a method to allocate and free the space for the packets
+/// sent and received on a channel.
+pub trait Packet: Sized + AsRef<[u8]> {
+    /// The maximum size a packet can have.
+    const MTU: usize;
+    /// Allocate a new buffer with space for `MTU` bytes.
+    /// Return `None` when the allocation can't be fulfilled.
+    ///
+    /// This function is called by the L2CAP driver when it needs
+    /// space to receive a packet into.
+    /// It will later call `from_raw_parts` with the buffer and the
+    /// amount of bytes it has received.
+    fn allocate() -> Option<Self>;
+    /// Take ownership of the packet buffer.
+    /// Returns a pointer to the buffer and the number of bytes in the buffer.
+    ///
+    /// To free the memory the driver will call `from_raw_parts` later
+    /// and drop the value.
+    fn into_raw_parts(self) -> (NonNull<u8>, usize);
+    /// Construct a `Packet` from a pointer to a buffer and the number of bytes
+    /// written to the buffer.
+    ///
+    /// SAFETY: `ptr` must be a pointer previously returned by either
+    /// `allocate` or `ìnto_raw_parts`.
+    /// `len` must be the number of bytes in the buffer and must not be larger
+    /// than `MTU`.
+    unsafe fn from_raw_parts(ptr: NonNull<u8>, len: usize) -> Self;
 }
 
 /// HostResources holds the resources used by the host.
 ///
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize = 1> {
-    rx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }>>,
-    #[cfg(feature = "gatt")]
-    tx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }>>,
-    connections: MaybeUninit<[ConnectionStorage; CONNS]>,
-    channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
+pub struct HostResources<P: Packet, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize = 1> {
+    connections: MaybeUninit<[ConnectionStorage<P>; CONNS]>,
+    channels: MaybeUninit<[ChannelStorage<P>; CHANNELS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize> Default
-    for HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<P: Packet, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize> Default
+    for HostResources<P, CONNS, CHANNELS, ADV_SETS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
-    HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<P: Packet, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>
+    HostResources<P, CONNS, CHANNELS, ADV_SETS>
 {
     /// Create a new instance of host resources.
     pub const fn new() -> Self {
         Self {
-            rx_pool: MaybeUninit::uninit(),
-            #[cfg(feature = "gatt")]
-            tx_pool: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
             channels: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
@@ -404,17 +430,10 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
 
 /// Create a new instance of the BLE host using the provided controller implementation and
 /// the resource configuration
-pub fn new<
-    'resources,
-    C: Controller,
-    const CONNS: usize,
-    const CHANNELS: usize,
-    const L2CAP_MTU: usize,
-    const ADV_SETS: usize,
->(
+pub fn new<'resources, C: Controller, P: Packet, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>(
     controller: C,
-    resources: &'resources mut HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
-) -> Stack<'resources, C> {
+    resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS>,
+) -> Stack<'resources, C, P> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         unsafe { core::mem::transmute(x) }
     }
@@ -424,56 +443,40 @@ pub fn new<
     // - Internal lifetimes are elided (made 'static) to simplify API usage
     // - This _should_ be OK, because there are no references held to the resources
     //   when the stack is shut down.
-    use crate::packet_pool::Pool;
-    let rx_pool: &'resources dyn Pool = &*resources.rx_pool.write(PacketPool::new());
-    let rx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(rx_pool) };
 
-    #[cfg(feature = "gatt")]
-    let tx_pool: &'resources dyn Pool = &*resources.tx_pool.write(PacketPool::new());
-    #[cfg(feature = "gatt")]
-    let tx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(tx_pool) };
-
-    let connections: &mut [ConnectionStorage] =
+    let connections: &mut [ConnectionStorage<P>] =
         &mut *resources.connections.write([const { ConnectionStorage::new() }; CONNS]);
-    let connections: &'resources mut [ConnectionStorage] = unsafe { transmute_slice(connections) };
+    let connections: &'resources mut [ConnectionStorage<P>] = unsafe { transmute_slice(connections) };
 
     let channels = &mut *resources.channels.write([const { ChannelStorage::new() }; CHANNELS]);
-    let channels: &'static mut [ChannelStorage] = unsafe { transmute_slice(channels) };
+    let channels: &'static mut [ChannelStorage<P>] = unsafe { transmute_slice(channels) };
 
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
-    let host: BleHost<'_, C> = BleHost::new(
-        controller,
-        rx_pool,
-        #[cfg(feature = "gatt")]
-        tx_pool,
-        connections,
-        channels,
-        advertise_handles,
-    );
+    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles);
 
     Stack { host }
 }
 
 /// Contains the host stack
-pub struct Stack<'stack, C> {
-    host: BleHost<'stack, C>,
+pub struct Stack<'stack, C, P> {
+    host: BleHost<'stack, C, P>,
 }
 
 /// Host components.
 #[non_exhaustive]
-pub struct Host<'stack, C> {
+pub struct Host<'stack, C, P> {
     /// Central role
     #[cfg(feature = "central")]
-    pub central: Central<'stack, C>,
+    pub central: Central<'stack, C, P>,
     /// Peripheral role
     #[cfg(feature = "peripheral")]
-    pub peripheral: Peripheral<'stack, C>,
+    pub peripheral: Peripheral<'stack, C, P>,
     /// Host runner
-    pub runner: Runner<'stack, C>,
+    pub runner: Runner<'stack, C, P>,
 }
 
-impl<'stack, C: Controller> Stack<'stack, C> {
+impl<'stack, C: Controller, P: Packet> Stack<'stack, C, P> {
     /// Set the random address used by this host.
     pub fn set_random_address(mut self, address: Address) -> Self {
         self.host.address.replace(address);
