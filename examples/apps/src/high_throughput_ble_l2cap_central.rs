@@ -10,19 +10,20 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
+pub async fn run<C, P>(controller: C)
 where
     C: Controller
         + ControllerCmdSync<LeSetDataLength>
         + ControllerCmdAsync<LeSetPhy>
         + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+    P: PacketPool,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<P, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut central,
@@ -72,7 +73,7 @@ where
                 .await
                 .expect("set phy command failed");
             let l2cap_channel_config = L2capChannelConfig {
-                mtu: L2CAP_MTU as u16,
+                mtu: P::MTU as u16,
                 // Ensure there will be enough credits to send data throughout the entire connection event.
                 flow_policy: CreditFlowPolicy::Every(50),
                 initial_credits: Some(200),
@@ -90,6 +91,7 @@ where
 
             const PAYLOAD_LEN: usize = 2510 - 6;
             const NUM_PAYLOADS: u8 = 40;
+            const L2CAP_MTU: usize = 251; // TODO: P::MTU;
 
             let start = Instant::now();
 

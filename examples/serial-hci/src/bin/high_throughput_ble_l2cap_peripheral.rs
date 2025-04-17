@@ -7,6 +7,9 @@ use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_example_apps::high_throughput_ble_l2cap_peripheral;
 
+#[path = "../alloc.rs"]
+mod alloc;
+
 #[tokio::main]
 async fn main() {
     env_logger::builder()
@@ -30,7 +33,7 @@ async fn main() {
             .parity(Parity::None)
             .stop_bits(StopBits::One),
     )
-        .unwrap();
+    .unwrap();
 
     // Drain input
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -53,5 +56,5 @@ async fn main() {
 
     // Setting the L2CAP MTU to be ten times the size of the PDU.
     // This size of the L2CAP MTU does not consume all the controller buffers.
-    high_throughput_ble_l2cap_peripheral::run::<_, 2510>(controller).await;
+    high_throughput_ble_l2cap_peripheral::run::<_, alloc::BigAlloc>(controller).await;
 }

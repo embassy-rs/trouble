@@ -8,11 +8,12 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
-use syn::{parse_quote, Expr, Result};
+use syn::{Expr, Result, parse_quote};
 
 #[derive(Default)]
 pub(crate) struct ServerArgs {
     mutex_type: Option<syn::Type>,
+    packet_type: Option<syn::Type>,
     attribute_table_size: Option<Expr>,
     cccd_table_size: Option<Expr>,
     connections_max: Option<Expr>,
@@ -34,6 +35,14 @@ impl ServerArgs {
                     )
                 })?;
                 self.mutex_type = Some(buffer.parse()?);
+            }
+            "packet_type" => {
+                let buffer = meta.value().map_err(|_| {
+                    Error::custom(
+                        "packet_type must be followed by `= [type]`. e.g. packet_type = MyPool".to_string(),
+                    )
+                })?;
+                self.packet_type = Some(buffer.parse()?);
             }
             "attribute_table_size" => {
                 let buffer = meta.value().map_err(|_| {
@@ -57,7 +66,7 @@ impl ServerArgs {
                 self.connections_max = Some(buffer.parse()?);
             }
             other => return Err(meta.error(format!(
-                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, attribute_table_size, cccd_table_size, connections_max"
+                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, packet_type, attribute_table_size, cccd_table_size, connections_max"
             ))),
         }
         Ok(())
@@ -82,6 +91,11 @@ impl ServerBuilder {
         let mutex_type = self.arguments.mutex_type.unwrap_or(syn::Type::Verbatim(quote!(
             embassy_sync::blocking_mutex::raw::NoopRawMutex
         )));
+
+        let packet_type = self
+            .arguments
+            .packet_type
+            .unwrap_or(syn::Type::Verbatim(quote!(trouble_host::prelude::DefaultPacketPool)));
 
         let mut code_service_definition = TokenStream2::new();
         let mut code_service_init = TokenStream2::new();
@@ -144,7 +158,7 @@ impl ServerBuilder {
 
             #visibility struct #name<'values>
             {
-                server: trouble_host::prelude::AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE, _CCCD_TABLE_SIZE, _CONNECTIONS_MAX>,
+                server: trouble_host::prelude::AttributeServer<'values, #mutex_type, #packet_type, _ATTRIBUTE_TABLE_SIZE, _CCCD_TABLE_SIZE, _CONNECTIONS_MAX>,
                 #code_service_definition
             }
 
@@ -206,18 +220,18 @@ impl ServerBuilder {
                     self.server.table().set(attribute_handle, input)
                 }
 
-                #visibility fn get_cccd_table(&self, connection: &trouble_host::connection::Connection) -> Option<trouble_host::prelude::CccdTable<_CCCD_TABLE_SIZE>> {
+                #visibility fn get_cccd_table(&self, connection: &trouble_host::connection::Connection<'_, #packet_type>) -> Option<trouble_host::prelude::CccdTable<_CCCD_TABLE_SIZE>> {
                     self.server.get_cccd_table(connection)
                 }
 
-                #visibility fn set_cccd_table(&self, connection: &trouble_host::connection::Connection, table: trouble_host::prelude::CccdTable<_CCCD_TABLE_SIZE>) {
+                #visibility fn set_cccd_table(&self, connection: &trouble_host::connection::Connection<'_, #packet_type>, table: trouble_host::prelude::CccdTable<_CCCD_TABLE_SIZE>) {
                     self.server.set_cccd_table(connection, table);
                 }
             }
 
             impl<'values> core::ops::Deref for #name<'values>
             {
-                type Target = trouble_host::prelude::AttributeServer<'values, #mutex_type, _ATTRIBUTE_TABLE_SIZE, _CCCD_TABLE_SIZE, _CONNECTIONS_MAX>;
+                type Target = trouble_host::prelude::AttributeServer<'values, #mutex_type, #packet_type, _ATTRIBUTE_TABLE_SIZE, _CCCD_TABLE_SIZE, _CONNECTIONS_MAX>;
 
                 fn deref(&self) -> &Self::Target {
                     &self.server

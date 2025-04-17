@@ -15,6 +15,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
 bt-hci = { version = "0.3", default-features = false, features = ["log"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
+trouble-host = { path = "../../host" }
 
 [features]
 security = [

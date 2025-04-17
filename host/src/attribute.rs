@@ -12,10 +12,10 @@ use heapless::Vec;
 use crate::att::AttErrorCode;
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::{AsGatt, Connection, FixedGattValue, FromGatt, GattConnection};
+use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
-use crate::Error;
+use crate::{Error, PacketPool};
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
@@ -38,8 +38,6 @@ pub enum CharacteristicProp {
     /// Extended properties
     Extended = 0x80,
 }
-
-type WriteCallback = fn(&Connection, &[u8]) -> Result<(), ()>;
 
 /// Attribute metadata.
 pub struct Attribute<'a> {
@@ -629,7 +627,7 @@ impl<T: FromGatt> Characteristic<T> {
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
     /// If the characteristic does not support notifications, an error is returned.
-    pub async fn notify(&self, connection: &GattConnection<'_, '_>, value: &T) -> Result<(), Error> {
+    pub async fn notify<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>, value: &T) -> Result<(), Error> {
         let value = value.as_gatt();
         let server = connection.server;
         server.set(self.handle, value)?;
@@ -641,7 +639,7 @@ impl<T: FromGatt> Characteristic<T> {
             return Ok(());
         }
 
-        let mut tx = connection.alloc_tx()?;
+        let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
         let mut w = WriteCursor::new(tx.as_mut());
         let (mut header, mut data) = w.split(4)?;
         data.write(crate::att::ATT_HANDLE_VALUE_NTF)?;
@@ -658,9 +656,9 @@ impl<T: FromGatt> Characteristic<T> {
     }
 
     /// Set the value of the characteristic in the provided attribute server.
-    pub fn set<M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, AT, CT, CN>,
+        server: &AttributeServer<'_, M, P, AT, CT, CN>,
         value: &T,
     ) -> Result<(), Error> {
         let value = value.as_gatt();
@@ -672,9 +670,9 @@ impl<T: FromGatt> Characteristic<T> {
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
     ///
-    pub fn get<M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, AT, CT, CN>,
+        server: &AttributeServer<'_, M, P, AT, CT, CN>,
     ) -> Result<T, Error> {
         server.table().get(self)
     }

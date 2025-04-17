@@ -1,8 +1,10 @@
 //! A packet pool for allocating and freeing packet buffers with quality of service policy.
 use core::cell::RefCell;
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::Mutex;
+
+use crate::{config, Packet, PacketPool};
 
 struct PacketBuf<const MTU: usize> {
     buf: [u8; MTU],
@@ -31,7 +33,7 @@ impl<const MTU: usize, const N: usize> State<MTU, N> {
         }
     }
 
-    fn alloc(&mut self) -> Option<PacketRef> {
+    fn alloc(&mut self) -> Option<PacketRef<MTU>> {
         for (idx, packet) in self.packets.iter_mut().enumerate() {
             if packet.free {
                 // info!("[{}] alloc {}", id.0, idx);
@@ -39,14 +41,14 @@ impl<const MTU: usize, const N: usize> State<MTU, N> {
                 packet.buf.iter_mut().for_each(|b| *b = 0);
                 return Some(PacketRef {
                     idx,
-                    buf: &mut packet.buf[..],
+                    buf: packet.buf.as_mut_ptr(),
                 });
             }
         }
         None
     }
 
-    fn free(&mut self, p_ref: PacketRef) {
+    fn free(&mut self, p_ref: &PacketRef<MTU>) {
         // info!("[{}] free {}", id.0, p_ref.idx);
         self.packets[p_ref.idx].free = true;
     }
@@ -58,35 +60,32 @@ impl<const MTU: usize, const N: usize> State<MTU, N> {
 
 /// A packet pool holds a pool of packet buffers that can be dynamically allocated
 /// and free'd.
-pub struct PacketPool<const MTU: usize, const N: usize> {
-    state: Mutex<NoopRawMutex, RefCell<State<MTU, N>>>,
+pub struct StaticPacketPool<M: RawMutex, const MTU: usize, const N: usize> {
+    state: Mutex<M, RefCell<State<MTU, N>>>,
 }
 
-impl<const MTU: usize, const N: usize> Default for PacketPool<MTU, N> {
+impl<M: RawMutex, const MTU: usize, const N: usize> Default for StaticPacketPool<M, MTU, N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const MTU: usize, const N: usize> PacketPool<MTU, N> {
+impl<M: RawMutex, const MTU: usize, const N: usize> StaticPacketPool<M, MTU, N> {
     /// Create a new packet pool with the given QoS policy
-    pub fn new() -> Self {
+    const fn new() -> Self {
         Self {
             state: Mutex::new(RefCell::new(State::new())),
         }
     }
 
-    fn alloc(&self) -> Option<Packet> {
+    fn alloc(&self) -> Option<PacketRef<MTU>> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
-            state.alloc().map(|p_ref| Packet {
-                p_ref: Some(p_ref),
-                pool: self,
-            })
+            state.alloc()
         })
     }
 
-    fn free(&self, p_ref: PacketRef) {
+    fn free(&self, p_ref: &PacketRef<MTU>) {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
             state.free(p_ref);
@@ -101,93 +100,75 @@ impl<const MTU: usize, const N: usize> PacketPool<MTU, N> {
     }
 }
 
-/// Type erased packet pool
-pub(crate) trait Pool {
-    /// Allocate a packet
-    ///
-    /// Returns None if out of memory.
-    fn alloc(&self) -> Option<Packet>;
-    /// Free a packet given it's reference.
-    fn free(&self, r: PacketRef);
-    /// Check for available packets.
-    fn available(&self) -> usize;
-    /// Check packet size.
-    fn mtu(&self) -> usize;
-}
-
-impl<const MTU: usize, const N: usize> Pool for PacketPool<MTU, N> {
-    fn alloc(&self) -> Option<Packet> {
-        PacketPool::alloc(self)
-    }
-
-    fn free(&self, r: PacketRef) {
-        PacketPool::free(self, r)
-    }
-
-    fn available(&self) -> usize {
-        PacketPool::available(self)
-    }
-
-    fn mtu(&self) -> usize {
-        MTU
-    }
-}
-
+/// Represents a reference to a packet.
 #[repr(C)]
-pub(crate) struct PacketRef {
+pub struct PacketRef<const MTU: usize> {
     idx: usize,
-    buf: *mut [u8],
+    buf: *mut u8,
 }
 
-#[repr(C)]
-pub(crate) struct Packet {
-    p_ref: Option<PacketRef>,
-    pool: *const dyn Pool,
-}
+/// Global default packet pool.
+pub type DefaultPacketPool = StaticPacketPool<
+    CriticalSectionRawMutex,
+    { config::L2CAP_DEFAULT_PACKET_POOL_MTU },
+    { config::L2CAP_DEFAULT_PACKET_POOL_SIZE },
+>;
 
-impl Packet {
-    pub(crate) fn len(&self) -> usize {
-        self.as_ref().len()
+static DEFAULT_POOL: StaticPacketPool<
+    CriticalSectionRawMutex,
+    { config::L2CAP_DEFAULT_PACKET_POOL_MTU },
+    { config::L2CAP_DEFAULT_PACKET_POOL_SIZE },
+> = StaticPacketPool::new();
+
+impl PacketPool for DefaultPacketPool {
+    type Packet = DefaultPacket;
+    const MTU: usize = { config::L2CAP_DEFAULT_PACKET_POOL_MTU };
+    fn capacity() -> usize {
+        config::L2CAP_DEFAULT_PACKET_POOL_SIZE
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
+    fn allocate() -> Option<DefaultPacket> {
+        DEFAULT_POOL.alloc().map(|p| DefaultPacket {
+            p_ref: p,
+            pool: &DEFAULT_POOL,
+        })
     }
 }
 
-impl Drop for Packet {
-    fn drop(&mut self) {
-        if let Some(r) = self.p_ref.take() {
-            let pool = unsafe { &*self.pool };
-            pool.free(r);
-        }
-    }
+/// Type representing the packet from the default packet pool.
+pub struct DefaultPacket {
+    p_ref: PacketRef<{ config::L2CAP_DEFAULT_PACKET_POOL_MTU }>,
+    pool: &'static DefaultPacketPool,
 }
 
-impl AsRef<[u8]> for Packet {
+impl Packet for DefaultPacket {}
+impl AsRef<[u8]> for DefaultPacket {
     fn as_ref(&self) -> &[u8] {
-        let p = self.p_ref.as_ref().unwrap();
-        unsafe { &(*p.buf)[..] }
+        unsafe { core::slice::from_raw_parts(self.p_ref.buf, config::L2CAP_DEFAULT_PACKET_POOL_MTU) }
     }
 }
 
-impl AsMut<[u8]> for Packet {
+impl AsMut<[u8]> for DefaultPacket {
     fn as_mut(&mut self) -> &mut [u8] {
-        let p = self.p_ref.as_mut().unwrap();
-        unsafe { &mut (*p.buf)[..] }
+        unsafe { core::slice::from_raw_parts_mut(self.p_ref.buf, config::L2CAP_DEFAULT_PACKET_POOL_MTU) }
+    }
+}
+
+impl Drop for DefaultPacket {
+    fn drop(&mut self) {
+        self.pool.free(&self.p_ref);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use static_cell::StaticCell;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
     use super::*;
 
     #[test]
     fn test_none_qos() {
-        static POOL: StaticCell<PacketPool<1, 8>> = StaticCell::new();
-        let pool = POOL.init(PacketPool::new());
+        let pool: StaticPacketPool<NoopRawMutex, 27, 8> = StaticPacketPool::new();
 
         let a1 = pool.alloc();
         assert!(a1.is_some());
