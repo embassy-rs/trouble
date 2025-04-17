@@ -11,7 +11,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "security")]
 use embassy_time::TimeoutError;
 
-use crate::connection::{Connection, ConnectionEventData};
+use crate::connection::{Connection, ConnectionEvent};
 #[cfg(feature = "gatt")]
 use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
@@ -50,30 +50,8 @@ impl State<'_> {
     }
 }
 
-pub(crate) struct EventChannel {
-    chan: Channel<NoopRawMutex, ConnectionEventData, { config::CONNECTION_EVENT_QUEUE_SIZE }>,
-}
-
-impl EventChannel {
-    #[allow(clippy::declare_interior_mutable_const)]
-    pub(crate) const NEW: EventChannel = EventChannel { chan: Channel::new() };
-
-    pub fn poll_receive(&self, cx: &mut Context<'_>) -> Poll<ConnectionEventData> {
-        self.chan.poll_receive(cx)
-    }
-
-    pub fn poll_ready_to_send(&self, cx: &mut Context<'_>) -> Poll<()> {
-        self.chan.poll_ready_to_send(cx)
-    }
-
-    pub fn try_send(&self, event: ConnectionEventData) -> Result<(), Error> {
-        self.chan.try_send(event).map_err(|_| Error::OutOfMemory)
-    }
-
-    pub fn clear(&self) {
-        self.chan.clear();
-    }
-}
+type EventChannel = Channel<NoopRawMutex, ConnectionEvent, { config::CONNECTION_EVENT_QUEUE_SIZE }>;
+type GattChannel = Channel<NoopRawMutex, Pdu, { config::L2CAP_RX_QUEUE_SIZE }>;
 
 pub(crate) struct ConnectionManager<'d> {
     state: RefCell<State<'d>>,
@@ -130,20 +108,38 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
-    pub(crate) async fn next(&self, index: u8) -> ConnectionEventData {
+    pub(crate) async fn next(&self, index: u8) -> ConnectionEvent {
         poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].events.poll_receive(cx))).await
     }
 
-    pub(crate) async fn post_event(&self, index: u8, event: ConnectionEventData) {
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn next_gatt(&self, index: u8) -> Pdu {
+        poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].gatt.poll_receive(cx))).await
+    }
+
+    pub(crate) async fn post_event(&self, index: u8, event: ConnectionEvent) {
         poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].events.poll_ready_to_send(cx))).await;
         self.with_mut(|state| state.connections[index as usize].events.try_send(event).unwrap());
     }
 
-    pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEventData) -> Result<(), Error> {
+    pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEvent) -> Result<(), Error> {
         self.with_mut(|state| {
             for entry in state.connections.iter() {
                 if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
-                    entry.events.try_send(event)?;
+                    entry.events.try_send(event).map_err(|_| Error::OutOfMemory)?;
+                    return Ok(());
+                }
+            }
+            Err(Error::NotFound)
+        })
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn post_gatt(&self, handle: ConnHandle, pdu: Pdu) -> Result<(), Error> {
+        self.with_mut(|state| {
+            for entry in state.connections.iter() {
+                if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+                    entry.gatt.try_send(pdu).map_err(|_| Error::OutOfMemory)?;
                     return Ok(());
                 }
             }
@@ -323,7 +319,7 @@ impl<'d> ConnectionManager<'d> {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
                 storage.reassembly.disconnected();
-                let _ = storage.events.try_send(ConnectionEventData::Disconnected { reason });
+                let _ = storage.events.try_send(ConnectionEvent::Disconnected { reason });
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
                 #[cfg(feature = "security")]
@@ -798,6 +794,8 @@ pub struct ConnectionStorage {
     pub encrypted: bool,
     pub events: EventChannel,
     pub reassembly: PacketReassembly,
+    #[cfg(feature = "gatt")]
+    pub gatt: GattChannel,
 }
 
 /// Connection metrics
@@ -880,7 +878,9 @@ impl ConnectionStorage {
             metrics: Metrics::new(),
             #[cfg(feature = "security")]
             encrypted: false,
-            events: EventChannel::NEW,
+            events: EventChannel::new(),
+            #[cfg(feature = "gatt")]
+            gatt: GattChannel::new(),
             reassembly: PacketReassembly::new(),
         }
     }

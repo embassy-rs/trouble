@@ -92,8 +92,8 @@ pub struct ConnectParams {
     pub supervision_timeout: Duration,
 }
 
-#[cfg(not(feature = "gatt"))]
 /// A connection event.
+#[derive(Debug)]
 pub enum ConnectionEvent {
     /// Connection disconnected.
     Disconnected {
@@ -121,65 +121,6 @@ pub enum ConnectionEvent {
     Bonded {
         /// Bond info for this connection
         bond_info: BondInformation,
-    },
-}
-
-/// A connection event.
-#[cfg(feature = "gatt")]
-pub enum ConnectionEvent<'stack> {
-    /// Connection disconnected.
-    Disconnected {
-        /// The reason (status code) for the disconnect.
-        reason: Status,
-    },
-    /// The phy settings was updated for this connection.
-    PhyUpdated {
-        /// The TX phy.
-        tx_phy: PhyKind,
-        /// The RX phy.
-        rx_phy: PhyKind,
-    },
-    /// The phy settings was updated for this connection.
-    ConnectionParamsUpdated {
-        /// Connection interval.
-        conn_interval: Duration,
-        /// Peripheral latency.
-        peripheral_latency: u16,
-        /// Supervision timeout.
-        supervision_timeout: Duration,
-    },
-    #[cfg(feature = "security")]
-    /// Bonded event.
-    Bonded {
-        /// Bond info for this connection
-        bond_info: BondInformation,
-    },
-    /// GATT event.
-    Gatt {
-        /// The event that was returned
-        data: crate::gatt::GattData<'stack>,
-    },
-}
-
-pub(crate) enum ConnectionEventData {
-    Disconnected {
-        reason: Status,
-    },
-    PhyUpdated {
-        tx_phy: PhyKind,
-        rx_phy: PhyKind,
-    },
-    ConnectionParamsUpdated {
-        conn_interval: Duration,
-        peripheral_latency: u16,
-        supervision_timeout: Duration,
-    },
-    #[cfg(feature = "security")]
-    Bonded {
-        bond_info: BondInformation,
-    },
-    Gatt {
-        data: Pdu,
     },
 }
 
@@ -245,7 +186,7 @@ impl<'stack> Connection<'stack> {
         self.manager.try_send(self.index, pdu)
     }
 
-    pub(crate) async fn post_event(&self, event: ConnectionEventData) {
+    pub(crate) async fn post_event(&self, event: ConnectionEvent) {
         self.manager.post_event(self.index, event).await
     }
 
@@ -255,45 +196,13 @@ impl<'stack> Connection<'stack> {
     }
 
     /// Wait for next connection event.
-    #[cfg(not(feature = "gatt"))]
     pub async fn next(&self) -> ConnectionEvent {
-        match self.manager.next(self.index).await {
-            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
-            ConnectionEventData::ConnectionParamsUpdated {
-                conn_interval,
-                peripheral_latency,
-                supervision_timeout,
-            } => ConnectionEvent::ConnectionParamsUpdated {
-                conn_interval,
-                peripheral_latency,
-                supervision_timeout,
-            },
-            ConnectionEventData::PhyUpdated { tx_phy, rx_phy } => ConnectionEvent::PhyUpdated { tx_phy, rx_phy },
-            ConnectionEventData::Gatt { data } => unreachable!(),
-        }
+        self.manager.next(self.index).await
     }
 
-    /// Wait for next connection event.
     #[cfg(feature = "gatt")]
-    pub async fn next(&self) -> ConnectionEvent<'stack> {
-        match self.manager.next(self.index).await {
-            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
-            ConnectionEventData::ConnectionParamsUpdated {
-                conn_interval,
-                peripheral_latency,
-                supervision_timeout,
-            } => ConnectionEvent::ConnectionParamsUpdated {
-                conn_interval,
-                peripheral_latency,
-                supervision_timeout,
-            },
-            ConnectionEventData::PhyUpdated { tx_phy, rx_phy } => ConnectionEvent::PhyUpdated { tx_phy, rx_phy },
-            ConnectionEventData::Gatt { data } => ConnectionEvent::Gatt {
-                data: crate::gatt::GattData::new(data, self.clone()),
-            },
-            #[cfg(feature = "security")]
-            ConnectionEventData::Bonded { bond_info } => ConnectionEvent::Bonded { bond_info },
-        }
+    pub(crate) async fn next_gatt(&self) -> Pdu {
+        self.manager.next_gatt(self.index).await
     }
 
     /// Check if still connected

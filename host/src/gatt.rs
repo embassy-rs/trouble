@@ -8,6 +8,7 @@ use bt_hci::controller::Controller;
 use bt_hci::param::{ConnHandle, PhyKind, Status};
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
+use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
@@ -94,33 +95,38 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
     /// Uses the attribute server to handle the protocol.
     pub async fn next(&self) -> GattConnectionEvent<'stack, 'server> {
         loop {
-            match self.connection.next().await {
-                ConnectionEvent::Disconnected { reason } => return GattConnectionEvent::Disconnected { reason },
-                ConnectionEvent::ConnectionParamsUpdated {
-                    conn_interval,
-                    peripheral_latency,
-                    supervision_timeout,
-                } => {
-                    return GattConnectionEvent::ConnectionParamsUpdated {
+            match select(self.connection.next(), self.connection.next_gatt()).await {
+                Either::First(event) => match event {
+                    ConnectionEvent::Disconnected { reason } => return GattConnectionEvent::Disconnected { reason },
+                    ConnectionEvent::ConnectionParamsUpdated {
                         conn_interval,
                         peripheral_latency,
                         supervision_timeout,
-                    };
-                }
-                ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
-                    return GattConnectionEvent::PhyUpdated { tx_phy, rx_phy };
-                }
-                #[cfg(feature = "security")]
-                ConnectionEvent::Bonded { bond_info } => {
-                    return GattConnectionEvent::Bonded { bond_info };
-                }
-                ConnectionEvent::Gatt { data } => match data.process(self.server).await {
-                    Ok(event) => match event {
-                        Some(event) => return GattConnectionEvent::Gatt { event: Ok(event) },
-                        None => continue,
-                    },
-                    Err(e) => return GattConnectionEvent::Gatt { event: Err(e) },
+                    } => {
+                        return GattConnectionEvent::ConnectionParamsUpdated {
+                            conn_interval,
+                            peripheral_latency,
+                            supervision_timeout,
+                        };
+                    }
+                    ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
+                        return GattConnectionEvent::PhyUpdated { tx_phy, rx_phy };
+                    }
+                    #[cfg(feature = "security")]
+                    ConnectionEvent::Bonded { bond_info } => {
+                        return GattConnectionEvent::Bonded { bond_info };
+                    }
                 },
+                Either::Second(data) => {
+                    let data = GattData::new(data, self.connection.clone());
+                    match data.process(self.server).await {
+                        Ok(event) => match event {
+                            Some(event) => return GattConnectionEvent::Gatt { event: Ok(event) },
+                            None => continue,
+                        },
+                        Err(e) => return GattConnectionEvent::Gatt { event: Err(e) },
+                    }
+                }
             }
         }
     }

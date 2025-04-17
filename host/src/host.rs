@@ -40,7 +40,7 @@ use futures::pin_mut;
 use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
-use crate::connection::ConnectionEventData;
+use crate::connection::ConnectionEvent;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::packet_pool::Pool;
@@ -378,8 +378,7 @@ where
                     #[cfg(feature = "gatt")]
                     match a {
                         Ok(att::Att::Client(_)) => {
-                            let event = ConnectionEventData::Gatt { data: pdu };
-                            self.connections.post_handle_event(acl.handle(), event)?;
+                            self.connections.post_gatt(acl.handle(), pdu)?;
                             on_drop.defuse();
                         }
                         Ok(att::Att::Server(_)) => {
@@ -754,7 +753,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                 } else {
                                     let _ = host.connections.post_handle_event(
                                         event.handle,
-                                        ConnectionEventData::PhyUpdated {
+                                        ConnectionEvent::PhyUpdated {
                                             tx_phy: event.tx_phy,
                                             rx_phy: event.rx_phy,
                                         },
@@ -770,7 +769,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                 } else {
                                     let _ = host.connections.post_handle_event(
                                         event.handle,
-                                        ConnectionEventData::ConnectionParamsUpdated {
+                                        ConnectionEvent::ConnectionParamsUpdated {
                                             conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
                                             peripheral_latency: event.peripheral_latency,
                                             supervision_timeout: Duration::from_micros(
