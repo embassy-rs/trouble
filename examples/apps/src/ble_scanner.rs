@@ -10,7 +10,7 @@ use trouble_host::prelude::*;
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 1;
 
-pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
+pub async fn run<C>(controller: C)
 where
     C: Controller + ControllerCmdSync<LeSetScanParams>,
 {
@@ -20,7 +20,7 @@ where
 
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
 
     let Host {

@@ -65,5 +65,5 @@ async fn main(spawner: Spawner) {
 
     let controller: ExternalController<_, 10> = ExternalController::new(bt_device);
 
-    ble_bas_peripheral::run::<_, 128>(controller).await;
+    ble_bas_peripheral::run(controller).await;
 }

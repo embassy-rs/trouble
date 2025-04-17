@@ -1394,6 +1394,7 @@ dependencies = [
  "rand_core",
  "static_cell",
  "trouble-example-apps",
+ "trouble-host",
 ]
 
 [[package]]

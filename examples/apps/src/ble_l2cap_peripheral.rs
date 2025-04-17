@@ -8,7 +8,7 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
+pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
@@ -16,7 +16,7 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut peripheral,
@@ -59,6 +59,7 @@ where
 
             // Size of payload we're expecting
             const PAYLOAD_LEN: usize = 27;
+            const L2CAP_MTU: usize = DefaultPacketPool::MTU;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
                 let len = ch1.receive(&stack, &mut rx).await.unwrap();

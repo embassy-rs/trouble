@@ -2431,6 +2431,7 @@ dependencies = [
  "reqwest",
  "static_cell",
  "trouble-example-apps",
+ "trouble-host",
 ]
 
 [[package]]

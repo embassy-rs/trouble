@@ -1021,6 +1021,7 @@ dependencies = [
  "tokio",
  "tokio-serial",
  "trouble-example-apps",
+ "trouble-host",
 ]
 
 [[package]]
