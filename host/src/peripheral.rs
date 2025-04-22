@@ -91,7 +91,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
 
         let advset: [AdvSet; 1] = [AdvSet {
             adv_handle: AdvHandle::new(0),
-            duration: bt_hci::param::Duration::from_secs(0),
+            duration: params.timeout.unwrap_or(embassy_time::Duration::from_micros(0)).into(),
             max_ext_adv_events: 0,
         }];
 
