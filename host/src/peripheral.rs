@@ -247,6 +247,46 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         })
     }
 
+    /// Update the extended advertisment adv_data and/or scan_data for multiple
+    /// advertising sets. Does not change any other advertising parameters. If
+    /// no advertising is active, this will not produce any observable effect.
+    /// This is typically useful when implementing a BLE beacon that only
+    /// broadcasts advertisement data and does not accept any connections.
+    pub async fn update_adv_data_ext<'k>(
+        &mut self,
+        sets: &[AdvertisementSet<'k>],
+        handles: &mut [AdvSet],
+    ) -> Result<(), BleHostError<C::Error>>
+    where
+        C: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>> + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
+    {
+        assert_eq!(sets.len(), handles.len());
+        let host = &self.stack.host;
+        for (i, set) in sets.iter().enumerate() {
+            let handle = handles[i].adv_handle;
+            let data: RawAdvertisement<'k> = set.data.into();
+            if !data.adv_data.is_empty() {
+                host.command(LeSetExtAdvData::new(
+                    handle,
+                    Operation::Complete,
+                    set.params.fragment,
+                    data.adv_data,
+                ))
+                .await?;
+            }
+            if !data.scan_data.is_empty() {
+                host.command(LeSetExtScanResponseData::new(
+                    handle,
+                    Operation::Complete,
+                    set.params.fragment,
+                    data.scan_data,
+                ))
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Accept any pending available connection.
     ///
     /// Accepts the next pending connection if there are any.
