@@ -55,14 +55,14 @@ pub const L2CAP_RX_QUEUE_SIZE: usize = raw::L2CAP_RX_QUEUE_SIZE;
 /// 1 packet that can be allocated, but the pool is shared among different channels.
 ///
 /// Default: 8.
-pub const L2CAP_DEFAULT_PACKET_POOL_SIZE: usize = raw::L2CAP_DEFAULT_PACKET_POOL_SIZE;
+pub const DEFAULT_PACKET_POOL_SIZE: usize = raw::DEFAULT_PACKET_POOL_SIZE;
 
 /// L2CAP default packet pool mtu
 ///
 /// This is the default packet pool mtu for all l2cap channels.
 ///
 /// Default: 27.
-pub const L2CAP_DEFAULT_PACKET_POOL_MTU: usize = raw::L2CAP_DEFAULT_PACKET_POOL_MTU;
+pub const DEFAULT_PACKET_POOL_MTU: usize = raw::DEFAULT_PACKET_POOL_MTU;
 
 /// Default: 1.
 pub const GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS: usize = raw::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;

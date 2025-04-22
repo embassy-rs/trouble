@@ -16,7 +16,6 @@ use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
-use crate::types::l2cap::L2capHeader;
 use crate::{config, Error, Identity, PacketPool};
 
 struct State<'d, P> {
@@ -245,23 +244,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         self.with_connected_handle(h, |_storage| Ok(())).is_ok()
     }
 
-    pub(crate) fn reassemble_init(
+    pub(crate) fn reassembly<F: FnOnce(&mut PacketReassembly<P::Packet>) -> Result<R, Error>, R>(
         &self,
         h: ConnHandle,
-        header: L2capHeader,
-        p: P::Packet,
-        initial: usize,
-    ) -> Result<(), Error> {
-        self.with_connected_handle(h, |storage| storage.reassembly.init(header, p, initial))
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn reassemble_fragment(
-        &self,
-        h: ConnHandle,
-        data: &[u8],
-    ) -> Result<Option<(L2capHeader, Pdu<P::Packet>)>, Error> {
-        self.with_connected_handle(h, |storage| storage.reassembly.update(data))
+        f: F,
+    ) -> Result<R, Error> {
+        self.with_connected_handle(h, |storage| f(&mut storage.reassembly))
     }
 
     pub(crate) fn disconnected(&self, h: ConnHandle, reason: Status) -> Result<(), Error> {
