@@ -6,6 +6,7 @@ pub use crate::channel_manager::CreditFlowPolicy;
 pub use crate::channel_manager::Metrics as ChannelMetrics;
 use crate::channel_manager::{ChannelIndex, ChannelManager};
 use crate::connection::Connection;
+use crate::pdu::Sdu;
 use crate::{BleHostError, PacketPool, Stack};
 
 pub(crate) mod sar;
@@ -83,23 +84,16 @@ impl<P: PacketPool> Drop for L2capChannelReader<'_, P> {
 }
 
 /// Configuration for an L2CAP channel.
+#[derive(Default)]
 pub struct L2capChannelConfig {
-    /// Size of Service Data Unit
-    pub mtu: u16,
+    /// Size of Service Data Unit. Defaults to packet allocator MTU-6.
+    pub mtu: Option<u16>,
+    /// Frame size (1 frame == 1 credit). Defaults to packet allocator MTU-4.
+    pub mps: Option<u16>,
     /// Flow control policy for connection oriented channels.
     pub flow_policy: CreditFlowPolicy,
     /// Initial credits for connection oriented channels.
     pub initial_credits: Option<u16>,
-}
-
-impl Default for L2capChannelConfig {
-    fn default() -> Self {
-        Self {
-            mtu: 23,
-            flow_policy: Default::default(),
-            initial_credits: None,
-        }
-    }
 }
 
 impl<'d, P: PacketPool> L2capChannel<'d, P> {
@@ -160,6 +154,16 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         stack.host.channels.receive(self.index, buf, &stack.host).await
     }
 
+    /// Receive the next SDU available on this channel.
+    ///
+    /// The length provided buffer slice must be equal or greater to the agreed MTU.
+    pub async fn receive_sdu<T: Controller>(
+        &mut self,
+        stack: &Stack<'_, T, P>,
+    ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
+        stack.host.channels.receive_sdu(self.index, &stack.host).await
+    }
+
     /// Read metrics of the l2cap channel.
     #[cfg(feature = "channel-metrics")]
     pub fn metrics<F: FnOnce(&ChannelMetrics) -> R, R>(&self, f: F) -> R {
@@ -174,18 +178,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>> {
         let handle = connection.handle();
-        stack
-            .host
-            .channels
-            .accept(
-                handle,
-                psm,
-                config.mtu,
-                config.flow_policy,
-                config.initial_credits,
-                &stack.host,
-            )
-            .await
+        stack.host.channels.accept(handle, psm, config, &stack.host).await
     }
 
     /// Create a new connection request with the provided PSM.
@@ -198,14 +191,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         stack
             .host
             .channels
-            .create(
-                connection.handle(),
-                psm,
-                config.mtu,
-                config.flow_policy,
-                config.initial_credits,
-                &stack.host,
-            )
+            .create(connection.handle(), psm, config, &stack.host)
             .await
     }
 
@@ -257,6 +243,16 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
         stack.host.channels.receive(self.index, buf, &stack.host).await
+    }
+
+    /// Receive the next SDU available on this channel.
+    ///
+    /// The length provided buffer slice must be equal or greater to the agreed MTU.
+    pub async fn receive_sdu<T: Controller>(
+        &mut self,
+        stack: &Stack<'_, T, P>,
+    ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
+        stack.host.channels.receive_sdu(self.index, &stack.host).await
     }
 
     /// Read metrics of the l2cap channel.

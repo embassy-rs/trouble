@@ -110,21 +110,21 @@ pub struct PacketRef<const MTU: usize> {
 /// Global default packet pool.
 pub type DefaultPacketPool = StaticPacketPool<
     CriticalSectionRawMutex,
-    { config::L2CAP_DEFAULT_PACKET_POOL_MTU },
-    { config::L2CAP_DEFAULT_PACKET_POOL_SIZE },
+    { config::DEFAULT_PACKET_POOL_MTU },
+    { config::DEFAULT_PACKET_POOL_SIZE },
 >;
 
 static DEFAULT_POOL: StaticPacketPool<
     CriticalSectionRawMutex,
-    { config::L2CAP_DEFAULT_PACKET_POOL_MTU },
-    { config::L2CAP_DEFAULT_PACKET_POOL_SIZE },
+    { config::DEFAULT_PACKET_POOL_MTU },
+    { config::DEFAULT_PACKET_POOL_SIZE },
 > = StaticPacketPool::new();
 
 impl PacketPool for DefaultPacketPool {
     type Packet = DefaultPacket;
-    const MTU: usize = { config::L2CAP_DEFAULT_PACKET_POOL_MTU };
+    const MTU: usize = { config::DEFAULT_PACKET_POOL_MTU };
     fn capacity() -> usize {
-        config::L2CAP_DEFAULT_PACKET_POOL_SIZE
+        config::DEFAULT_PACKET_POOL_SIZE
     }
 
     fn allocate() -> Option<DefaultPacket> {
@@ -137,20 +137,20 @@ impl PacketPool for DefaultPacketPool {
 
 /// Type representing the packet from the default packet pool.
 pub struct DefaultPacket {
-    p_ref: PacketRef<{ config::L2CAP_DEFAULT_PACKET_POOL_MTU }>,
+    p_ref: PacketRef<{ config::DEFAULT_PACKET_POOL_MTU }>,
     pool: &'static DefaultPacketPool,
 }
 
 impl Packet for DefaultPacket {}
 impl AsRef<[u8]> for DefaultPacket {
     fn as_ref(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.p_ref.buf, config::L2CAP_DEFAULT_PACKET_POOL_MTU) }
+        unsafe { core::slice::from_raw_parts(self.p_ref.buf, config::DEFAULT_PACKET_POOL_MTU) }
     }
 }
 
 impl AsMut<[u8]> for DefaultPacket {
     fn as_mut(&mut self) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.p_ref.buf, config::L2CAP_DEFAULT_PACKET_POOL_MTU) }
+        unsafe { core::slice::from_raw_parts_mut(self.p_ref.buf, config::DEFAULT_PACKET_POOL_MTU) }
     }
 }
 

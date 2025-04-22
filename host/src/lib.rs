@@ -95,14 +95,14 @@ pub mod prelude {
     pub use crate::l2cap::*;
     #[cfg(feature = "default-packet-pool")]
     pub use crate::packet_pool::DefaultPacketPool;
+    pub use crate::pdu::Sdu;
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
-    pub use crate::Address;
-    pub use crate::Identity;
+    pub use crate::{Address, Identity};
 }
 
 #[cfg(feature = "gatt")]

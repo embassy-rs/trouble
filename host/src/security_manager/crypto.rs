@@ -1,10 +1,8 @@
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
-use aes::{
-    cipher::{BlockEncrypt, KeyInit},
-    Aes128,
-};
+use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::Aes128;
 use bt_hci::param::BdAddr;
 use cmac::digest;
 use p256::ecdh;

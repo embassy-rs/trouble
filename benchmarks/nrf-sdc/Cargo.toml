@@ -10,7 +10,7 @@ embassy-time = { version = "0.4", default-features = false, features = ["defmt",
 embassy-nrf = { version = "0.3", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.6", features = ["defmt"] }
-trouble-host = { path = "../../host", default-features = false, features = ["defmt", "l2cap-rx-queue-size-4", "l2cap-tx-queue-size-4", "central", "peripheral", "scan", "gatt", "default-packet-pool"] }
+trouble-host = { path = "../../host", default-features = false, features = ["defmt", "l2cap-rx-queue-size-4", "l2cap-tx-queue-size-4", "central", "peripheral", "scan", "gatt", "default-packet-pool", "default-packet-pool-mtu-251"] }
 
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
 nrf-sdc = { version = "0.1.0", default-features = false, features = ["defmt", "peripheral", "central"] }

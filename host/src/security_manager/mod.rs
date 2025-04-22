@@ -14,9 +14,8 @@ use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
-pub use crypto::IdentityResolvingKey;
-pub use crypto::LongTermKey;
 use crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
+pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
@@ -33,8 +32,7 @@ use crate::pdu::Pdu;
 use crate::prelude::Connection;
 use crate::security_manager::types::UseOutOfBand;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
-use crate::{Address, Error};
-use crate::{Identity, PacketPool};
+use crate::{Address, Error, Identity, PacketPool};
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -442,7 +440,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let result = {
             let mut buffer = [0u8; 72];
             let size = {
-                let size = pdu.len.min(buffer.len());
+                let size = pdu.len().min(buffer.len());
                 buffer[..size].copy_from_slice(&pdu.as_ref()[..size]);
                 size
             };

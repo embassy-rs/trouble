@@ -14,7 +14,7 @@ embassy-sync = { version = "0.6", features = ["defmt"] }
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
 bt-hci = { version = "0.3", default-features = false, features = ["defmt"] }
 trouble-example-apps= { version = "0.1.0", path = "../apps", features = ["defmt"] }
-trouble-host = { path = "../../host", features = ["l2cap-default-packet-pool-mtu-128"] }
+trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-128"] }
 cyw43 = { version = "0.3", features = ["defmt", "firmware-logs", "bluetooth"] }
 cyw43-pio = { version = "0.4", features = ["defmt"] }
 

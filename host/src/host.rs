@@ -304,22 +304,101 @@ where
                     return Ok(());
                 }
 
-                let Some(mut p) = P::allocate() else {
-                    warn!("[host] no memory for packets on channel {}", header.channel);
-                    return Err(Error::OutOfMemory);
-                };
-                p.as_mut()[..data.len()].copy_from_slice(data);
-
+                // We must be prepared to receive fragments.
                 if header.length as usize != data.len() {
-                    self.connections.reassemble_init(acl.handle(), header, p, data.len())?;
+                    // Dynamic channels can be optimized.
+                    #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
+                    if header.channel >= L2CAP_CID_DYN_START {
+                        // This is the start of the frame, so make sure to adjust the credits.
+                        self.channels.received(header.channel, 1)?;
+
+                        self.connections.reassembly(acl.handle(), |p| {
+                            let r = if !p.in_progress() {
+                                // Init the new assembly assuming the length of the SDU.
+                                let (first, payload) = data.split_at(2);
+                                let len: u16 = u16::from_le_bytes([first[0], first[1]]);
+                                let Some(packet) = P::allocate() else {
+                                    warn!("[host] no memory for packets on channel {}", header.channel);
+                                    return Err(Error::OutOfMemory);
+                                };
+                                p.init(header.channel, len, packet)?;
+                                p.update(payload)?
+                            } else {
+                                p.update(data)?
+                            };
+                            // Something is very wrong if assembly was finished since we've not received the last fragment.
+                            assert!(r.is_none());
+                            Ok(())
+                        })?;
+                        return Ok(());
+                    }
+
+                    let Some(packet) = P::allocate() else {
+                        warn!("[host] no memory for packets on channel {}", header.channel);
+                        return Err(Error::OutOfMemory);
+                    };
+                    self.connections.reassembly(acl.handle(), |p| {
+                        p.init(header.channel, header.length, packet)?;
+                        let r = p.update(data)?;
+                        assert!(r.is_none());
+                        Ok(())
+                    })?;
                     return Ok(());
+                } else {
+                    #[allow(unused_mut)]
+                    let mut result = None;
+
+                    #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
+                    if header.channel >= L2CAP_CID_DYN_START {
+                        // This is a complete L2CAP K-frame, so make sure to adjust the credits.
+                        self.channels.received(header.channel, 1)?;
+
+                        if let Some((state, pdu)) = self.connections.reassembly(acl.handle(), |p| {
+                            if !p.in_progress() {
+                                let (first, payload) = data.split_at(2);
+                                let len: u16 = u16::from_le_bytes([first[0], first[1]]);
+
+                                let Some(packet) = P::allocate() else {
+                                    warn!("[host] no memory for packets on channel {}", header.channel);
+                                    return Err(Error::OutOfMemory);
+                                };
+                                p.init(header.channel, len, packet)?;
+                                p.update(payload)
+                            } else {
+                                p.update(data)
+                            }
+                        })? {
+                            result.replace((state, pdu));
+                        } else {
+                            return Ok(());
+                        }
+                    }
+
+                    if let Some((state, pdu)) = result {
+                        (state, pdu)
+                    } else {
+                        let Some(packet) = P::allocate() else {
+                            warn!("[host] no memory for packets on channel {}", header.channel);
+                            return Err(Error::OutOfMemory);
+                        };
+                        let result = self.connections.reassembly(acl.handle(), |p| {
+                            p.init(header.channel, header.length, packet)?;
+                            p.update(data)
+                        })?;
+                        let Some((state, pdu)) = result else {
+                            return Err(Error::InvalidState);
+                        };
+                        (state, pdu)
+                    }
                 }
-                (header, Pdu::new(p, header.length as usize))
             }
             // Next (potentially last) in a fragment
             AclPacketBoundary::Continuing => {
                 // Get the existing fragment
-                if let Some((header, p)) = self.connections.reassemble_fragment(acl.handle(), acl.data())? {
+                if let Some((header, p)) = self.connections.reassembly(acl.handle(), |p| {
+                    assert!(p.in_progress());
+                    p.update(acl.data())
+                })? {
                     (header, p)
                 } else {
                     // Do not process yet
@@ -346,7 +425,7 @@ where
                         length: 3,
                     };
 
-                    let mut packet = pdu.packet;
+                    let mut packet = pdu.into_inner();
                     let mut w = WriteCursor::new(packet.as_mut());
                     w.write_hci(&l2cap)?;
                     w.write(rsp)?;
@@ -382,7 +461,7 @@ where
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
                 self.connections.handle_security_channel(acl.handle(), pdu)?;
             }
-            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, pdu) {
+            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header.channel, pdu) {
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
@@ -1023,7 +1102,7 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;
-            match host.l2cap(conn, pdu.len as u16, 1).await {
+            match host.l2cap(conn, pdu.len() as u16, 1).await {
                 Ok(mut sender) => {
                     if let Err(e) = sender.send(pdu.as_ref()).await {
                         warn!("[host] error sending outbound pdu");
@@ -1058,6 +1137,11 @@ impl<'a, 'd, T: Controller, P> L2capSender<'a, 'd, T, P> {
         T: blocking::Controller,
     {
         let mut pbf = AclPacketBoundary::FirstNonFlushable;
+        //info!(
+        //    "[host] fragmenting PDU of size {} into {} sized fragments",
+        //    pdu.len(),
+        //    self.fragment_size
+        //);
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
             // info!("Sent ACL {:?}", acl);
@@ -1077,6 +1161,11 @@ impl<'a, 'd, T: Controller, P> L2capSender<'a, 'd, T, P> {
     }
 
     pub(crate) async fn send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
+        //info!(
+        //    "[host] fragmenting PDU of size {} into {} sized fragments",
+        //    pdu.len(),
+        //    self.fragment_size
+        //);
         let mut pbf = AclPacketBoundary::FirstNonFlushable;
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);

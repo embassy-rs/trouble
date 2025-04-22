@@ -62,8 +62,11 @@ where
 
             info!("Connection established");
 
+            const PAYLOAD_LEN: usize = 2510;
+            const L2CAP_MTU: usize = 251;
             let l2cap_channel_config = L2capChannelConfig {
-                mtu: P::MTU as u16,
+                mtu: Some(PAYLOAD_LEN as u16 - 6),
+                mps: Some(L2CAP_MTU as u16 - 4),
                 // Ensure there will be enough credits to send data throughout the entire connection event.
                 flow_policy: CreditFlowPolicy::Every(50),
                 initial_credits: Some(200),
@@ -76,8 +79,6 @@ where
             info!("L2CAP channel accepted");
 
             // Size of payload we're expecting
-            const PAYLOAD_LEN: usize = 2510 - 6;
-            const L2CAP_MTU: usize = 251; // TODO: P::MTU;
             const NUM_PAYLOADS: u8 = 40;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..NUM_PAYLOADS {

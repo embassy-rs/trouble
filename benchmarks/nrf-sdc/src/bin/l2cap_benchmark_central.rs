@@ -96,11 +96,12 @@ async fn main(spawner: Spawner) {
     let _ = join(runner.run(), async {
         loop {
             let conn = unwrap!(central.connect(&config).await);
-            const PAYLOAD_LEN: usize = 492;
+            const PAYLOAD_LEN: usize = L2CAP_MTU - 6;
             let config = L2capChannelConfig {
                 flow_policy: CreditFlowPolicy::MinThreshold(4),
                 initial_credits: Some(8),
-                mtu: PAYLOAD_LEN as u16,
+                mtu: Some(PAYLOAD_LEN as u16),
+                mps: Some(L2CAP_MTU as u16 - 4),
             };
             let mut ch1 = unwrap!(L2capChannel::create(&stack, &conn, 0x2349, &config).await);
             info!("sending l2cap data");
