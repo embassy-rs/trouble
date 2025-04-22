@@ -113,10 +113,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     /// does not accept any connections.
     pub async fn update_adv_data<'k>(&mut self, data: Advertisement<'k>) -> Result<(), BleHostError<C::Error>>
     where
-        C: for<'t> ControllerCmdSync<LeSetAdvData>
-            + ControllerCmdSync<LeSetAdvParams>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+        C: for<'t> ControllerCmdSync<LeSetAdvData> + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
         let host = &self.stack.host;
         let data: RawAdvertisement = data.into();
