@@ -692,7 +692,7 @@ impl<'d> ConnectionManager<'d> {
                                 .await?;
                         }
                         // Emit the bonded event after enabling encryption
-                        self.post_event(index as u8, ConnectionEventData::Bonded { bond_info })
+                        self.post_event(index as u8, ConnectionEvent::Bonded { bond_info })
                             .await;
                     } else {
                         warn!("[host] Enable encryption failed, no long term key")

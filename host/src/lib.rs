@@ -21,7 +21,7 @@ use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
 use crate::packet_pool::PacketPool;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, LongTermKey};
+pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable

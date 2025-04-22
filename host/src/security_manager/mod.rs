@@ -14,6 +14,7 @@ use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
+pub use crypto::IdentityResolvingKey;
 pub use crypto::LongTermKey;
 use crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -53,21 +54,47 @@ pub struct BondInformation {
     pub ltk: LongTermKey,
     /// Device address
     pub address: BdAddr,
-    // Identity Resolving Key (IRK)?
+    /// Identity Resolving Key (IRK)
+    pub irk: Option<IdentityResolvingKey>,
     // Connection Signature Resolving Key (CSRK)?
 }
 
 impl BondInformation {
     /// Create a BondInformation
     pub fn new(address: BdAddr, ltk: LongTermKey) -> Self {
-        Self { ltk, address }
+        Self {
+            ltk,
+            address,
+            irk: None,
+        }
+    }
+
+    /// Create a BondInformation with IRK
+    pub fn new_with_irk(address: BdAddr, ltk: LongTermKey, irk: IdentityResolvingKey) -> Self {
+        Self {
+            ltk,
+            address,
+            irk: Some(irk),
+        }
+    }
+
+    /// Check whether the address matches the bond information
+    pub fn match_address(&self, address: &BdAddr) -> bool {
+        match self.irk {
+            Some(irk) => irk.resolve_address(address),
+            None => self.address == *address,
+        }
     }
 }
 
 impl core::fmt::Display for BondInformation {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let a = Address::random(self.address.into_inner());
-        write!(f, "Address {} LTK {}", a, self.ltk)
+        write!(f, "Address {} LTK {}", a, self.ltk)?;
+        if let Some(irk) = &self.irk {
+            write!(f, " IRK {}", irk)?;
+        }
+        Ok(())
     }
 }
 
@@ -75,7 +102,10 @@ impl core::fmt::Display for BondInformation {
 impl defmt::Format for BondInformation {
     fn format(&self, fmt: defmt::Formatter) {
         let a = Address::random(self.address.into_inner());
-        defmt::write!(fmt, "Address {} LTK {}", a, self.ltk)
+        defmt::write!(fmt, "Address {} LTK {}", a, self.ltk);
+        if let Some(irk) = &self.irk {
+            defmt::write!(fmt, " IRK {}", irk);
+        }
     }
 }
 
@@ -228,6 +258,8 @@ struct PairingData {
     ltk: Option<u128>,
     /// Peer device address
     peer_address: Option<Address>,
+    /// Identity Resolving Key
+    irk: Option<IdentityResolvingKey>,
 }
 
 impl PairingData {
@@ -251,6 +283,7 @@ impl PairingData {
             local_check: None,
             ltk: None,
             peer_address: None,
+            irk: None,
         }
     }
     /// Clear pairing data
@@ -354,7 +387,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn get_peer_long_term_key(&self, address: Address) -> Option<LongTermKey> {
         trace!("[security manager] Find long term key for {}", address);
         self.state.borrow().bond.iter().find_map(|bond| {
-            if bond.address == address.addr {
+            if bond.match_address(&address.addr) {
                 Some(bond.ltk)
             } else {
                 None
@@ -372,11 +405,29 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.state.borrow().random_generator_seeded
     }
 
+    /// Generate a resolvable private address using the IRK of a bonded device
+    pub(crate) fn generate_resolvable_address(&self, address: BdAddr) -> Option<[u8; 6]> {
+        let mut rng_borrow = self.rng.borrow_mut();
+        let rng = rng_borrow.deref_mut();
+
+        self.state.borrow().bond.iter().find_map(|bond| {
+            if bond.match_address(&address) {
+                bond.irk.as_ref().map(|irk| irk.generate_resolvable_address(rng))
+            } else {
+                None
+            }
+        })
+    }
+
     /// Add a bonded device
     pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
-        let a = Address::random(bond_information.address.into_inner());
-        trace!("[security manager] Add bond for {}", a);
-        let index = self.state.borrow().bond.iter().position(|bond| bond.address == a.addr);
+        trace!("[security manager] Add bond for {}", bond_information.address);
+        let index = self
+            .state
+            .borrow()
+            .bond
+            .iter()
+            .position(|bond| bond.match_address(&bond_information.address));
         match index {
             Some(index) => {
                 // Replace existing bond if it exists
@@ -394,14 +445,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     /// Remove a bonded device
     pub(crate) fn remove_bond_information(&self, address: BdAddr) -> Result<(), Error> {
-        let a = Address::random(address.into_inner());
-        trace!("[security manager] Remove bond for {}", a);
+        trace!("[security manager] Remove bond for {}", address);
         let index = self
             .state
             .borrow_mut()
             .bond
             .iter()
-            .position(|bond| bond.address == a.addr);
+            .position(|bond| bond.match_address(&address));
         match index {
             Some(index) => {
                 self.state.borrow_mut().bond.remove(index);
@@ -509,6 +559,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 Command::PairingRandom => self.handle_pairing_random(payload, connections, handle, storage),
                 Command::PairingDhKeyCheck => self.handle_pairing_dhkey_check(payload, connections, handle, storage),
                 Command::PairingFailed => self.handle_pairing_failed(payload),
+                Command::IdentityInformation => self.handle_identity_information(payload),
+                Command::IdentityAddressInformation => self.handle_identity_address_information(payload),
                 _ => {
                     warn!("Unhandled Security Manager Protocol command {}", command);
                     Ok(())
@@ -686,11 +738,16 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         if !peer_features.security_properties.secure_connection() {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
-        let local_features = PairingFeatures {
+        let mut local_features = PairingFeatures {
             io_capabilities: IoCapabilities::NoInputNoOutput,
             security_properties: AuthReq::new(BondingFlag::Bonding),
             ..Default::default()
         };
+
+        // Set identity key flag
+        if peer_features.initiator_key_distribution.identity_key() {
+            local_features.initiator_key_distribution.set_identity_key();
+        }
 
         {
             let pairing_state = self.pairing_state.borrow();
@@ -1143,6 +1200,26 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
+    fn handle_identity_information(&self, payload: &[u8]) -> Result<(), Error> {
+        let irk = IdentityResolvingKey::new(u128::from_le_bytes(
+            payload.try_into().map_err(|_| Error::InvalidValue)?,
+        ));
+        self.pairing_state.borrow_mut().irk = Some(irk);
+        info!("Identity information: IRK: {:?}", irk);
+        Ok(())
+    }
+
+    fn handle_identity_address_information(&self, payload: &[u8]) -> Result<(), Error> {
+        let addr_type = payload[0];
+        let addr = BdAddr::new(payload[1..7].try_into().map_err(|_| Error::InvalidValue)?);
+        // How to process the public device address when ​​Resolvable Private Address is used?
+        debug!(
+            "Identity address information: addr_type: {:?}, addr: {:?}",
+            addr_type, addr
+        );
+        Ok(())
+    }
+
     /// Handle recevied events from HCI
     pub(crate) fn handle_event(&self, event: &Event) -> Result<(), Error> {
         match event {
@@ -1185,18 +1262,20 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     fn store_pairing(&self) -> Result<BondInformation, Error> {
         let pairing_state = self.pairing_state.borrow();
+        let irk = pairing_state.irk;
         if let (Some(ltk), Some(peer_address)) = (pairing_state.ltk, pairing_state.peer_address) {
             let ltk = LongTermKey(ltk);
             let bond = BondInformation {
                 address: peer_address.addr,
                 ltk,
+                irk,
             };
 
             let bonds = &mut self.state.borrow_mut().bond;
 
             let mut replaced = false;
             for bond in bonds.iter_mut() {
-                if bond.address == peer_address.addr {
+                if bond.match_address(&peer_address.addr) {
                     bond.ltk = ltk;
                     replaced = true;
                     trace!("[security manager] Replaced bond for {}", peer_address);
