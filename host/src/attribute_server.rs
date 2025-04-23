@@ -40,14 +40,16 @@ impl Default for Identity {
 }
 
 impl Identity {
-    pub(crate) fn match_address(&self, address: &BdAddr) -> bool {
+    /// Check whether the address matches the identity
+    pub fn match_address(&self, address: &BdAddr) -> bool {
         match self {
             Self::BdAddr(addr) => addr == address,
             Self::Irk(irk) => irk.resolve_address(address),
         }
     }
 
-    pub(crate) fn match_identity(&self, identity: &Identity) -> bool {
+    /// Check whether the given identity matches current identity
+    pub fn match_identity(&self, identity: &Identity) -> bool {
         match (self, identity) {
             (Self::BdAddr(addr1), Self::BdAddr(addr2)) => addr1 == addr2,
             (Self::Irk(irk1), Self::Irk(irk2)) => irk1 == irk2,
