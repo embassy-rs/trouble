@@ -237,7 +237,7 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
                     return Ok(());
                 }
             }
-            return Err(Error::NotFound);
+            Err(Error::NotFound)
         })
     }
 }

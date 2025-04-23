@@ -185,7 +185,7 @@ impl defmt::Format for Address {
 /// Because sometimes the peer uses the static or public address even though the IRK is sent.
 /// In this case, the IRK exists but the used address is not RPA.
 /// Should `Address` be used instead?
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Identity {
     /// Random static or public address
     pub bd_addr: BdAddr,
@@ -201,16 +201,6 @@ impl defmt::Format for Identity {
         defmt::write!(fmt, "BdAddr({:X}) ", self.bd_addr);
         #[cfg(feature = "security")]
         defmt::write!(fmt, "Irk({:X})", self.irk);
-    }
-}
-
-impl Default for Identity {
-    fn default() -> Self {
-        Self {
-            bd_addr: BdAddr::default(),
-            #[cfg(feature = "security")]
-            irk: None,
-        }
     }
 }
 
