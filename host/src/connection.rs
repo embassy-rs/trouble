@@ -19,7 +19,7 @@ use crate::prelude::Identity;
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::BondInformation;
-use crate::{BleHostError, Error, Stack};
+use crate::{BleHostError, Error, PacketPool, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -140,35 +140,27 @@ impl Default for ConnectParams {
 /// Handle to a BLE connection.
 ///
 /// When the last reference to a connection is dropped, the connection is automatically disconnected.
-pub struct Connection<'stack> {
+pub struct Connection<'stack, P: PacketPool> {
     index: u8,
-    manager: &'stack ConnectionManager<'stack>,
+    manager: &'stack ConnectionManager<'stack, P>,
 }
 
-impl Clone for Connection<'_> {
+impl<P: PacketPool> Clone for Connection<'_, P> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
         Connection::new(self.index, self.manager)
     }
 }
 
-impl Drop for Connection<'_> {
+impl<P: PacketPool> Drop for Connection<'_, P> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);
     }
 }
 
-impl<'stack> Connection<'stack> {
-    pub(crate) fn new(index: u8, manager: &'stack ConnectionManager<'stack>) -> Self {
+impl<'stack, P: PacketPool> Connection<'stack, P> {
+    pub(crate) fn new(index: u8, manager: &'stack ConnectionManager<'stack, P>) -> Self {
         Self { index, manager }
-    }
-
-    pub(crate) fn completed_packets(&self, amount: u16) {
-        #[cfg(feature = "controller-host-flow-control")]
-        {
-            let handle = self.manager.handle(self.index);
-            self.manager.completed_packets(handle, amount);
-        }
     }
 
     pub(crate) fn set_att_mtu(&self, mtu: u16) {
@@ -179,21 +171,16 @@ impl<'stack> Connection<'stack> {
         self.manager.get_att_mtu(self.index)
     }
 
-    pub(crate) async fn send(&self, pdu: Pdu) {
+    pub(crate) async fn send(&self, pdu: Pdu<P::Packet>) {
         self.manager.send(self.index, pdu).await
     }
 
-    pub(crate) fn try_send(&self, pdu: Pdu) -> Result<(), Error> {
+    pub(crate) fn try_send(&self, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         self.manager.try_send(self.index, pdu)
     }
 
     pub(crate) async fn post_event(&self, event: ConnectionEvent) {
         self.manager.post_event(self.index, event).await
-    }
-
-    #[cfg(feature = "gatt")]
-    pub(crate) fn alloc_tx(&self) -> Result<crate::packet_pool::Packet, Error> {
-        self.manager.alloc_tx()
     }
 
     /// Wait for next connection event.
@@ -202,7 +189,7 @@ impl<'stack> Connection<'stack> {
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) async fn next_gatt(&self) -> Pdu {
+    pub(crate) async fn next_gatt(&self) -> Pdu<P::Packet> {
         self.manager.next_gatt(self.index).await
     }
 
@@ -254,7 +241,7 @@ impl<'stack> Connection<'stack> {
     }
 
     /// The RSSI value for this connection.
-    pub async fn rssi<T>(&self, stack: &Stack<'_, T>) -> Result<i8, BleHostError<T::Error>>
+    pub async fn rssi<T>(&self, stack: &Stack<'_, T, P>) -> Result<i8, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
     {
@@ -267,7 +254,7 @@ impl<'stack> Connection<'stack> {
     ///
     /// This updates both TX and RX phy of the connection. For more fine grained control,
     /// use the LeSetPhy HCI command directly.
-    pub async fn set_phy<T>(&self, stack: &Stack<'_, T>, phy: PhyKind) -> Result<(), BleHostError<T::Error>>
+    pub async fn set_phy<T>(&self, stack: &Stack<'_, T, P>, phy: PhyKind) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdAsync<LeSetPhy>,
     {
@@ -303,7 +290,7 @@ impl<'stack> Connection<'stack> {
     }
 
     /// Read the current phy used for the connection.
-    pub async fn read_phy<T>(&self, stack: &Stack<'_, T>) -> Result<(PhyKind, PhyKind), BleHostError<T::Error>>
+    pub async fn read_phy<T>(&self, stack: &Stack<'_, T, P>) -> Result<(PhyKind, PhyKind), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeReadPhy>,
     {
@@ -314,7 +301,7 @@ impl<'stack> Connection<'stack> {
     /// Update connection parameters for this connection.
     pub async fn update_connection_params<T>(
         &self,
-        stack: &Stack<'_, T>,
+        stack: &Stack<'_, T, P>,
         params: &ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
@@ -353,8 +340,8 @@ impl<'stack> Connection<'stack> {
         const CONN_MAX: usize,
     >(
         self,
-        server: &'server AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX>,
-    ) -> Result<GattConnection<'stack, 'server>, Error> {
+        server: &'server AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>,
+    ) -> Result<GattConnection<'stack, 'server, P>, Error> {
         GattConnection::try_new(self, server)
     }
 }

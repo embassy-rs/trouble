@@ -1,7 +1,7 @@
 use futures::future::join;
 use std::time::Duration;
 use tokio::select;
-use trouble_example_tests::{serial, TestContext};
+use trouble_example_tests::{TestContext, serial};
 use trouble_host::prelude::*;
 
 #[tokio::test]
@@ -48,7 +48,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
     let peripheral = tokio::task::spawn_local(async move {
         let controller_peripheral = serial::create_controller(&peripheral).await;
 
-        let mut resources: HostResources<2, 4, 27> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, 2, 4> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources).set_random_address(peripheral_address);
         let Host {
             mut peripheral,

@@ -12,28 +12,24 @@ use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::TimeoutError;
 
 use crate::connection::{Connection, ConnectionEvent};
-#[cfg(feature = "gatt")]
-use crate::packet_pool::{Packet, Pool};
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 use crate::prelude::Identity;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, Error};
+use crate::{config, Error, PacketPool};
 
-struct State<'d> {
-    connections: &'d mut [ConnectionStorage],
+struct State<'d, P> {
+    connections: &'d mut [ConnectionStorage<P>],
     central_waker: WakerRegistration,
     peripheral_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
-    #[cfg(feature = "controller-host-flow-control")]
-    completed_packets_waker: WakerRegistration,
     default_link_credits: usize,
     default_att_mtu: u16,
 }
 
-impl State<'_> {
+impl<P> State<'_, P> {
     fn print(&self, verbose: bool) {
         for (idx, storage) in self.connections.iter().enumerate() {
             if verbose || storage.state != ConnectionState::Disconnected {
@@ -52,37 +48,27 @@ impl State<'_> {
 }
 
 type EventChannel = Channel<NoopRawMutex, ConnectionEvent, { config::CONNECTION_EVENT_QUEUE_SIZE }>;
-type GattChannel = Channel<NoopRawMutex, Pdu, { config::L2CAP_RX_QUEUE_SIZE }>;
+type GattChannel<P> = Channel<NoopRawMutex, Pdu<P>, { config::L2CAP_RX_QUEUE_SIZE }>;
 
-pub(crate) struct ConnectionManager<'d> {
-    state: RefCell<State<'d>>,
-    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_TX_QUEUE_SIZE }>,
-    #[cfg(feature = "gatt")]
-    tx_pool: &'d dyn Pool,
+pub(crate) struct ConnectionManager<'d, P: PacketPool> {
+    state: RefCell<State<'d, P::Packet>>,
+    outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "security")]
     pub(crate) security_manager: SecurityManager<{ crate::BI_COUNT }>,
 }
 
-impl<'d> ConnectionManager<'d> {
-    pub(crate) fn new(
-        connections: &'d mut [ConnectionStorage],
-        default_att_mtu: u16,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
-    ) -> Self {
+impl<'d, P: PacketPool> ConnectionManager<'d, P> {
+    pub(crate) fn new(connections: &'d mut [ConnectionStorage<P::Packet>], default_att_mtu: u16) -> Self {
         Self {
             state: RefCell::new(State {
                 connections,
                 central_waker: WakerRegistration::new(),
                 peripheral_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
-                #[cfg(feature = "controller-host-flow-control")]
-                completed_packets_waker: WakerRegistration::new(),
                 default_link_credits: 0,
                 default_att_mtu,
             }),
             outbound: Channel::new(),
-            #[cfg(feature = "gatt")]
-            tx_pool,
             #[cfg(feature = "security")]
             security_manager: SecurityManager::new(),
         }
@@ -114,7 +100,7 @@ impl<'d> ConnectionManager<'d> {
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) async fn next_gatt(&self, index: u8) -> Pdu {
+    pub(crate) async fn next_gatt(&self, index: u8) -> Pdu<P::Packet> {
         poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].gatt.poll_receive(cx))).await
     }
 
@@ -136,7 +122,7 @@ impl<'d> ConnectionManager<'d> {
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) fn post_gatt(&self, handle: ConnHandle, pdu: Pdu) -> Result<(), Error> {
+    pub(crate) fn post_gatt(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         self.with_mut(|state| {
             for entry in state.connections.iter() {
                 if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
@@ -181,21 +167,6 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
-    pub(crate) fn completed_packets(&self, _handle: ConnHandle, _amount: u16) {
-        #[cfg(feature = "controller-host-flow-control")]
-        self.with_mut(|state| {
-            let handle = _handle;
-            let amount = _amount;
-            for entry in state.connections.iter_mut() {
-                if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
-                    entry.completed_packets += amount;
-                    state.completed_packets_waker.wake();
-                    break;
-                }
-            }
-        })
-    }
-
     pub(crate) fn request_handle_disconnect(&self, handle: ConnHandle, reason: DisconnectReason) {
         self.with_mut(|state| {
             for entry in state.connections.iter_mut() {
@@ -208,7 +179,10 @@ impl<'d> ConnectionManager<'d> {
         })
     }
 
-    pub(crate) fn poll_disconnecting<'m>(&'m self, cx: Option<&mut Context<'_>>) -> Poll<DisconnectRequest<'m, 'd>> {
+    pub(crate) fn poll_disconnecting<'m>(
+        &'m self,
+        cx: Option<&mut Context<'_>>,
+    ) -> Poll<DisconnectRequest<'m, 'd, P::Packet>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
             state.disconnect_waker.register(cx.waker());
@@ -226,45 +200,7 @@ impl<'d> ConnectionManager<'d> {
         Poll::Pending
     }
 
-    pub(crate) fn poll_completed_packets<'m>(
-        &'m self,
-        _cursor: usize,
-        _cx: Option<&mut Context<'_>>,
-    ) -> Poll<CompletedPackets<'m, 'd>> {
-        #[cfg(feature = "controller-host-flow-control")]
-        {
-            let cursor = _cursor;
-            let cx = _cx;
-            let mut state = self.state.borrow_mut();
-            if let Some(cx) = cx {
-                state.completed_packets_waker.register(cx.waker());
-            }
-            let mut pos = cursor;
-            let end = if pos > 0 { pos - 1 } else { state.connections.len() - 1 };
-
-            loop {
-                let next = (pos + 1) % state.connections.len();
-                let storage = &state.connections[pos];
-                if let ConnectionState::Connected = storage.state {
-                    if storage.completed_packets > 0 {
-                        return Poll::Ready(CompletedPackets {
-                            index: pos,
-                            handle: storage.handle.unwrap(),
-                            amount: storage.completed_packets,
-                            state: &self.state,
-                        });
-                    }
-                }
-                if pos == end {
-                    break;
-                }
-                pos = next;
-            }
-        }
-        Poll::Pending
-    }
-
-    pub(crate) fn get_connected_handle(&'d self, h: ConnHandle) -> Option<Connection<'d>> {
+    pub(crate) fn get_connected_handle(&'d self, h: ConnHandle) -> Option<Connection<'d, P>> {
         let mut state = self.state.borrow_mut();
         for (index, storage) in state.connections.iter().enumerate() {
             match (storage.handle, &storage.state) {
@@ -278,7 +214,7 @@ impl<'d> ConnectionManager<'d> {
         None
     }
 
-    pub(crate) fn with_connected_handle<F: FnOnce(&mut ConnectionStorage) -> Result<R, Error>, R>(
+    pub(crate) fn with_connected_handle<F: FnOnce(&mut ConnectionStorage<P::Packet>) -> Result<R, Error>, R>(
         &self,
         h: ConnHandle,
         f: F,
@@ -314,13 +250,18 @@ impl<'d> ConnectionManager<'d> {
         &self,
         h: ConnHandle,
         header: L2capHeader,
-        p: crate::packet_pool::Packet,
+        p: P::Packet,
         initial: usize,
     ) -> Result<(), Error> {
         self.with_connected_handle(h, |storage| storage.reassembly.init(header, p, initial))
     }
 
-    pub(crate) fn reassemble_fragment(&self, h: ConnHandle, data: &[u8]) -> Result<Option<(L2capHeader, Pdu)>, Error> {
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn reassemble_fragment(
+        &self,
+        h: ConnHandle,
+        data: &[u8],
+    ) -> Result<Option<(L2capHeader, Pdu<P::Packet>)>, Error> {
         self.with_connected_handle(h, |storage| storage.reassembly.update(data))
     }
 
@@ -360,10 +301,6 @@ impl<'d> ConnectionManager<'d> {
                 storage.events.clear();
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
-                #[cfg(feature = "controller-host-flow-control")]
-                {
-                    storage.completed_packets = 0;
-                }
                 // Default ATT MTU is 23
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
@@ -390,7 +327,7 @@ impl<'d> ConnectionManager<'d> {
         role: LeConnRole,
         peers: &[(AddrKind, &BdAddr)],
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<Connection<'d>> {
+    ) -> Poll<Connection<'d, P>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
             match role {
@@ -443,7 +380,7 @@ impl<'d> ConnectionManager<'d> {
         Poll::Pending
     }
 
-    fn with_mut<F: FnOnce(&mut State<'d>) -> R, R>(&self, f: F) -> R {
+    fn with_mut<F: FnOnce(&mut State<'d, P::Packet>) -> R, R>(&self, f: F) -> R {
         let mut state = self.state.borrow_mut();
         f(&mut state)
     }
@@ -472,7 +409,7 @@ impl<'d> ConnectionManager<'d> {
         });
     }
 
-    pub(crate) async fn accept(&'d self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> Connection<'d> {
+    pub(crate) async fn accept(&'d self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> Connection<'d, P> {
         poll_fn(|cx| self.poll_accept(role, peers, Some(cx))).await
     }
 
@@ -509,7 +446,7 @@ impl<'d> ConnectionManager<'d> {
         handle: ConnHandle,
         packets: usize,
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<Result<PacketGrant<'_, 'd>, Error>> {
+    ) -> Poll<Result<PacketGrant<'_, 'd, P::Packet>, Error>> {
         let mut state = self.state.borrow_mut();
         for storage in state.connections.iter_mut() {
             match storage.state {
@@ -539,26 +476,21 @@ impl<'d> ConnectionManager<'d> {
         self.with_mut(|state| state.connections[index as usize].att_mtu)
     }
 
-    pub(crate) async fn send(&self, index: u8, pdu: Pdu) {
+    pub(crate) async fn send(&self, index: u8, pdu: Pdu<P::Packet>) {
         let handle = self.with_mut(|state| state.connections[index as usize].handle.unwrap());
         self.outbound.send((handle, pdu)).await
     }
 
-    #[cfg(feature = "gatt")]
-    pub(crate) fn alloc_tx(&self) -> Result<Packet, Error> {
-        self.tx_pool.alloc().ok_or(Error::OutOfMemory)
-    }
-
-    pub(crate) fn try_send(&self, index: u8, pdu: Pdu) -> Result<(), Error> {
+    pub(crate) fn try_send(&self, index: u8, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         let handle = self.with_mut(|state| state.connections[index as usize].handle.unwrap());
         self.outbound.try_send((handle, pdu)).map_err(|_| Error::OutOfMemory)
     }
 
-    pub(crate) fn try_outbound(&self, handle: ConnHandle, pdu: Pdu) -> Result<(), Error> {
+    pub(crate) fn try_outbound(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         self.outbound.try_send((handle, pdu)).map_err(|_| Error::OutOfMemory)
     }
 
-    pub(crate) async fn outbound(&self) -> (ConnHandle, Pdu) {
+    pub(crate) async fn outbound(&self) -> (ConnHandle, Pdu<P::Packet>) {
         self.outbound.receive().await
     }
 
@@ -600,7 +532,7 @@ impl<'d> ConnectionManager<'d> {
         false
     }
 
-    pub(crate) fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu) -> Result<(), Error> {
+    pub(crate) fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let state = self.state.borrow();
@@ -740,14 +672,14 @@ impl<'d> ConnectionManager<'d> {
     }
 }
 
-pub struct DisconnectRequest<'a, 'd> {
+pub struct DisconnectRequest<'a, 'd, P> {
     index: usize,
     handle: ConnHandle,
     reason: DisconnectReason,
-    state: &'a RefCell<State<'d>>,
+    state: &'a RefCell<State<'d, P>>,
 }
 
-impl DisconnectRequest<'_, '_> {
+impl<P> DisconnectRequest<'_, '_, P> {
     pub fn handle(&self) -> ConnHandle {
         self.handle
     }
@@ -761,36 +693,7 @@ impl DisconnectRequest<'_, '_> {
         state.connections[self.index].state = ConnectionState::Disconnecting(self.reason);
     }
 }
-
-pub(crate) struct CompletedPackets<'a, 'd> {
-    state: &'a RefCell<State<'d>>,
-    handle: ConnHandle,
-    amount: u16,
-    index: usize,
-}
-
-#[cfg(feature = "controller-host-flow-control")]
-impl CompletedPackets<'_, '_> {
-    pub(crate) fn amount(&self) -> u16 {
-        self.amount
-    }
-
-    pub(crate) fn handle(&self) -> ConnHandle {
-        self.handle
-    }
-
-    pub(crate) fn confirm(self) -> usize {
-        let mut state = self.state.borrow_mut();
-        let connection = &mut state.connections[self.index];
-        if connection.state == ConnectionState::Connected && connection.handle == Some(self.handle) {
-            connection.completed_packets = connection.completed_packets.saturating_sub(self.amount);
-        }
-
-        (self.index + 1) % state.connections.len()
-    }
-}
-
-pub struct ConnectionStorage {
+pub struct ConnectionStorage<P> {
     pub state: ConnectionState,
     pub handle: Option<ConnHandle>,
     pub role: Option<LeConnRole>,
@@ -799,17 +702,15 @@ pub struct ConnectionStorage {
     pub att_mtu: u16,
     pub link_credits: usize,
     pub link_credit_waker: WakerRegistration,
-    #[cfg(feature = "controller-host-flow-control")]
-    pub completed_packets: u16,
     pub refcount: u8,
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
     #[cfg(feature = "security")]
     pub encrypted: bool,
     pub events: EventChannel,
-    pub reassembly: PacketReassembly,
+    pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
-    pub gatt: GattChannel,
+    pub gatt: GattChannel<P>,
 }
 
 /// Connection metrics
@@ -874,8 +775,8 @@ impl defmt::Format for Metrics {
     }
 }
 
-impl ConnectionStorage {
-    pub(crate) const fn new() -> ConnectionStorage {
+impl<P> ConnectionStorage<P> {
+    pub(crate) const fn new() -> ConnectionStorage<P> {
         ConnectionStorage {
             state: ConnectionState::Disconnected,
             handle: None,
@@ -884,8 +785,6 @@ impl ConnectionStorage {
             peer_identity: None,
             att_mtu: 23,
             link_credits: 0,
-            #[cfg(feature = "controller-host-flow-control")]
-            completed_packets: 0,
             link_credit_waker: WakerRegistration::new(),
             refcount: 0,
             #[cfg(feature = "connection-metrics")]
@@ -900,7 +799,7 @@ impl ConnectionStorage {
     }
 }
 
-impl core::fmt::Debug for ConnectionStorage {
+impl<P> core::fmt::Debug for ConnectionStorage<P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut d = f.debug_struct("ConnectionStorage");
         let d = d
@@ -916,7 +815,7 @@ impl core::fmt::Debug for ConnectionStorage {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for ConnectionStorage {
+impl<P> defmt::Format for ConnectionStorage<P> {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
@@ -926,8 +825,6 @@ impl defmt::Format for ConnectionStorage {
             self.link_credits,
         );
 
-        #[cfg(feature = "controller-host-flow-control")]
-        defmt::write!(f, ", completed = {}", self.completed_packets);
         defmt::write!(
             f,
             ", role = {}, peer = {}, ref = {}",
@@ -951,14 +848,14 @@ pub enum ConnectionState {
     Connected,
 }
 
-pub struct PacketGrant<'a, 'd> {
-    state: &'a RefCell<State<'d>>,
+pub struct PacketGrant<'a, 'd, P> {
+    state: &'a RefCell<State<'d, P>>,
     handle: ConnHandle,
     packets: usize,
 }
 
-impl<'a, 'd> PacketGrant<'a, 'd> {
-    fn new(state: &'a RefCell<State<'d>>, handle: ConnHandle, packets: usize) -> Self {
+impl<'a, 'd, P> PacketGrant<'a, 'd, P> {
+    fn new(state: &'a RefCell<State<'d, P>>, handle: ConnHandle, packets: usize) -> Self {
         Self { state, handle, packets }
     }
 
@@ -980,7 +877,7 @@ impl<'a, 'd> PacketGrant<'a, 'd> {
     }
 }
 
-impl Drop for PacketGrant<'_, '_> {
+impl<P> Drop for PacketGrant<'_, '_, P> {
     fn drop(&mut self) {
         if self.packets > 0 {
             let mut state = self.state.borrow_mut();
@@ -1003,19 +900,20 @@ impl Drop for PacketGrant<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::PacketPool;
     extern crate std;
+
     use std::boxed::Box;
 
     use embassy_futures::block_on;
 
+    use crate::prelude::*;
+
     const ADDR_1: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
     const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
 
-    fn setup() -> &'static ConnectionManager<'static> {
+    fn setup() -> &'static ConnectionManager<'static, DefaultPacketPool> {
         let storage = Box::leak(Box::new([const { ConnectionStorage::new() }; 3]));
-        let pool = Box::leak(Box::new(PacketPool::<27, 8>::new()));
-        let mgr = ConnectionManager::new(&mut storage[..], 23, pool);
+        let mgr = ConnectionManager::new(&mut storage[..], 23);
         Box::leak(Box::new(mgr))
     }
 

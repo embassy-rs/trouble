@@ -1,4 +1,5 @@
 use core::cell::RefCell;
+use core::marker::PhantomData;
 
 use bt_hci::param::BdAddr;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -11,7 +12,7 @@ use crate::prelude::Connection;
 #[cfg(feature = "security")]
 use crate::security_manager::IdentityResolvingKey;
 use crate::types::uuid::Uuid;
-use crate::{codec, Error};
+use crate::{codec, Error, PacketPool};
 
 /// Identity of a peer device
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +45,7 @@ impl Identity {
     pub fn match_address(&self, address: &BdAddr) -> bool {
         match self {
             Self::BdAddr(addr) => addr == address,
+            #[cfg(feature = "security")]
             Self::Irk(irk) => irk.resolve_address(address),
         }
     }
@@ -52,8 +54,11 @@ impl Identity {
     pub fn match_identity(&self, identity: &Identity) -> bool {
         match (self, identity) {
             (Self::BdAddr(addr1), Self::BdAddr(addr2)) => addr1 == addr2,
+            #[cfg(feature = "security")]
             (Self::Irk(irk1), Self::Irk(irk2)) => irk1 == irk2,
+            #[cfg(feature = "security")]
             (Self::Irk(irk), Self::BdAddr(addr)) => irk.resolve_address(addr),
+            #[cfg(feature = "security")]
             (Self::BdAddr(addr), Self::Irk(irk)) => irk.resolve_address(addr),
         }
     }
@@ -291,48 +296,66 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
 }
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct AttributeServer<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> {
+pub struct AttributeServer<
+    'values,
+    M: RawMutex,
+    P: PacketPool,
+    const ATT_MAX: usize,
+    const CCCD_MAX: usize,
+    const CONN_MAX: usize,
+> {
     att_table: AttributeTable<'values, M, ATT_MAX>,
     cccd_tables: CccdTables<M, CCCD_MAX, CONN_MAX>,
+    _p: PhantomData<P>,
 }
 
 pub(crate) mod sealed {
     use super::*;
 
-    pub trait DynamicAttributeServer {
-        fn connect(&self, connection: &Connection) -> Result<(), Error>;
-        fn disconnect(&self, connection: &Connection);
-        fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error>;
-        fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool;
+    pub trait DynamicAttributeServer<P: PacketPool> {
+        fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error>;
+        fn disconnect(&self, connection: &Connection<'_, P>);
+        fn process(
+            &self,
+            connection: &Connection<'_, P>,
+            packet: &AttClient,
+            rx: &mut [u8],
+        ) -> Result<Option<usize>, Error>;
+        fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool;
         fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
         fn update_identity(&self, identity: Identity) -> Result<(), Error>;
     }
 }
 
 /// Type erased attribute server
-pub trait DynamicAttributeServer: sealed::DynamicAttributeServer {}
+pub trait DynamicAttributeServer<P: PacketPool>: sealed::DynamicAttributeServer<P> {}
 
-impl<M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> DynamicAttributeServer
-    for AttributeServer<'_, M, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
+    DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
 {
 }
-impl<M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> sealed::DynamicAttributeServer
-    for AttributeServer<'_, M, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
+    sealed::DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
 {
-    fn connect(&self, connection: &Connection) -> Result<(), Error> {
+    fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
         AttributeServer::connect(self, connection)
     }
 
-    fn disconnect(&self, connection: &Connection) {
+    fn disconnect(&self, connection: &Connection<'_, P>) {
         self.cccd_tables.disconnect(&connection.peer_identity());
     }
 
-    fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn process(
+        &self,
+        connection: &Connection<'_, P>,
+        packet: &AttClient,
+        rx: &mut [u8],
+    ) -> Result<Option<usize>, Error> {
         let res = AttributeServer::process(self, connection, packet, rx)?;
         Ok(res)
     }
 
-    fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool {
+    fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
         AttributeServer::should_notify(self, connection, cccd_handle)
     }
 
@@ -345,28 +368,32 @@ impl<M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: u
     }
 }
 
-impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
-    AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
+    AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
 {
     /// Create a new instance of the AttributeServer
     pub fn new(
         att_table: AttributeTable<'values, M, ATT_MAX>,
-    ) -> AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX> {
+    ) -> AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX> {
         let cccd_tables = CccdTables::new(&att_table);
-        AttributeServer { att_table, cccd_tables }
+        AttributeServer {
+            att_table,
+            cccd_tables,
+            _p: PhantomData,
+        }
     }
 
-    pub(crate) fn connect(&self, connection: &Connection<'_>) -> Result<(), Error> {
+    pub(crate) fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
         self.cccd_tables.connect(&connection.peer_identity())
     }
 
-    pub(crate) fn should_notify(&self, connection: &Connection<'_>, cccd_handle: u16) -> bool {
+    pub(crate) fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
         self.cccd_tables.should_notify(&connection.peer_identity(), cccd_handle)
     }
 
     fn read_attribute_data(
         &self,
-        connection: &Connection<'_>,
+        connection: &Connection<'_, P>,
         offset: usize,
         att: &mut Attribute<'values>,
         data: &mut [u8],
@@ -384,7 +411,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn write_attribute_data(
         &self,
-        connection: &Connection<'_>,
+        connection: &Connection<'_, P>,
         offset: usize,
         att: &mut Attribute<'values>,
         data: &[u8],
@@ -405,7 +432,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_read_by_type_req(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         start: u16,
         end: u16,
@@ -447,7 +474,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_read_by_group_type_req(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         start: u16,
         end: u16,
@@ -488,7 +515,12 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
         }
     }
 
-    fn handle_read_req(&self, connection: &Connection, buf: &mut [u8], handle: u16) -> Result<usize, codec::Error> {
+    fn handle_read_req(
+        &self,
+        connection: &Connection<'_, P>,
+        buf: &mut [u8],
+        handle: u16,
+    ) -> Result<usize, codec::Error> {
         let mut data = WriteCursor::new(buf);
 
         data.write(att::ATT_READ_RSP)?;
@@ -515,7 +547,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_write_cmd(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         handle: u16,
         data: &[u8],
@@ -534,7 +566,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_write_req(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         handle: u16,
         data: &[u8],
@@ -652,7 +684,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_prepare_write(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         handle: u16,
         offset: u16,
@@ -689,7 +721,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_read_blob(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         handle: u16,
         offset: u16,
@@ -730,7 +762,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
     /// Process an event and produce a response if necessary
     pub fn process(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         packet: &AttClient,
         rx: &mut [u8],
     ) -> Result<Option<usize>, codec::Error> {
@@ -796,12 +828,12 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
     }
 
     /// Get the CCCD table for a connection
-    pub fn get_cccd_table(&self, connection: &Connection) -> Option<CccdTable<CCCD_MAX>> {
+    pub fn get_cccd_table(&self, connection: &Connection<'_, P>) -> Option<CccdTable<CCCD_MAX>> {
         self.cccd_tables.get_cccd_table(&connection.peer_identity())
     }
 
     /// Set the CCCD table for a connection
-    pub fn set_cccd_table(&self, connection: &Connection, table: CccdTable<CCCD_MAX>) {
+    pub fn set_cccd_table(&self, connection: &Connection<'_, P>, table: CccdTable<CCCD_MAX>) {
         self.cccd_tables.set_cccd_table(&connection.peer_identity(), table);
     }
 }
