@@ -800,9 +800,5 @@ mod tests {
         let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
         let re = irk.resolve_address(&address);
         assert_eq!(re, true);
-        // let irk = IdentityResolvingKey::new(0x7586c92dbd9381e9513ed8c8bd58636);
-        // let address = BdAddr::new([0x23, 0xec, 0xd8, 0x67, 0x7e, 0x6c]);
-        // let re = irk.resolve_address(&address);
-        // assert_eq!(re, true);
     }
 }

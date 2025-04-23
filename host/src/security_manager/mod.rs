@@ -30,11 +30,11 @@ use types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
 use crate::codec::{Decode, Encode};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
-use crate::prelude::{Connection, Identity};
+use crate::prelude::Connection;
 use crate::security_manager::types::UseOutOfBand;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
-use crate::PacketPool;
 use crate::{Address, Error};
+use crate::{Identity, PacketPool};
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {

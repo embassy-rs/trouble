@@ -21,7 +21,6 @@ use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
-use crate::attribute_server::Identity;
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable
@@ -103,6 +102,7 @@ pub mod prelude {
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
     pub use crate::Address;
+    pub use crate::Identity;
 }
 
 #[cfg(feature = "gatt")]
@@ -176,6 +176,71 @@ impl defmt::Format for Address {
             a[1],
             a[0]
         )
+    }
+}
+
+/// Identity of a peer device
+///
+/// Sometimes we have to save both the address and the IRK.
+/// Because sometimes the peer uses the static or public address even though the IRK is sent.
+/// In this case, the IRK exists but the used address is not RPA.
+/// Should `Address` be used instead?
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Identity {
+    /// Random static or public address
+    pub bd_addr: BdAddr,
+
+    /// Identity Resolving Key
+    #[cfg(feature = "security")]
+    pub irk: Option<IdentityResolvingKey>,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Identity {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "BdAddr({:X}) ", self.bd_addr);
+        #[cfg(feature = "security")]
+        defmt::write!(fmt, "Irk({:X})", self.irk);
+    }
+}
+
+impl Default for Identity {
+    fn default() -> Self {
+        Self {
+            bd_addr: BdAddr::default(),
+            #[cfg(feature = "security")]
+            irk: None,
+        }
+    }
+}
+
+impl Identity {
+    /// Check whether the address matches the identity
+    pub fn match_address(&self, address: &BdAddr) -> bool {
+        if self.bd_addr == *address {
+            return true;
+        }
+        #[cfg(feature = "security")]
+        if let Some(irk) = self.irk {
+            return irk.resolve_address(address);
+        }
+        false
+    }
+
+    /// Check whether the given identity matches current identity
+    pub fn match_identity(&self, identity: &Identity) -> bool {
+        if self.match_address(&identity.bd_addr) {
+            return true;
+        }
+        #[cfg(feature = "security")]
+        if let Some(irk) = identity.irk {
+            if let Some(current_irk) = self.irk {
+                return irk == current_irk;
+            } else {
+                return irk.resolve_address(&self.bd_addr);
+            }
+        }
+        false
     }
 }
 

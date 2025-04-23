@@ -14,11 +14,10 @@ use embassy_time::TimeoutError;
 use crate::connection::{Connection, ConnectionEvent};
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
-use crate::prelude::Identity;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, Error, PacketPool};
+use crate::{config, Error, Identity, PacketPool};
 
 struct State<'d, P> {
     connections: &'d mut [ConnectionStorage<P>],

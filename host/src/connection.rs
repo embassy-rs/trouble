@@ -14,12 +14,11 @@ use crate::connection_manager::ConnectionManager;
 #[cfg(feature = "connection-metrics")]
 pub use crate::connection_manager::Metrics as ConnectionMetrics;
 use crate::pdu::Pdu;
-use crate::prelude::Identity;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::BondInformation;
-use crate::{BleHostError, Error, PacketPool, Stack};
+use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
