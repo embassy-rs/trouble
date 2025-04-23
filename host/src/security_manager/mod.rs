@@ -80,9 +80,18 @@ impl BondInformation {
 
     /// Check whether the address matches the bond information
     pub fn match_address(&self, address: &BdAddr) -> bool {
-        match self.irk {
-            Some(irk) => irk.resolve_address(address),
-            None => self.address == *address,
+        info!("Matching address");
+        // Check the address first
+        if self.address == *address {
+            return true;
+        }
+        // Then check the IRK
+        // This is because when the connection is just established, the address may not updated to RPA, so the comparing of address should be done first.
+        if let Some(irk) = &self.irk {
+            info!("Matching IRK {:?} for address: {:?}", irk, address);
+            irk.resolve_address(address)
+        } else {
+            false
         }
     }
 }
@@ -387,6 +396,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn get_peer_long_term_key(&self, address: Address) -> Option<LongTermKey> {
         trace!("[security manager] Find long term key for {}", address);
         self.state.borrow().bond.iter().find_map(|bond| {
+            info!("Matching address: {}", bond);
             if bond.match_address(&address.addr) {
                 Some(bond.ltk)
             } else {
@@ -421,7 +431,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     /// Add a bonded device
     pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
-        trace!("[security manager] Add bond for {}", bond_information.address);
+        trace!("[security manager] Add bond for {:?}", bond_information.address);
         let index = self
             .state
             .borrow()
@@ -445,7 +455,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     /// Remove a bonded device
     pub(crate) fn remove_bond_information(&self, address: BdAddr) -> Result<(), Error> {
-        trace!("[security manager] Remove bond for {}", address);
+        trace!("[security manager] Remove bond for {:?}", address);
         let index = self
             .state
             .borrow_mut()
@@ -559,7 +569,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 Command::PairingRandom => self.handle_pairing_random(payload, connections, handle, storage),
                 Command::PairingDhKeyCheck => self.handle_pairing_dhkey_check(payload, connections, handle, storage),
                 Command::PairingFailed => self.handle_pairing_failed(payload),
-                Command::IdentityInformation => self.handle_identity_information(payload),
+                Command::IdentityInformation => self.handle_identity_information(payload, handle),
                 Command::IdentityAddressInformation => self.handle_identity_address_information(payload),
                 _ => {
                     warn!("Unhandled Security Manager Protocol command {}", command);
@@ -1200,11 +1210,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
-    fn handle_identity_information(&self, payload: &[u8]) -> Result<(), Error> {
+    fn handle_identity_information(&self, payload: &[u8], handle: ConnHandle) -> Result<(), Error> {
         let irk = IdentityResolvingKey::new(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
         self.pairing_state.borrow_mut().irk = Some(irk);
+        let bond_info = self.store_pairing()?;
+        self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))?;
         info!("Identity information: IRK: {:?}", irk);
         Ok(())
     }

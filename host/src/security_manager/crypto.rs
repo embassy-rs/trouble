@@ -118,13 +118,15 @@ impl IdentityResolvingKey {
             return false; // Not a resolvable private address
         }
 
+        prand.reverse();
+
         // Calculate local hash
-        let local_hash = self.ah(prand);
+        let mut local_hash = self.ah(prand);
+        local_hash.reverse();
 
         // Compare with the hash in the address
         let mut address_hash = [0u8; 3];
         address_hash.copy_from_slice(&address.raw()[0..3]);
-
         local_hash == address_hash
     }
 
@@ -137,7 +139,6 @@ impl IdentityResolvingKey {
 
         let cipher = Aes128::new_from_slice(&self.0.to_be_bytes()).unwrap();
         cipher.encrypt_block((&mut r_prime).into());
-
         // Extract least significant 24 bits (3 bytes) as the result
         r_prime[13..16].try_into().unwrap()
     }
@@ -493,7 +494,6 @@ pub(super) fn u256<T: From<[u8; 32]>>(hi: u128, lo: u128) -> T {
 #[allow(clippy::unusual_byte_groupings)]
 #[cfg(test)]
 mod tests {
-    use aes::Aes128;
     use p256::elliptic_curve::rand_core::OsRng;
 
     use super::*;
@@ -792,5 +792,13 @@ mod tests {
 
         let hash = irk.ah(prand);
         assert_eq!(hash, [0x0d, 0xfb, 0xaa]);
+    }
+
+    #[test]
+    pub fn rpa_test() {
+        let irk = IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d);
+        let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
+        let re = irk.resolve_address(&address);
+        assert_eq!(re, true);
     }
 }
