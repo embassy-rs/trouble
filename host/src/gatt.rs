@@ -114,6 +114,10 @@ impl<'stack, 'server> GattConnection<'stack, 'server> {
                     }
                     #[cfg(feature = "security")]
                     ConnectionEvent::Bonded { bond_info } => {
+                        // Update the identity of the connection
+                        if let Err(e) = self.server.update_identity(bond_info.identity) {
+                            error!("Failed to update identity in att server: {:?}", e);
+                        }
                         return GattConnectionEvent::Bonded { bond_info };
                     }
                 },

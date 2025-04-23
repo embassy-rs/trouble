@@ -22,6 +22,7 @@ use crate::connection_manager::ConnectionStorage;
 use crate::packet_pool::PacketPool;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+use crate::attribute_server::Identity;
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable
@@ -553,8 +554,8 @@ impl<'stack, C: Controller> Stack<'stack, C> {
 
     #[cfg(feature = "security")]
     /// Remove a bonded device
-    pub fn remove_bond_information(&self, address: BdAddr) -> Result<(), Error> {
-        self.host.connections.security_manager.remove_bond_information(address)
+    pub fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
+        self.host.connections.security_manager.remove_bond_information(identity)
     }
 
     #[cfg(feature = "security")]

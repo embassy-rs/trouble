@@ -14,6 +14,7 @@ use crate::connection_manager::ConnectionManager;
 #[cfg(feature = "connection-metrics")]
 pub use crate::connection_manager::Metrics as ConnectionMetrics;
 use crate::pdu::Pdu;
+use crate::prelude::Identity;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
@@ -228,6 +229,11 @@ impl<'stack> Connection<'stack> {
     /// The peer address for this connection.
     pub fn peer_address(&self) -> BdAddr {
         self.manager.peer_address(self.index)
+    }
+
+    /// The peer identity key for this connection.
+    pub fn peer_identity(&self) -> Identity {
+        self.manager.peer_identity(self.index)
     }
 
     /// Get the encrypted state of the connection

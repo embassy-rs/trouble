@@ -12,7 +12,7 @@ use core::ops::DerefMut;
 
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+use bt_hci::param::{BdAddr, ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
 pub use crypto::IdentityResolvingKey;
 pub use crypto::LongTermKey;
@@ -30,7 +30,7 @@ use types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
 use crate::codec::{Decode, Encode};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
-use crate::prelude::Connection;
+use crate::prelude::{Connection, Identity};
 use crate::security_manager::types::UseOutOfBand;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error};
@@ -52,69 +52,28 @@ pub(crate) enum SecurityEventData {
 pub struct BondInformation {
     /// Long Term Key (LTK)
     pub ltk: LongTermKey,
-    /// Device address
-    pub address: BdAddr,
-    /// Identity Resolving Key (IRK)
-    pub irk: Option<IdentityResolvingKey>,
+    /// Peer identity
+    pub identity: Identity,
     // Connection Signature Resolving Key (CSRK)?
 }
 
 impl BondInformation {
     /// Create a BondInformation
-    pub fn new(address: BdAddr, ltk: LongTermKey) -> Self {
-        Self {
-            ltk,
-            address,
-            irk: None,
-        }
-    }
-
-    /// Create a BondInformation with IRK
-    pub fn new_with_irk(address: BdAddr, ltk: LongTermKey, irk: IdentityResolvingKey) -> Self {
-        Self {
-            ltk,
-            address,
-            irk: Some(irk),
-        }
-    }
-
-    /// Check whether the address matches the bond information
-    pub fn match_address(&self, address: &BdAddr) -> bool {
-        info!("Matching address");
-        // Check the address first
-        if self.address == *address {
-            return true;
-        }
-        // Then check the IRK
-        // This is because when the connection is just established, the address may not updated to RPA, so the comparing of address should be done first.
-        if let Some(irk) = &self.irk {
-            info!("Matching IRK {:?} for address: {:?}", irk, address);
-            irk.resolve_address(address)
-        } else {
-            false
-        }
+    pub fn new(identity: Identity, ltk: LongTermKey) -> Self {
+        Self { ltk, identity }
     }
 }
 
 impl core::fmt::Display for BondInformation {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let a = Address::random(self.address.into_inner());
-        write!(f, "Address {} LTK {}", a, self.ltk)?;
-        if let Some(irk) = &self.irk {
-            write!(f, " IRK {}", irk)?;
-        }
-        Ok(())
+        write!(f, "Identity {:?} LTK {}", self.identity, self.ltk)
     }
 }
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for BondInformation {
     fn format(&self, fmt: defmt::Formatter) {
-        let a = Address::random(self.address.into_inner());
-        defmt::write!(fmt, "Address {} LTK {}", a, self.ltk);
-        if let Some(irk) = &self.irk {
-            defmt::write!(fmt, " IRK {}", irk);
-        }
+        defmt::write!(fmt, "Identity {:?} LTK {}", self.identity, self.ltk);
     }
 }
 
@@ -393,11 +352,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Get the long term key for peer
-    pub(crate) fn get_peer_long_term_key(&self, address: Address) -> Option<LongTermKey> {
-        trace!("[security manager] Find long term key for {}", address);
+    pub(crate) fn get_peer_long_term_key(&self, identity: &Identity) -> Option<LongTermKey> {
+        trace!("[security manager] Find long term key for {:?}", identity);
         self.state.borrow().bond.iter().find_map(|bond| {
             info!("Matching address: {}", bond);
-            if bond.match_address(&address.addr) {
+            if bond.identity.match_identity(identity) {
                 Some(bond.ltk)
             } else {
                 None
@@ -415,29 +374,15 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.state.borrow().random_generator_seeded
     }
 
-    /// Generate a resolvable private address using the IRK of a bonded device
-    pub(crate) fn generate_resolvable_address(&self, address: BdAddr) -> Option<[u8; 6]> {
-        let mut rng_borrow = self.rng.borrow_mut();
-        let rng = rng_borrow.deref_mut();
-
-        self.state.borrow().bond.iter().find_map(|bond| {
-            if bond.match_address(&address) {
-                bond.irk.as_ref().map(|irk| irk.generate_resolvable_address(rng))
-            } else {
-                None
-            }
-        })
-    }
-
     /// Add a bonded device
     pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
-        trace!("[security manager] Add bond for {:?}", bond_information.address);
+        trace!("[security manager] Add bond for {:?}", bond_information.identity);
         let index = self
             .state
             .borrow()
             .bond
             .iter()
-            .position(|bond| bond.match_address(&bond_information.address));
+            .position(|bond| bond_information.identity.match_identity(&bond.identity));
         match index {
             Some(index) => {
                 // Replace existing bond if it exists
@@ -454,14 +399,14 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Remove a bonded device
-    pub(crate) fn remove_bond_information(&self, address: BdAddr) -> Result<(), Error> {
-        trace!("[security manager] Remove bond for {:?}", address);
+    pub(crate) fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
+        trace!("[security manager] Remove bond for {:?}", identity);
         let index = self
             .state
             .borrow_mut()
             .bond
             .iter()
-            .position(|bond| bond.match_address(&address));
+            .position(|bond| bond.identity.match_identity(&identity));
         match index {
             Some(index) => {
                 self.state.borrow_mut().bond.remove(index);
@@ -487,10 +432,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let role = storage.role.ok_or(Error::InvalidValue)?;
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
         let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-        let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
-        let peer_address = Address {
-            kind: peer_address_kind,
-            addr: peer_address,
+        let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+        let peer_address = match peer_identity {
+            Identity::BdAddr(addr) => Address {
+                kind: peer_address_kind,
+                addr,
+            },
+            Identity::Irk(_) => return Err(Error::InvalidValue), // The irk is unknown here?
         };
 
         let result = {
@@ -608,14 +556,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Initiate pairing
     pub fn initiate(&self, connection: &Connection) -> Result<(), Error> {
         if connection.role() == LeConnRole::Central {
-            let peer_address = connection.peer_address();
-            if let Some(ltk) = self.get_peer_long_term_key(Address {
-                addr: peer_address,
-                kind: AddrKind::RANDOM,
-            }) {
+            let peer_identity = connection.peer_identity();
+            if let Some(ltk) = self.get_peer_long_term_key(&peer_identity) {
                 self.try_send_event(SecurityEventData::EnableEncryption(
                     connection.handle(),
-                    BondInformation::new(peer_address, ltk),
+                    BondInformation::new(peer_identity, ltk),
                 ))?;
                 {
                     let mut pairing_state = self.pairing_state.borrow_mut();
@@ -1050,10 +995,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let (peer_nonce, mac_key, ltk, local_check) = {
             let pairing_state = self.pairing_state.borrow();
             let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-            let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
-            let peer_address = Address {
-                kind: peer_address_kind,
-                addr: peer_address,
+            let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+            let peer_address = match peer_identity {
+                Identity::BdAddr(addr) => Address {
+                    kind: peer_address_kind,
+                    addr,
+                },
+                Identity::Irk(_) => return Err(Error::InvalidValue), // The irk is unknown when pairing
             };
             let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
             let dh_key = pairing_state.dh_key.as_ref().ok_or(Error::InvalidValue)?;
@@ -1147,10 +1095,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             let peer_public_key = pairing_state.public_key_peer.ok_or(Error::InvalidValue)?;
             let local_public_key = pairing_state.public_key.ok_or(Error::InvalidValue)?;
             let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-            let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
-            let peer_address = Address {
-                kind: peer_address_kind,
-                addr: peer_address,
+            let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+            let peer_address = match peer_identity {
+                Identity::BdAddr(addr) => Address {
+                    kind: peer_address_kind,
+                    addr,
+                },
+                Identity::Irk(_) => return Err(Error::InvalidValue), // The irk is unknown?
             };
             let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
             let mac_key = pairing_state.mac_key.as_ref().ok_or(Error::InvalidValue)?;
@@ -1277,17 +1228,23 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let irk = pairing_state.irk;
         if let (Some(ltk), Some(peer_address)) = (pairing_state.ltk, pairing_state.peer_address) {
             let ltk = LongTermKey(ltk);
-            let bond = BondInformation {
-                address: peer_address.addr,
-                ltk,
-                irk,
+            // Use IRK in bond information if available
+            let bond = match irk {
+                Some(irk) => BondInformation {
+                    identity: Identity::Irk(irk),
+                    ltk,
+                },
+                None => BondInformation {
+                    identity: Identity::BdAddr(peer_address.addr),
+                    ltk,
+                },
             };
 
             let bonds = &mut self.state.borrow_mut().bond;
 
             let mut replaced = false;
             for bond in bonds.iter_mut() {
-                if bond.match_address(&peer_address.addr) {
+                if bond.identity.match_address(&peer_address.addr) {
                     bond.ltk = ltk;
                     replaced = true;
                     trace!("[security manager] Replaced bond for {}", peer_address);

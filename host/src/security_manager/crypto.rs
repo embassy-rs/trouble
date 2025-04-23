@@ -57,7 +57,7 @@ impl defmt::Format for LongTermKey {
 }
 
 /// Identity Resolving Key.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
 pub struct IdentityResolvingKey(pub u128);
