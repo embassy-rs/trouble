@@ -138,8 +138,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
             match state.peer_identity {
-                Some(Identity::BdAddr(addr)) => addr,
-                _ => BdAddr::default(), // Is it good to return the default addr if irk is used?
+                Some(identity) => identity.bd_addr, // TODO: If irk is used, this addr might be outdated.
+                _ => BdAddr::default(),
             }
         })
     }
@@ -305,7 +305,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
-                storage.peer_identity.replace(Identity::BdAddr(peer_addr));
+                storage.peer_identity.replace(Identity {
+                    bd_addr: peer_addr,
+                    irk: None,
+                });
                 storage.role.replace(role);
                 match role {
                     LeConnRole::Central => {
@@ -348,7 +351,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                         for peer in peers.iter() {
                             // TODO: Accept advertsing peers which use IRK
                             if storage.peer_addr_kind.unwrap() == peer.0
-                                && storage.peer_identity.unwrap() == Identity::BdAddr(*peer.1)
+                                && storage.peer_identity.unwrap().bd_addr == *peer.1
                             {
                                 storage.state = ConnectionState::Connected;
                                 trace!(

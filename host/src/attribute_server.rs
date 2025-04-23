@@ -15,52 +15,67 @@ use crate::types::uuid::Uuid;
 use crate::{codec, Error, PacketPool};
 
 /// Identity of a peer device
+///
+/// Sometimes we have to save both the address and the IRK.
+/// Because sometimes the peer uses the static or public address even though the IRK is sent.
+/// In this case, the IRK exists but the used address is not RPA.
+/// Should `Address` be used instead?
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Identity {
+pub struct Identity {
     /// Random static or public address
-    BdAddr(BdAddr),
+    pub bd_addr: BdAddr,
+
     /// Identity Resolving Key
     #[cfg(feature = "security")]
-    Irk(IdentityResolvingKey),
+    pub irk: Option<IdentityResolvingKey>,
 }
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for Identity {
     fn format(&self, fmt: defmt::Formatter) {
-        match self {
-            Self::BdAddr(addr) => defmt::write!(fmt, "BdAddr({:X})", addr),
-            Self::Irk(irk) => defmt::write!(fmt, "Irk({:X})", irk),
-        }
+        defmt::write!(fmt, "BdAddr({:X}) ", self.bd_addr);
+        #[cfg(feature = "security")]
+        defmt::write!(fmt, "Irk({:X})", self.irk);
     }
 }
 
 impl Default for Identity {
     fn default() -> Self {
-        Self::BdAddr(BdAddr::default())
+        Self {
+            bd_addr: BdAddr::default(),
+            #[cfg(feature = "security")]
+            irk: None,
+        }
     }
 }
 
 impl Identity {
     /// Check whether the address matches the identity
     pub fn match_address(&self, address: &BdAddr) -> bool {
-        match self {
-            Self::BdAddr(addr) => addr == address,
-            #[cfg(feature = "security")]
-            Self::Irk(irk) => irk.resolve_address(address),
+        if self.bd_addr == *address {
+            return true;
         }
+        #[cfg(feature = "security")]
+        if let Some(irk) = self.irk {
+            return irk.resolve_address(address);
+        }
+        false
     }
 
     /// Check whether the given identity matches current identity
     pub fn match_identity(&self, identity: &Identity) -> bool {
-        match (self, identity) {
-            (Self::BdAddr(addr1), Self::BdAddr(addr2)) => addr1 == addr2,
-            #[cfg(feature = "security")]
-            (Self::Irk(irk1), Self::Irk(irk2)) => irk1 == irk2,
-            #[cfg(feature = "security")]
-            (Self::Irk(irk), Self::BdAddr(addr)) => irk.resolve_address(addr),
-            #[cfg(feature = "security")]
-            (Self::BdAddr(addr), Self::Irk(irk)) => irk.resolve_address(addr),
+        if self.match_address(&identity.bd_addr) {
+            return true;
         }
+        #[cfg(feature = "security")]
+        if let Some(irk) = identity.irk {
+            if let Some(current_irk) = self.irk {
+                return irk == current_irk;
+            } else {
+                return irk.resolve_address(&self.bd_addr);
+            }
+        }
+        false
     }
 }
 

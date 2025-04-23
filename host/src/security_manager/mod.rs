@@ -12,7 +12,7 @@ use core::ops::DerefMut;
 
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{BdAddr, ConnHandle, LeConnRole};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
 pub use crypto::IdentityResolvingKey;
 pub use crypto::LongTermKey;
@@ -434,12 +434,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
         let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
         let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-        let peer_address = match peer_identity {
-            Identity::BdAddr(addr) => Address {
-                kind: peer_address_kind,
-                addr,
-            },
-            Identity::Irk(_) => return Err(Error::InvalidValue), // The irk is unknown here?
+        let peer_address = Address {
+            kind: peer_address_kind,
+            addr: peer_identity.bd_addr,
         };
 
         let result = {
@@ -999,12 +996,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             let pairing_state = self.pairing_state.borrow();
             let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
             let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-            let peer_address = match peer_identity {
-                Identity::BdAddr(addr) => Address {
-                    kind: peer_address_kind,
-                    addr,
-                },
-                Identity::Irk(_) => return Err(Error::InvalidValue), // The irk is unknown when pairing
+            let peer_address = Address {
+                kind: peer_address_kind,
+                addr: peer_identity.bd_addr,
             };
             let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
             let dh_key = pairing_state.dh_key.as_ref().ok_or(Error::InvalidValue)?;
@@ -1099,12 +1093,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             let local_public_key = pairing_state.public_key.ok_or(Error::InvalidValue)?;
             let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
             let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-            let peer_address = match peer_identity {
-                Identity::BdAddr(addr) => Address {
-                    kind: peer_address_kind,
-                    addr,
-                },
-                Identity::Irk(_) => return Err(Error::InvalidValue), // The irk is unknown?
+            let peer_address = Address {
+                kind: peer_address_kind,
+                addr: peer_identity.bd_addr,
             };
             let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
             let mac_key = pairing_state.mac_key.as_ref().ok_or(Error::InvalidValue)?;
@@ -1177,8 +1168,22 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     fn handle_identity_address_information(&self, payload: &[u8]) -> Result<(), Error> {
         let addr_type = payload[0];
+        let kind = if addr_type == 0 {
+            AddrKind::PUBLIC
+        } else if addr_type == 1 {
+            AddrKind::RANDOM
+        } else {
+            // Impossible
+            error!("[security manager] Invalid address type: {:?}", addr_type);
+            return Err(Error::InvalidValue);
+        };
         let addr = BdAddr::new(payload[1..7].try_into().map_err(|_| Error::InvalidValue)?);
+        self.pairing_state.borrow_mut().peer_address = Some(Address { kind, addr });
+        // TODO: Check if the bond info is correctly updated
+        let bond_info = self.store_pairing()?;
         // How to process the public device address when ​​Resolvable Private Address is used?
+        // TODO: If bond info is updated, send EnableEncryption event
+        // self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))?;
         debug!(
             "Identity address information: addr_type: {:?}, addr: {:?}",
             addr_type, addr
@@ -1232,14 +1237,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         if let (Some(ltk), Some(peer_address)) = (pairing_state.ltk, pairing_state.peer_address) {
             let ltk = LongTermKey(ltk);
             // Use IRK in bond information if available
-            let bond = match irk {
-                Some(irk) => BondInformation {
-                    identity: Identity::Irk(irk),
-                    ltk,
-                },
-                None => BondInformation {
-                    identity: Identity::BdAddr(peer_address.addr),
-                    ltk,
+            let bond = BondInformation {
+                ltk,
+                identity: Identity {
+                    bd_addr: peer_address.addr,
+                    irk,
                 },
             };
 
@@ -1257,7 +1259,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             if !replaced {
                 match bonds.push(bond.clone()) {
                     Ok(_) => {
-                        trace!("[security manager] Added bond for {}", peer_address);
+                        trace!("[security manager] Added bond {} for {}", bond, peer_address);
                         Ok(bond)
                     }
                     Err(e) => {
