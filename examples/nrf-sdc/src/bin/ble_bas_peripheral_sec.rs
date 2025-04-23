@@ -76,5 +76,5 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<3312>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    ble_bas_peripheral_sec::run::<_, _, L2CAP_MTU>(sdc, &mut rng_2).await;
+    ble_bas_peripheral_sec::run(sdc, &mut rng_2).await;
 }
