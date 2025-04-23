@@ -306,6 +306,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.peer_addr_kind.replace(peer_addr_kind);
                 storage.peer_identity.replace(Identity {
                     bd_addr: peer_addr,
+                    #[cfg(feature = "security")]
                     irk: None,
                 });
                 storage.role.replace(role);
