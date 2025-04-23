@@ -556,7 +556,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "security")]
     pub(crate) async fn handle_security_event<'h, C>(
         &self,
-        host: &crate::host::BleHost<'h, C>,
+        host: &crate::host::BleHost<'h, C, P>,
         _event: crate::security_manager::SecurityEventData,
     ) -> Result<(), crate::BleHostError<C::Error>>
     where
@@ -624,7 +624,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                                 .await?;
                         }
                         // Emit the bonded event after enabling encryption
-                        self.post_event(index as u8, ConnectionEventData::Bonded { bond_info })
+                        self.post_event(index as u8, ConnectionEvent::Bonded { bond_info })
                             .await;
                     } else {
                         warn!("[host] Enable encryption failed, no long term key")
@@ -645,7 +645,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "security")]
     pub(crate) fn poll_security_events(
         &self,
-    ) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_> {
+    ) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_, P> {
         self.security_manager.poll_events()
     }
 

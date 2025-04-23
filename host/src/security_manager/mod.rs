@@ -32,6 +32,7 @@ use crate::pdu::Pdu;
 use crate::prelude::Connection;
 use crate::security_manager::types::UseOutOfBand;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
+use crate::PacketPool;
 use crate::{Address, Error};
 
 /// Events of interest to the security manager
@@ -101,19 +102,19 @@ impl<const BOND_COUNT: usize> SecurityManagerData<BOND_COUNT> {
 }
 
 /// Packet structure for sending security manager protocol (SMP) commands
-struct TxPacket {
+struct TxPacket<P: PacketPool> {
     /// Underlying packet
-    packet: crate::packet_pool::Packet,
+    packet: P::Packet,
     /// Command to send
     command: Command,
 }
 
-impl TxPacket {
+impl<P: PacketPool> TxPacket<P> {
     /// Size of L2CAP header and command
     const HEADER_SIZE: usize = 5;
 
     /// Get a packet from the pool
-    pub fn new(mut packet: crate::packet_pool::Packet, command: Command) -> Result<Self, Error> {
+    pub fn new(mut packet: P::Packet, command: Command) -> Result<Self, Error> {
         let packet_data = packet.as_mut();
         let smp_size = command.payload_size() + 1;
         packet_data[..2].copy_from_slice(&(smp_size).to_le_bytes());
@@ -139,7 +140,7 @@ impl TxPacket {
         usize::from(self.command.payload_size()) + Self::HEADER_SIZE
     }
     /// Create a PDU from the packet
-    pub fn into_pdu(self) -> Pdu {
+    pub fn into_pdu(self) -> Pdu<P::Packet> {
         let len = self.total_size();
         Pdu::new(self.packet, len)
     }
@@ -417,11 +418,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle packet
-    pub(crate) fn handle(
+    pub(crate) fn handle<P: PacketPool>(
         &self,
-        pdu: Pdu,
-        connections: &ConnectionManager,
-        storage: &ConnectionStorage,
+        pdu: Pdu<P::Packet>,
+        connections: &ConnectionManager<P>,
+        storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
         // Should it be possible to handle multiple concurrent pairings?
         let role = storage.role.ok_or(Error::InvalidValue)?;
@@ -544,7 +545,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Initiate pairing
-    pub fn initiate(&self, connection: &Connection) -> Result<(), Error> {
+    pub fn initiate<P: PacketPool>(&self, connection: &Connection<P>) -> Result<(), Error> {
         if connection.role() == LeConnRole::Central {
             let peer_address = connection.peer_address();
             if let Some(ltk) = self.get_peer_long_term_key(Address {
@@ -570,7 +571,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     ..Default::default()
                 };
 
-                let mut packet = TxPacket::new(connection.alloc_tx()?, Command::PairingRequest)?;
+                let mut packet: TxPacket<P> =
+                    TxPacket::new(P::allocate().ok_or(Error::OutOfMemory)?, Command::PairingRequest)?;
 
                 let payload = packet.payload_mut();
 
@@ -599,7 +601,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             // Send sequrity request to central
             let auth_req = AuthReq::new(BondingFlag::Bonding);
 
-            let mut packet = TxPacket::new(connection.alloc_tx()?, Command::SecurityRequest)?;
+            let mut packet: TxPacket<P> =
+                TxPacket::new(P::allocate().ok_or(Error::OutOfMemory)?, Command::SecurityRequest)?;
 
             let response = packet.payload_mut();
 
@@ -667,10 +670,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing request command
-    fn handle_pairing_request(
+    fn handle_pairing_request<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
@@ -727,10 +730,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing response command
-    fn handle_pairing_response(
+    fn handle_pairing_response<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
@@ -781,10 +784,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing public key command
-    fn handle_pairing_public_key(
+    fn handle_pairing_public_key<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let role = {
@@ -893,10 +896,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing confirm command
-    fn handle_pairing_confirm(
+    fn handle_pairing_confirm<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let confirm = Confirm(u128::from_le_bytes(
@@ -938,12 +941,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing random command
-    fn handle_pairing_random(
+    fn handle_pairing_random<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
-        storage: &ConnectionStorage,
+        storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
         let peer_nonce = Nonce(u128::from_le_bytes(
             payload
@@ -1065,12 +1068,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing DH key check
-    fn handle_pairing_dhkey_check(
+    fn handle_pairing_dhkey_check<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
-        storage: &ConnectionStorage,
+        storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
         let (role, local_check) = {
             let pairing_state = self.pairing_state.borrow();
@@ -1224,16 +1227,20 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Prepare a packet for sending
-    fn prepare_packet(&self, command: Command, connections: &ConnectionManager) -> Result<TxPacket, Error> {
-        let packet = connections.alloc_tx()?;
+    fn prepare_packet<P: PacketPool>(
+        &self,
+        command: Command,
+        connections: &ConnectionManager<P>,
+    ) -> Result<TxPacket<P>, Error> {
+        let packet = P::allocate().ok_or(Error::OutOfMemory)?;
         TxPacket::new(packet, command)
     }
 
     /// Send a packet
-    fn try_send_packet(
+    fn try_send_packet<P: PacketPool>(
         &self,
-        packet: TxPacket,
-        connections: &ConnectionManager,
+        packet: TxPacket<P>,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let len = packet.total_size();
