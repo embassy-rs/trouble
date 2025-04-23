@@ -17,18 +17,27 @@ impl FixedSize for u32 {
 
 impl Decode<'_> for u8 {
     fn decode(src: &[u8]) -> Result<Self, Error> {
+        if src.is_empty() {
+            return Err(Error::InvalidValue);
+        }
         Ok(src[0])
     }
 }
 
 impl Decode<'_> for u16 {
     fn decode(src: &[u8]) -> Result<Self, Error> {
+        if src.len() < 2 {
+            return Err(Error::InvalidValue);
+        }
         Ok(u16::from_le_bytes([src[0], src[1]]))
     }
 }
 
 impl Decode<'_> for u32 {
     fn decode(src: &[u8]) -> Result<Self, Error> {
+        if src.len() < 4 {
+            return Err(Error::InvalidValue);
+        }
         Ok(u32::from_le_bytes([src[0], src[1], src[2], src[3]]))
     }
 }
