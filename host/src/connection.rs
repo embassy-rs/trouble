@@ -18,7 +18,7 @@ use crate::pdu::Pdu;
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::BondInformation;
-use crate::{BleHostError, Error, PacketPool, Stack};
+use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -215,6 +215,11 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// The peer address for this connection.
     pub fn peer_address(&self) -> BdAddr {
         self.manager.peer_address(self.index)
+    }
+
+    /// The peer identity key for this connection.
+    pub fn peer_identity(&self) -> Identity {
+        self.manager.peer_identity(self.index)
     }
 
     /// Get the encrypted state of the connection

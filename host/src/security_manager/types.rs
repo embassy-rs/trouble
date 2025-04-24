@@ -556,8 +556,24 @@ impl KeyDistributionFlags {
     pub(crate) fn link_key(&self) -> bool {
         (self.0 & Self::LINK_KEY) == Self::LINK_KEY
     }
-}
 
+    /// Set the encryption key flag
+    pub(crate) fn set_encryption_key(&mut self) {
+        self.0 |= Self::ENCRYPTION_KEY;
+    }
+    /// Set the identity key flag   
+    pub(crate) fn set_identity_key(&mut self) {
+        self.0 |= Self::IDENTITY_KEY;
+    }
+    /// Set the signing key flag
+    pub(crate) fn set_signing_key(&mut self) {
+        self.0 |= Self::SIGNING_KEY;
+    }
+    /// Set the link key flag
+    pub(crate) fn set_link_key(&mut self) {
+        self.0 |= Self::LINK_KEY;
+    }
+}
 impl From<u8> for KeyDistributionFlags {
     fn from(value: u8) -> Self {
         Self(value)

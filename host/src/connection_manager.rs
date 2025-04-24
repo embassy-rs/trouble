@@ -17,7 +17,7 @@ use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, Error, PacketPool};
+use crate::{config, Error, Identity, PacketPool};
 
 struct State<'d, P> {
     connections: &'d mut [ConnectionStorage<P>],
@@ -136,7 +136,17 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
-            state.peer_addr.unwrap()
+            match state.peer_identity {
+                Some(identity) => identity.bd_addr, // TODO: If irk is used, this addr might be outdated.
+                _ => BdAddr::default(),
+            }
+        })
+    }
+
+    pub(crate) fn peer_identity(&self, index: u8) -> Identity {
+        self.with_mut(|state| {
+            let state = &mut state.connections[index as usize];
+            state.peer_identity.unwrap()
         })
     }
 
@@ -294,7 +304,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
-                storage.peer_addr.replace(peer_addr);
+                storage.peer_identity.replace(Identity {
+                    bd_addr: peer_addr,
+                    #[cfg(feature = "security")]
+                    irk: None,
+                });
                 storage.role.replace(role);
                 match role {
                     LeConnRole::Central => {
@@ -335,7 +349,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 if r == role {
                     if !peers.is_empty() {
                         for peer in peers.iter() {
-                            if storage.peer_addr_kind.unwrap() == peer.0 && &storage.peer_addr.unwrap() == peer.1 {
+                            // TODO: Accept advertsing peers which use IRK
+                            if storage.peer_addr_kind.unwrap() == peer.0
+                                && storage.peer_identity.unwrap().bd_addr == *peer.1
+                            {
                                 storage.state = ConnectionState::Connected;
                                 trace!(
                                     "[link][poll_accept] connection handle {:?} in role {:?} accepted",
@@ -570,20 +587,20 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle) => {
                 let conn_info = self.state.borrow().connections.iter().find_map(|connection| {
-                    match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
-                        (Some(connection_handle), Some(addr), Some(kind)) => {
+                    match (connection.handle, connection.peer_identity) {
+                        (Some(connection_handle), Some(identity)) => {
                             if handle == connection_handle {
-                                Some((connection_handle, crate::Address { addr, kind }))
+                                Some((connection_handle, identity))
                             } else {
                                 None
                             }
                         }
-                        (_, _, _) => None,
+                        (_, _) => None,
                     }
                 });
 
-                if let Some((conn, address)) = conn_info {
-                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(address) {
+                if let Some((conn, identity)) = conn_info {
+                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(&identity) {
                         let _ = host
                             .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
                             .await?;
@@ -605,20 +622,20 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                         .connections
                         .iter()
                         .enumerate()
-                        .find_map(|(index, connection)| {
-                            match (connection.handle, connection.peer_addr, connection.peer_addr_kind) {
-                                (Some(connection_handle), Some(addr), Some(kind)) => {
+                        .find_map(
+                            |(index, connection)| match (connection.handle, connection.peer_identity) {
+                                (Some(connection_handle), Some(identity)) => {
                                     if handle == connection_handle {
-                                        Some((index, connection.role, crate::Address { addr, kind }))
+                                        Some((index, connection.role, identity))
                                     } else {
                                         None
                                     }
                                 }
-                                (_, _, _) => None,
-                            }
-                        });
-                if let Some((index, role, address)) = connection_data {
-                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(address) {
+                                (_, _) => None,
+                            },
+                        );
+                if let Some((index, role, identity)) = connection_data {
+                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(&identity) {
                         if let Some(LeConnRole::Central) = role {
                             host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
                                 .await?;
@@ -684,7 +701,7 @@ pub struct ConnectionStorage<P> {
     pub handle: Option<ConnHandle>,
     pub role: Option<LeConnRole>,
     pub peer_addr_kind: Option<AddrKind>,
-    pub peer_addr: Option<BdAddr>,
+    pub peer_identity: Option<Identity>,
     pub att_mtu: u16,
     pub link_credits: usize,
     pub link_credit_waker: WakerRegistration,
@@ -768,7 +785,7 @@ impl<P> ConnectionStorage<P> {
             handle: None,
             role: None,
             peer_addr_kind: None,
-            peer_addr: None,
+            peer_identity: None,
             att_mtu: 23,
             link_credits: 0,
             link_credit_waker: WakerRegistration::new(),
@@ -792,7 +809,7 @@ impl<P> core::fmt::Debug for ConnectionStorage<P> {
             .field("state", &self.state)
             .field("handle", &self.handle)
             .field("role", &self.role)
-            .field("peer_addr", &self.peer_addr)
+            .field("peer_identity", &self.peer_identity)
             .field("refcount", &self.refcount);
         #[cfg(feature = "connection-metrics")]
         let d = d.field("metrics", &self.metrics);
@@ -813,9 +830,9 @@ impl<P> defmt::Format for ConnectionStorage<P> {
 
         defmt::write!(
             f,
-            ", role = {}, peer = {:02x}, ref = {}",
+            ", role = {}, peer = {}, ref = {}",
             self.role,
-            self.peer_addr,
+            self.peer_identity,
             self.refcount
         );
 
