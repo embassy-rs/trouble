@@ -1035,13 +1035,24 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             {
                 Either3::First(request) => {
                     trace!("[host] poll disconnecting links");
-                    host.command(Disconnect::new(request.handle(), request.reason()))
-                        .await?;
+                    match host.command(Disconnect::new(request.handle(), request.reason())).await {
+                        Ok(_) => {}
+                        Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
                     request.confirm();
                 }
                 Either3::Second(request) => {
                     trace!("[host] poll disconnecting channels");
-                    request.send(host).await?;
+                    match request.send(host).await {
+                        Ok(_) => {}
+                        Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
                     request.confirm();
                 }
                 Either3::Third(states) => match states {
