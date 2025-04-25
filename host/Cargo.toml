@@ -128,7 +128,8 @@ default-packet-pool-mtu-27 = []
 default-packet-pool-mtu-48 = []
 default-packet-pool-mtu-64 = []
 default-packet-pool-mtu-128 = []
-default-packet-pool-mtu-251 = [] # Default
+default-packet-pool-mtu-251 = []
+default-packet-pool-mtu-255 = [] # Default
 default-packet-pool-mtu-512 = []
 default-packet-pool-mtu-1024 = []
 
