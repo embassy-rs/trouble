@@ -7,7 +7,7 @@ pub use crate::channel_manager::Metrics as ChannelMetrics;
 use crate::channel_manager::{ChannelIndex, ChannelManager};
 use crate::connection::Connection;
 use crate::pdu::Sdu;
-use crate::{BleHostError, PacketPool, Stack};
+use crate::{BleHostError, Error, PacketPool, Stack};
 
 pub(crate) mod sar;
 
@@ -108,39 +108,39 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
 
     /// Send the provided buffer over this l2cap channel.
     ///
-    /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
+    /// The buffer must be equal to or smaller than the MTU agreed for the channel.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, waits until more credits are available.
-    pub async fn send<T: Controller, const TX_MTU: usize>(
+    pub async fn send<T: Controller>(
         &mut self,
         stack: &Stack<'_, T, P>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; TX_MTU];
+        let mut p_buf = P::allocate().ok_or(Error::OutOfMemory)?;
         stack
             .host
             .channels
-            .send(self.index, buf, &mut p_buf[..], &stack.host)
+            .send(self.index, buf, p_buf.as_mut(), &stack.host)
             .await
     }
 
     /// Send the provided buffer over this l2cap channel.
     ///
-    /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
+    /// The buffer must be equal to or smaller than the MTU agreed for the channel.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, returns Error::Busy.
-    pub fn try_send<T: Controller + blocking::Controller, const TX_MTU: usize>(
+    pub fn try_send<T: Controller + blocking::Controller>(
         &mut self,
         stack: &Stack<'_, T, P>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; TX_MTU];
+        let mut p_buf = P::allocate().ok_or(Error::OutOfMemory)?;
         stack
             .host
             .channels
-            .try_send(self.index, buf, &mut p_buf[..], &stack.host)
+            .try_send(self.index, buf, p_buf.as_mut(), &stack.host)
     }
 
     /// Receive data on this channel and copy it into the buffer.
@@ -287,39 +287,39 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
 
     /// Send the provided buffer over this l2cap channel.
     ///
-    /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
+    /// The buffer must be equal to or smaller than the MTU agreed for the channel.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, waits until more credits are available.
-    pub async fn send<T: Controller, const TX_MTU: usize>(
+    pub async fn send<T: Controller>(
         &mut self,
         stack: &Stack<'_, T, P>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; TX_MTU];
+        let mut p_buf = P::allocate().ok_or(Error::OutOfMemory)?;
         stack
             .host
             .channels
-            .send(self.index, buf, &mut p_buf[..], &stack.host)
+            .send(self.index, buf, p_buf.as_mut(), &stack.host)
             .await
     }
 
     /// Send the provided buffer over this l2cap channel.
     ///
-    /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
+    /// The buffer must be equal to or smaller than the MTU agreed for the channel.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, returns Error::Busy.
-    pub fn try_send<T: Controller + blocking::Controller, const TX_MTU: usize>(
+    pub fn try_send<T: Controller + blocking::Controller>(
         &mut self,
         stack: &Stack<'_, T, P>,
         buf: &[u8],
     ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; TX_MTU];
+        let mut p_buf = P::allocate().ok_or(Error::OutOfMemory)?;
         stack
             .host
             .channels
-            .try_send(self.index, buf, &mut p_buf[..], &stack.host)
+            .try_send(self.index, buf, p_buf.as_mut(), &stack.host)
     }
 
     /// Read metrics of the l2cap channel.

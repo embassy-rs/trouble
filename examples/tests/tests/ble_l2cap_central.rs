@@ -48,7 +48,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
     let peripheral = tokio::task::spawn_local(async move {
         let controller_peripheral = serial::create_controller(&peripheral).await;
 
-        let mut resources: HostResources<DefaultPacketPool, 2, 4> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, 1, 1> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources).set_random_address(peripheral_address);
         let Host {
             mut peripheral,
@@ -82,11 +82,15 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
                     let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &Default::default()).await?;
+                    const PAYLOAD_LEN: usize = 27;
+                    let config = L2capChannelConfig {
+                        mtu: Some(PAYLOAD_LEN as u16),
+                        ..Default::default()
+                    };
+                    let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &config).await?;
 
                     println!("[peripheral] channel created");
 
-                    const PAYLOAD_LEN: usize = 27;
                     // Size of payload we're expecting
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
@@ -97,8 +101,9 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
                     println!("[peripheral] data received");
 
                     for i in 0..10 {
+                        println!("[peripheral] sending {}", i);
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, PAYLOAD_LEN>(&stack, &tx).await?;
+                        ch1.send(&stack, &tx).await?;
                     }
                     println!("[peripheral] data sent");
                     token.cancel();

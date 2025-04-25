@@ -94,7 +94,7 @@ where
 
             for i in 0..NUM_PAYLOADS {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.expect("L2CAP send failed");
+                ch1.send(&stack, &tx).await.expect("L2CAP send failed");
             }
 
             let duration = start.elapsed();

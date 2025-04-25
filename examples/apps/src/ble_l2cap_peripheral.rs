@@ -51,15 +51,16 @@ where
 
             info!("Connection established");
 
-            let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &Default::default())
-                .await
-                .unwrap();
+            let config = L2capChannelConfig {
+                mtu: Some(PAYLOAD_LEN as u16),
+                ..Default::default()
+            };
+            let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &config).await.unwrap();
 
             info!("L2CAP channel accepted");
 
             // Size of payload we're expecting
             const PAYLOAD_LEN: usize = 27;
-            const L2CAP_MTU: usize = DefaultPacketPool::MTU;
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
                 let len = ch1.receive(&stack, &mut rx).await.unwrap();
@@ -71,7 +72,7 @@ where
             Timer::after(Duration::from_secs(1)).await;
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
+                ch1.send(&stack, &tx).await.unwrap();
             }
             info!("L2CAP data echoed");
 

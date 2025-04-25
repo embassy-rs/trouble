@@ -43,14 +43,17 @@ where
             let conn = central.connect(&config).await.unwrap();
             info!("Connected, creating l2cap channel");
             const PAYLOAD_LEN: usize = 27;
-            const L2CAP_MTU: usize = DefaultPacketPool::MTU;
-            let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &Default::default())
+            let config = L2capChannelConfig {
+                mtu: Some(PAYLOAD_LEN as u16),
+                ..Default::default()
+            };
+            let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &config)
                 .await
                 .unwrap();
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
+                ch1.send(&stack, &tx).await.unwrap();
             }
             info!("Sent data, waiting for them to be sent back");
             let mut rx = [0; PAYLOAD_LEN];

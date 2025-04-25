@@ -171,6 +171,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             initial_credits,
         } = config;
 
+        let mtu = mtu.unwrap_or(P::MTU as u16 - 6);
+        let mps = mps.unwrap_or(P::MTU as u16 - 4);
+        if mps > P::MTU as u16 - 4 {
+            return Err(Error::InsufficientSpace.into());
+        }
+
         // Wait until we find a channel for our connection in the connecting state matching our PSM.
         let (channel, req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
@@ -178,8 +184,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             for (idx, chan) in state.channels.iter_mut().enumerate() {
                 match chan.state {
                     ChannelState::PeerConnecting(req_id) if chan.conn == Some(conn) && psm.contains(&chan.psm) => {
-                        chan.mtu = chan.mtu.min(mtu.unwrap_or(P::MTU as u16 - 6));
-                        chan.mps = chan.mps.min(mps.unwrap_or(P::MTU as u16 - 4));
+                        chan.mtu = chan.mtu.min(mtu);
+                        chan.mps = chan.mps.min(mps);
                         chan.flow_control =
                             CreditFlowControl::new(*flow_policy, initial_credits.unwrap_or(P::capacity() as u16));
                         chan.state = ChannelState::Connected;
@@ -242,6 +248,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
         let mtu = mtu.unwrap_or(P::MTU as u16 - 6);
         let mps = mps.unwrap_or(P::MTU as u16 - 4);
+        if mps > P::MTU as u16 - 4 {
+            return Err(Error::InsufficientSpace.into());
+        }
 
         // Allocate space for our new channel.
         let idx = self.alloc(conn, |storage| {
@@ -629,7 +638,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         p_buf: &mut [u8],
         ble: &BleHost<'d, T, P>,
     ) -> Result<(), BleHostError<T::Error>> {
-        let (conn, mps, peer_cid) = self.connected_channel_params(index)?;
+        let (conn, mps, mtu, peer_cid) = self.connected_channel_params(index)?;
+        if buf.len() > mtu as usize {
+            return Err(Error::InsufficientSpace.into());
+        }
         // The number of packets we'll need to send for this payload
         let len = (buf.len() as u16).saturating_add(2);
         let n_packets = len.div_ceil(mps);
@@ -656,7 +668,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
     /// Send the provided buffer over a given l2cap channel.
     ///
-    /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
+    /// The buffer must be equal to or smaller than the MTU agreed for the channel.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     pub(crate) fn try_send<T: Controller + blocking::Controller>(
@@ -666,7 +678,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         p_buf: &mut [u8],
         ble: &BleHost<'d, T, P>,
     ) -> Result<(), BleHostError<T::Error>> {
-        let (conn, mps, peer_cid) = self.connected_channel_params(index)?;
+        let (conn, mps, mtu, peer_cid) = self.connected_channel_params(index)?;
+        if buf.len() > mtu as usize {
+            return Err(Error::InsufficientSpace.into());
+        }
 
         // The number of packets we'll need to send for this payload
         let len = (buf.len() as u16).saturating_add(2);
@@ -700,11 +715,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
-    fn connected_channel_params(&self, index: ChannelIndex) -> Result<(ConnHandle, u16, u16), Error> {
+    fn connected_channel_params(&self, index: ChannelIndex) -> Result<(ConnHandle, u16, u16, u16), Error> {
         let state = self.state.borrow();
         let chan = &state.channels[index.0 as usize];
         if chan.state == ChannelState::Connected {
-            return Ok((chan.conn.unwrap(), chan.mps, chan.peer_cid));
+            return Ok((chan.conn.unwrap(), chan.mps, chan.mtu, chan.peer_cid));
         }
         //trace!("[l2cap][connected_channel_params] channel {} closed", index);
         Err(Error::ChannelClosed)
