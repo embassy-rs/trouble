@@ -28,10 +28,10 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
 }
 
 /// How many outgoing L2CAP buffers per link
-const L2CAP_TXQ: u8 = 10;
+const L2CAP_TXQ: u8 = 3;
 
 /// How many incoming L2CAP buffers per link
-const L2CAP_RXQ: u8 = 10;
+const L2CAP_RXQ: u8 = 3;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
@@ -74,7 +74,7 @@ async fn main(spawner: Spawner) {
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
 
-    let mut sdc_mem = sdc::Mem::<12240>::new();
+    let mut sdc_mem = sdc::Mem::<4864>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     Timer::after(Duration::from_millis(200)).await;
