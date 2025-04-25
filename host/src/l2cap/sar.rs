@@ -120,3 +120,80 @@ impl<P> PacketReassembly<P> {
         }
     }
 }
+
+pub struct PacketSplitter<P> {
+    current: Option<Pdu<P>>,
+    offset: usize,
+}
+
+impl<P> PacketSplitter<P> {
+    pub const fn new() -> Self {
+        Self {
+            current: None,
+            offset: 0,
+        }
+    }
+}
+
+impl<P: Packet> PacketSplitter<P> {
+    pub fn reset(&mut self, p: Pdu<P>) {
+        assert!(self.current.is_none());
+        self.current.replace(p);
+        self.offset = 0;
+    }
+
+    pub fn disconnected(&mut self) {
+        let _ = self.current.take();
+    }
+
+    pub fn len(&self) -> usize {
+        if let Some(p) = self.current.as_ref() {
+            if self.offset == 0 {
+                2 + p.len()
+            } else {
+                p.len() - self.offset
+            }
+        } else {
+            0
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.current.is_none()
+    }
+
+    pub fn fill(&self, mut buf: &mut [u8]) -> usize {
+        let mut n = 0;
+        if let Some(p) = self.current.as_ref() {
+            assert!(buf.len() >= 23);
+            if self.offset == 0 {
+                let len = p.len() as u16;
+                buf[0..2].copy_from_slice(&len.to_le_bytes());
+                n = 2;
+                buf = &mut buf[2..];
+            }
+
+            if self.offset < p.as_ref().len() {
+                let max = buf.len().min(p.as_ref().len() - self.offset);
+                let ret = Some(&p.as_ref()[self.offset..self.offset + max]);
+                n += max;
+            }
+        }
+        n
+    }
+
+    pub fn commit(&mut self, n: usize) {
+        if let Some(p) = self.current.take() {
+            let n = if self.offset == 0 {
+                // Take into account header
+                n - 2
+            } else {
+                n
+            };
+            self.offset += n;
+            if self.offset < p.as_ref().len() {
+                self.current.replace(p);
+            }
+        }
+    }
+}

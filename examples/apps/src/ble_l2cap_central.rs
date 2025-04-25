@@ -50,12 +50,12 @@ where
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
+                ch1.send(&tx).await.unwrap();
             }
             info!("Sent data, waiting for them to be sent back");
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..10 {
-                let len = ch1.receive(&stack, &mut rx).await.unwrap();
+                let len = ch1.receive(&mut rx).await.unwrap();
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }

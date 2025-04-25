@@ -119,7 +119,7 @@ async fn main(spawner: Spawner) {
 
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..500 {
-                let len = unwrap!(ch1.receive(&stack, &mut rx).await);
+                let len = unwrap!(ch1.receive(&mut rx).await);
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [(i % 255) as u8; PAYLOAD_LEN]);
             }
@@ -130,7 +130,7 @@ async fn main(spawner: Spawner) {
             let mut bytes: u64 = 0;
             for i in 0..500 {
                 let tx = [(i % 255) as u8; PAYLOAD_LEN];
-                unwrap!(ch1.send::<_, L2CAP_MTU>(&stack, &tx).await);
+                unwrap!(ch1.send(&tx).await);
                 bytes += PAYLOAD_LEN as u64;
                 let duration = Instant::now() - last;
                 if duration.as_secs() > 10 {

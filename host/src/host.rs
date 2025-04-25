@@ -705,6 +705,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
     }
 }
 
+const MAX_HCI_PACKET_LEN: usize = 259;
 impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     /// Run the receive loop that polls the controller for events.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
@@ -721,7 +722,6 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     where
         C: ControllerCmdSync<Disconnect>,
     {
-        const MAX_HCI_PACKET_LEN: usize = 259;
         let host = &self.stack.host;
         // use embassy_time::Instant;
         // let mut last = Instant::now();
@@ -1101,23 +1101,53 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
         let host = &self.stack.host;
         let params = host.initialized.get().await;
         loop {
-            let (conn, pdu) = host.connections.outbound().await;
-            match host.l2cap(conn, pdu.len() as u16, 1).await {
-                Ok(mut sender) => {
-                    if let Err(e) = sender.send(pdu.as_ref()).await {
-                        warn!("[host] error sending outbound pdu");
+            let mut tx = [0u8; 255];
+
+            match select3(
+                poll_fn(|cx| host.connections.poll_outbound(cx)),
+                poll_fn(|cx| host.channels.poll_flow(cx)),
+                poll_fn(|cx| host.channels.poll_outbound(cx)),
+            )
+            .await
+            {
+                Either3::First((conn, pdu)) => match host.l2cap(conn, pdu.len() as u16, 1).await {
+                    Ok(mut sender) => {
+                        if let Err(e) = sender.send(pdu.as_ref()).await {
+                            warn!("[host] error sending outbound pdu");
+                            return Err(e);
+                        }
+                    }
+                    Err(BleHostError::BleHost(Error::NotFound)) => {
+                        warn!("[host] unable to send data to disconnected host (ignored)");
+                    }
+                    Err(BleHostError::BleHost(Error::Disconnected)) => {
+                        warn!("[host] unable to send data to disconnected host (ignored)");
+                    }
+                    Err(e) => {
+                        warn!("[host] error requesting sending outbound pdu");
                         return Err(e);
                     }
-                }
-                Err(BleHostError::BleHost(Error::NotFound)) => {
-                    warn!("[host] unable to send data to disconnected host (ignored)");
-                }
-                Err(BleHostError::BleHost(Error::Disconnected)) => {
-                    warn!("[host] unable to send data to disconnected host (ignored)");
-                }
-                Err(e) => {
-                    warn!("[host] error requesting sending outbound pdu");
-                    return Err(e);
+                },
+                Either3::Second((conn, segment)) => {}
+                Either3::Third((conn, segment, mut grant)) => {
+                    match host.try_l2cap(conn, segment.len().min(tx.len() - 4) as u16, 1) {
+                        Ok(mut sender) => {
+                            let n = segment.encode(&mut tx[..]);
+                            sender.send(&tx[..n]).await?;
+                            segment.commit(n);
+                            grant.confirm(1);
+                        }
+                        Err(BleHostError::BleHost(Error::NotFound)) => {
+                            warn!("[host] unable to send data to disconnected host (ignored)");
+                        }
+                        Err(BleHostError::BleHost(Error::Disconnected)) => {
+                            warn!("[host] unable to send data to disconnected host (ignored)");
+                        }
+                        Err(e) => {
+                            warn!("[host] error requesting sending outbound pdu");
+                            return Err(e);
+                        }
+                    }
                 }
             }
         }

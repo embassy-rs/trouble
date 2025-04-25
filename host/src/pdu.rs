@@ -1,4 +1,4 @@
-use crate::Packet;
+use crate::{Packet, PacketPool};
 
 pub(crate) struct Pdu<P> {
     packet: P,
@@ -58,9 +58,29 @@ impl<P> Sdu<P> {
         self.pdu.len() == 0
     }
 
+    pub(crate) fn into_pdu(self) -> Pdu<P> {
+        self.pdu
+    }
+
     /// Retrieve the inner packet.
     pub fn into_inner(self) -> P {
         self.pdu.into_inner()
+    }
+}
+
+impl<P: Packet> Sdu<P> {
+    /// Create SDU from a slice.
+    pub fn from_slice<POOL>(data: &[u8]) -> Result<Self, ()>
+    where
+        POOL: PacketPool<Packet = P>,
+    {
+        assert!(data.len() <= POOL::MTU);
+        if let Some(mut buf) = POOL::allocate() {
+            buf.as_mut()[..data.len()].copy_from_slice(data);
+            Ok(Sdu::new(buf, data.len()))
+        } else {
+            Err(())
+        }
     }
 }
 

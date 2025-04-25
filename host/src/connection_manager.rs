@@ -481,8 +481,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         self.outbound.try_send((handle, pdu)).map_err(|_| Error::OutOfMemory)
     }
 
-    pub(crate) async fn outbound(&self) -> (ConnHandle, Pdu<P::Packet>) {
-        self.outbound.receive().await
+    pub(crate) fn poll_outbound(&self, cx: &mut Context<'_>) -> Poll<(ConnHandle, Pdu<P::Packet>)> {
+        self.outbound.poll_receive(cx)
     }
 
     pub(crate) fn get_att_mtu_handle(&self, conn: ConnHandle) -> u16 {

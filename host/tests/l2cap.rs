@@ -6,7 +6,6 @@ mod common;
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3;
-const MTU: usize = 23;
 
 /// Verify l2cap le connection oriented channels using two HCI adapters attached to the test machine.
 #[tokio::test]
@@ -69,7 +68,7 @@ async fn l2cap_connection_oriented_channels() {
                     // Size of payload we're expecting
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(&stack, &mut rx).await?;
+                        let len = ch1.receive(&mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }
@@ -77,7 +76,7 @@ async fn l2cap_connection_oriented_channels() {
 
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, MTU>(&stack, &tx).await?;
+                        ch1.send(&tx).await?;
                     }
                     println!("[peripheral] data sent");
                     break;
@@ -123,12 +122,12 @@ async fn l2cap_connection_oriented_channels() {
                     println!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, MTU>(&stack, &tx).await?;
+                        ch1.send(&tx).await?;
                     }
                     println!("[central] data sent");
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
-                        let len = ch1.receive(&stack, &mut rx).await?;
+                        let len = ch1.receive(&mut rx).await?;
                         assert_eq!(len, rx.len());
                         assert_eq!(rx, [i; PAYLOAD_LEN]);
                     }

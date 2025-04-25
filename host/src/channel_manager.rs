@@ -2,31 +2,34 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use bt_hci::controller::{blocking, Controller};
+use bt_hci::controller::Controller;
 use bt_hci::param::ConnHandle;
-use bt_hci::FromHciBytes;
+use bt_hci::{FromHciBytes, WriteHci};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 
-use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::BleHost;
 #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
 use crate::l2cap::sar::PacketReassembly;
+use crate::l2cap::sar::PacketSplitter;
 use crate::l2cap::L2capChannel;
 use crate::pdu::{Pdu, Sdu};
 use crate::prelude::L2capChannelConfig;
 use crate::types::l2cap::{
-    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capSignalCode,
-    L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
+    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
+    L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode,
+    LeCreditFlowInd,
 };
-use crate::{config, BleHostError, Error, PacketPool};
+use crate::{config, BleHostError, Error, Packet, PacketPool};
 
 const BASE_ID: u16 = 0x40;
 
 struct State<'d, P> {
     next_req_id: u8,
+    poll_flow_channel: usize,
+    poll_outbound_channel: usize,
     channels: &'d mut [ChannelStorage<P>],
     accept_waker: WakerRegistration,
     create_waker: WakerRegistration,
@@ -67,6 +70,14 @@ impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
         self.chan.poll_receive(cx)
     }
 
+    pub fn poll_ready_to_send(&self, cx: &mut Context<'_>) -> Poll<()> {
+        self.chan.poll_ready_to_send(cx)
+    }
+
+    pub fn poll_ready_to_receive(&self, cx: &mut Context<'_>) -> Poll<()> {
+        self.chan.poll_ready_to_receive(cx)
+    }
+
     pub fn clear(&self) {
         self.chan.clear()
     }
@@ -101,6 +112,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Self {
             state: RefCell::new(State {
                 next_req_id: 0,
+                poll_flow_channel: 0,
+                poll_outbound_channel: 0,
                 channels,
                 accept_waker: WakerRegistration::new(),
                 create_waker: WakerRegistration::new(),
@@ -119,6 +132,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             if chan.state == ChannelState::Connected {
                 chan.state = ChannelState::Disconnecting;
                 let _ = chan.inbound.close();
+                let _ = chan.outbound.close();
                 #[cfg(feature = "channel-metrics")]
                 chan.metrics.reset();
                 state.disconnect_waker.wake();
@@ -131,6 +145,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         for storage in state.channels.iter_mut() {
             if Some(conn) == storage.conn {
                 let _ = storage.inbound.close();
+                let _ = storage.outbound.close();
+                #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+                storage.reassembly.disconnected();
+                storage.splitter.disconnected();
                 #[cfg(feature = "channel-metrics")]
                 storage.metrics.reset();
                 storage.close();
@@ -147,6 +165,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             if ChannelState::Disconnected == storage.state && storage.refcount == 0 {
                 // Ensure inbound is empty.
                 storage.inbound.clear();
+                storage.outbound.clear();
                 let cid: u16 = BASE_ID + idx as u16;
                 storage.conn = Some(conn);
                 storage.cid = cid;
@@ -543,6 +562,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             if cid == storage.cid {
                 storage.state = ChannelState::PeerDisconnecting;
                 let _ = storage.inbound.close();
+                let _ = storage.outbound.close();
                 state.disconnect_waker.wake();
                 break;
             }
@@ -561,45 +581,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
-    /// Receive SDU on a given channel.
-    ///
-    /// The MTU of the channel must be <= the MTU of the packet.
-    pub(crate) async fn receive_sdu<T: Controller>(
-        &self,
-        chan: ChannelIndex,
-        ble: &BleHost<'d, T, P>,
-    ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
-        let pdu = self.receive_pdu(&ble.connections, chan).await?;
-        let mut p_buf: [u8; 16] = [0; 16];
-        self.flow_control(chan, ble, &mut p_buf).await?;
+    /// Receive the next SDU on a given channel.
+    pub(crate) async fn receive(&self, chan: ChannelIndex) -> Result<Sdu<P::Packet>, Error> {
+        let pdu = self.receive_pdu(chan).await?;
         Ok(Sdu::from_pdu(pdu))
     }
 
-    /// Receive data on a given channel and copy it into the buffer.
-    ///
-    /// The length provided buffer slice must be equal or greater to the agreed MTU.
-    pub(crate) async fn receive<T: Controller>(
-        &self,
-        chan: ChannelIndex,
-        buf: &mut [u8],
-        ble: &BleHost<'d, T, P>,
-    ) -> Result<usize, BleHostError<T::Error>> {
-        let pdu = self.receive_pdu(&ble.connections, chan).await?;
-
-        let to_copy = pdu.len().min(buf.len());
-        // info!("[host] received a pdu of len {}, copying {} bytes", pdu.len(), to_copy);
-        buf[..to_copy].copy_from_slice(&pdu.as_ref()[..to_copy]);
-
-        let mut p_buf: [u8; 16] = [0; 16];
-        self.flow_control(chan, ble, &mut p_buf).await?;
-        Ok(to_copy)
-    }
-
-    async fn receive_pdu<'m>(
-        &self,
-        ble: &'m ConnectionManager<'d, P>,
-        chan: ChannelIndex,
-    ) -> Result<Pdu<P::Packet>, Error> {
+    async fn receive_pdu(&self, chan: ChannelIndex) -> Result<Pdu<P::Packet>, Error> {
         poll_fn(|cx| {
             let state = self.state.borrow();
             let chan = &state.channels[chan.0 as usize];
@@ -622,35 +610,19 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
-    pub(crate) async fn send<T: Controller>(
-        &self,
-        index: ChannelIndex,
-        buf: &[u8],
-        p_buf: &mut [u8],
-        ble: &BleHost<'d, T, P>,
-    ) -> Result<(), BleHostError<T::Error>> {
-        let (conn, mps, peer_cid) = self.connected_channel_params(index)?;
-        // The number of packets we'll need to send for this payload
-        let len = (buf.len() as u16).saturating_add(2);
-        let n_packets = len.div_ceil(mps);
-        // info!("[host] sending {} LE K frames, len {}, mps {}", n_packets, len, mps);
-
-        let mut grant = poll_fn(|cx| self.poll_request_to_send(index, n_packets, Some(cx))).await?;
-
-        // Segment using mps
-        let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
-
-        let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        ble.l2cap(conn, (len - 4) as u16, 1).await?.send(&p_buf[..len]).await?;
-        grant.confirm(1);
-
-        let chunks = remaining.chunks(mps as usize);
-
-        for chunk in chunks {
-            let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            ble.l2cap(conn, (len - 4) as u16, 1).await?.send(&p_buf[..len]).await?;
-            grant.confirm(1);
-        }
+    pub(crate) async fn send(&self, index: ChannelIndex, sdu: Sdu<P::Packet>) -> Result<(), Error> {
+        poll_fn(|cx| {
+            let state = self.state.borrow();
+            let chan = &state.channels[index.0 as usize];
+            chan.outbound.poll_ready_to_send(cx)
+        })
+        .await;
+        self.with_mut(|state| {
+            state.channels[index.0 as usize]
+                .outbound
+                .try_send(sdu.into_pdu())
+                .unwrap()
+        });
         Ok(())
     }
 
@@ -659,45 +631,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     /// The buffer will be segmented to the maximum payload size agreed in the opening handshake.
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
-    pub(crate) fn try_send<T: Controller + blocking::Controller>(
-        &self,
-        index: ChannelIndex,
-        buf: &[u8],
-        p_buf: &mut [u8],
-        ble: &BleHost<'d, T, P>,
-    ) -> Result<(), BleHostError<T::Error>> {
-        let (conn, mps, peer_cid) = self.connected_channel_params(index)?;
-
-        // The number of packets we'll need to send for this payload
-        let len = (buf.len() as u16).saturating_add(2);
-        let n_packets = len.div_ceil(mps);
-
-        let mut grant = match self.poll_request_to_send(index, n_packets, None) {
-            Poll::Ready(res) => res?,
-            Poll::Pending => {
-                return Err(Error::Busy.into());
-            }
-        };
-
-        // Pre-request
-        let mut sender = ble.try_l2cap(conn, len, n_packets)?;
-
-        // Segment using mps
-        let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
-
-        let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        sender.try_send(&p_buf[..len])?;
-        grant.confirm(1);
-
-        let chunks = remaining.chunks(mps as usize);
-        let num_chunks = chunks.len();
-
-        for (i, chunk) in chunks.enumerate() {
-            let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            sender.try_send(&p_buf[..len])?;
-            grant.confirm(1);
-        }
-        Ok(())
+    pub(crate) fn try_send(&self, index: ChannelIndex, sdu: Sdu<P::Packet>) -> Result<(), Error> {
+        self.with_mut(|state| state.channels[index.0 as usize].outbound.try_send(sdu.into_pdu()))
     }
 
     fn connected_channel_params(&self, index: ChannelIndex) -> Result<(ConnHandle, u16, u16), Error> {
@@ -710,49 +645,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Err(Error::ChannelClosed)
     }
 
-    // Check the current state of flow control and send flow indications if
-    // our policy says so.
-    async fn flow_control<T: Controller>(
-        &self,
-        index: ChannelIndex,
-        ble: &BleHost<'d, T, P>,
-        p_buf: &mut [u8],
-    ) -> Result<(), BleHostError<T::Error>> {
-        let (conn, cid, credits) = self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
-            if chan.state == ChannelState::Connected {
-                return Ok((chan.conn.unwrap(), chan.cid, chan.flow_control.process()));
-            }
-            trace!("[l2cap][flow_control_process] channel {:?} not found", index);
-            Err(Error::NotFound)
-        })?;
-
-        if let Some(credits) = credits {
-            let identifier = self.next_request_id();
-            let signal = LeCreditFlowInd { cid, credits };
-            // info!("[host] sending credit flow {} credits on cid {}", credits, cid);
-
-            // Reuse packet buffer for signalling data to save the extra TX buffer
-            ble.l2cap_signal(conn, identifier, &signal, p_buf).await?;
-            self.with_mut(|state| {
-                let chan = &mut state.channels[index.0 as usize];
-                if chan.state == ChannelState::Connected {
-                    chan.flow_control.confirm_granted(credits);
-                    return Ok(());
-                }
-                trace!("[l2cap][flow_control_grant] channel {:?} not found", index);
-                Err(Error::NotFound)
-            })?;
-        }
-        Ok(())
-    }
-
     fn with_mut<F: FnOnce(&mut State<'d, P::Packet>) -> R, R>(&self, f: F) -> R {
         let mut state = self.state.borrow_mut();
         f(&mut state)
     }
 
-    fn poll_request_to_send(
+    pub(crate) fn poll_request_to_send(
         &self,
         index: ChannelIndex,
         credits: u16,
@@ -777,6 +675,96 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
         trace!("[l2cap][pool_request_to_send] channel index {:?} not found", index);
         Poll::Ready(Err(Error::NotFound))
+    }
+
+    pub(crate) fn poll_flow<'m>(&'m self, cx: &mut Context<'_>) -> Poll<(ConnHandle, FlowRequest<'m, 'd, P>)> {
+        let mut state = self.state.borrow_mut();
+        let mut channel = state.poll_flow_channel;
+        loop {
+            let next_channel = (channel + 1) % state.channels.len();
+            let chan = &mut state.channels[channel];
+            if chan.state == ChannelState::Connected {
+                if let Poll::Ready(credits) = chan.flow_control.poll(cx) {
+                    let conn = chan.conn.unwrap();
+                    state.poll_flow_channel = next_channel;
+                    return Poll::Ready((
+                        conn,
+                        FlowRequest {
+                            index: ChannelIndex(channel as u8),
+                            state: &self.state,
+                            credits,
+                        },
+                    ));
+                }
+            }
+            channel = next_channel;
+
+            if channel == state.poll_flow_channel {
+                break;
+            }
+        }
+        Poll::Pending
+    }
+
+    pub(crate) fn poll_outbound<'m>(
+        &'m self,
+        cx: &mut Context<'_>,
+    ) -> Poll<(ConnHandle, Segment<'m, 'd, P::Packet>, CreditGrant<'m, 'd, P::Packet>)> {
+        let mut state = self.state.borrow_mut();
+        let mut channel = state.poll_outbound_channel;
+        loop {
+            let next_channel = (channel + 1) % state.channels.len();
+            let chan = &mut state.channels[channel];
+            let index = ChannelIndex(channel as u8);
+            if chan.state == ChannelState::Connected {
+                chan.credit_waker.register(cx.waker());
+                let credits = 1;
+                if credits <= chan.peer_credits {
+                    chan.peer_credits -= credits;
+                    #[cfg(feature = "channel-metrics")]
+                    chan.metrics.sent(credits as usize);
+
+                    if !chan.splitter.is_empty() {
+                        let conn = chan.conn.unwrap();
+                        state.poll_outbound_channel = next_channel;
+                        return Poll::Ready((
+                            conn,
+                            Segment {
+                                state: &self.state,
+                                index,
+                            },
+                            CreditGrant::new(&self.state, index, credits),
+                        ));
+                    }
+
+                    match chan.outbound.poll_receive(cx) {
+                        Poll::Ready(Some(pdu)) => {
+                            chan.splitter.reset(pdu);
+                            let conn = chan.conn.unwrap();
+                            state.poll_outbound_channel = next_channel;
+                            return Poll::Ready((
+                                conn,
+                                Segment {
+                                    state: &self.state,
+                                    index,
+                                },
+                                CreditGrant::new(&self.state, index, credits),
+                            ));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    #[cfg(feature = "channel-metrics")]
+                    chan.metrics.blocked_send();
+                }
+            }
+            channel = next_channel;
+
+            if channel == state.poll_outbound_channel {
+                break;
+            }
+        }
+        Poll::Pending
     }
 
     pub(crate) fn poll_disconnecting<'m>(&'m self, cx: Option<&mut Context<'_>>) -> Poll<DisconnectRequest<'m, 'd, P>> {
@@ -839,6 +827,89 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             let state = &state.channels[index.0 as usize];
             f(&state.metrics)
         })
+    }
+}
+
+pub(crate) struct FlowRequest<'a, 'd, P: PacketPool> {
+    state: &'a RefCell<State<'d, P::Packet>>,
+    index: ChannelIndex,
+    credits: u16,
+}
+
+impl<'a, 'd, P: PacketPool> FlowRequest<'a, 'd, P> {
+    pub fn encode(&self, buf: &mut [u8]) -> Result<usize, Error> {
+        let mut state = self.state.borrow_mut();
+        let chan = &state.channels[self.index.0 as usize];
+
+        let flow = LeCreditFlowInd {
+            cid: chan.cid,
+            credits: self.credits,
+        };
+
+        encode_signal(state.next_request_id(), &flow, buf)
+    }
+
+    pub fn commit(self) {
+        let mut state = self.state.borrow_mut();
+        let chan = &mut state.channels[self.index.0 as usize];
+        chan.flow_control.confirm_granted(self.credits);
+    }
+}
+
+fn encode_signal<D: L2capSignal>(identifier: u8, signal: &D, p_buf: &mut [u8]) -> Result<usize, Error> {
+    //trace!(
+    //    "[l2cap] sending control signal (req = {}) signal: {:?}",
+    //    identifier,
+    //    signal
+    //);
+    let header = L2capSignalHeader {
+        identifier,
+        code: D::code(),
+        length: signal.size() as u16,
+    };
+    let l2cap = L2capHeader {
+        channel: D::channel(),
+        length: header.size() as u16 + header.length,
+    };
+
+    let mut w = WriteCursor::new(p_buf);
+    w.write_hci(&l2cap)?;
+    w.write_hci(&header)?;
+    w.write_hci(signal)?;
+
+    Ok(w.len())
+}
+
+pub(crate) struct Segment<'a, 'd, P> {
+    state: &'a RefCell<State<'d, P>>,
+    index: ChannelIndex,
+}
+
+impl<'a, 'd, P: Packet> Segment<'a, 'd, P> {
+    pub fn channel(&self) -> ChannelIndex {
+        self.index
+    }
+    pub fn encode(&self, buf: &mut [u8]) -> usize {
+        let state = self.state.borrow_mut();
+        let chan = &state.channels[self.index.0 as usize];
+        let n = chan.splitter.fill(&mut buf[4..]);
+
+        buf[0..2].copy_from_slice(&chan.peer_cid.to_le_bytes());
+        buf[2..4].copy_from_slice(&(n as u16).to_le_bytes());
+        n + 4
+    }
+
+    pub fn commit(&self, n: usize) {
+        let mut state = self.state.borrow_mut();
+        let chan = &mut state.channels[self.index.0 as usize];
+        chan.splitter.commit(n - 4);
+    }
+
+    pub fn len(&self) -> usize {
+        let state = self.state.borrow_mut();
+        let chan = &state.channels[self.index.0 as usize];
+        let n = chan.splitter.len();
+        n
     }
 }
 
@@ -915,6 +986,8 @@ pub struct ChannelStorage<P> {
     credit_waker: WakerRegistration,
 
     inbound: PacketChannel<P, { config::L2CAP_RX_QUEUE_SIZE }>,
+    outbound: PacketChannel<P, { config::L2CAP_TX_QUEUE_SIZE }>,
+    splitter: PacketSplitter<P>,
     #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
     reassembly: PacketReassembly<P>,
 
@@ -1038,6 +1111,8 @@ impl<P> ChannelStorage<P> {
             credit_waker: WakerRegistration::new(),
             refcount: 0,
             inbound: PacketChannel::new(),
+            outbound: PacketChannel::new(),
+            splitter: PacketSplitter::new(),
             #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
             reassembly: PacketReassembly::new(),
             #[cfg(feature = "channel-metrics")]
@@ -1086,8 +1161,8 @@ impl Default for CreditFlowPolicy {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct CreditFlowControl {
+    waker: WakerRegistration,
     policy: CreditFlowPolicy,
     credits: u16,
     received: u16,
@@ -1099,6 +1174,7 @@ impl CreditFlowControl {
             policy,
             credits: initial_credits,
             received: 0,
+            waker: WakerRegistration::new(),
         }
     }
     fn available(&self) -> u16 {
@@ -1108,6 +1184,7 @@ impl CreditFlowControl {
     fn confirm_received(&mut self, n: u16) {
         self.credits = self.credits.saturating_sub(n);
         self.received = self.received.saturating_add(n);
+        self.waker.wake();
     }
 
     // Confirm that we've granted amount credits
@@ -1117,20 +1194,21 @@ impl CreditFlowControl {
     }
 
     // Check if policy says we should grant more credits
-    fn process(&mut self) -> Option<u16> {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<u16> {
+        self.waker.register(cx.waker());
         match self.policy {
             CreditFlowPolicy::Every(count) => {
                 if self.received >= count {
-                    Some(self.received)
+                    Poll::Ready(self.received)
                 } else {
-                    None
+                    Poll::Pending
                 }
             }
             CreditFlowPolicy::MinThreshold(threshold) => {
                 if self.credits < threshold {
-                    Some(self.received)
+                    Poll::Ready(self.received)
                 } else {
-                    None
+                    Poll::Pending
                 }
             }
         }

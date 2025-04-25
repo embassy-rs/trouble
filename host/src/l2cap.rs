@@ -1,5 +1,5 @@
 //! L2CAP channels.
-use bt_hci::controller::{blocking, Controller};
+use bt_hci::controller::Controller;
 
 pub use crate::channel_manager::CreditFlowPolicy;
 #[cfg(feature = "channel-metrics")]
@@ -7,7 +7,7 @@ pub use crate::channel_manager::Metrics as ChannelMetrics;
 use crate::channel_manager::{ChannelIndex, ChannelManager};
 use crate::connection::Connection;
 use crate::pdu::Sdu;
-use crate::{BleHostError, PacketPool, Stack};
+use crate::{BleHostError, Error, PacketPool, Stack};
 
 pub(crate) mod sar;
 
@@ -112,17 +112,13 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, waits until more credits are available.
-    pub async fn send<T: Controller, const TX_MTU: usize>(
-        &mut self,
-        stack: &Stack<'_, T, P>,
-        buf: &[u8],
-    ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; TX_MTU];
-        stack
-            .host
-            .channels
-            .send(self.index, buf, &mut p_buf[..], &stack.host)
-            .await
+    pub async fn send(&mut self, tx: &[u8]) -> Result<(), Error> {
+        if tx.len() > P::MTU {
+            return Err(Error::InsufficientSpace);
+        }
+        let sdu = Sdu::from_slice::<P>(tx).map_err(|_| Error::OutOfMemory)?;
+        self.manager.send(self.index, sdu).await?;
+        Ok(())
     }
 
     /// Send the provided buffer over this l2cap channel.
@@ -131,37 +127,26 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, returns Error::Busy.
-    pub fn try_send<T: Controller + blocking::Controller, const TX_MTU: usize>(
-        &mut self,
-        stack: &Stack<'_, T, P>,
-        buf: &[u8],
-    ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; TX_MTU];
-        stack
-            .host
-            .channels
-            .try_send(self.index, buf, &mut p_buf[..], &stack.host)
+    pub fn try_send(&mut self, tx: &[u8]) -> Result<(), Error> {
+        if tx.len() > P::MTU {
+            return Err(Error::InsufficientSpace);
+        }
+        let sdu = Sdu::from_slice::<P>(tx).map_err(|_| Error::OutOfMemory)?;
+        self.manager.try_send(self.index, sdu)?;
+        Ok(())
     }
 
-    /// Receive data on this channel and copy it into the buffer.
+    /// Receive the next SDU available on this channel and copy it into the provided buffer.
     ///
-    /// The length provided buffer slice must be equal or greater to the agreed MTU.
-    pub async fn receive<T: Controller>(
-        &mut self,
-        stack: &Stack<'_, T, P>,
-        buf: &mut [u8],
-    ) -> Result<usize, BleHostError<T::Error>> {
-        stack.host.channels.receive(self.index, buf, &stack.host).await
-    }
-
-    /// Receive the next SDU available on this channel.
-    ///
-    /// The length provided buffer slice must be equal or greater to the agreed MTU.
-    pub async fn receive_sdu<T: Controller>(
-        &mut self,
-        stack: &Stack<'_, T, P>,
-    ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
-        stack.host.channels.receive_sdu(self.index, &stack.host).await
+    /// The buffer must be able to fit up to P::MTU length of bytes.
+    pub async fn receive(&mut self, rx: &mut [u8]) -> Result<usize, Error> {
+        if rx.len() < P::MTU {
+            return Err(Error::InsufficientSpace);
+        }
+        let sdu = self.manager.receive(self.index).await?;
+        let to_copy = rx.len().min(sdu.len());
+        rx[..to_copy].copy_from_slice(sdu.as_ref());
+        Ok(to_copy)
     }
 
     /// Read metrics of the l2cap channel.
@@ -234,25 +219,17 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
         self.manager.disconnect(self.index);
     }
 
-    /// Receive data on this channel and copy it into the buffer.
+    /// Receive the next SDU available on this channel and copy it into the provided buffer.
     ///
-    /// The length provided buffer slice must be equal or greater to the agreed MTU.
-    pub async fn receive<T: Controller>(
-        &mut self,
-        stack: &Stack<'_, T, P>,
-        buf: &mut [u8],
-    ) -> Result<usize, BleHostError<T::Error>> {
-        stack.host.channels.receive(self.index, buf, &stack.host).await
-    }
-
-    /// Receive the next SDU available on this channel.
-    ///
-    /// The length provided buffer slice must be equal or greater to the agreed MTU.
-    pub async fn receive_sdu<T: Controller>(
-        &mut self,
-        stack: &Stack<'_, T, P>,
-    ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
-        stack.host.channels.receive_sdu(self.index, &stack.host).await
+    /// The buffer must be able to fit up to P::MTU length of bytes.
+    pub async fn receive(&mut self, rx: &mut [u8]) -> Result<usize, Error> {
+        if rx.len() < P::MTU {
+            return Err(Error::InsufficientSpace);
+        }
+        let sdu = self.manager.receive(self.index).await?;
+        let to_copy = rx.len().min(sdu.len());
+        rx[..to_copy].copy_from_slice(sdu.as_ref());
+        Ok(to_copy)
     }
 
     /// Read metrics of the l2cap channel.
@@ -291,17 +268,13 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, waits until more credits are available.
-    pub async fn send<T: Controller, const TX_MTU: usize>(
-        &mut self,
-        stack: &Stack<'_, T, P>,
-        buf: &[u8],
-    ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; TX_MTU];
-        stack
-            .host
-            .channels
-            .send(self.index, buf, &mut p_buf[..], &stack.host)
-            .await
+    pub async fn send(&mut self, tx: &[u8]) -> Result<(), Error> {
+        if tx.len() > P::MTU {
+            return Err(Error::InsufficientSpace);
+        }
+        let sdu = Sdu::from_slice::<P>(tx).map_err(|_| Error::OutOfMemory)?;
+        self.manager.send(self.index, sdu).await?;
+        Ok(())
     }
 
     /// Send the provided buffer over this l2cap channel.
@@ -310,16 +283,13 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
     ///
     /// If the channel has been closed or the channel id is not valid, an error is returned.
     /// If there are no available credits to send, returns Error::Busy.
-    pub fn try_send<T: Controller + blocking::Controller, const TX_MTU: usize>(
-        &mut self,
-        stack: &Stack<'_, T, P>,
-        buf: &[u8],
-    ) -> Result<(), BleHostError<T::Error>> {
-        let mut p_buf = [0u8; TX_MTU];
-        stack
-            .host
-            .channels
-            .try_send(self.index, buf, &mut p_buf[..], &stack.host)
+    pub fn try_send(&mut self, tx: &[u8]) -> Result<(), Error> {
+        if tx.len() > P::MTU {
+            return Err(Error::InsufficientSpace);
+        }
+        let sdu = Sdu::from_slice::<P>(tx).map_err(|_| Error::OutOfMemory)?;
+        self.manager.try_send(self.index, sdu)?;
+        Ok(())
     }
 
     /// Read metrics of the l2cap channel.

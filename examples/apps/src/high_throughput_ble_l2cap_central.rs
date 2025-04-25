@@ -99,7 +99,7 @@ where
 
             for i in 0..NUM_PAYLOADS {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.expect("L2CAP send failed");
+                ch1.send(&tx).await.expect("L2CAP send failed");
             }
 
             let duration = start.elapsed();
@@ -112,7 +112,7 @@ where
 
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..NUM_PAYLOADS {
-                let len = ch1.receive(&stack, &mut rx).await.expect("L2CAP receive failed");
+                let len = ch1.receive(&mut rx).await.expect("L2CAP receive failed");
                 assert_eq!(len, rx.len());
                 assert_eq!(rx, [i; PAYLOAD_LEN]);
             }
