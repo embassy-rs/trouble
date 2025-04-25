@@ -14,7 +14,7 @@ esp-println = { version = "0.13.0", features = ["log"] }
 esp-wifi = { version = "0.13.0", features = [ "ble" ] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
 bt-hci = { version = "0.3" }
-trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-251"] }
+trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
 
 [features]
 default = ["esp32c3"]
