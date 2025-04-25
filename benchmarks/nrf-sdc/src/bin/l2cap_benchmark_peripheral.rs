@@ -130,7 +130,7 @@ async fn main(spawner: Spawner) {
             let mut bytes: u64 = 0;
             for i in 0..500 {
                 let tx = [(i % 255) as u8; PAYLOAD_LEN];
-                unwrap!(ch1.send::<_, L2CAP_MTU>(&stack, &tx).await);
+                unwrap!(ch1.send(&stack, &tx).await);
                 bytes += PAYLOAD_LEN as u64;
                 let duration = Instant::now() - last;
                 if duration.as_secs() > 10 {

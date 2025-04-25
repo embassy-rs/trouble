@@ -71,11 +71,15 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
                     let conn = central.connect(&config).await.unwrap();
                     log::info!("[central] connected");
                     const PAYLOAD_LEN: usize = 27;
-                    let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &Default::default()).await?;
+                    let config = L2capChannelConfig {
+                        mtu: Some(PAYLOAD_LEN as u16),
+                        ..Default::default()
+                    };
+                    let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &config).await?;
                     log::info!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, PAYLOAD_LEN>(&stack, &tx).await?;
+                        ch1.send(&stack, &tx).await?;
                     }
                     log::info!("[central] data sent");
                     let mut rx = [0; PAYLOAD_LEN];
