@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(dead_code)]
 
+pub(crate) mod common;
 pub(crate) mod fmt;
 
 pub mod ble_advertise;

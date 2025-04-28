@@ -75,7 +75,7 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
                         mtu: Some(PAYLOAD_LEN as u16),
                         ..Default::default()
                     };
-                    let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &config).await?;
+                    let mut ch1 = L2capChannel::create(&stack, &conn, 0x81, &config).await?;
                     log::info!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
