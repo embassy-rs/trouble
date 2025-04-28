@@ -389,13 +389,14 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn dec_ref(&self, index: u8) {
         self.with_mut(|state| {
-            let state = &mut state.connections[index as usize];
-            state.refcount = unwrap!(
-                state.refcount.checked_sub(1),
+            let conn = &mut state.connections[index as usize];
+            conn.refcount = unwrap!(
+                conn.refcount.checked_sub(1),
                 "bug: dropping a connection with refcount 0"
             );
-            if state.refcount == 0 && state.state == ConnectionState::Connected {
-                state.state = ConnectionState::DisconnectRequest(DisconnectReason::RemoteUserTerminatedConn);
+            if conn.refcount == 0 && conn.state == ConnectionState::Connected {
+                conn.state = ConnectionState::DisconnectRequest(DisconnectReason::RemoteUserTerminatedConn);
+                state.disconnect_waker.wake();
             }
         });
     }
