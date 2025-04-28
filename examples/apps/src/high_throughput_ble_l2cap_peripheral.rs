@@ -4,6 +4,8 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
 use trouble_host::prelude::*;
 
+use crate::common::PSM_L2CAP_EXAMPLES;
+
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
@@ -72,7 +74,7 @@ where
                 initial_credits: Some(200),
             };
 
-            let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &l2cap_channel_config)
+            let mut ch1 = L2capChannel::accept(&stack, &conn, &[PSM_L2CAP_EXAMPLES], &l2cap_channel_config)
                 .await
                 .expect("L2capChannel create failed");
 

@@ -2,6 +2,8 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
+use crate::common::PSM_L2CAP_EXAMPLES;
+
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
@@ -55,7 +57,9 @@ where
                 mtu: Some(PAYLOAD_LEN as u16),
                 ..Default::default()
             };
-            let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &config).await.unwrap();
+            let mut ch1 = L2capChannel::accept(&stack, &conn, &[PSM_L2CAP_EXAMPLES], &config)
+                .await
+                .unwrap();
 
             info!("L2CAP channel accepted");
 
