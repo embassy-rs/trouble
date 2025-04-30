@@ -259,6 +259,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.state = ConnectionState::Disconnected;
                 storage.reassembly.disconnected();
                 let _ = storage.events.try_send(ConnectionEvent::Disconnected { reason });
+                #[cfg(feature = "gatt")]
+                storage.gatt.clear();
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
                 #[cfg(feature = "security")]
