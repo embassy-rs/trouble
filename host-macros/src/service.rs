@@ -5,7 +5,7 @@
 //! generate the code required to create the service.
 
 use darling::{Error, FromMeta};
-use inflector::cases::screamingsnakecase::to_screaming_snake_case;
+use convert_case::{Case, Casing};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::parse::Result;
@@ -189,7 +189,7 @@ impl ServiceBuilder {
     /// Construct instructions for adding a characteristic to the service, with static storage.
     fn construct_characteristic_static(&mut self, characteristic: Characteristic) {
         let (code_descriptors, named_descriptors) = self.build_descriptors(&characteristic);
-        let name_screaming = format_ident!("{}", to_screaming_snake_case(characteristic.name.as_str()));
+        let name_screaming = format_ident!("{}", characteristic.name.as_str().to_case(Case::Constant));
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
         let access = &characteristic.args.access;
@@ -287,7 +287,7 @@ impl ServiceBuilder {
                 .enumerate()
                 .map(|(index, args)| {
                     let name_screaming =
-                        format_ident!("DESC_{index}_{}", to_screaming_snake_case(characteristic.name.as_str()));
+                        format_ident!("DESC_{index}_{}", characteristic.name.as_str().to_case(Case::Constant));
                     let identifier = args.name.as_ref().map(|name| format_ident!("{}_{}_descriptor", characteristic.name.as_str(), name.value()));
                     let access = &args.access;
                     let properties = set_access_properties(access);
