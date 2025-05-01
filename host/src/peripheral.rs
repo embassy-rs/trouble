@@ -49,7 +49,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
 
         let data: RawAdvertisement = data.into();
         if !data.props.legacy_adv() {
-            return Err(Error::InvalidValue.into());
+            return Err(Error::ExtendedAdvertisingNotSupported.into());
         }
 
         let kind = match (data.props.connectable_adv(), data.props.scannable_adv()) {
@@ -118,7 +118,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         let host = &self.stack.host;
         let data: RawAdvertisement = data.into();
         if !data.props.legacy_adv() {
-            return Err(Error::InvalidValue.into());
+            return Err(Error::ExtendedAdvertisingNotSupported.into());
         }
         if !data.adv_data.is_empty() {
             let mut buf = [0; 31];

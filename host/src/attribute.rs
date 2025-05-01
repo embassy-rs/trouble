@@ -15,7 +15,7 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
-use crate::{Error, PacketPool};
+use crate::{Error, PacketPool, MAX_INVALID_DATA_LEN};
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
@@ -374,15 +374,21 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                         len,
                     } = &mut att.data
                     {
-                        if value.len() == input.len() {
+                        let expected_len = value.len();
+                        let actual_len = input.len();
+
+                        if expected_len == actual_len {
                             value.copy_from_slice(input);
                             return Ok(());
-                        } else if *variable_len && input.len() <= value.len() {
+                        } else if *variable_len && actual_len <= expected_len {
                             value[..input.len()].copy_from_slice(input);
                             *len = input.len() as u16;
                             return Ok(());
                         } else {
-                            return Err(Error::InvalidValue);
+                            return Err(Error::UnexpectedDataLength {
+                                expected: expected_len,
+                                actual: actual_len,
+                            });
                         }
                     }
                 }
@@ -419,9 +425,18 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                         len,
                     } = &mut att.data
                     {
-                        let value = if *variable_len { &value[..*len as usize] } else { value };
-                        let v = T::Value::from_gatt(value).map_err(|_| Error::InvalidValue)?;
-                        return Ok(v);
+                        let value_slice = if *variable_len { &value[..*len as usize] } else { value };
+
+                        match T::Value::from_gatt(value_slice) {
+                            Ok(v) => return Ok(v),
+                            Err(_) => {
+                                let mut invalid_data = [0u8; MAX_INVALID_DATA_LEN];
+                                let len_to_copy = value_slice.len().min(MAX_INVALID_DATA_LEN);
+                                invalid_data[..len_to_copy].copy_from_slice(&value_slice[..len_to_copy]);
+
+                                return Err(Error::CannotConstructGattValue(invalid_data));
+                            }
+                        }
                     }
                 }
             }

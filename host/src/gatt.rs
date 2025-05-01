@@ -650,7 +650,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 }
                 res => {
                     trace!("[gatt client] response: {:?}", res);
-                    return Err(Error::InvalidValue.into());
+                    return Err(Error::UnexpectedGattResponse.into());
                 }
             }
         }
@@ -676,8 +676,15 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             match Self::response(response.pdu.as_ref())? {
                 AttRsp::ReadByType { mut it } => {
                     while let Some(Ok((handle, item))) = it.next() {
-                        if item.len() < 5 {
-                            return Err(Error::InvalidValue.into());
+                        let expected_items_len = 5;
+                        let item_len = item.len();
+
+                        if item_len < expected_items_len {
+                            return Err(Error::MalformedCharacteristicDeclaration {
+                                expected: expected_items_len,
+                                actual: item_len,
+                            }
+                            .into());
                         }
                         if let AttributeData::Declaration {
                             props,
@@ -706,13 +713,13 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             }
                             start = handle + 1;
                         } else {
-                            return Err(Error::InvalidValue.into());
+                            return Err(Error::InvalidCharacteristicDeclarationData.into());
                         }
                     }
                 }
                 AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
                 _ => {
-                    return Err(Error::InvalidValue.into());
+                    return Err(Error::UnexpectedGattResponse.into());
                 }
             }
         }
@@ -738,7 +745,10 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     } else {
                         Ok((
                             handle,
-                            CCCD(u16::from_le_bytes(item.try_into().map_err(|_| Error::InvalidValue)?)),
+                            CCCD(u16::from_le_bytes(
+                                item.try_into()
+                                    .map_err(|_| Error::InvalidCccdHandleLength(item.len()))?,
+                            )),
                         ))
                     }
                 } else {
@@ -746,7 +756,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 }
             }
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::InvalidValue.into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
         }
     }
 
@@ -771,7 +781,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 Ok(to_copy)
             }
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::InvalidValue.into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
         }
     }
 
@@ -803,7 +813,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 Ok(to_copy)
             }
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::InvalidValue.into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
         }
     }
 
@@ -822,7 +832,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         match Self::response(response.pdu.as_ref())? {
             AttRsp::Write => Ok(()),
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::InvalidValue.into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
         }
     }
 
@@ -872,7 +882,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 })
             }
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::InvalidValue.into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
         }
     }
 
@@ -893,7 +903,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         match Self::response(response.pdu.as_ref())? {
             AttRsp::Write => Ok(()),
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::InvalidValue.into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
         }
     }
 
@@ -936,7 +946,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         let att = Att::decode(data)?;
         match att {
             Att::Server(AttServer::Response(rsp)) => Ok(rsp),
-            _ => Err(Error::InvalidValue.into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
         }
     }
 }

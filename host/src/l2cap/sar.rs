@@ -32,7 +32,10 @@ impl<P> AssembledPacket<P> {
 
     pub(crate) fn finalize(self, length: usize) -> Result<Pdu<P>, Error> {
         if length != self.written {
-            return Err(Error::InvalidValue);
+            return Err(Error::FailedToFinalize {
+                expected: length,
+                actual: self.written,
+            });
         }
         Ok(Pdu::new(self.packet, length))
     }
