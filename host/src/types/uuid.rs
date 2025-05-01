@@ -107,7 +107,7 @@ impl TryFrom<&[u8]> for Uuid {
                 bytes.copy_from_slice(value);
                 Ok(Uuid::Uuid128(bytes))
             }
-            _ => Err(crate::Error::InvalidValue),
+            _ => Err(crate::Error::InvalidUuidLength(value.len())),
         }
     }
 }

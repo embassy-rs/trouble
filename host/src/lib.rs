@@ -244,6 +244,9 @@ pub enum BleHostError<E> {
     BleHost(Error),
 }
 
+/// How many bytes of invalid data to capture in the error variants before truncating.
+pub const MAX_INVALID_DATA_LEN: usize = 16;
+
 /// Errors related to Host.
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -261,6 +264,59 @@ pub enum Error {
     InsufficientSpace,
     /// Invalid value.
     InvalidValue,
+
+    /// Unexpected data length.
+    ///
+    /// This happens if the attribute data length doesn't match the input length size,
+    /// and the attribute is deemed as *not* having variable length due to the characteristic's
+    /// `MAX_SIZE` and `MIN_SIZE` being defined as equal.
+    UnexpectedDataLength {
+        /// Expected length.
+        expected: usize,
+        /// Actual length.
+        actual: usize,
+    },
+
+    /// Error converting from GATT value.
+    CannotConstructGattValue([u8; MAX_INVALID_DATA_LEN]),
+
+    /// Scan config filter accept list is empty.
+    ConfigFilterAcceptListIsEmpty,
+
+    /// Unexpected GATT response.
+    UnexpectedGattResponse,
+
+    /// Received characteristic declaration data shorter than the minimum required length (5 bytes).
+    MalformedCharacteristicDeclaration {
+        /// Expected length.
+        expected: usize,
+        /// Actual length.
+        actual: usize,
+    },
+
+    /// Failed to decode the data structure within a characteristic declaration attribute value.
+    InvalidCharacteristicDeclarationData,
+
+    /// Invalid CCCD handle length.
+    InvalidCccdHandleLength(usize),
+
+    /// Failed to finalize the packet.
+    FailedToFinalize {
+        /// Expected length.
+        expected: usize,
+        /// Actual length.
+        actual: usize,
+    },
+
+    /// Codec error.
+    CodecError(codec::Error),
+
+    /// Extended advertising not supported.
+    ExtendedAdvertisingNotSupported,
+
+    /// Invalid UUID length.
+    InvalidUuidLength(usize),
+
     /// Error decoding advertisement data.
     Advertisement(AdvertisementDataError),
     /// Invalid l2cap channel id provided.
@@ -328,7 +384,7 @@ impl From<codec::Error> for Error {
     fn from(error: codec::Error) -> Self {
         match error {
             codec::Error::InsufficientSpace => Error::InsufficientSpace,
-            codec::Error::InvalidValue => Error::InvalidValue,
+            codec::Error::InvalidValue => Error::CodecError(error),
         }
     }
 }

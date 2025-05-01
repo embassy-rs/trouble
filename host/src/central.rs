@@ -25,7 +25,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
             + ControllerCmdAsync<LeCreateConn>,
     {
         if config.scan_config.filter_accept_list.is_empty() {
-            return Err(Error::InvalidValue.into());
+            return Err(Error::ConfigFilterAcceptListIsEmpty.into());
         }
 
         let host = &self.stack.host;
@@ -78,7 +78,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
             + ControllerCmdAsync<LeExtCreateConn>,
     {
         if config.scan_config.filter_accept_list.is_empty() {
-            return Err(Error::InvalidValue.into());
+            return Err(Error::ConfigFilterAcceptListIsEmpty.into());
         }
 
         let host = &self.stack.host;
