@@ -62,13 +62,13 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
             }
             r = async {
                 let mut adv_data = [0; 31];
-                AdStructure::encode_slice(
+                let adv_data_len = AdStructure::encode_slice(
                     &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
                     &mut adv_data[..],
                 ).unwrap();
 
                 let mut scan_data = [0; 31];
-                AdStructure::encode_slice(
+                let scan_data_len = AdStructure::encode_slice(
                     &[AdStructure::CompleteLocalName(b"trouble-l2cap-example")],
                     &mut scan_data[..],
                 ).unwrap();
@@ -76,8 +76,8 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
                 loop {
                     println!("[peripheral] advertising");
                     let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
-                        adv_data: &adv_data[..],
-                        scan_data: &scan_data[..],
+                        adv_data: &adv_data[..adv_data_len],
+                        scan_data: &scan_data[..scan_data_len],
                     }).await?;
                     let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");

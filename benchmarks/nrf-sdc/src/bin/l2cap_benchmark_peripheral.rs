@@ -82,13 +82,13 @@ async fn main(spawner: Spawner) {
     } = stack.build();
 
     let mut adv_data = [0; 31];
-    unwrap!(AdStructure::encode_slice(
+    let adv_data_len = unwrap!(AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
         &mut adv_data[..],
     ));
 
     let mut scan_data = [0; 31];
-    unwrap!(AdStructure::encode_slice(
+    let scan_data_len = unwrap!(AdStructure::encode_slice(
         &[AdStructure::CompleteLocalName(b"Trouble")],
         &mut scan_data[..]
     ));
@@ -100,8 +100,8 @@ async fn main(spawner: Spawner) {
                     .advertise(
                         &Default::default(),
                         Advertisement::ConnectableScannableUndirected {
-                            adv_data: &adv_data[..],
-                            scan_data: &scan_data[..],
+                            adv_data: &adv_data[..adv_data_len],
+                            scan_data: &scan_data[..scan_data_len],
                         },
                     )
                     .await

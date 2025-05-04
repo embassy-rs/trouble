@@ -72,13 +72,13 @@ async fn gatt_client_server() {
             }
             r = async {
                 let mut adv_data = [0; 31];
-                AdStructure::encode_slice(
+                let adv_data_len = AdStructure::encode_slice(
                     &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
                     &mut adv_data[..],
                 ).unwrap();
 
                 let mut scan_data = [0; 31];
-                AdStructure::encode_slice(
+                let scan_data_len = AdStructure::encode_slice(
                     &[AdStructure::CompleteLocalName(b"trouble-gatt-int")],
                     &mut scan_data[..],
                 ).unwrap();
@@ -87,8 +87,8 @@ async fn gatt_client_server() {
                 while !done {
                     println!("[peripheral] advertising");
                     let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
-                        adv_data: &adv_data[..],
-                        scan_data: &scan_data[..],
+                        adv_data: &adv_data[..adv_data_len],
+                        scan_data: &scan_data[..scan_data_len],
                     }).await?;
                     let conn = acceptor.accept().await?.with_attribute_server(&server)?;
                     println!("[peripheral] connected");
