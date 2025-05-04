@@ -177,7 +177,7 @@ async fn advertise<'a, 'b, C: Controller>(
     server: &'b Server<'_>,
 ) -> Result<GattConnection<'a, 'b, DefaultPacketPool>, BleHostError<C::Error>> {
     let mut advertiser_data = [0; 31];
-    AdStructure::encode_slice(
+    let len = AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
             AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
@@ -189,7 +189,7 @@ async fn advertise<'a, 'b, C: Controller>(
         .advertise(
             &Default::default(),
             Advertisement::ConnectableScannableUndirected {
-                adv_data: &advertiser_data[..],
+                adv_data: &advertiser_data[..len],
                 scan_data: &[],
             },
         )

@@ -27,14 +27,14 @@ where
     } = stack.build();
 
     let mut adv_data = [0; 31];
-    AdStructure::encode_slice(
+    let adv_data_len = AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
         &mut adv_data[..],
     )
     .unwrap();
 
     let mut scan_data = [0; 31];
-    AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
+    let scan_data_len = AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
 
     let _ = join(runner.run(), async {
         loop {
@@ -43,8 +43,8 @@ where
                 .advertise(
                     &Default::default(),
                     Advertisement::ConnectableScannableUndirected {
-                        adv_data: &adv_data[..],
-                        scan_data: &scan_data[..],
+                        adv_data: &adv_data[..adv_data_len],
+                        scan_data: &scan_data[..scan_data_len],
                     },
                 )
                 .await
