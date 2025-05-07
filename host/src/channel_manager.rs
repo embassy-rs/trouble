@@ -113,6 +113,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         self.state.borrow_mut().next_request_id()
     }
 
+    pub(crate) fn psm(&self, index: ChannelIndex) -> u16 {
+        self.with_mut(|state| {
+            let chan = &mut state.channels[index.0 as usize];
+            chan.psm
+        })
+    }
+
     pub(crate) fn disconnect(&self, index: ChannelIndex) {
         self.with_mut(|state| {
             let chan = &mut state.channels[index.0 as usize];
