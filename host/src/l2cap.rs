@@ -106,6 +106,11 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         self.manager.disconnect(self.index);
     }
 
+    /// Get the PSM for this channel.
+    pub fn psm(&self) -> u16 {
+        self.manager.psm(self.index)
+    }
+
     /// Send the provided buffer over this l2cap channel.
     ///
     /// The buffer must be equal to or smaller than the MTU agreed for the channel.
