@@ -7,7 +7,7 @@ os.chdir(dname)
 features = []
 
 
-def feature(name, default, min=None, max=None, pow2=None, vals=None, factors=[]):
+def feature(name, description, default, min=None, max=None, pow2=None, vals=None, factors=[]):
     if vals is None:
         assert min is not None
         assert max is not None
@@ -31,27 +31,47 @@ def feature(name, default, min=None, max=None, pow2=None, vals=None, factors=[])
             "name": name,
             "default": default,
             "vals": vals,
+            "description": description,
         }
     )
 
 
-feature("connection_event_queue_size", default=2, min=1, max=64, pow2=True)
-feature("l2cap_rx_queue_size", default=8, min=1, max=64, pow2=True)
-feature("l2cap_tx_queue_size", default=8, min=1, max=64, pow2=True)
-feature("default_packet_pool_size", default=16, min=1, max=128, pow2=True)
-feature("default_packet_pool_mtu", default=255, vals = [27, 48, 64, 128, 251, 255, 512, 1024])
-feature("gatt_client_notification_max_subscribers", default=1, min=1, max=512, pow2=True)
-feature("gatt_client_notification_queue_size", default=1, min=1, max=512, pow2=True)
+feature(
+    "connection_event_queue_size",
+    "Controls the size of the per-connection event queue. The event queue notifies of disconnects and changes to the connection",
+    default=2, min=1, max=64, pow2=True)
+feature("l2cap_rx_queue_size",
+        "Controls the size of the L2CAP inbound queue per channel. The size of the queue impacts how many packets you can have in flight for each L2CAP channel. Keep in mind that the packet pool size might need to be adjusted as well.",
+        default=8, min=1, max=64, pow2=True)
+feature("l2cap_tx_queue_size",
+        "Controls the size of the L2CAP outbound queue per channel. The size of the queue impacts how many packets you can have in flight for each L2CAP channel. Keep in mind that the packet pool size might need to be adjusted as well.",
+        default=8, min=1, max=64, pow2=True)
+feature("default_packet_pool_size",
+        "Controls the pool size of the default packet pool, if enabled. This significantly impacts the RAM usage. The RAM usage from adjusting this setting will be the MTU * pool size.",
+        default=16, min=1, max=128, pow2=True)
+feature("default_packet_pool_mtu",
+        "Controls the packet MTU of the default packet pool, if enabled. This significantly impacts the RAM usage. The RAM usage from adjusting this setting will be the MTU * pool size.",
+        default=255, vals = [27, 48, 64, 128, 251, 255, 512, 1024])
+feature("gatt_client_notification_max_subscribers",
+        "When using the GATT client, this controls how many subscribers can be created.",
+        default=1, min=1, max=512, pow2=True)
+feature("gatt_client_notification_queue_size",
+        "When using the GATT client, this controls how many notifications can be queued for each subscriber.",
+        default=1, min=1, max=512, pow2=True)
 
 # ========= Update Cargo.toml
 
 things = ""
 for f in features:
     name = f["name"].replace("_", "-")
+    desc = f["description"]
     for val in f["vals"]:
         things += f"{name}-{val} = []"
         if val == f["default"]:
             things += " # Default"
+            things += f"{desc}"
+        else:
+            things += f" # {desc}"
         things += "\n"
     things += "\n"
 
