@@ -12,25 +12,40 @@ A trouble application needs two pieces of configuration:
 
 The following features enable/disable features in the host:
 
-* central - enables the central BLE role, allowing the devices to create connections.
-* scan - extends the central BLE role allowing the device to scan for devices.
-* peripheral - enables the peripheral BLE role, allowing the device to advertise its presence.
-* gatt - enables GATT client and server support.
-* derive - enables macros for defining GATT services.
-* security - enables support for the security manager for pairing/bonding.
-* controller-host-flow-control - enables controller-host flow control (not supported by all controllers).
-* connection-metrics - enable additional connection metrics that increases the per-connection RAM requirements.
+* *central* - enables the central BLE role, allowing the devices to create connections.
+* *scan* - extends the central BLE role allowing the device to scan for devices.
+* *peripheral* - enables the peripheral BLE role, allowing the device to advertise its presence.
+* *gatt* - enables GATT client and server support.
+* *derive* - enables macros for defining GATT services.
+* *security* - enables support for the security manager for pairing/bonding.
+* *controller-host-flow-control* - enables controller-host flow control (not supported by all controllers).
+* *connection-metrics* - enable additional connection metrics that increases the per-connection RAM requirements.
 
 The following features configure queue sizes and memory pools (N is any number supported in the features list):
 
-* connection-event-queue-size-N - per-connection queue size of events (disconnects, gatt data).
-* l2cap-rx-queue-size-N - per-l2cap channel queue size of inbound data.
-* l2cap-tx-queue-size-N - per-l2cap channel queue size of outbound data.
-* default-packet-pool - enables a default builtin packet pool.
-* default-packet-pool-size-N - size of the default packet pool.
-* default-packet-pool-mtu-N - size of the default packet pool packets.
-* gatt-client-notification-max-subscribers - GATT client max notification subscribers.
-* gatt-client-notification-queue-size-N - GATT client queue size for inbound notifications.
+* *connection-event-queue-size-N* - per-connection queue size of events (disconnects, connection update events).
++
+Normally the events in this queue are infrequent, so the size defaults to a low value.
+* *l2cap-rx-queue-size-N* - per-l2cap channel queue size of inbound data.
++
+The RX queue size is used to size the per-connection inbound GATT data queues as well as the L2CAP connection oriented channel queues. The size of the queue determines how many in-flight packets you can have per channel,
+and the RAM usage therefore varies with the number of channels and the length of the queue. The packets in the queue are allocated from packet pool configured for the host, and does not contribute directly to the RAM usage.
+* *l2cap-tx-queue-size-N* - per-l2cap channel queue size of outbound data.
++
+The TX queue size is used to size the outbound GATT queue. The packets in the queue are allocated from the packet pool configured for the host, and does not contribute directly to the RAM usage.
+* *default-packet-pool* - enables a default builtin packet pool.
+* *default-packet-pool-size-N* - size of the default packet pool.
++ Configures the number of packets available in the default packet pool, if enabled. This significantly impacts the RAM usage which can be derived from the size of the pool and the mtu. The pool should be sized based on
+the number of connections, channels, queue lengths and expected throughput.
+* *default-packet-pool-mtu-N* - size of the default packet pool packets.
++ Configures the size of packets available in the default packet pool, if enabled. This significantly impacts the RAM usage which can be derived from the size of the pool and the mtu. The pool should be sized based on
+the number of connections, channels, queue lengths and expected throughput.
+* *gatt-client-notification-max-subscribers* - GATT client max notification subscribers.
++
+When using the GATT client, this controls how many subscribers can be created.
+* *gatt-client-notification-queue-size-N* - GATT client queue size for inbound notifications.
++
+When using the GATT client, this controls how many notifications can be queued for each subscriber.
 
 A common question is why the above settings are not const generics, and the reason is that it would obfuscate the API too much, and
 they generally do not need to be changed from the defaults.
@@ -40,10 +55,10 @@ they generally do not need to be changed from the defaults.
 The `HostResources` type holds references to all packets, connections, channels and other data used by Trouble. The following
 generic parameters can be set:
 
-* PacketPool - Allocator used for payloads. Should be sized according to your attribute size or l2cap MTU.
-* CONNS - max number of BLE connections supported.
-* CHANNELS - max number of L2CAP channels supported (not including GATT).
-* ADV_SETS - max number of advertising sets (the default of 1 is appropriate for most applications).
+* *PacketPool* - Allocator used for payloads. Should be sized according to your attribute size or l2cap MTU.
+* *CONNS* - max number of BLE connections supported.
+* *CHANNELS* - max number of L2CAP channels supported (not including GATT).
+* *ADV_SETS* - max number of advertising sets (the default of 1 is appropriate for most applications).
 
 The following instance would allow you to have up to 4 connections and 2 l2cap channels with an MTU configured by the `default-packet-pool-mtu-N` feature.
 
