@@ -257,7 +257,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
-                storage.reassembly.disconnected();
+                storage.reassembly.clear();
                 let _ = storage.events.try_send(ConnectionEvent::Disconnected { reason });
                 #[cfg(feature = "gatt")]
                 storage.gatt.clear();
@@ -288,6 +288,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         for (idx, storage) in state.connections.iter_mut().enumerate() {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 {
                 storage.events.clear();
+                storage.reassembly.clear();
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
                 // Default ATT MTU is 23

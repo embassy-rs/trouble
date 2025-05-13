@@ -138,6 +138,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         for storage in state.channels.iter_mut() {
             if Some(conn) == storage.conn {
                 let _ = storage.inbound.close();
+                #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+                storage.reassembly.clear();
                 #[cfg(feature = "channel-metrics")]
                 storage.metrics.reset();
                 storage.close();
@@ -154,6 +156,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             if ChannelState::Disconnected == storage.state && storage.refcount == 0 {
                 // Ensure inbound is empty.
                 storage.inbound.clear();
+                #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+                storage.reassembly.clear();
                 let cid: u16 = BASE_ID + idx as u16;
                 storage.conn = Some(conn);
                 storage.cid = cid;
