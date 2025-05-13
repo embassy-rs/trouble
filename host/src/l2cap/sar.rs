@@ -89,7 +89,7 @@ impl<P> PacketReassembly<P> {
     }
 
     /// Deletes any reassemblies for the disconnected handle.
-    pub fn disconnected(&mut self) {
+    pub fn clear(&mut self) {
         let _ = self.state.take();
     }
 
