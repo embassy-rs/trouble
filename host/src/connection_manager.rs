@@ -301,6 +301,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     irk: None,
                 });
                 storage.role.replace(role);
+
+                trace!("[link][connect] idx {}: state: {:?}", idx, storage);
                 match role {
                     LeConnRole::Central => {
                         state.central_waker.wake();
@@ -345,11 +347,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                                 && storage.peer_identity.unwrap().bd_addr == *peer.1
                             {
                                 storage.state = ConnectionState::Connected;
-                                trace!(
-                                    "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                                    handle,
-                                    role
-                                );
+                                trace!("[link][poll_accept] connection accepted: state: {:?}", storage);
                                 assert_eq!(storage.refcount, 0);
                                 state.inc_ref(idx as u8);
                                 return Poll::Ready(Connection::new(idx as u8, self));
@@ -358,11 +356,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     } else {
                         storage.state = ConnectionState::Connected;
                         assert_eq!(storage.refcount, 0);
-                        trace!(
-                            "[link][poll_accept] connection handle {:?} in role {:?} accepted",
-                            handle,
-                            role
-                        );
+                        trace!("[link][poll_accept] connection accepted: state: {:?}", storage);
 
                         assert_eq!(storage.refcount, 0);
                         state.inc_ref(idx as u8);
@@ -822,10 +816,11 @@ impl<P> defmt::Format for ConnectionStorage<P> {
 
         defmt::write!(
             f,
-            ", role = {}, peer = {}, ref = {}",
+            ", role = {}, peer = {}, ref = {}, sar = {}",
             self.role,
             self.peer_identity,
-            self.refcount
+            self.refcount,
+            self.reassembly,
         );
 
         #[cfg(feature = "connection-metrics")]

@@ -6,6 +6,21 @@ pub(crate) struct AssembledPacket<P> {
     written: usize,
 }
 
+impl<P> core::fmt::Debug for AssembledPacket<P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AssembledPacket")
+            .field("assembled", &self.written)
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P> defmt::Format for AssembledPacket<P> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "assembled = {}", self.written);
+    }
+}
+
 impl<P> AssembledPacket<P> {
     pub(crate) fn new(packet: P, initial: usize) -> Self {
         Self {
@@ -14,16 +29,19 @@ impl<P> AssembledPacket<P> {
         }
     }
 
-    pub(crate) fn write(&mut self, data: &[u8]) -> Result<(), Error>
+    pub(crate) fn write(&mut self, data: &[u8])
     where
         P: Packet,
     {
-        if self.written + data.len() > self.packet.as_ref().len() {
-            return Err(Error::InsufficientSpace);
-        }
+        assert!(
+            self.written + data.len() <= self.packet.as_ref().len(),
+            "out of bounds reassembly: written = {}, data = {}, packet = {}",
+            self.written,
+            data.len(),
+            self.packet.as_ref().len()
+        );
         self.packet.as_mut()[self.written..self.written + data.len()].copy_from_slice(data);
         self.written += data.len();
-        Ok(())
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -42,15 +60,20 @@ impl<P> AssembledPacket<P> {
 }
 
 // Handles reassembling of a HCI packet.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct PacketReassembly<P> {
     state: Option<State<P>>,
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct State<P> {
     state: AssemblyState,
     packet: AssembledPacket<P>,
 }
 
+#[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct AssemblyState {
     // Target channel of current assembly.
@@ -106,7 +129,7 @@ impl<P> PacketReassembly<P> {
         P: Packet,
     {
         if let Some(mut state) = self.state.take() {
-            state.packet.write(data)?;
+            state.packet.write(data);
             let target = state.state.length as usize;
             //info!(
             //    "[host] update reassembly on {} written {}, target {})",
