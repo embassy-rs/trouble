@@ -19,6 +19,12 @@ impl<P> AssembledPacket<P> {
         P: Packet,
     {
         if self.written + data.len() > self.packet.as_ref().len() {
+            error!(
+                "unexpected assembly write: written = {}, data = {}, packet = {}",
+                self.written,
+                data.len(),
+                self.packet.as_ref().len()
+            );
             return Err(Error::InsufficientSpace);
         }
         self.packet.as_mut()[self.written..self.written + data.len()].copy_from_slice(data);
