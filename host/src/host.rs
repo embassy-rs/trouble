@@ -396,7 +396,15 @@ where
             AclPacketBoundary::Continuing => {
                 // Get the existing fragment
                 if let Some((header, p)) = self.connections.reassembly(acl.handle(), |p| {
-                    assert!(p.in_progress());
+                    if !p.in_progress() {
+                        warn!("[host] reassembly: {:?}", p);
+                    }
+                    assert!(
+                        p.in_progress(),
+                        "unexpected continuation fragment of len {} for handle {}",
+                        acl.data().len(),
+                        acl.handle().raw(),
+                    );
                     p.update(acl.data())
                 })? {
                     (header, p)
@@ -1045,6 +1053,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     match request.send(host).await {
                         Ok(_) => {}
                         Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
+                        Err(BleHostError::BleHost(Error::NotFound)) => {}
                         Err(e) => {
                             return Err(e);
                         }
