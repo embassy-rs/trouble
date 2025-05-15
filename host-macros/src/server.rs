@@ -158,7 +158,7 @@ impl ServerBuilder {
 
             #visibility struct #name<'values>
             {
-                server: trouble_host::prelude::AttributeServer<'values, #mutex_type, #packet_type, _ATTRIBUTE_TABLE_SIZE, _CCCD_TABLE_SIZE, _CONNECTIONS_MAX>,
+                pub server: trouble_host::prelude::AttributeServer<'values, #mutex_type, #packet_type, _ATTRIBUTE_TABLE_SIZE, _CCCD_TABLE_SIZE, _CONNECTIONS_MAX>,
                 #code_service_definition
             }
 
