@@ -396,7 +396,11 @@ where
             AclPacketBoundary::Continuing => {
                 // Get the existing fragment
                 if let Some((header, p)) = self.connections.reassembly(acl.handle(), |p| {
-                    assert!(p.in_progress());
+                    assert!(
+                        p.in_progress(),
+                        "unexpected continuation fragment for handle {}",
+                        acl.handle().raw()
+                    );
                     p.update(acl.data())
                 })? {
                     (header, p)
