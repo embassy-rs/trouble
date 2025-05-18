@@ -1507,7 +1507,6 @@ dependencies = [
 name = "trouble-esp32-examples"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
  "embassy-executor",
  "esp-alloc",
  "esp-backtrace",

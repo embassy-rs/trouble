@@ -2406,7 +2406,6 @@ dependencies = [
 name = "trouble-rp-examples"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
  "cortex-m",
  "cortex-m-rt",
  "cyw43",

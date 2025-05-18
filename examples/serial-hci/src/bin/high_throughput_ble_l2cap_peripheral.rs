@@ -1,11 +1,10 @@
 // Use with any serial HCI
-use bt_hci::controller::ExternalController;
-use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::*;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_example_apps::high_throughput_ble_l2cap_peripheral;
+use trouble_host::prelude::{ExternalController, SerialTransport};
 
 #[path = "../alloc.rs"]
 mod alloc;
