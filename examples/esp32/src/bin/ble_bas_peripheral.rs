@@ -1,11 +1,11 @@
 #![no_std]
 #![no_main]
 
-use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
 use esp_hal::{clock::CpuClock, timer::timg::TimerGroup};
 use esp_wifi::ble::controller::BleConnector;
 use trouble_example_apps::ble_bas_peripheral;
+use trouble_host::prelude::ExternalController;
 use {esp_alloc as _, esp_backtrace as _};
 
 #[esp_hal_embassy::main]

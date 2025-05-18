@@ -1,12 +1,11 @@
 // Use with any serial HCI
-use bt_hci::controller::ExternalController;
-use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::*;
 use rand::rngs::OsRng;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_example_apps::ble_bas_central_sec;
+use trouble_host::prelude::{ExternalController, SerialTransport};
 
 #[tokio::main]
 async fn main() {
