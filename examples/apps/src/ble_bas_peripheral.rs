@@ -52,7 +52,7 @@ where
 
     let _ = join(ble_task(runner), async {
         loop {
-            match advertise("Trouble Example", &mut peripheral, &server).await {
+            match server.advertise("Trouble Example", &mut peripheral).await {
                 Ok(conn) => {
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let a = gatt_events_task(&server, &conn);
@@ -103,74 +103,68 @@ async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
 /// This is how we interact with read and write requests.
 async fn gatt_events_task<P: PacketPool>(server: &Server<'_>, conn: &GattConnection<'_, '_, P>) -> Result<(), Error> {
     let level = server.battery_service.level;
-    loop {
+    let reason = loop {
         match conn.next().await {
-            GattConnectionEvent::Disconnected { reason } => {
-                info!("[gatt] disconnected: {:?}", reason);
-                break;
+            GattConnectionEvent::Disconnected { reason } => break reason,
+            GattConnectionEvent::Gatt { event: Err(e) } => warn!("[gatt] error processing event: {:?}", e),
+            GattConnectionEvent::Gatt { event: Ok(event) } => {
+                match &event {
+                    GattEvent::Read(event) => {
+                        if event.handle() == level.handle {
+                            let value = server.get(&level);
+                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                        }
+                    }
+                    GattEvent::Write(event) => {
+                        if event.handle() == level.handle {
+                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                        }
+                    }
+                };
+                // This step is also performed at drop(), but writing it explicitly is necessary
+                // in order to ensure reply is sent.
+                match event.accept() {
+                    Ok(reply) => reply.send().await,
+                    Err(e) => warn!("[gatt] error sending response: {:?}", e),
+                };
             }
-            GattConnectionEvent::Gatt { event } => match event {
-                Ok(event) => {
-                    match &event {
-                        GattEvent::Read(event) => {
-                            if event.handle() == level.handle {
-                                let value = server.get(&level);
-                                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-                            }
-                        }
-                        GattEvent::Write(event) => {
-                            if event.handle() == level.handle {
-                                info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
-                            }
-                        }
-                    }
-
-                    // This step is also performed at drop(), but writing it explicitly is necessary
-                    // in order to ensure reply is sent.
-                    match event.accept() {
-                        Ok(reply) => {
-                            reply.send().await;
-                        }
-                        Err(e) => warn!("[gatt] error sending response: {:?}", e),
-                    }
-                }
-                Err(e) => warn!("[gatt] error processing event: {:?}", e),
-            },
-            _ => {}
+            _ => {} // ignore other Gatt Connection Events
         }
-    }
-    info!("[gatt] task finished");
+    };
+    info!("[gatt] disconnected: {:?}", reason);
     Ok(())
 }
 
-/// Create an advertiser to use to connect to a BLE Central, and wait for it to connect.
-async fn advertise<'a, 'b, C: Controller>(
-    name: &'a str,
-    peripheral: &mut Peripheral<'a, C, DefaultPacketPool>,
-    server: &'b Server<'_>,
-) -> Result<GattConnection<'a, 'b, DefaultPacketPool>, BleHostError<C::Error>> {
-    let mut advertiser_data = [0; 31];
-    let len = AdStructure::encode_slice(
-        &[
-            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
-            AdStructure::CompleteLocalName(name.as_bytes()),
-        ],
-        &mut advertiser_data[..],
-    )?;
-    let advertiser = peripheral
-        .advertise(
-            &Default::default(),
-            Advertisement::ConnectableScannableUndirected {
-                adv_data: &advertiser_data[..len],
-                scan_data: &[],
-            },
-        )
-        .await?;
-    info!("[adv] advertising");
-    let conn = advertiser.accept().await?.with_attribute_server(server)?;
-    info!("[adv] connection established");
-    Ok(conn)
+impl<'values> Server<'values> {
+    /// Create an advertiser to use to connect to a BLE Central, and wait for it to connect.
+    pub async fn advertise<'server, C: Controller>(
+        &'server self,
+        name: &str,
+        peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
+    ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
+        let mut advertiser_data = [0; 31];
+        let len = AdStructure::encode_slice(
+            &[
+                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
+                AdStructure::CompleteLocalName(name.as_bytes()),
+            ],
+            &mut advertiser_data[..],
+        )?;
+        let advertiser = peripheral
+            .advertise(
+                &Default::default(),
+                Advertisement::ConnectableScannableUndirected {
+                    adv_data: &advertiser_data[..len],
+                    scan_data: &[],
+                },
+            )
+            .await?;
+        info!("[adv] advertising");
+        let conn = advertiser.accept().await?.with_attribute_server(self)?;
+        info!("[adv] connection established");
+        Ok(conn)
+    }
 }
 
 /// Example task to use the BLE notifier interface.
