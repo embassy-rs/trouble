@@ -302,7 +302,6 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 });
                 storage.role.replace(role);
 
-                trace!("[link][connect] idx {}: state: {:?}", idx, storage);
                 match role {
                     LeConnRole::Central => {
                         state.central_waker.wake();
