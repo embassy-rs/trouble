@@ -29,19 +29,17 @@ impl<P> AssembledPacket<P> {
         }
     }
 
-    pub(crate) fn write(&mut self, data: &[u8])
+    pub(crate) fn write(&mut self, data: &[u8]) -> Result<(), Error>
     where
         P: Packet,
     {
-        assert!(
-            self.written + data.len() <= self.packet.as_ref().len(),
-            "out of bounds reassembly: written = {}, data = {}, packet = {}",
-            self.written,
-            data.len(),
-            self.packet.as_ref().len()
-        );
-        self.packet.as_mut()[self.written..self.written + data.len()].copy_from_slice(data);
-        self.written += data.len();
+        if self.written + data.len() <= self.packet.as_ref().len() {
+            self.packet.as_mut()[self.written..self.written + data.len()].copy_from_slice(data);
+            self.written += data.len();
+            Ok(())
+        } else {
+            Err(Error::InsufficientSpace)
+        }
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -129,7 +127,7 @@ impl<P> PacketReassembly<P> {
         P: Packet,
     {
         if let Some(mut state) = self.state.take() {
-            state.packet.write(data);
+            state.packet.write(data)?;
             let target = state.state.length as usize;
             //info!(
             //    "[host] update reassembly on {} written {}, target {})",

@@ -326,9 +326,12 @@ where
                             } else {
                                 p.update(data)?
                             };
-                            // Something is very wrong if assembly was finished since we've not received the last fragment.
-                            assert!(r.is_none());
-                            Ok(())
+                            // Something is wrong if assembly was finished since we've not received the last fragment.
+                            if r.is_some() {
+                                Err(Error::InvalidState)
+                            } else {
+                                Ok(())
+                            }
                         })?;
                         return Ok(());
                     }
@@ -340,8 +343,11 @@ where
                     self.connections.reassembly(acl.handle(), |p| {
                         p.init(header.channel, header.length, packet)?;
                         let r = p.update(data)?;
-                        assert!(r.is_none());
-                        Ok(())
+                        if r.is_some() {
+                            Err(Error::InvalidState)
+                        } else {
+                            Ok(())
+                        }
                     })?;
                     return Ok(());
                 } else {
@@ -397,14 +403,14 @@ where
                 // Get the existing fragment
                 if let Some((header, p)) = self.connections.reassembly(acl.handle(), |p| {
                     if !p.in_progress() {
-                        warn!("[host] reassembly: {:?}", p);
+                        warn!(
+                            "[host] unexpected continuation fragment of length {} for handle {}: {:?}",
+                            acl.data().len(),
+                            acl.handle().raw(),
+                            p
+                        );
+                        return Err(Error::InvalidState);
                     }
-                    assert!(
-                        p.in_progress(),
-                        "unexpected continuation fragment of len {} for handle {}",
-                        acl.data().len(),
-                        acl.handle().raw(),
-                    );
                     p.update(acl.data())
                 })? {
                     (header, p)
