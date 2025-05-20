@@ -760,11 +760,16 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             e
                         );
 
-                        if let Error::Disconnected = e {
-                            warn!("[host] requesting {:?} to be disconnected", acl.handle());
-                            host.connections.log_status(true);
-                            host.connections
-                                .request_handle_disconnect(acl.handle(), DisconnectReason::RemoteUserTerminatedConn);
+                        match e {
+                            Error::InvalidState | Error::Disconnected => {
+                                warn!("[host] requesting {:?} to be disconnected", acl.handle());
+                                host.connections.log_status(true);
+                                host.connections.request_handle_disconnect(
+                                    acl.handle(),
+                                    DisconnectReason::RemoteUserTerminatedConn,
+                                );
+                            }
+                            _ => {}
                         }
 
                         let mut m = host.metrics.borrow_mut();
