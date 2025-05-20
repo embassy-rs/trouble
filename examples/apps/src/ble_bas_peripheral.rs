@@ -103,52 +103,44 @@ async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
 /// This is how we interact with read and write requests.
 async fn gatt_events_task<P: PacketPool>(server: &Server<'_>, conn: &GattConnection<'_, '_, P>) -> Result<(), Error> {
     let level = server.battery_service.level;
-    loop {
+    let reason = loop {
         match conn.next().await {
-            GattConnectionEvent::Disconnected { reason } => {
-                info!("[gatt] disconnected: {:?}", reason);
-                break;
+            GattConnectionEvent::Disconnected { reason } => break reason,
+            GattConnectionEvent::Gatt { event: Err(e) } => warn!("[gatt] error processing event: {:?}", e),
+            GattConnectionEvent::Gatt { event: Ok(event) } => {
+                match &event {
+                    GattEvent::Read(event) => {
+                        if event.handle() == level.handle {
+                            let value = server.get(&level);
+                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                        }
+                    }
+                    GattEvent::Write(event) => {
+                        if event.handle() == level.handle {
+                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                        }
+                    }
+                };
+                // This step is also performed at drop(), but writing it explicitly is necessary
+                // in order to ensure reply is sent.
+                match event.accept() {
+                    Ok(reply) => reply.send().await,
+                    Err(e) => warn!("[gatt] error sending response: {:?}", e),
+                };
             }
-            GattConnectionEvent::Gatt { event } => match event {
-                Ok(event) => {
-                    match &event {
-                        GattEvent::Read(event) => {
-                            if event.handle() == level.handle {
-                                let value = server.get(&level);
-                                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-                            }
-                        }
-                        GattEvent::Write(event) => {
-                            if event.handle() == level.handle {
-                                info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
-                            }
-                        }
-                    }
-
-                    // This step is also performed at drop(), but writing it explicitly is necessary
-                    // in order to ensure reply is sent.
-                    match event.accept() {
-                        Ok(reply) => {
-                            reply.send().await;
-                        }
-                        Err(e) => warn!("[gatt] error sending response: {:?}", e),
-                    }
-                }
-                Err(e) => warn!("[gatt] error processing event: {:?}", e),
-            },
-            _ => {}
+            _ => {} // ignore other Gatt Connection Events
         }
-    }
-    info!("[gatt] task finished");
+    };
+    info!("[gatt] disconnected: {:?}", reason);
     Ok(())
 }
 
 /// Create an advertiser to use to connect to a BLE Central, and wait for it to connect.
-async fn advertise<'a, 'b, C: Controller>(
-    name: &'a str,
-    peripheral: &mut Peripheral<'a, C, DefaultPacketPool>,
-    server: &'b Server<'_>,
-) -> Result<GattConnection<'a, 'b, DefaultPacketPool>, BleHostError<C::Error>> {
+async fn advertise<'values, 'server, C: Controller>(
+    name: &'values str,
+    peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
+    server: &'server Server<'values>,
+) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
     let mut advertiser_data = [0; 31];
     let len = AdStructure::encode_slice(
         &[
