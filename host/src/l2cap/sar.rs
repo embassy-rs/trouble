@@ -58,17 +58,23 @@ impl<P> AssembledPacket<P> {
 }
 
 // Handles reassembling of a HCI packet.
-#[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct PacketReassembly<P> {
     state: Option<State<P>>,
 }
 
-#[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct State<P> {
     state: AssemblyState,
     packet: AssembledPacket<P>,
+}
+
+impl<P> core::fmt::Debug for PacketReassembly<P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PacketReassembly")
+            .field("state", &self.state.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug)]
