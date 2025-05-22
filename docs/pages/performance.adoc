@@ -14,7 +14,7 @@ link:https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-
 
 The structure of the Data Physical Channel PDU is shown below.
 
-. Data Physical Channel PDU. link:https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/low-energy-controller/link-layer-specification.html#UUID-bdffe63c-9d5a-e80c-b833-1bec7946f005[Obtained from bluetooth.com]
+.Data Physical Channel PDU. link:https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/low-energy-controller/link-layer-specification.html#UUID-bdffe63c-9d5a-e80c-b833-1bec7946f005[Obtained from bluetooth.com]
 image::PDU.png[Data Physical Channel PDU]
 
 Since Bluetooth 4.2, the maximum size of the PDU payload, plus the MIC if included, has increased from 27 to 251 bytes.
@@ -63,7 +63,7 @@ By understanding these configurations, we can adjust them to prioritize throughp
 A default BLE configuration optimised for backwards compatibility and energy conservation, like the `ble_l2cap` examples,
 would have a PDU size of 27 and a high connection interval.
 
-The Bluetooth packet timeline blow depicts multiple packets being sent in one connection event.
+The Bluetooth packet timeline below depicts multiple packets being sent in one connection event.
 Blue represents useful data being sent.
 
 .Packets set during a connection event
@@ -129,7 +129,7 @@ before receiving the next batch from the host. See diagram below.
 .1M PHY and L2CAP MTU set to 5020, consuming all controller buffers
 image::L2CAP_MTU_uses_all_buffers.png[]
 
-However, if we allow a few extra buffers, the host will be abel to send more data to the controller before it
+However, if we allow a few extra buffers, the host will be able to send more data to the controller before it
 exhausts the data from the previous message.
 This will cause the radio to stay awake.
 

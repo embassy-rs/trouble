@@ -12,10 +12,10 @@ use heapless::Vec;
 use crate::att::AttErrorCode;
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::{AsGatt, Connection, FixedGattValue, FromGatt, GattConnection};
+use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
-use crate::Error;
+use crate::{Error, PacketPool, MAX_INVALID_DATA_LEN};
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
@@ -38,8 +38,6 @@ pub enum CharacteristicProp {
     /// Extended properties
     Extended = 0x80,
 }
-
-type WriteCallback = fn(&Connection, &[u8]) -> Result<(), ()>;
 
 /// Attribute metadata.
 pub struct Attribute<'a> {
@@ -376,15 +374,21 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                         len,
                     } = &mut att.data
                     {
-                        if value.len() == input.len() {
+                        let expected_len = value.len();
+                        let actual_len = input.len();
+
+                        if expected_len == actual_len {
                             value.copy_from_slice(input);
                             return Ok(());
-                        } else if *variable_len && input.len() <= value.len() {
+                        } else if *variable_len && actual_len <= expected_len {
                             value[..input.len()].copy_from_slice(input);
                             *len = input.len() as u16;
                             return Ok(());
                         } else {
-                            return Err(Error::InvalidValue);
+                            return Err(Error::UnexpectedDataLength {
+                                expected: expected_len,
+                                actual: actual_len,
+                            });
                         }
                     }
                 }
@@ -421,9 +425,18 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                         len,
                     } = &mut att.data
                     {
-                        let value = if *variable_len { &value[..*len as usize] } else { value };
-                        let v = T::Value::from_gatt(value).map_err(|_| Error::InvalidValue)?;
-                        return Ok(v);
+                        let value_slice = if *variable_len { &value[..*len as usize] } else { value };
+
+                        match T::Value::from_gatt(value_slice) {
+                            Ok(v) => return Ok(v),
+                            Err(_) => {
+                                let mut invalid_data = [0u8; MAX_INVALID_DATA_LEN];
+                                let len_to_copy = value_slice.len().min(MAX_INVALID_DATA_LEN);
+                                invalid_data[..len_to_copy].copy_from_slice(&value_slice[..len_to_copy]);
+
+                                return Err(Error::CannotConstructGattValue(invalid_data));
+                            }
+                        }
                     }
                 }
             }
@@ -629,7 +642,7 @@ impl<T: FromGatt> Characteristic<T> {
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
     /// If the characteristic does not support notifications, an error is returned.
-    pub async fn notify(&self, connection: &GattConnection<'_, '_>, value: &T) -> Result<(), Error> {
+    pub async fn notify<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>, value: &T) -> Result<(), Error> {
         let value = value.as_gatt();
         let server = connection.server;
         server.set(self.handle, value)?;
@@ -641,7 +654,7 @@ impl<T: FromGatt> Characteristic<T> {
             return Ok(());
         }
 
-        let mut tx = connection.alloc_tx()?;
+        let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
         let mut w = WriteCursor::new(tx.as_mut());
         let (mut header, mut data) = w.split(4)?;
         data.write(crate::att::ATT_HANDLE_VALUE_NTF)?;
@@ -658,9 +671,9 @@ impl<T: FromGatt> Characteristic<T> {
     }
 
     /// Set the value of the characteristic in the provided attribute server.
-    pub fn set<M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, AT, CT, CN>,
+        server: &AttributeServer<'_, M, P, AT, CT, CN>,
         value: &T,
     ) -> Result<(), Error> {
         let value = value.as_gatt();
@@ -672,9 +685,9 @@ impl<T: FromGatt> Characteristic<T> {
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
     ///
-    pub fn get<M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, AT, CT, CN>,
+        server: &AttributeServer<'_, M, P, AT, CT, CN>,
     ) -> Result<T, Error> {
         server.table().get(self)
     }
@@ -874,7 +887,7 @@ pub enum CCCDFlag {
 
 /// CCCD flag.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub struct CCCD(pub(crate) u16);
 
 impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
@@ -884,6 +897,12 @@ impl<const T: usize> From<[CCCDFlag; T]> for CCCD {
             val |= prop as u16;
         }
         CCCD(val)
+    }
+}
+
+impl From<u16> for CCCD {
+    fn from(value: u16) -> Self {
+        CCCD(value)
     }
 }
 

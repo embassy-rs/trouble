@@ -1,7 +1,7 @@
 use futures::future::join;
 use std::time::Duration;
 use tokio::select;
-use trouble_example_tests::{serial, TestContext};
+use trouble_example_tests::{TestContext, serial};
 use trouble_host::prelude::*;
 
 #[tokio::test]
@@ -45,7 +45,7 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     let peripheral_address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     let central = tokio::task::spawn_local(async move {
         let controller_central = serial::create_controller(&central).await;
-        let mut resources: HostResources<2, 4, 27> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, 2, 4> = HostResources::new();
         let stack = trouble_host::new(controller_central, &mut resources);
         let Host {
             mut central,
@@ -71,11 +71,15 @@ async fn run_l2cap_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
                     let conn = central.connect(&config).await.unwrap();
                     log::info!("[central] connected");
                     const PAYLOAD_LEN: usize = 27;
-                    let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &Default::default()).await?;
+                    let config = L2capChannelConfig {
+                        mtu: Some(PAYLOAD_LEN as u16),
+                        ..Default::default()
+                    };
+                    let mut ch1 = L2capChannel::create(&stack, &conn, 0x81, &config).await?;
                     log::info!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, PAYLOAD_LEN>(&stack, &tx).await?;
+                        ch1.send(&stack, &tx).await?;
                     }
                     log::info!("[central] data sent");
                     let mut rx = [0; PAYLOAD_LEN];

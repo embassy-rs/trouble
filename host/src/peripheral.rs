@@ -12,15 +12,15 @@ use embassy_futures::select::{select, Either};
 
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
 use crate::connection::Connection;
-use crate::{Address, BleHostError, Error, Stack};
+use crate::{Address, BleHostError, Error, PacketPool, Stack};
 
 /// Type which implements the BLE peripheral role.
-pub struct Peripheral<'d, C> {
-    stack: &'d Stack<'d, C>,
+pub struct Peripheral<'d, C, P: PacketPool> {
+    stack: &'d Stack<'d, C, P>,
 }
 
-impl<'d, C: Controller> Peripheral<'d, C> {
-    pub(crate) fn new(stack: &'d Stack<'d, C>) -> Self {
+impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
+    pub(crate) fn new(stack: &'d Stack<'d, C, P>) -> Self {
         Self { stack }
     }
 
@@ -29,7 +29,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         &mut self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
-    ) -> Result<Advertiser<'d, C>, BleHostError<C::Error>>
+    ) -> Result<Advertiser<'d, C, P>, BleHostError<C::Error>>
     where
         C: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
@@ -49,7 +49,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
 
         let data: RawAdvertisement = data.into();
         if !data.props.legacy_adv() {
-            return Err(Error::InvalidValue.into());
+            return Err(Error::ExtendedAdvertisingNotSupported.into());
         }
 
         let kind = match (data.props.connectable_adv(), data.props.scannable_adv()) {
@@ -91,7 +91,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
 
         let advset: [AdvSet; 1] = [AdvSet {
             adv_handle: AdvHandle::new(0),
-            duration: bt_hci::param::Duration::from_secs(0),
+            duration: params.timeout.unwrap_or(embassy_time::Duration::from_micros(0)).into(),
             max_ext_adv_events: 0,
         }];
 
@@ -104,6 +104,35 @@ impl<'d, C: Controller> Peripheral<'d, C> {
             extended: false,
             done: false,
         })
+    }
+
+    /// Update the advertisment adv_data and/or scan_data. Does not change any
+    /// other advertising parameters. If no advertising is active, this will not
+    /// produce any observable effect. This is typically useful when
+    /// implementing a BLE beacon that only broadcasts advertisement data and
+    /// does not accept any connections.
+    pub async fn update_adv_data<'k>(&mut self, data: Advertisement<'k>) -> Result<(), BleHostError<C::Error>>
+    where
+        C: for<'t> ControllerCmdSync<LeSetAdvData> + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+    {
+        let host = &self.stack.host;
+        let data: RawAdvertisement = data.into();
+        if !data.props.legacy_adv() {
+            return Err(Error::ExtendedAdvertisingNotSupported.into());
+        }
+        if !data.adv_data.is_empty() {
+            let mut buf = [0; 31];
+            let to_copy = data.adv_data.len().min(buf.len());
+            buf[..to_copy].copy_from_slice(&data.adv_data[..to_copy]);
+            host.command(LeSetAdvData::new(to_copy as u8, buf)).await?;
+        }
+        if !data.scan_data.is_empty() {
+            let mut buf = [0; 31];
+            let to_copy = data.scan_data.len().min(buf.len());
+            buf[..to_copy].copy_from_slice(&data.scan_data[..to_copy]);
+            host.command(LeSetScanResponseData::new(to_copy as u8, buf)).await?;
+        }
+        Ok(())
     }
 
     /// Starts sending BLE advertisements according to the provided config.
@@ -119,7 +148,7 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         &mut self,
         sets: &[AdvertisementSet<'k>],
         handles: &mut [AdvSet],
-    ) -> Result<Advertiser<'d, C>, BleHostError<C::Error>>
+    ) -> Result<Advertiser<'d, C, P>, BleHostError<C::Error>>
     where
         C: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
             + ControllerCmdSync<LeClearAdvSets>
@@ -218,10 +247,50 @@ impl<'d, C: Controller> Peripheral<'d, C> {
         })
     }
 
+    /// Update the extended advertisment adv_data and/or scan_data for multiple
+    /// advertising sets. Does not change any other advertising parameters. If
+    /// no advertising is active, this will not produce any observable effect.
+    /// This is typically useful when implementing a BLE beacon that only
+    /// broadcasts advertisement data and does not accept any connections.
+    pub async fn update_adv_data_ext<'k>(
+        &mut self,
+        sets: &[AdvertisementSet<'k>],
+        handles: &mut [AdvSet],
+    ) -> Result<(), BleHostError<C::Error>>
+    where
+        C: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>> + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>,
+    {
+        assert_eq!(sets.len(), handles.len());
+        let host = &self.stack.host;
+        for (i, set) in sets.iter().enumerate() {
+            let handle = handles[i].adv_handle;
+            let data: RawAdvertisement<'k> = set.data.into();
+            if !data.adv_data.is_empty() {
+                host.command(LeSetExtAdvData::new(
+                    handle,
+                    Operation::Complete,
+                    set.params.fragment,
+                    data.adv_data,
+                ))
+                .await?;
+            }
+            if !data.scan_data.is_empty() {
+                host.command(LeSetExtScanResponseData::new(
+                    handle,
+                    Operation::Complete,
+                    set.params.fragment,
+                    data.scan_data,
+                ))
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Accept any pending available connection.
     ///
     /// Accepts the next pending connection if there are any.
-    pub fn try_accept(&mut self) -> Option<Connection<'d>> {
+    pub fn try_accept(&mut self) -> Option<Connection<'d, P>> {
         if let Poll::Ready(conn) = self
             .stack
             .host
@@ -236,17 +305,17 @@ impl<'d, C: Controller> Peripheral<'d, C> {
 }
 
 /// Handle to an active advertiser which can accept connections.
-pub struct Advertiser<'d, C: Controller> {
-    stack: &'d Stack<'d, C>,
+pub struct Advertiser<'d, C, P: PacketPool> {
+    stack: &'d Stack<'d, C, P>,
     extended: bool,
     done: bool,
 }
 
-impl<'d, C: Controller> Advertiser<'d, C> {
+impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
     /// Accept the next peripheral connection for this advertiser.
     ///
     /// Returns Error::Timeout if advertiser stopped.
-    pub async fn accept(mut self) -> Result<Connection<'d>, Error> {
+    pub async fn accept(mut self) -> Result<Connection<'d, P>, Error> {
         let result = match select(
             self.stack.host.connections.accept(LeConnRole::Peripheral, &[]),
             self.stack.host.advertise_state.wait(),
@@ -261,7 +330,7 @@ impl<'d, C: Controller> Advertiser<'d, C> {
     }
 }
 
-impl<C: Controller> Drop for Advertiser<'_, C> {
+impl<C, P: PacketPool> Drop for Advertiser<'_, C, P> {
     fn drop(&mut self) {
         if !self.done {
             self.stack.host.advertise_command_state.cancel(self.extended);

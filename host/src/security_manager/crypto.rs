@@ -1,6 +1,9 @@
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
+use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::Aes128;
+use bt_hci::param::BdAddr;
 use cmac::digest;
 use p256::ecdh;
 use rand_core::{CryptoRng, RngCore};
@@ -46,6 +49,114 @@ impl core::fmt::Display for LongTermKey {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for LongTermKey {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{:016x}", self.0)
+    }
+}
+
+/// Identity Resolving Key.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[must_use]
+#[repr(transparent)]
+pub struct IdentityResolvingKey(pub u128);
+
+impl IdentityResolvingKey {
+    /// Creates an Identity Resolving Key from a `u128` value.
+    #[inline(always)]
+    pub const fn new(k: u128) -> Self {
+        Self(k)
+    }
+
+    /// Creates an Identity Resolving Key from a `[u8; 16]` value in little endian.
+    #[inline(always)]
+    pub const fn from_le_bytes(k: [u8; 16]) -> Self {
+        Self(u128::from_le_bytes(k))
+    }
+
+    /// Returns the Identity Resolving Key as `[u8; 16]` value in little endian.
+    #[inline(always)]
+    pub const fn to_le_bytes(self) -> [u8; 16] {
+        self.0.to_le_bytes()
+    }
+
+    /// Generates a resolvable private address using this key.
+    ///
+    /// The generated address follows the format described in
+    /// Bluetooth Core Specification [Vol 3] Part C, Section 10.8.2.
+    pub fn generate_resolvable_address<T: RngCore + CryptoRng>(&self, rng: &mut T) -> [u8; 6] {
+        // Generate prand (24 bits with top 2 bits set to 0b01 to indicate resolvable private address)
+        let mut prand = [0u8; 3];
+        rng.fill_bytes(&mut prand);
+
+        // Set the top 2 bits to 0b01 to indicate resolvable private address
+        prand[2] &= 0b00111111; // Clear top 2 bits
+        prand[2] |= 0b01000000; // Set 2nd bit from top
+
+        // Calculate hash using ah function
+        let hash = self.ah(prand);
+
+        // Construct the address: prand || hash
+        let mut address = [0u8; 6];
+        address[3..6].copy_from_slice(&prand);
+        address[0..3].copy_from_slice(&hash);
+
+        address
+    }
+
+    /// Resolves a resolvable private address.
+    ///
+    /// Returns true if the address was generated using this IRK.
+    pub fn resolve_address(&self, address: &BdAddr) -> bool {
+        // Extract prand (top 24 bits) and hash (bottom 24 bits)
+        let mut prand = [0u8; 3];
+        prand.copy_from_slice(&address.raw()[3..6]);
+
+        // Verify the address type bits (top 2 bits should be 0b01)
+        if (prand[2] & 0b11000000) != 0b01000000 {
+            return false; // Not a resolvable private address
+        }
+
+        prand.reverse();
+
+        // Calculate local hash
+        let mut local_hash = self.ah(prand);
+        local_hash.reverse();
+
+        // Compare with the hash in the address
+        let mut address_hash = [0u8; 3];
+        address_hash.copy_from_slice(&address.raw()[0..3]);
+        local_hash == address_hash
+    }
+
+    /// Random address hash function `ah` as defined in
+    /// Bluetooth Core Specification [Vol 3] Part H, Section 2.2.2.
+    /// https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/security-manager-specification.html#UUID-03b4d5c9-160c-658a-7aa5-d0b2230d38f1
+    fn ah(&self, r: [u8; 3]) -> [u8; 3] {
+        let mut r_prime = [0u8; 16];
+        r_prime[13..].copy_from_slice(&r);
+
+        let cipher = Aes128::new_from_slice(&self.0.to_be_bytes()).unwrap();
+        cipher.encrypt_block((&mut r_prime).into());
+        // Extract least significant 24 bits (3 bytes) as the result
+        r_prime[13..16].try_into().unwrap()
+    }
+}
+
+impl From<&IdentityResolvingKey> for u128 {
+    #[inline(always)]
+    fn from(k: &IdentityResolvingKey) -> Self {
+        k.0
+    }
+}
+
+impl core::fmt::Display for IdentityResolvingKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for IdentityResolvingKey {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{:016x}", self.0)
     }
@@ -670,5 +781,22 @@ mod tests {
         let y = Nonce(u128::from_le_bytes(rb));
 
         assert_eq!(x.g2(&pkax, &pkbx, &y).0, 991180);
+    }
+
+    #[test]
+    pub fn irk_test() {
+        let irk = IdentityResolvingKey::new(0xec0234a3_57c8ad05_341010a6_0a397d9b);
+        let prand = [0x70, 0x81, 0x94];
+
+        let hash = irk.ah(prand);
+        assert_eq!(hash, [0x0d, 0xfb, 0xaa]);
+    }
+
+    #[test]
+    pub fn rpa_test() {
+        let irk = IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d);
+        let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
+        let re = irk.resolve_address(&address);
+        assert_eq!(re, true);
     }
 }

@@ -10,25 +10,25 @@ use embassy_time::Instant;
 
 use crate::command::CommandState;
 use crate::connection::ScanConfig;
-use crate::{BleHostError, Central};
+use crate::{BleHostError, Central, PacketPool};
 
 /// A scanner that wraps a central to provide additional functionality
 /// around BLE scanning.
 ///
 /// The buffer size can be tuned if in a noisy environment that
 /// returns a lot of results.
-pub struct Scanner<'d, C: Controller> {
-    central: Central<'d, C>,
+pub struct Scanner<'d, C: Controller, P: PacketPool> {
+    central: Central<'d, C, P>,
 }
 
-impl<'d, C: Controller> Scanner<'d, C> {
+impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
     /// Create a new scanner with the provided central.
-    pub fn new(central: Central<'d, C>) -> Self {
+    pub fn new(central: Central<'d, C, P>) -> Self {
         Self { central }
     }
 
     /// Retrieve the underlying central
-    pub fn into_inner(self) -> Central<'d, C> {
+    pub fn into_inner(self) -> Central<'d, C, P> {
         self.central
     }
 

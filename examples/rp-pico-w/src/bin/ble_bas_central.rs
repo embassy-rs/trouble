@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 
-use bt_hci::controller::ExternalController;
 use cyw43_pio::PioSpi;
 use defmt::*;
 use embassy_executor::Spawner;
@@ -11,6 +10,7 @@ use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_central;
+use trouble_host::prelude::ExternalController;
 use {defmt_rtt as _, embassy_time as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -65,5 +65,5 @@ async fn main(spawner: Spawner) {
 
     let controller: ExternalController<_, 10> = ExternalController::new(bt_device);
 
-    ble_bas_central::run::<_, 128>(controller).await;
+    ble_bas_central::run(controller).await;
 }

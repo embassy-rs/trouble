@@ -2,13 +2,15 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
+use crate::common::PSM_L2CAP_EXAMPLES;
+
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
+pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
@@ -16,7 +18,7 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut peripheral,
@@ -25,14 +27,14 @@ where
     } = stack.build();
 
     let mut adv_data = [0; 31];
-    AdStructure::encode_slice(
+    let adv_data_len = AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
         &mut adv_data[..],
     )
     .unwrap();
 
     let mut scan_data = [0; 31];
-    AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
+    let scan_data_len = AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
 
     let _ = join(runner.run(), async {
         loop {
@@ -41,8 +43,8 @@ where
                 .advertise(
                     &Default::default(),
                     Advertisement::ConnectableScannableUndirected {
-                        adv_data: &adv_data[..],
-                        scan_data: &scan_data[..],
+                        adv_data: &adv_data[..adv_data_len],
+                        scan_data: &scan_data[..scan_data_len],
                     },
                 )
                 .await
@@ -51,7 +53,11 @@ where
 
             info!("Connection established");
 
-            let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &Default::default())
+            let config = L2capChannelConfig {
+                mtu: Some(PAYLOAD_LEN as u16),
+                ..Default::default()
+            };
+            let mut ch1 = L2capChannel::accept(&stack, &conn, &[PSM_L2CAP_EXAMPLES], &config)
                 .await
                 .unwrap();
 
@@ -70,7 +76,7 @@ where
             Timer::after(Duration::from_secs(1)).await;
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
+                ch1.send(&stack, &tx).await.unwrap();
             }
             info!("L2CAP data echoed");
 

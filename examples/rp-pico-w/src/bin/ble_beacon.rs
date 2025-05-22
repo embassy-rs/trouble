@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use cyw43_pio::{PioSpi, RM2_CLOCK_DIVIDER};
+use cyw43_pio::PioSpi;
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
@@ -9,7 +9,7 @@ use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use static_cell::StaticCell;
-use trouble_example_apps::ble_bas_central;
+use trouble_example_apps::ble_beacon;
 use trouble_host::prelude::ExternalController;
 use {defmt_rtt as _, embassy_time as _, panic_probe as _};
 
@@ -34,7 +34,7 @@ async fn main(spawner: Spawner) {
         // IMPORTANT
         //
         // Download and make sure these files from https://github.com/embassy-rs/embassy/tree/main/cyw43-firmware
-        // are available in `./examples/rp-pico-2-w`. (should be automatic)
+        // are available in `./examples/rp-pico-w`. (should be automatic)
         //
         // IMPORTANT
         let fw = include_bytes!("../../cyw43-firmware/43439A0.bin");
@@ -49,7 +49,7 @@ async fn main(spawner: Spawner) {
     let spi = PioSpi::new(
         &mut pio.common,
         pio.sm0,
-        RM2_CLOCK_DIVIDER,
+        cyw43_pio::DEFAULT_CLOCK_DIVIDER,
         pio.irq0,
         cs,
         p.PIN_24,
@@ -65,5 +65,5 @@ async fn main(spawner: Spawner) {
 
     let controller: ExternalController<_, 10> = ExternalController::new(bt_device);
 
-    ble_bas_central::run(controller).await;
+    ble_beacon::run(controller).await;
 }

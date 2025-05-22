@@ -6,7 +6,6 @@ mod common;
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3;
-const MTU: usize = 23;
 
 /// Verify l2cap le connection oriented channels using two HCI adapters attached to the test machine.
 #[tokio::test]
@@ -26,7 +25,7 @@ async fn l2cap_connection_oriented_channels() {
     let peripheral = local.spawn_local(async move {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
-        let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address);
         let Host {
@@ -42,13 +41,13 @@ async fn l2cap_connection_oriented_channels() {
             }
             r = async {
                 let mut adv_data = [0; 31];
-                AdStructure::encode_slice(
+                let adv_data_len = AdStructure::encode_slice(
                     &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
                     &mut adv_data[..],
                 ).unwrap();
 
                 let mut scan_data = [0; 31];
-                AdStructure::encode_slice(
+                let scan_data_len = AdStructure::encode_slice(
                     &[AdStructure::CompleteLocalName(b"trouble-l2cap-int")],
                     &mut scan_data[..],
                 ).unwrap();
@@ -56,8 +55,8 @@ async fn l2cap_connection_oriented_channels() {
                 loop {
                     println!("[peripheral] advertising");
                     let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
-                        adv_data: &adv_data[..],
-                        scan_data: &scan_data[..],
+                        adv_data: &adv_data[..adv_data_len],
+                        scan_data: &scan_data[..scan_data_len],
                     }).await?;
                     let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
@@ -77,7 +76,7 @@ async fn l2cap_connection_oriented_channels() {
 
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, MTU>(&stack, &tx).await?;
+                        ch1.send(&stack, &tx).await?;
                     }
                     println!("[peripheral] data sent");
                     break;
@@ -92,7 +91,7 @@ async fn l2cap_connection_oriented_channels() {
     // Spawn central
     let central = local.spawn_local(async move {
         let controller_central = common::create_controller(&central).await;
-        let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 27> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
 
         let stack = trouble_host::new(controller_central, &mut resources);
         let Host {
@@ -123,7 +122,7 @@ async fn l2cap_connection_oriented_channels() {
                     println!("[central] channel created");
                     for i in 0..10 {
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, MTU>(&stack, &tx).await?;
+                        ch1.send(&stack, &tx).await?;
                     }
                     println!("[central] data sent");
                     let mut rx = [0; PAYLOAD_LEN];

@@ -9,6 +9,7 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
 use trouble_example_apps::ble_l2cap_peripheral;
+use trouble_host::prelude::*;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -26,12 +27,10 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
 }
 
 /// How many outgoing L2CAP buffers per link
-const L2CAP_TXQ: u8 = 20;
+const L2CAP_TXQ: u8 = 3;
 
 /// How many incoming L2CAP buffers per link
-const L2CAP_RXQ: u8 = 20;
-
-const L2CAP_MTU: usize = 27;
+const L2CAP_RXQ: u8 = 3;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
@@ -43,7 +42,12 @@ fn build_sdc<'d, const N: usize>(
         .support_adv()?
         .support_peripheral()?
         .peripheral_count(1)?
-        .buffer_cfg(L2CAP_MTU as u8, L2CAP_MTU as u8, L2CAP_TXQ, L2CAP_RXQ)?
+        .buffer_cfg(
+            DefaultPacketPool::MTU as u8,
+            DefaultPacketPool::MTU as u8,
+            L2CAP_TXQ,
+            L2CAP_RXQ,
+        )?
         .build(p, rng, mpsl, mem)
 }
 
@@ -69,8 +73,8 @@ async fn main(spawner: Spawner) {
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
 
-    let mut sdc_mem = sdc::Mem::<12848>::new();
+    let mut sdc_mem = sdc::Mem::<4720>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    ble_l2cap_peripheral::run::<_, L2CAP_MTU>(sdc).await;
+    ble_l2cap_peripheral::run(sdc).await;
 }

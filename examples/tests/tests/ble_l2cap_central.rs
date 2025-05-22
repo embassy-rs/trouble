@@ -1,7 +1,7 @@
 use futures::future::join;
 use std::time::Duration;
 use tokio::select;
-use trouble_example_tests::{serial, TestContext};
+use trouble_example_tests::{TestContext, serial};
 use trouble_host::prelude::*;
 
 #[tokio::test]
@@ -48,7 +48,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
     let peripheral = tokio::task::spawn_local(async move {
         let controller_peripheral = serial::create_controller(&peripheral).await;
 
-        let mut resources: HostResources<2, 4, 27> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, 1, 1> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources).set_random_address(peripheral_address);
         let Host {
             mut peripheral,
@@ -62,13 +62,13 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
             }
             r = async {
                 let mut adv_data = [0; 31];
-                AdStructure::encode_slice(
+                let adv_data_len = AdStructure::encode_slice(
                     &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
                     &mut adv_data[..],
                 ).unwrap();
 
                 let mut scan_data = [0; 31];
-                AdStructure::encode_slice(
+                let scan_data_len = AdStructure::encode_slice(
                     &[AdStructure::CompleteLocalName(b"trouble-l2cap-example")],
                     &mut scan_data[..],
                 ).unwrap();
@@ -76,17 +76,21 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
                 loop {
                     println!("[peripheral] advertising");
                     let acceptor = peripheral.advertise(&Default::default(), Advertisement::ConnectableScannableUndirected {
-                        adv_data: &adv_data[..],
-                        scan_data: &scan_data[..],
+                        adv_data: &adv_data[..adv_data_len],
+                        scan_data: &scan_data[..scan_data_len],
                     }).await?;
                     let conn = acceptor.accept().await?;
                     println!("[peripheral] connected");
 
-                    let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x2349], &Default::default()).await?;
+                    const PAYLOAD_LEN: usize = 27;
+                    let config = L2capChannelConfig {
+                        mtu: Some(PAYLOAD_LEN as u16),
+                        ..Default::default()
+                    };
+                    let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x81], &config).await?;
 
                     println!("[peripheral] channel created");
 
-                    const PAYLOAD_LEN: usize = 27;
                     // Size of payload we're expecting
                     let mut rx = [0; PAYLOAD_LEN];
                     for i in 0..10 {
@@ -97,8 +101,9 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
                     println!("[peripheral] data received");
 
                     for i in 0..10 {
+                        println!("[peripheral] sending {}", i);
                         let tx = [i; PAYLOAD_LEN];
-                        ch1.send::<_, PAYLOAD_LEN>(&stack, &tx).await?;
+                        ch1.send(&stack, &tx).await?;
                     }
                     println!("[peripheral] data sent");
                     token.cancel();

@@ -11,12 +11,14 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
+#[cfg(feature = "connection-metrics")]
+pub use crate::connection_manager::Metrics as ConnectionMetrics;
 use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::BondInformation;
-use crate::{BleHostError, Error, Stack};
+use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -90,8 +92,8 @@ pub struct ConnectParams {
     pub supervision_timeout: Duration,
 }
 
-#[cfg(not(feature = "gatt"))]
 /// A connection event.
+#[derive(Debug)]
 pub enum ConnectionEvent {
     /// Connection disconnected.
     Disconnected {
@@ -122,65 +124,6 @@ pub enum ConnectionEvent {
     },
 }
 
-/// A connection event.
-#[cfg(feature = "gatt")]
-pub enum ConnectionEvent<'stack> {
-    /// Connection disconnected.
-    Disconnected {
-        /// The reason (status code) for the disconnect.
-        reason: Status,
-    },
-    /// The phy settings was updated for this connection.
-    PhyUpdated {
-        /// The TX phy.
-        tx_phy: PhyKind,
-        /// The RX phy.
-        rx_phy: PhyKind,
-    },
-    /// The phy settings was updated for this connection.
-    ConnectionParamsUpdated {
-        /// Connection interval.
-        conn_interval: Duration,
-        /// Peripheral latency.
-        peripheral_latency: u16,
-        /// Supervision timeout.
-        supervision_timeout: Duration,
-    },
-    #[cfg(feature = "security")]
-    /// Bonded event.
-    Bonded {
-        /// Bond info for this connection
-        bond_info: BondInformation,
-    },
-    /// GATT event.
-    Gatt {
-        /// The event that was returned
-        data: crate::gatt::GattData<'stack>,
-    },
-}
-
-pub(crate) enum ConnectionEventData {
-    Disconnected {
-        reason: Status,
-    },
-    PhyUpdated {
-        tx_phy: PhyKind,
-        rx_phy: PhyKind,
-    },
-    ConnectionParamsUpdated {
-        conn_interval: Duration,
-        peripheral_latency: u16,
-        supervision_timeout: Duration,
-    },
-    #[cfg(feature = "security")]
-    Bonded {
-        bond_info: BondInformation,
-    },
-    Gatt {
-        data: Pdu,
-    },
-}
-
 impl Default for ConnectParams {
     fn default() -> Self {
         Self {
@@ -196,35 +139,27 @@ impl Default for ConnectParams {
 /// Handle to a BLE connection.
 ///
 /// When the last reference to a connection is dropped, the connection is automatically disconnected.
-pub struct Connection<'stack> {
+pub struct Connection<'stack, P: PacketPool> {
     index: u8,
-    manager: &'stack ConnectionManager<'stack>,
+    manager: &'stack ConnectionManager<'stack, P>,
 }
 
-impl Clone for Connection<'_> {
+impl<P: PacketPool> Clone for Connection<'_, P> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
         Connection::new(self.index, self.manager)
     }
 }
 
-impl Drop for Connection<'_> {
+impl<P: PacketPool> Drop for Connection<'_, P> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);
     }
 }
 
-impl<'stack> Connection<'stack> {
-    pub(crate) fn new(index: u8, manager: &'stack ConnectionManager<'stack>) -> Self {
+impl<'stack, P: PacketPool> Connection<'stack, P> {
+    pub(crate) fn new(index: u8, manager: &'stack ConnectionManager<'stack, P>) -> Self {
         Self { index, manager }
-    }
-
-    pub(crate) fn completed_packets(&self, amount: u16) {
-        #[cfg(feature = "controller-host-flow-control")]
-        {
-            let handle = self.manager.handle(self.index);
-            self.manager.completed_packets(handle, amount);
-        }
     }
 
     pub(crate) fn set_att_mtu(&self, mtu: u16) {
@@ -235,63 +170,26 @@ impl<'stack> Connection<'stack> {
         self.manager.get_att_mtu(self.index)
     }
 
-    pub(crate) async fn send(&self, pdu: Pdu) {
+    pub(crate) async fn send(&self, pdu: Pdu<P::Packet>) {
         self.manager.send(self.index, pdu).await
     }
 
-    pub(crate) fn try_send(&self, pdu: Pdu) -> Result<(), Error> {
+    pub(crate) fn try_send(&self, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         self.manager.try_send(self.index, pdu)
     }
 
-    pub(crate) async fn post_event(&self, event: ConnectionEventData) {
+    pub(crate) async fn post_event(&self, event: ConnectionEvent) {
         self.manager.post_event(self.index, event).await
     }
 
-    #[cfg(feature = "gatt")]
-    pub(crate) fn alloc_tx(&self) -> Result<crate::packet_pool::Packet, Error> {
-        self.manager.alloc_tx()
-    }
-
     /// Wait for next connection event.
-    #[cfg(not(feature = "gatt"))]
     pub async fn next(&self) -> ConnectionEvent {
-        match self.manager.next(self.index).await {
-            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
-            ConnectionEventData::ConnectionParamsUpdated {
-                conn_interval,
-                peripheral_latency,
-                supervision_timeout,
-            } => ConnectionEvent::ConnectionParamsUpdated {
-                conn_interval,
-                peripheral_latency,
-                supervision_timeout,
-            },
-            ConnectionEventData::PhyUpdated { tx_phy, rx_phy } => ConnectionEvent::PhyUpdated { tx_phy, rx_phy },
-            ConnectionEventData::Gatt { data } => unreachable!(),
-        }
+        self.manager.next(self.index).await
     }
 
-    /// Wait for next connection event.
     #[cfg(feature = "gatt")]
-    pub async fn next(&self) -> ConnectionEvent<'stack> {
-        match self.manager.next(self.index).await {
-            ConnectionEventData::Disconnected { reason } => ConnectionEvent::Disconnected { reason },
-            ConnectionEventData::ConnectionParamsUpdated {
-                conn_interval,
-                peripheral_latency,
-                supervision_timeout,
-            } => ConnectionEvent::ConnectionParamsUpdated {
-                conn_interval,
-                peripheral_latency,
-                supervision_timeout,
-            },
-            ConnectionEventData::PhyUpdated { tx_phy, rx_phy } => ConnectionEvent::PhyUpdated { tx_phy, rx_phy },
-            ConnectionEventData::Gatt { data } => ConnectionEvent::Gatt {
-                data: crate::gatt::GattData::new(data, self.clone()),
-            },
-            #[cfg(feature = "security")]
-            ConnectionEventData::Bonded { bond_info } => ConnectionEvent::Bonded { bond_info },
-        }
+    pub(crate) async fn next_gatt(&self) -> Pdu<P::Packet> {
+        self.manager.next_gatt(self.index).await
     }
 
     /// Check if still connected
@@ -319,6 +217,11 @@ impl<'stack> Connection<'stack> {
         self.manager.peer_address(self.index)
     }
 
+    /// The peer identity key for this connection.
+    pub fn peer_identity(&self) -> Identity {
+        self.manager.peer_identity(self.index)
+    }
+
     /// Get the encrypted state of the connection
     pub fn encrypted(&self) -> bool {
         self.manager.get_encrypted(self.index)
@@ -330,8 +233,14 @@ impl<'stack> Connection<'stack> {
             .request_disconnect(self.index, DisconnectReason::RemoteUserTerminatedConn);
     }
 
+    /// Read metrics for this connection
+    #[cfg(feature = "connection-metrics")]
+    pub fn metrics<F: FnOnce(&ConnectionMetrics) -> R, R>(&self, f: F) -> R {
+        self.manager.metrics(self.index, f)
+    }
+
     /// The RSSI value for this connection.
-    pub async fn rssi<T>(&self, stack: &Stack<'_, T>) -> Result<i8, BleHostError<T::Error>>
+    pub async fn rssi<T>(&self, stack: &Stack<'_, T, P>) -> Result<i8, BleHostError<T::Error>>
     where
         T: ControllerCmdSync<ReadRssi>,
     {
@@ -344,7 +253,7 @@ impl<'stack> Connection<'stack> {
     ///
     /// This updates both TX and RX phy of the connection. For more fine grained control,
     /// use the LeSetPhy HCI command directly.
-    pub async fn set_phy<T>(&self, stack: &Stack<'_, T>, phy: PhyKind) -> Result<(), BleHostError<T::Error>>
+    pub async fn set_phy<T>(&self, stack: &Stack<'_, T, P>, phy: PhyKind) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdAsync<LeSetPhy>,
     {
@@ -380,7 +289,7 @@ impl<'stack> Connection<'stack> {
     }
 
     /// Read the current phy used for the connection.
-    pub async fn read_phy<T>(&self, stack: &Stack<'_, T>) -> Result<(PhyKind, PhyKind), BleHostError<T::Error>>
+    pub async fn read_phy<T>(&self, stack: &Stack<'_, T, P>) -> Result<(PhyKind, PhyKind), BleHostError<T::Error>>
     where
         T: ControllerCmdSync<LeReadPhy>,
     {
@@ -391,7 +300,7 @@ impl<'stack> Connection<'stack> {
     /// Update connection parameters for this connection.
     pub async fn update_connection_params<T>(
         &self,
-        stack: &Stack<'_, T>,
+        stack: &Stack<'_, T, P>,
         params: &ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
@@ -430,8 +339,8 @@ impl<'stack> Connection<'stack> {
         const CONN_MAX: usize,
     >(
         self,
-        server: &'server AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX>,
-    ) -> Result<GattConnection<'stack, 'server>, Error> {
+        server: &'server AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>,
+    ) -> Result<GattConnection<'stack, 'server, P>, Error> {
         GattConnection::try_new(self, server)
     }
 }

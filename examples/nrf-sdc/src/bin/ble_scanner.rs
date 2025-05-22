@@ -26,8 +26,6 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-const L2CAP_MTU: usize = 27;
-
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
     rng: &'d mut rng::Rng<RNG>,
@@ -70,5 +68,5 @@ async fn main(spawner: Spawner) {
 
     Timer::after(Duration::from_millis(200)).await;
 
-    ble_scanner::run::<_, L2CAP_MTU>(sdc).await;
+    ble_scanner::run(sdc).await;
 }

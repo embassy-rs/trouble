@@ -1,6 +1,6 @@
 use core::cell::RefCell;
+use core::marker::PhantomData;
 
-use bt_hci::param::BdAddr;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
@@ -9,17 +9,23 @@ use crate::attribute::{Attribute, AttributeData, AttributeTable, CCCD};
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
-use crate::{codec, Error};
+use crate::{codec, Error, Identity, PacketPool};
 
 #[derive(Default)]
 struct Client {
-    address: BdAddr,
+    identity: Identity,
     is_connected: bool,
+}
+
+impl Client {
+    fn set_identity(&mut self, identity: Identity) {
+        self.identity = identity;
+    }
 }
 
 /// A table of CCCD values.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CccdTable<const ENTRIES: usize> {
     inner: [(u16, CCCD); ENTRIES],
 }
@@ -33,6 +39,16 @@ impl<const ENTRIES: usize> Default for CccdTable<ENTRIES> {
 }
 
 impl<const ENTRIES: usize> CccdTable<ENTRIES> {
+    /// Create a new CCCD table from an array of (handle, cccd) pairs.
+    pub fn new(cccd_values: [(u16, CCCD); ENTRIES]) -> Self {
+        Self { inner: cccd_values }
+    }
+
+    /// Get the inner array of (handle, cccd) pairs.
+    pub fn inner(&self) -> &[(u16, CCCD); ENTRIES] {
+        &self.inner
+    }
+
     fn add_handle(&mut self, cccd_handle: u16) {
         for (handle, _) in self.inner.iter_mut() {
             if *handle == 0 {
@@ -103,20 +119,20 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         }
     }
 
-    fn connect(&self, peer_address: &BdAddr) -> Result<(), Error> {
+    fn connect(&self, peer_identity: &Identity) -> Result<(), Error> {
         self.state.lock(|n| {
-            trace!("[server] searching for peer {:?}", peer_address);
+            trace!("[server] searching for peer {:?}", peer_identity);
             let mut n = n.borrow_mut();
-            let empty_slot = BdAddr::default();
+            let empty_slot = Identity::default();
             for (client, table) in n.iter_mut() {
-                if client.address == *peer_address {
+                if client.identity.match_identity(peer_identity) {
                     // trace!("[server] found! table = {:?}", *table);
                     client.is_connected = true;
                     return Ok(());
-                } else if client.address == empty_slot {
+                } else if client.identity == empty_slot {
                     //  trace!("[server] empty slot: connecting");
                     client.is_connected = true;
-                    client.address = *peer_address;
+                    client.set_identity(*peer_identity);
                     return Ok(());
                 }
             }
@@ -124,9 +140,9 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
             // if we got here all slots are full; replace the first disconnected client
             for (client, table) in n.iter_mut() {
                 if !client.is_connected {
-                    trace!("[server] booting disconnected peer {:?}", client.address);
+                    trace!("[server] booting disconnected peer {:?}", client.identity);
                     client.is_connected = true;
-                    client.address = *peer_address;
+                    client.set_identity(*peer_identity);
                     // erase the previous client's config
                     table.disable_all();
                     return Ok(());
@@ -139,11 +155,11 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn disconnect(&self, peer_address: &BdAddr) {
+    fn disconnect(&self, peer_identity: &Identity) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, _) in n.iter_mut() {
-                if client.address == *peer_address {
+                if client.identity.match_identity(peer_identity) {
                     client.is_connected = false;
                     break;
                 }
@@ -151,11 +167,11 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn get_value(&self, peer_address: &BdAddr, cccd_handle: u16) -> Option<[u8; 2]> {
+    fn get_value(&self, peer_identity: &Identity, cccd_handle: u16) -> Option<[u8; 2]> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
-                if client.address == *peer_address {
+                if client.identity.match_identity(peer_identity) {
                     return table.get_raw(cccd_handle);
                 }
             }
@@ -163,11 +179,11 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn set_notify(&self, peer_address: &BdAddr, cccd_handle: u16, is_enabled: bool) {
+    fn set_notify(&self, peer_identity: &Identity, cccd_handle: u16, is_enabled: bool) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, table) in n.iter_mut() {
-                if client.address == *peer_address {
+                if client.identity.match_identity(peer_identity) {
                     table.set_notify(cccd_handle, is_enabled);
                     break;
                 }
@@ -175,11 +191,11 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn should_notify(&self, peer_address: &BdAddr, cccd_handle: u16) -> bool {
+    fn should_notify(&self, peer_identity: &Identity, cccd_handle: u16) -> bool {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
-                if client.address == *peer_address {
+                if client.identity.match_identity(peer_identity) {
                     return table.should_notify(cccd_handle);
                 }
             }
@@ -187,91 +203,144 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn get_cccd_table(&self, peer_address: &BdAddr) -> Option<CccdTable<CCCD_MAX>> {
+    fn get_cccd_table(&self, peer_identity: &Identity) -> Option<CccdTable<CCCD_MAX>> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
-                if client.address == *peer_address {
+                if client.identity.match_identity(peer_identity) {
                     return Some(table.clone());
                 }
             }
             None
         })
     }
+
+    fn set_cccd_table(&self, peer_identity: &Identity, table: CccdTable<CCCD_MAX>) {
+        self.state.lock(|n| {
+            let mut n = n.borrow_mut();
+            for (client, t) in n.iter_mut() {
+                if client.identity.match_identity(peer_identity) {
+                    trace!("Setting cccd table {:?} for {:?}", table, peer_identity);
+                    *t = table;
+                    break;
+                }
+            }
+        })
+    }
+
+    fn update_identity(&self, identity: Identity) -> Result<(), Error> {
+        self.state.lock(|n| {
+            let mut n = n.borrow_mut();
+            for (client, _) in n.iter_mut() {
+                if identity.match_identity(&client.identity) {
+                    client.set_identity(identity);
+                    return Ok(());
+                }
+            }
+            Err(Error::NotFound)
+        })
+    }
 }
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct AttributeServer<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> {
+pub struct AttributeServer<
+    'values,
+    M: RawMutex,
+    P: PacketPool,
+    const ATT_MAX: usize,
+    const CCCD_MAX: usize,
+    const CONN_MAX: usize,
+> {
     att_table: AttributeTable<'values, M, ATT_MAX>,
     cccd_tables: CccdTables<M, CCCD_MAX, CONN_MAX>,
+    _p: PhantomData<P>,
 }
 
 pub(crate) mod sealed {
     use super::*;
 
-    pub trait DynamicAttributeServer {
-        fn connect(&self, connection: &Connection) -> Result<(), Error>;
-        fn disconnect(&self, connection: &Connection);
-        fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error>;
-        fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool;
+    pub trait DynamicAttributeServer<P: PacketPool> {
+        fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error>;
+        fn disconnect(&self, connection: &Connection<'_, P>);
+        fn process(
+            &self,
+            connection: &Connection<'_, P>,
+            packet: &AttClient,
+            rx: &mut [u8],
+        ) -> Result<Option<usize>, Error>;
+        fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool;
         fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
+        fn update_identity(&self, identity: Identity) -> Result<(), Error>;
     }
 }
 
 /// Type erased attribute server
-pub trait DynamicAttributeServer: sealed::DynamicAttributeServer {}
+pub trait DynamicAttributeServer<P: PacketPool>: sealed::DynamicAttributeServer<P> {}
 
-impl<M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> DynamicAttributeServer
-    for AttributeServer<'_, M, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
+    DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
 {
 }
-impl<M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize> sealed::DynamicAttributeServer
-    for AttributeServer<'_, M, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
+    sealed::DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
 {
-    fn connect(&self, connection: &Connection) -> Result<(), Error> {
+    fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
         AttributeServer::connect(self, connection)
     }
 
-    fn disconnect(&self, connection: &Connection) {
-        self.cccd_tables.disconnect(&connection.peer_address());
+    fn disconnect(&self, connection: &Connection<'_, P>) {
+        self.cccd_tables.disconnect(&connection.peer_identity());
     }
 
-    fn process(&self, connection: &Connection, packet: &AttClient, rx: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn process(
+        &self,
+        connection: &Connection<'_, P>,
+        packet: &AttClient,
+        rx: &mut [u8],
+    ) -> Result<Option<usize>, Error> {
         let res = AttributeServer::process(self, connection, packet, rx)?;
         Ok(res)
     }
 
-    fn should_notify(&self, connection: &Connection, cccd_handle: u16) -> bool {
+    fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
         AttributeServer::should_notify(self, connection, cccd_handle)
     }
 
     fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error> {
         self.att_table.set_raw(characteristic, input)
     }
+
+    fn update_identity(&self, identity: Identity) -> Result<(), Error> {
+        self.cccd_tables.update_identity(identity)
+    }
 }
 
-impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
-    AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
+    AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
 {
     /// Create a new instance of the AttributeServer
     pub fn new(
         att_table: AttributeTable<'values, M, ATT_MAX>,
-    ) -> AttributeServer<'values, M, ATT_MAX, CCCD_MAX, CONN_MAX> {
+    ) -> AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX> {
         let cccd_tables = CccdTables::new(&att_table);
-        AttributeServer { att_table, cccd_tables }
+        AttributeServer {
+            att_table,
+            cccd_tables,
+            _p: PhantomData,
+        }
     }
 
-    pub(crate) fn connect(&self, connection: &Connection<'_>) -> Result<(), Error> {
-        self.cccd_tables.connect(&connection.peer_address())
+    pub(crate) fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
+        self.cccd_tables.connect(&connection.peer_identity())
     }
 
-    pub(crate) fn should_notify(&self, connection: &Connection<'_>, cccd_handle: u16) -> bool {
-        self.cccd_tables.should_notify(&connection.peer_address(), cccd_handle)
+    pub(crate) fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
+        self.cccd_tables.should_notify(&connection.peer_identity(), cccd_handle)
     }
 
     fn read_attribute_data(
         &self,
-        connection: &Connection<'_>,
+        connection: &Connection<'_, P>,
         offset: usize,
         att: &mut Attribute<'values>,
         data: &mut [u8],
@@ -280,7 +349,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
             // CCCD values for each connected client are held in the CCCD tables:
             // the value is written back into att.data so att.read() has the final
             // say when parsing at the requested offset.
-            if let Some(value) = self.cccd_tables.get_value(&connection.peer_address(), att.handle) {
+            if let Some(value) = self.cccd_tables.get_value(&connection.peer_identity(), att.handle) {
                 let _ = att.write(0, value.as_slice());
             }
         }
@@ -289,7 +358,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn write_attribute_data(
         &self,
-        connection: &Connection<'_>,
+        connection: &Connection<'_, P>,
         offset: usize,
         att: &mut Attribute<'values>,
         data: &[u8],
@@ -302,7 +371,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
             } = att.data
             {
                 self.cccd_tables
-                    .set_notify(&connection.peer_address(), att.handle, notifications);
+                    .set_notify(&connection.peer_identity(), att.handle, notifications);
             }
         }
         err
@@ -310,7 +379,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_read_by_type_req(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         start: u16,
         end: u16,
@@ -352,7 +421,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_read_by_group_type_req(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         start: u16,
         end: u16,
@@ -393,7 +462,12 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
         }
     }
 
-    fn handle_read_req(&self, connection: &Connection, buf: &mut [u8], handle: u16) -> Result<usize, codec::Error> {
+    fn handle_read_req(
+        &self,
+        connection: &Connection<'_, P>,
+        buf: &mut [u8],
+        handle: u16,
+    ) -> Result<usize, codec::Error> {
         let mut data = WriteCursor::new(buf);
 
         data.write(att::ATT_READ_RSP)?;
@@ -420,7 +494,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_write_cmd(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         handle: u16,
         data: &[u8],
@@ -439,7 +513,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_write_req(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         handle: u16,
         data: &[u8],
@@ -557,7 +631,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_prepare_write(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         handle: u16,
         offset: u16,
@@ -594,7 +668,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
 
     fn handle_read_blob(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         handle: u16,
         offset: u16,
@@ -635,7 +709,7 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
     /// Process an event and produce a response if necessary
     pub fn process(
         &self,
-        connection: &Connection,
+        connection: &Connection<'_, P>,
         packet: &AttClient,
         rx: &mut [u8],
     ) -> Result<Option<usize>, codec::Error> {
@@ -700,8 +774,13 @@ impl<'values, M: RawMutex, const ATT_MAX: usize, const CCCD_MAX: usize, const CO
         &self.att_table
     }
 
-    /// Get a reference to the CCCD tables
-    pub fn cccd_tables(&self, connection: &Connection) -> Option<CccdTable<CCCD_MAX>> {
-        self.cccd_tables.get_cccd_table(&connection.peer_address())
+    /// Get the CCCD table for a connection
+    pub fn get_cccd_table(&self, connection: &Connection<'_, P>) -> Option<CccdTable<CCCD_MAX>> {
+        self.cccd_tables.get_cccd_table(&connection.peer_identity())
+    }
+
+    /// Set the CCCD table for a connection
+    pub fn set_cccd_table(&self, connection: &Connection<'_, P>, table: CccdTable<CCCD_MAX>) {
+        self.cccd_tables.set_cccd_table(&connection.peer_identity(), table);
     }
 }

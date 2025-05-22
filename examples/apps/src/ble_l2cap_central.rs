@@ -2,13 +2,15 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
+use crate::common::PSM_L2CAP_EXAMPLES;
+
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
+pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
@@ -17,7 +19,7 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut central,
@@ -43,13 +45,17 @@ where
             let conn = central.connect(&config).await.unwrap();
             info!("Connected, creating l2cap channel");
             const PAYLOAD_LEN: usize = 27;
-            let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &Default::default())
+            let config = L2capChannelConfig {
+                mtu: Some(PAYLOAD_LEN as u16),
+                ..Default::default()
+            };
+            let mut ch1 = L2capChannel::create(&stack, &conn, PSM_L2CAP_EXAMPLES, &config)
                 .await
                 .unwrap();
             info!("New l2cap channel created, sending some data!");
             for i in 0..10 {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.unwrap();
+                ch1.send(&stack, &tx).await.unwrap();
             }
             info!("Sent data, waiting for them to be sent back");
             let mut rx = [0; PAYLOAD_LEN];

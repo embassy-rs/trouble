@@ -9,7 +9,7 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, RNG, const L2CAP_MTU: usize>(controller: C, random_generator: &mut RNG)
+pub async fn run<C, RNG>(controller: C, random_generator: &mut RNG)
 where
     C: Controller,
     RNG: RngCore + CryptoRng,
@@ -19,7 +19,7 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
         .set_random_generator_seed(random_generator);
@@ -56,7 +56,9 @@ where
             }
         }
 
-        let client = GattClient::<C, 10, 24>::new(&stack, &conn).await.unwrap();
+        let client = GattClient::<C, DefaultPacketPool, 10>::new(&stack, &conn)
+            .await
+            .unwrap();
 
         let _ = join(client.task(), async {
             info!("Looking for battery service");

@@ -26,8 +26,6 @@ use bt_hci::param::{
     AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, EventMaskPage2, FilterDuplicates,
     LeConnRole, LeEventMask, Status,
 };
-#[cfg(feature = "controller-host-flow-control")]
-use bt_hci::param::{ConnHandleCompletedPackets, ControllerToHostFlowControl};
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_sync::once_lock::OnceLock;
@@ -38,13 +36,11 @@ use embassy_time::Duration;
 use futures::pin_mut;
 
 use crate::att::{AttClient, AttServer};
-use crate::channel_manager::{ChannelManager, ChannelStorage, PacketChannel};
+use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
-use crate::connection::ConnectionEventData;
-use crate::connection_manager::{ConnectionManager, ConnectionStorage, EventChannel, PacketGrant};
+use crate::connection::ConnectionEvent;
+use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
-use crate::l2cap::sar::{PacketReassembly, SarType};
-use crate::packet_pool::Pool;
 use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
@@ -52,7 +48,7 @@ use crate::types::l2cap::{
     L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
     L2CAP_CID_LE_U_SIGNAL,
 };
-use crate::{att, config, Address, BleHostError, Error, Stack};
+use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
 
 /// A BLE Host.
 ///
@@ -61,19 +57,15 @@ use crate::{att, config, Address, BleHostError, Error, Stack};
 ///
 /// The host performs connection management, l2cap channel management, and
 /// multiplexes events and data across connections and l2cap channels.
-pub(crate) struct BleHost<'d, T> {
+pub(crate) struct BleHost<'d, T, P: PacketPool> {
     initialized: OnceLock<InitialState>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
     pub(crate) controller: T,
-    pub(crate) connections: ConnectionManager<'d>,
-    pub(crate) reassembly: PacketReassembly<'d>,
-    pub(crate) channels: ChannelManager<'d>,
+    pub(crate) connections: ConnectionManager<'d, P>,
+    pub(crate) channels: ChannelManager<'d, P>,
     #[cfg(feature = "gatt")]
-    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu), { config::L2CAP_RX_QUEUE_SIZE }>,
-    pub(crate) rx_pool: &'d dyn Pool,
-    #[cfg(feature = "gatt")]
-    pub(crate) tx_pool: &'d dyn Pool,
+    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), { crate::config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
@@ -189,9 +181,10 @@ pub struct HostMetrics {
     pub rx_errors: u32,
 }
 
-impl<'d, T> BleHost<'d, T>
+impl<'d, T, P> BleHost<'d, T, P>
 where
     T: Controller,
+    P: PacketPool,
 {
     /// Create a new instance of the BLE host.
     ///
@@ -200,13 +193,8 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
-        rx_pool: &'d dyn Pool,
-        #[cfg(feature = "gatt")] tx_pool: &'d dyn Pool,
-        connections: &'d mut [ConnectionStorage],
-        events: &'d mut [EventChannel],
-        channels: &'d mut [ChannelStorage],
-        channels_rx: &'d mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>],
-        sar: &'d mut [SarType],
+        connections: &'d mut [ConnectionStorage<P::Packet>],
+        channels: &'d mut [ChannelStorage<P::Packet>],
         advertise_handles: &'d mut [AdvHandleState],
     ) -> Self {
         Self {
@@ -214,15 +202,8 @@ where
             initialized: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             controller,
-            #[cfg(feature = "gatt")]
-            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4, tx_pool),
-            #[cfg(not(feature = "gatt"))]
-            connections: ConnectionManager::new(connections, events, rx_pool.mtu() as u16 - 4),
-            reassembly: PacketReassembly::new(sar),
-            channels: ChannelManager::new(rx_pool, channels, channels_rx),
-            rx_pool,
-            #[cfg(feature = "gatt")]
-            tx_pool,
+            connections: ConnectionManager::new(connections, P::MTU as u16 - 4),
+            channels: ChannelManager::new(channels),
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),
             advertise_state: AdvState::new(advertise_handles),
@@ -303,10 +284,7 @@ where
     fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let handle = acl.handle();
-        let on_drop = OnDrop::new(|| {
-            self.connections.completed_packets(handle, 1);
-        });
-        let (header, mut packet) = match acl.boundary_flag() {
+        let (header, pdu) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
                 let (header, data) = L2capHeader::from_hci_bytes(acl.data())?;
 
@@ -326,22 +304,115 @@ where
                     return Ok(());
                 }
 
-                let Some(mut p) = self.rx_pool.alloc() else {
-                    info!("No memory for packets on channel {}", header.channel);
-                    return Err(Error::OutOfMemory);
-                };
-                p.as_mut()[..data.len()].copy_from_slice(data);
-
+                // We must be prepared to receive fragments.
                 if header.length as usize != data.len() {
-                    self.reassembly.init(acl.handle(), header, p, data.len())?;
+                    // Dynamic channels can be optimized.
+                    #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
+                    if header.channel >= L2CAP_CID_DYN_START {
+                        // This is the start of the frame, so make sure to adjust the credits.
+                        self.channels.received(header.channel, 1)?;
+
+                        self.connections.reassembly(acl.handle(), |p| {
+                            let r = if !p.in_progress() {
+                                // Init the new assembly assuming the length of the SDU.
+                                let (first, payload) = data.split_at(2);
+                                let len: u16 = u16::from_le_bytes([first[0], first[1]]);
+                                let Some(packet) = P::allocate() else {
+                                    warn!("[host] no memory for packets on channel {}", header.channel);
+                                    return Err(Error::OutOfMemory);
+                                };
+                                p.init(header.channel, len, packet)?;
+                                p.update(payload)?
+                            } else {
+                                p.update(data)?
+                            };
+                            // Something is wrong if assembly was finished since we've not received the last fragment.
+                            if r.is_some() {
+                                Err(Error::InvalidState)
+                            } else {
+                                Ok(())
+                            }
+                        })?;
+                        return Ok(());
+                    }
+
+                    let Some(packet) = P::allocate() else {
+                        warn!("[host] no memory for packets on channel {}", header.channel);
+                        return Err(Error::OutOfMemory);
+                    };
+                    self.connections.reassembly(acl.handle(), |p| {
+                        p.init(header.channel, header.length, packet)?;
+                        let r = p.update(data)?;
+                        if r.is_some() {
+                            Err(Error::InvalidState)
+                        } else {
+                            Ok(())
+                        }
+                    })?;
                     return Ok(());
+                } else {
+                    #[allow(unused_mut)]
+                    let mut result = None;
+
+                    #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
+                    if header.channel >= L2CAP_CID_DYN_START {
+                        // This is a complete L2CAP K-frame, so make sure to adjust the credits.
+                        self.channels.received(header.channel, 1)?;
+
+                        if let Some((state, pdu)) = self.connections.reassembly(acl.handle(), |p| {
+                            if !p.in_progress() {
+                                let (first, payload) = data.split_at(2);
+                                let len: u16 = u16::from_le_bytes([first[0], first[1]]);
+
+                                let Some(packet) = P::allocate() else {
+                                    warn!("[host] no memory for packets on channel {}", header.channel);
+                                    return Err(Error::OutOfMemory);
+                                };
+                                p.init(header.channel, len, packet)?;
+                                p.update(payload)
+                            } else {
+                                p.update(data)
+                            }
+                        })? {
+                            result.replace((state, pdu));
+                        } else {
+                            return Ok(());
+                        }
+                    }
+
+                    if let Some((state, pdu)) = result {
+                        (state, pdu)
+                    } else {
+                        let Some(packet) = P::allocate() else {
+                            warn!("[host] no memory for packets on channel {}", header.channel);
+                            return Err(Error::OutOfMemory);
+                        };
+                        let result = self.connections.reassembly(acl.handle(), |p| {
+                            p.init(header.channel, header.length, packet)?;
+                            p.update(data)
+                        })?;
+                        let Some((state, pdu)) = result else {
+                            return Err(Error::InvalidState);
+                        };
+                        (state, pdu)
+                    }
                 }
-                (header, p)
             }
             // Next (potentially last) in a fragment
             AclPacketBoundary::Continuing => {
                 // Get the existing fragment
-                if let Some((header, p)) = self.reassembly.update(acl.handle(), acl.data())? {
+                if let Some((header, p)) = self.connections.reassembly(acl.handle(), |p| {
+                    if !p.in_progress() {
+                        warn!(
+                            "[host] unexpected continuation fragment of length {} for handle {}: {:?}",
+                            acl.data().len(),
+                            acl.handle().raw(),
+                            p
+                        );
+                        return Err(Error::InvalidState);
+                    }
+                    p.update(acl.data())
+                })? {
                     (header, p)
                 } else {
                     // Do not process yet
@@ -358,7 +429,7 @@ where
             L2CAP_CID_ATT => {
                 // Handle ATT MTU exchange here since it doesn't strictly require
                 // gatt to be enabled.
-                let a = att::Att::decode(&packet.as_ref()[..header.length as usize]);
+                let a = att::Att::decode(pdu.as_ref());
                 if let Ok(att::Att::Client(AttClient::Request(att::AttReq::ExchangeMtu { mtu }))) = a {
                     let mtu = self.connections.exchange_att_mtu(acl.handle(), mtu);
 
@@ -368,6 +439,7 @@ where
                         length: 3,
                     };
 
+                    let mut packet = pdu.into_inner();
                     let mut w = WriteCursor::new(packet.as_mut());
                     w.write_hci(&l2cap)?;
                     w.write(rsp)?;
@@ -375,7 +447,6 @@ where
                     info!("[host] agreed att MTU of {}", mtu);
                     let len = w.len();
                     self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
-                    on_drop.defuse();
                 } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
                     info!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
@@ -383,20 +454,12 @@ where
                     #[cfg(feature = "gatt")]
                     match a {
                         Ok(att::Att::Client(_)) => {
-                            let event = ConnectionEventData::Gatt {
-                                data: Pdu::new(packet, header.length as usize),
-                            };
-                            self.connections.post_handle_event(acl.handle(), event)?;
-                            on_drop.defuse();
+                            self.connections.post_gatt(acl.handle(), pdu)?;
                         }
                         Ok(att::Att::Server(_)) => {
-                            if let Err(e) = self
-                                .att_client
-                                .try_send((acl.handle(), Pdu::new(packet, header.length as usize)))
-                            {
+                            if let Err(e) = self.att_client.try_send((acl.handle(), pdu)) {
                                 return Err(Error::OutOfMemory);
                             }
-                            on_drop.defuse();
                         }
                         Err(e) => {
                             warn!("Error decoding attribute payload: {:?}", e);
@@ -410,13 +473,10 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                self.connections
-                    .handle_security_channel(acl.handle(), &packet, usize::from(header.length))?;
+                self.connections.handle_security_channel(acl.handle(), pdu)?;
             }
-            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header, packet) {
-                Ok(_) => {
-                    on_drop.defuse();
-                }
+            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header.channel, pdu) {
+                Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
                     return Err(e);
@@ -477,7 +537,7 @@ where
         handle: ConnHandle,
         len: u16,
         n_packets: u16,
-    ) -> Result<L2capSender<'_, 'd, T>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, 'd, T, P::Packet>, BleHostError<T::Error>> {
         // Take into account l2cap header.
         let acl_max = self.initialized.get().await.acl_max as u16;
         let len = len + (4 * n_packets);
@@ -500,7 +560,7 @@ where
         handle: ConnHandle,
         len: u16,
         n_packets: u16,
-    ) -> Result<L2capSender<'_, 'd, T>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, 'd, T, P::Packet>, BleHostError<T::Error>> {
         let acl_max = self.initialized.try_get().map(|i| i.acl_max).unwrap_or(27) as u16;
         let len = len + (4 * n_packets);
         let n_acl = len.div_ceil(acl_max);
@@ -519,9 +579,9 @@ where
     }
 
     /// Read current host metrics
-    pub(crate) fn metrics(&self) -> HostMetrics {
-        let m = self.metrics.borrow_mut().clone();
-        m
+    pub(crate) fn metrics<F: FnOnce(&HostMetrics) -> R, R>(&self, f: F) -> R {
+        let m = self.metrics.borrow();
+        f(&m)
     }
 
     /// Log status information of the host
@@ -536,25 +596,25 @@ where
 }
 
 /// Runs the host with the given controller.
-pub struct Runner<'d, C> {
-    rx: RxRunner<'d, C>,
-    control: ControlRunner<'d, C>,
-    tx: TxRunner<'d, C>,
+pub struct Runner<'d, C, P: PacketPool> {
+    rx: RxRunner<'d, C, P>,
+    control: ControlRunner<'d, C, P>,
+    tx: TxRunner<'d, C, P>,
 }
 
 /// The receiver part of the host runner.
-pub struct RxRunner<'d, C> {
-    stack: &'d Stack<'d, C>,
+pub struct RxRunner<'d, C, P: PacketPool> {
+    stack: &'d Stack<'d, C, P>,
 }
 
 /// The control part of the host runner.
-pub struct ControlRunner<'d, C> {
-    stack: &'d Stack<'d, C>,
+pub struct ControlRunner<'d, C, P: PacketPool> {
+    stack: &'d Stack<'d, C, P>,
 }
 
 /// The transmit part of the host runner.
-pub struct TxRunner<'d, C> {
-    stack: &'d Stack<'d, C>,
+pub struct TxRunner<'d, C, P: PacketPool> {
+    stack: &'d Stack<'d, C, P>,
 }
 
 /// Event handler.
@@ -572,8 +632,8 @@ pub trait EventHandler {
 struct DummyHandler;
 impl EventHandler for DummyHandler {}
 
-impl<'d, C: Controller> Runner<'d, C> {
-    pub(crate) fn new(stack: &'d Stack<'d, C>) -> Self {
+impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
+    pub(crate) fn new(stack: &'d Stack<'d, C, P>) -> Self {
         Self {
             rx: RxRunner { stack },
             control: ControlRunner { stack },
@@ -582,7 +642,7 @@ impl<'d, C: Controller> Runner<'d, C> {
     }
 
     /// Split the runner into separate independent async tasks
-    pub fn split(self) -> (RxRunner<'d, C>, ControlRunner<'d, C>, TxRunner<'d, C>) {
+    pub fn split(self) -> (RxRunner<'d, C, P>, ControlRunner<'d, C, P>, TxRunner<'d, C, P>) {
         (self.rx, self.control, self.tx)
     }
 
@@ -659,7 +719,7 @@ impl<'d, C: Controller> Runner<'d, C> {
     }
 }
 
-impl<'d, C: Controller> RxRunner<'d, C> {
+impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     /// Run the receive loop that polls the controller for events.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
@@ -700,15 +760,16 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             e
                         );
 
-                        if let Error::Disconnected = e {
-                            warn!("[host] requesting {:?} to be disconnected", acl.handle());
-                            let _ = host
-                                .command(Disconnect::new(
+                        match e {
+                            Error::InvalidState | Error::Disconnected => {
+                                warn!("[host] requesting {:?} to be disconnected", acl.handle());
+                                host.connections.log_status(true);
+                                host.connections.request_handle_disconnect(
                                     acl.handle(),
                                     DisconnectReason::RemoteUserTerminatedConn,
-                                ))
-                                .await;
-                            host.connections.log_status(true);
+                                );
+                            }
+                            _ => {}
                         }
 
                         let mut m = host.metrics.borrow_mut();
@@ -765,7 +826,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                 } else {
                                     let _ = host.connections.post_handle_event(
                                         event.handle,
-                                        ConnectionEventData::PhyUpdated {
+                                        ConnectionEvent::PhyUpdated {
                                             tx_phy: event.tx_phy,
                                             rx_phy: event.rx_phy,
                                         },
@@ -781,7 +842,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                                 } else {
                                     let _ = host.connections.post_handle_event(
                                         event.handle,
-                                        ConnectionEventData::ConnectionParamsUpdated {
+                                        ConnectionEvent::ConnectionParamsUpdated {
                                             conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
                                             peripheral_latency: event.peripheral_latency,
                                             supervision_timeout: Duration::from_micros(
@@ -814,7 +875,6 @@ impl<'d, C: Controller> RxRunner<'d, C> {
                             .unwrap_or(Status::UNSPECIFIED);
                             let _ = host.connections.disconnected(handle, reason);
                             let _ = host.channels.disconnected(handle);
-                            host.reassembly.disconnected(handle);
                             let mut m = host.metrics.borrow_mut();
                             m.disconnect_events = m.disconnect_events.wrapping_add(1);
                         }
@@ -852,7 +912,7 @@ impl<'d, C: Controller> RxRunner<'d, C> {
     }
 }
 
-impl<'d, C: Controller> ControlRunner<'d, C> {
+impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
     /// Run the control loop for the host
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
@@ -915,6 +975,12 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
         .exec(&host.controller)
         .await?;
 
+        info!(
+            "[host] using packet pool with MTU {} capacity {}",
+            P::MTU,
+            P::capacity(),
+        );
+
         let ret = LeReadFilterAcceptListSize::new().exec(&host.controller).await?;
         info!("[host] filter accept list size: {}", ret);
 
@@ -926,35 +992,28 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
         host.connections
             .set_link_credits(ret.total_num_le_acl_data_packets as usize);
 
+        const ACL_LEN: u16 = 255;
+        const ACL_N: u16 = 1;
         info!(
             "[host] configuring host buffers ({} packets of size {})",
-            config::L2CAP_RX_PACKET_POOL_SIZE,
-            host.rx_pool.mtu()
+            ACL_N, ACL_LEN,
         );
-        HostBufferSize::new(
-            host.rx_pool.mtu() as u16,
-            0,
-            config::L2CAP_RX_PACKET_POOL_SIZE as u16,
-            0,
-        )
-        .exec(&host.controller)
-        .await?;
+        HostBufferSize::new(ACL_LEN, 0, ACL_N, 0).exec(&host.controller).await?;
 
-        #[cfg(feature = "controller-host-flow-control")]
-        {
-            info!("[host] enabling flow control");
-            SetControllerToHostFlowControl::new(ControllerToHostFlowControl::AclOnSyncOff)
-                .exec(&host.controller)
-                .await?;
-        }
+        /*
+                #[cfg(feature = "controller-host-flow-control")]
+                {
+                    info!("[host] enabling flow control");
+                    SetControllerToHostFlowControl::new(ControllerToHostFlowControl::AclOnSyncOff)
+                        .exec(&host.controller)
+                        .await?;
+                }
+        */
 
         let _ = host.initialized.init(InitialState {
             acl_max: ret.le_acl_data_packet_length as usize,
         });
         info!("[host] initialized");
-
-        #[allow(unused_mut)]
-        let mut completed_packets_cursor = 0;
 
         let device_address = host.command(ReadBdAddr::new()).await?;
         if *device_address.raw() != [0, 0, 0, 0, 0, 0] {
@@ -970,13 +1029,9 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
         }
 
         loop {
-            match select4(
+            match select3(
                 poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
                 poll_fn(|cx| host.channels.poll_disconnecting(Some(cx))),
-                poll_fn(|cx| {
-                    host.connections
-                        .poll_completed_packets(completed_packets_cursor, Some(cx))
-                }),
                 select4(
                     poll_fn(|cx| host.connect_command_state.poll_cancelled(cx)),
                     poll_fn(|cx| host.advertise_command_state.poll_cancelled(cx)),
@@ -993,33 +1048,30 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
             )
             .await
             {
-                Either4::First(request) => {
+                Either3::First(request) => {
                     trace!("[host] poll disconnecting links");
-                    host.command(Disconnect::new(request.handle(), request.reason()))
-                        .await?;
-                    request.confirm();
-                }
-                Either4::Second(request) => {
-                    trace!("[host] poll disconnecting channels");
-                    request.send(host).await?;
-                    request.confirm();
-                }
-                Either4::Third(completed) => {
-                    #[cfg(feature = "controller-host-flow-control")]
-                    {
-                        if let Err(e) = HostNumberOfCompletedPackets::new(&[ConnHandleCompletedPackets::new(
-                            completed.handle(),
-                            completed.amount(),
-                        )])
-                        .exec(&host.controller)
-                        .await
-                        {
-                            warn!("[host] error performing flow control");
+                    match host.command(Disconnect::new(request.handle(), request.reason())).await {
+                        Ok(_) => {}
+                        Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
+                        Err(e) => {
+                            return Err(e);
                         }
-                        completed_packets_cursor = completed.confirm();
                     }
+                    request.confirm();
                 }
-                Either4::Fourth(states) => match states {
+                Either3::Second(request) => {
+                    trace!("[host] poll disconnecting channels");
+                    match request.send(host).await {
+                        Ok(_) => {}
+                        Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
+                        Err(BleHostError::BleHost(Error::NotFound)) => {}
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                    request.confirm();
+                }
+                Either3::Third(states) => match states {
                     Either4::First(_) => {
                         trace!("[host] cancel connection create");
                         // trace!("[host] cancelling create connection");
@@ -1070,14 +1122,14 @@ impl<'d, C: Controller> ControlRunner<'d, C> {
     }
 }
 
-impl<'d, C: Controller> TxRunner<'d, C> {
+impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     /// Run the transmit loop for the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
         let host = &self.stack.host;
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;
-            match host.l2cap(conn, pdu.len as u16, 1).await {
+            match host.l2cap(conn, pdu.len() as u16, 1).await {
                 Ok(mut sender) => {
                     if let Err(e) = sender.send(pdu.as_ref()).await {
                         warn!("[host] error sending outbound pdu");
@@ -1099,19 +1151,24 @@ impl<'d, C: Controller> TxRunner<'d, C> {
     }
 }
 
-pub struct L2capSender<'a, 'd, T: Controller> {
+pub struct L2capSender<'a, 'd, T: Controller, P> {
     pub(crate) controller: &'a T,
     pub(crate) handle: ConnHandle,
-    pub(crate) grant: PacketGrant<'a, 'd>,
+    pub(crate) grant: PacketGrant<'a, 'd, P>,
     pub(crate) fragment_size: u16,
 }
 
-impl<'a, 'd, T: Controller> L2capSender<'a, 'd, T> {
+impl<'a, 'd, T: Controller, P> L2capSender<'a, 'd, T, P> {
     pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
     where
         T: blocking::Controller,
     {
         let mut pbf = AclPacketBoundary::FirstNonFlushable;
+        //info!(
+        //    "[host] fragmenting PDU of size {} into {} sized fragments",
+        //    pdu.len(),
+        //    self.fragment_size
+        //);
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
             // info!("Sent ACL {:?}", acl);
@@ -1131,6 +1188,11 @@ impl<'a, 'd, T: Controller> L2capSender<'a, 'd, T> {
     }
 
     pub(crate) async fn send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>> {
+        //info!(
+        //    "[host] fragmenting PDU of size {} into {} sized fragments",
+        //    pdu.len(),
+        //    self.fragment_size
+        //);
         let mut pbf = AclPacketBoundary::FirstNonFlushable;
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);

@@ -14,8 +14,8 @@ use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
 use constants::ENCRYPTION_KEY_SIZE_128_BITS;
-pub use crypto::LongTermKey;
 use crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
+pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
@@ -32,7 +32,7 @@ use crate::pdu::Pdu;
 use crate::prelude::Connection;
 use crate::security_manager::types::UseOutOfBand;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
-use crate::{Address, Error};
+use crate::{Address, Error, Identity, PacketPool};
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -51,31 +51,28 @@ pub(crate) enum SecurityEventData {
 pub struct BondInformation {
     /// Long Term Key (LTK)
     pub ltk: LongTermKey,
-    /// Device address
-    pub address: BdAddr,
-    // Identity Resolving Key (IRK)?
+    /// Peer identity
+    pub identity: Identity,
     // Connection Signature Resolving Key (CSRK)?
 }
 
 impl BondInformation {
     /// Create a BondInformation
-    pub fn new(address: BdAddr, ltk: LongTermKey) -> Self {
-        Self { ltk, address }
+    pub fn new(identity: Identity, ltk: LongTermKey) -> Self {
+        Self { ltk, identity }
     }
 }
 
 impl core::fmt::Display for BondInformation {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let a = Address::random(self.address.into_inner());
-        write!(f, "Address {} LTK {}", a, self.ltk)
+        write!(f, "Identity {:?} LTK {}", self.identity, self.ltk)
     }
 }
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for BondInformation {
     fn format(&self, fmt: defmt::Formatter) {
-        let a = Address::random(self.address.into_inner());
-        defmt::write!(fmt, "Address {} LTK {}", a, self.ltk)
+        defmt::write!(fmt, "Identity {:?} LTK {}", self.identity, self.ltk);
     }
 }
 
@@ -101,19 +98,19 @@ impl<const BOND_COUNT: usize> SecurityManagerData<BOND_COUNT> {
 }
 
 /// Packet structure for sending security manager protocol (SMP) commands
-struct TxPacket {
+struct TxPacket<P: PacketPool> {
     /// Underlying packet
-    packet: crate::packet_pool::Packet,
+    packet: P::Packet,
     /// Command to send
     command: Command,
 }
 
-impl TxPacket {
+impl<P: PacketPool> TxPacket<P> {
     /// Size of L2CAP header and command
     const HEADER_SIZE: usize = 5;
 
     /// Get a packet from the pool
-    pub fn new(mut packet: crate::packet_pool::Packet, command: Command) -> Result<Self, Error> {
+    pub fn new(mut packet: P::Packet, command: Command) -> Result<Self, Error> {
         let packet_data = packet.as_mut();
         let smp_size = command.payload_size() + 1;
         packet_data[..2].copy_from_slice(&(smp_size).to_le_bytes());
@@ -139,7 +136,7 @@ impl TxPacket {
         usize::from(self.command.payload_size()) + Self::HEADER_SIZE
     }
     /// Create a PDU from the packet
-    pub fn into_pdu(self) -> Pdu {
+    pub fn into_pdu(self) -> Pdu<P::Packet> {
         let len = self.total_size();
         Pdu::new(self.packet, len)
     }
@@ -228,6 +225,8 @@ struct PairingData {
     ltk: Option<u128>,
     /// Peer device address
     peer_address: Option<Address>,
+    /// Identity Resolving Key
+    irk: Option<IdentityResolvingKey>,
 }
 
 impl PairingData {
@@ -251,6 +250,7 @@ impl PairingData {
             local_check: None,
             ltk: None,
             peer_address: None,
+            irk: None,
         }
     }
     /// Clear pairing data
@@ -351,10 +351,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Get the long term key for peer
-    pub(crate) fn get_peer_long_term_key(&self, address: Address) -> Option<LongTermKey> {
-        trace!("[security manager] Find long term key for {}", address);
+    pub(crate) fn get_peer_long_term_key(&self, identity: &Identity) -> Option<LongTermKey> {
+        trace!("[security manager] Find long term key for {:?}", identity);
         self.state.borrow().bond.iter().find_map(|bond| {
-            if bond.address == address.addr {
+            info!("Matching address: {}", bond);
+            if bond.identity.match_identity(identity) {
                 Some(bond.ltk)
             } else {
                 None
@@ -374,9 +375,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     /// Add a bonded device
     pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
-        let a = Address::random(bond_information.address.into_inner());
-        trace!("[security manager] Add bond for {}", a);
-        let index = self.state.borrow().bond.iter().position(|bond| bond.address == a.addr);
+        trace!("[security manager] Add bond for {:?}", bond_information.identity);
+        let index = self
+            .state
+            .borrow()
+            .bond
+            .iter()
+            .position(|bond| bond_information.identity.match_identity(&bond.identity));
         match index {
             Some(index) => {
                 // Replace existing bond if it exists
@@ -393,15 +398,14 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Remove a bonded device
-    pub(crate) fn remove_bond_information(&self, address: BdAddr) -> Result<(), Error> {
-        let a = Address::random(address.into_inner());
-        trace!("[security manager] Remove bond for {}", a);
+    pub(crate) fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
+        trace!("[security manager] Remove bond for {:?}", identity);
         let index = self
             .state
             .borrow_mut()
             .bond
             .iter()
-            .position(|bond| bond.address == a.addr);
+            .position(|bond| bond.identity.match_identity(&identity));
         match index {
             Some(index) => {
                 self.state.borrow_mut().bond.remove(index);
@@ -417,29 +421,27 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle packet
-    pub(crate) fn handle(
+    pub(crate) fn handle<P: PacketPool>(
         &self,
-        packet: &crate::packet_pool::Packet,
-        payload_size: usize,
-        connections: &ConnectionManager,
-        storage: &ConnectionStorage,
+        pdu: Pdu<P::Packet>,
+        connections: &ConnectionManager<P>,
+        storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
         // Should it be possible to handle multiple concurrent pairings?
         let role = storage.role.ok_or(Error::InvalidValue)?;
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
         let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-        let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
+        let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
         let peer_address = Address {
             kind: peer_address_kind,
-            addr: peer_address,
+            addr: peer_identity.bd_addr,
         };
 
         let result = {
             let mut buffer = [0u8; 72];
             let size = {
-                let packet_payload = packet.as_ref();
-                let size = payload_size.min(buffer.len());
-                buffer[..size].copy_from_slice(&packet_payload[..size]);
+                let size = pdu.len().min(buffer.len());
+                buffer[..size].copy_from_slice(&pdu.as_ref()[..size]);
                 size
             };
             if size < 2 {
@@ -511,6 +513,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 Command::PairingRandom => self.handle_pairing_random(payload, connections, handle, storage),
                 Command::PairingDhKeyCheck => self.handle_pairing_dhkey_check(payload, connections, handle, storage),
                 Command::PairingFailed => self.handle_pairing_failed(payload),
+                Command::IdentityInformation => self.handle_identity_information(payload, handle),
+                Command::IdentityAddressInformation => self.handle_identity_address_information(payload),
                 _ => {
                     warn!("Unhandled Security Manager Protocol command {}", command);
                     Ok(())
@@ -546,16 +550,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Initiate pairing
-    pub fn initiate(&self, connection: &Connection) -> Result<(), Error> {
+    pub fn initiate<P: PacketPool>(&self, connection: &Connection<P>) -> Result<(), Error> {
         if connection.role() == LeConnRole::Central {
-            let peer_address = connection.peer_address();
-            if let Some(ltk) = self.get_peer_long_term_key(Address {
-                addr: peer_address,
-                kind: AddrKind::RANDOM,
-            }) {
+            let peer_identity = connection.peer_identity();
+            if let Some(ltk) = self.get_peer_long_term_key(&peer_identity) {
                 self.try_send_event(SecurityEventData::EnableEncryption(
                     connection.handle(),
-                    BondInformation::new(peer_address, ltk),
+                    BondInformation::new(peer_identity, ltk),
                 ))?;
                 {
                     let mut pairing_state = self.pairing_state.borrow_mut();
@@ -572,7 +573,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     ..Default::default()
                 };
 
-                let mut packet = TxPacket::new(connection.alloc_tx()?, Command::PairingRequest)?;
+                let mut packet: TxPacket<P> =
+                    TxPacket::new(P::allocate().ok_or(Error::OutOfMemory)?, Command::PairingRequest)?;
 
                 let payload = packet.payload_mut();
 
@@ -601,7 +603,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             // Send sequrity request to central
             let auth_req = AuthReq::new(BondingFlag::Bonding);
 
-            let mut packet = TxPacket::new(connection.alloc_tx()?, Command::SecurityRequest)?;
+            let mut packet: TxPacket<P> =
+                TxPacket::new(P::allocate().ok_or(Error::OutOfMemory)?, Command::SecurityRequest)?;
 
             let response = packet.payload_mut();
 
@@ -669,10 +672,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing request command
-    fn handle_pairing_request(
+    fn handle_pairing_request<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
@@ -688,11 +691,16 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         if !peer_features.security_properties.secure_connection() {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
-        let local_features = PairingFeatures {
+        let mut local_features = PairingFeatures {
             io_capabilities: IoCapabilities::NoInputNoOutput,
             security_properties: AuthReq::new(BondingFlag::Bonding),
             ..Default::default()
         };
+
+        // Set identity key flag
+        if peer_features.initiator_key_distribution.identity_key() {
+            local_features.initiator_key_distribution.set_identity_key();
+        }
 
         {
             let pairing_state = self.pairing_state.borrow();
@@ -729,10 +737,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing response command
-    fn handle_pairing_response(
+    fn handle_pairing_response<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
@@ -783,10 +791,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing public key command
-    fn handle_pairing_public_key(
+    fn handle_pairing_public_key<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let role = {
@@ -895,10 +903,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing confirm command
-    fn handle_pairing_confirm(
+    fn handle_pairing_confirm<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let confirm = Confirm(u128::from_le_bytes(
@@ -940,12 +948,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing random command
-    fn handle_pairing_random(
+    fn handle_pairing_random<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
-        storage: &ConnectionStorage,
+        storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
         let peer_nonce = Nonce(u128::from_le_bytes(
             payload
@@ -985,10 +993,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let (peer_nonce, mac_key, ltk, local_check) = {
             let pairing_state = self.pairing_state.borrow();
             let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-            let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
+            let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
             let peer_address = Address {
                 kind: peer_address_kind,
-                addr: peer_address,
+                addr: peer_identity.bd_addr,
             };
             let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
             let dh_key = pairing_state.dh_key.as_ref().ok_or(Error::InvalidValue)?;
@@ -1067,12 +1075,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing DH key check
-    fn handle_pairing_dhkey_check(
+    fn handle_pairing_dhkey_check<P: PacketPool>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
-        storage: &ConnectionStorage,
+        storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
         let (role, local_check) = {
             let pairing_state = self.pairing_state.borrow();
@@ -1082,10 +1090,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             let peer_public_key = pairing_state.public_key_peer.ok_or(Error::InvalidValue)?;
             let local_public_key = pairing_state.public_key.ok_or(Error::InvalidValue)?;
             let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-            let peer_address = storage.peer_addr.ok_or(Error::InvalidValue)?;
+            let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
             let peer_address = Address {
                 kind: peer_address_kind,
-                addr: peer_address,
+                addr: peer_identity.bd_addr,
             };
             let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
             let mac_key = pairing_state.mac_key.as_ref().ok_or(Error::InvalidValue)?;
@@ -1145,6 +1153,42 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
+    fn handle_identity_information(&self, payload: &[u8], handle: ConnHandle) -> Result<(), Error> {
+        let irk = IdentityResolvingKey::new(u128::from_le_bytes(
+            payload.try_into().map_err(|_| Error::InvalidValue)?,
+        ));
+        self.pairing_state.borrow_mut().irk = Some(irk);
+        let bond_info = self.store_pairing()?;
+        self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))?;
+        info!("Identity information: IRK: {:?}", irk);
+        Ok(())
+    }
+
+    fn handle_identity_address_information(&self, payload: &[u8]) -> Result<(), Error> {
+        let addr_type = payload[0];
+        let kind = if addr_type == 0 {
+            AddrKind::PUBLIC
+        } else if addr_type == 1 {
+            AddrKind::RANDOM
+        } else {
+            // Impossible
+            error!("[security manager] Invalid address type: {:?}", addr_type);
+            return Err(Error::InvalidValue);
+        };
+        let addr = BdAddr::new(payload[1..7].try_into().map_err(|_| Error::InvalidValue)?);
+        self.pairing_state.borrow_mut().peer_address = Some(Address { kind, addr });
+        // TODO: Check if the bond info is correctly updated
+        let bond_info = self.store_pairing()?;
+        // How to process the public device address when ​​Resolvable Private Address is used?
+        // TODO: If bond info is updated, send EnableEncryption event
+        // self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))?;
+        debug!(
+            "Identity address information: addr_type: {:?}, addr: {:?}",
+            addr_type, addr
+        );
+        Ok(())
+    }
+
     /// Handle recevied events from HCI
     pub(crate) fn handle_event(&self, event: &Event) -> Result<(), Error> {
         match event {
@@ -1187,18 +1231,23 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     fn store_pairing(&self) -> Result<BondInformation, Error> {
         let pairing_state = self.pairing_state.borrow();
+        let irk = pairing_state.irk;
         if let (Some(ltk), Some(peer_address)) = (pairing_state.ltk, pairing_state.peer_address) {
             let ltk = LongTermKey(ltk);
+            // Use IRK in bond information if available
             let bond = BondInformation {
-                address: peer_address.addr,
                 ltk,
+                identity: Identity {
+                    bd_addr: peer_address.addr,
+                    irk,
+                },
             };
 
             let bonds = &mut self.state.borrow_mut().bond;
 
             let mut replaced = false;
             for bond in bonds.iter_mut() {
-                if bond.address == peer_address.addr {
+                if bond.identity.match_address(&peer_address.addr) {
                     bond.ltk = ltk;
                     replaced = true;
                     trace!("[security manager] Replaced bond for {}", peer_address);
@@ -1208,7 +1257,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             if !replaced {
                 match bonds.push(bond.clone()) {
                     Ok(_) => {
-                        trace!("[security manager] Added bond for {}", peer_address);
+                        trace!("[security manager] Added bond {} for {}", bond, peer_address);
                         Ok(bond)
                     }
                     Err(e) => {
@@ -1226,16 +1275,20 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Prepare a packet for sending
-    fn prepare_packet(&self, command: Command, connections: &ConnectionManager) -> Result<TxPacket, Error> {
-        let packet = connections.alloc_tx()?;
+    fn prepare_packet<P: PacketPool>(
+        &self,
+        command: Command,
+        connections: &ConnectionManager<P>,
+    ) -> Result<TxPacket<P>, Error> {
+        let packet = P::allocate().ok_or(Error::OutOfMemory)?;
         TxPacket::new(packet, command)
     }
 
     /// Send a packet
-    fn try_send_packet(
+    fn try_send_packet<P: PacketPool>(
         &self,
-        packet: TxPacket,
-        connections: &ConnectionManager,
+        packet: TxPacket<P>,
+        connections: &ConnectionManager<P>,
         handle: ConnHandle,
     ) -> Result<(), Error> {
         let len = packet.total_size();

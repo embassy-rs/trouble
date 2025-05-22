@@ -17,12 +17,10 @@ use heapless::Vec;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
-use crate::channel_manager::{ChannelStorage, PacketChannel};
-use crate::connection_manager::{ConnectionStorage, EventChannel};
-use crate::l2cap::sar::SarType;
-use crate::packet_pool::PacketPool;
+use crate::channel_manager::ChannelStorage;
+use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, LongTermKey};
+pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable
@@ -41,7 +39,8 @@ mod command;
 pub mod config;
 mod connection_manager;
 mod cursor;
-pub mod packet_pool;
+#[cfg(feature = "default-packet-pool")]
+mod packet_pool;
 mod pdu;
 #[cfg(feature = "peripheral")]
 pub mod peripheral;
@@ -70,7 +69,9 @@ use host::{AdvHandleState, BleHost, HostMetrics, Runner};
 
 pub mod prelude {
     //! Convenience include of most commonly used types.
+    pub use bt_hci::controller::ExternalController;
     pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role, PhyKind, PhyMask};
+    pub use bt_hci::transport::SerialTransport;
     pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
     pub use heapless::String as HeaplessString;
@@ -78,7 +79,7 @@ pub mod prelude {
     pub use trouble_host_macros::*;
 
     pub use super::att::AttErrorCode;
-    pub use super::{BleHostError, Controller, Error, Host, HostResources, Stack};
+    pub use super::{BleHostError, Controller, Error, Host, HostResources, Packet, PacketPool, Stack};
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
@@ -94,14 +95,16 @@ pub mod prelude {
     pub use crate::gatt::*;
     pub use crate::host::{ControlRunner, EventHandler, HostMetrics, Runner, RxRunner, TxRunner};
     pub use crate::l2cap::*;
-    pub use crate::packet_pool::PacketPool;
+    #[cfg(feature = "default-packet-pool")]
+    pub use crate::packet_pool::DefaultPacketPool;
+    pub use crate::pdu::Sdu;
     #[cfg(feature = "peripheral")]
     pub use crate::peripheral::*;
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
-    pub use crate::Address;
+    pub use crate::{Address, Identity};
 }
 
 #[cfg(feature = "gatt")]
@@ -178,6 +181,61 @@ impl defmt::Format for Address {
     }
 }
 
+/// Identity of a peer device
+///
+/// Sometimes we have to save both the address and the IRK.
+/// Because sometimes the peer uses the static or public address even though the IRK is sent.
+/// In this case, the IRK exists but the used address is not RPA.
+/// Should `Address` be used instead?
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Identity {
+    /// Random static or public address
+    pub bd_addr: BdAddr,
+
+    /// Identity Resolving Key
+    #[cfg(feature = "security")]
+    pub irk: Option<IdentityResolvingKey>,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Identity {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "BdAddr({:X}) ", self.bd_addr);
+        #[cfg(feature = "security")]
+        defmt::write!(fmt, "Irk({:X})", self.irk);
+    }
+}
+
+impl Identity {
+    /// Check whether the address matches the identity
+    pub fn match_address(&self, address: &BdAddr) -> bool {
+        if self.bd_addr == *address {
+            return true;
+        }
+        #[cfg(feature = "security")]
+        if let Some(irk) = self.irk {
+            return irk.resolve_address(address);
+        }
+        false
+    }
+
+    /// Check whether the given identity matches current identity
+    pub fn match_identity(&self, identity: &Identity) -> bool {
+        if self.match_address(&identity.bd_addr) {
+            return true;
+        }
+        #[cfg(feature = "security")]
+        if let Some(irk) = identity.irk {
+            if let Some(current_irk) = self.irk {
+                return irk == current_irk;
+            } else {
+                return irk.resolve_address(&self.bd_addr);
+            }
+        }
+        false
+    }
+}
+
 /// Errors returned by the host.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -187,6 +245,9 @@ pub enum BleHostError<E> {
     /// Error from the host.
     BleHost(Error),
 }
+
+/// How many bytes of invalid data to capture in the error variants before truncating.
+pub const MAX_INVALID_DATA_LEN: usize = 16;
 
 /// Errors related to Host.
 #[derive(Debug, PartialEq)]
@@ -205,6 +266,56 @@ pub enum Error {
     InsufficientSpace,
     /// Invalid value.
     InvalidValue,
+
+    /// Unexpected data length.
+    ///
+    /// This happens if the attribute data length doesn't match the input length size,
+    /// and the attribute is deemed as *not* having variable length due to the characteristic's
+    /// `MAX_SIZE` and `MIN_SIZE` being defined as equal.
+    UnexpectedDataLength {
+        /// Expected length.
+        expected: usize,
+        /// Actual length.
+        actual: usize,
+    },
+
+    /// Error converting from GATT value.
+    CannotConstructGattValue([u8; MAX_INVALID_DATA_LEN]),
+
+    /// Scan config filter accept list is empty.
+    ConfigFilterAcceptListIsEmpty,
+
+    /// Unexpected GATT response.
+    UnexpectedGattResponse,
+
+    /// Received characteristic declaration data shorter than the minimum required length (5 bytes).
+    MalformedCharacteristicDeclaration {
+        /// Expected length.
+        expected: usize,
+        /// Actual length.
+        actual: usize,
+    },
+
+    /// Failed to decode the data structure within a characteristic declaration attribute value.
+    InvalidCharacteristicDeclarationData,
+
+    /// Failed to finalize the packet.
+    FailedToFinalize {
+        /// Expected length.
+        expected: usize,
+        /// Actual length.
+        actual: usize,
+    },
+
+    /// Codec error.
+    CodecError(codec::Error),
+
+    /// Extended advertising not supported.
+    ExtendedAdvertisingNotSupported,
+
+    /// Invalid UUID length.
+    InvalidUuidLength(usize),
+
     /// Error decoding advertisement data.
     Advertisement(AdvertisementDataError),
     /// Invalid l2cap channel id provided.
@@ -272,7 +383,7 @@ impl From<codec::Error> for Error {
     fn from(error: codec::Error) -> Self {
         match error {
             codec::Error::InsufficientSpace => Error::InsufficientSpace,
-            codec::Error::InvalidValue => Error::InvalidValue,
+            codec::Error::InvalidValue => Error::CodecError(error),
         }
     }
 }
@@ -366,44 +477,59 @@ impl<
 {
 }
 
+/// A Packet is a byte buffer for packet data.
+/// Similar to a `Vec<u8>` it has a length and a capacity.
+pub trait Packet: Sized + AsRef<[u8]> + AsMut<[u8]> {}
+
+/// A Packet Pool that can allocate packets of the desired size.
+///
+/// The MTU is usually related to the MTU of l2cap payloads.
+pub trait PacketPool: 'static {
+    /// Packet type provided by this pool.
+    type Packet: Packet;
+
+    /// The maximum size a packet can have.
+    const MTU: usize;
+
+    /// Allocate a new buffer with space for `MTU` bytes.
+    /// Return `None` when the allocation can't be fulfilled.
+    ///
+    /// This function is called by the L2CAP driver when it needs
+    /// space to receive a packet into.
+    /// It will later call `from_raw_parts` with the buffer and the
+    /// amount of bytes it has received.
+    fn allocate() -> Option<Self::Packet>;
+
+    /// Capacity of this pool in the number of packets.
+    fn capacity() -> usize;
+}
+
 /// HostResources holds the resources used by the host.
 ///
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize = 1> {
-    rx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_RX_PACKET_POOL_SIZE }>>,
-    #[cfg(feature = "gatt")]
-    tx_pool: MaybeUninit<PacketPool<L2CAP_MTU, { config::L2CAP_TX_PACKET_POOL_SIZE }>>,
-    connections: MaybeUninit<[ConnectionStorage; CONNS]>,
-    events: MaybeUninit<[EventChannel; CONNS]>,
-    channels: MaybeUninit<[ChannelStorage; CHANNELS]>,
-    channels_rx: MaybeUninit<[PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>; CHANNELS]>,
-    sar: MaybeUninit<[SarType; CONNS]>,
+pub struct HostResources<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize = 1> {
+    connections: MaybeUninit<[ConnectionStorage<P::Packet>; CONNS]>,
+    channels: MaybeUninit<[ChannelStorage<P::Packet>; CHANNELS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize> Default
-    for HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize> Default
+    for HostResources<P, CONNS, CHANNELS, ADV_SETS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const ADV_SETS: usize>
-    HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>
+impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>
+    HostResources<P, CONNS, CHANNELS, ADV_SETS>
 {
     /// Create a new instance of host resources.
     pub const fn new() -> Self {
         Self {
-            rx_pool: MaybeUninit::uninit(),
-            #[cfg(feature = "gatt")]
-            tx_pool: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
-            events: MaybeUninit::uninit(),
-            sar: MaybeUninit::uninit(),
             channels: MaybeUninit::uninit(),
-            channels_rx: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
         }
     }
@@ -414,14 +540,14 @@ impl<const CONNS: usize, const CHANNELS: usize, const L2CAP_MTU: usize, const AD
 pub fn new<
     'resources,
     C: Controller,
+    P: PacketPool,
     const CONNS: usize,
     const CHANNELS: usize,
-    const L2CAP_MTU: usize,
     const ADV_SETS: usize,
 >(
     controller: C,
-    resources: &'resources mut HostResources<CONNS, CHANNELS, L2CAP_MTU, ADV_SETS>,
-) -> Stack<'resources, C> {
+    resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS>,
+) -> Stack<'resources, C, P> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         unsafe { core::mem::transmute(x) }
     }
@@ -431,72 +557,40 @@ pub fn new<
     // - Internal lifetimes are elided (made 'static) to simplify API usage
     // - This _should_ be OK, because there are no references held to the resources
     //   when the stack is shut down.
-    use crate::packet_pool::Pool;
-    let rx_pool: &'resources dyn Pool = &*resources.rx_pool.write(PacketPool::new());
-    let rx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(rx_pool) };
 
-    #[cfg(feature = "gatt")]
-    let tx_pool: &'resources dyn Pool = &*resources.tx_pool.write(PacketPool::new());
-    #[cfg(feature = "gatt")]
-    let tx_pool = unsafe { core::mem::transmute::<&'resources dyn Pool, &'static dyn Pool>(tx_pool) };
+    let connections: &mut [ConnectionStorage<P::Packet>] =
+        &mut *resources.connections.write([const { ConnectionStorage::new() }; CONNS]);
+    let connections: &'resources mut [ConnectionStorage<P::Packet>] = unsafe { transmute_slice(connections) };
 
-    use bt_hci::param::ConnHandle;
+    let channels = &mut *resources.channels.write([const { ChannelStorage::new() }; CHANNELS]);
+    let channels: &'static mut [ChannelStorage<P::Packet>] = unsafe { transmute_slice(channels) };
 
-    use crate::l2cap::sar::AssembledPacket;
-    use crate::types::l2cap::L2capHeader;
-    let connections: &mut [ConnectionStorage] =
-        &mut *resources.connections.write([ConnectionStorage::DISCONNECTED; CONNS]);
-    let connections: &'resources mut [ConnectionStorage] = unsafe { transmute_slice(connections) };
-
-    let events: &mut [EventChannel] = &mut *resources.events.write([EventChannel::NEW; CONNS]);
-    let events: &'resources mut [EventChannel] = unsafe { transmute_slice(events) };
-
-    let channels = &mut *resources.channels.write([ChannelStorage::DISCONNECTED; CHANNELS]);
-    let channels: &'static mut [ChannelStorage] = unsafe { transmute_slice(channels) };
-
-    let channels_rx: &mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>] =
-        &mut *resources.channels_rx.write([PacketChannel::NEW; CHANNELS]);
-    let channels_rx: &'static mut [PacketChannel<{ config::L2CAP_RX_QUEUE_SIZE }>] =
-        unsafe { transmute_slice(channels_rx) };
-    let sar = &mut *resources.sar.write([const { None }; CONNS]);
-    let sar: &'static mut [Option<(ConnHandle, L2capHeader, AssembledPacket)>] = unsafe { transmute_slice(sar) };
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
-    let host: BleHost<'_, C> = BleHost::new(
-        controller,
-        rx_pool,
-        #[cfg(feature = "gatt")]
-        tx_pool,
-        connections,
-        events,
-        channels,
-        channels_rx,
-        sar,
-        advertise_handles,
-    );
+    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles);
 
     Stack { host }
 }
 
 /// Contains the host stack
-pub struct Stack<'stack, C> {
-    host: BleHost<'stack, C>,
+pub struct Stack<'stack, C, P: PacketPool> {
+    host: BleHost<'stack, C, P>,
 }
 
 /// Host components.
 #[non_exhaustive]
-pub struct Host<'stack, C> {
+pub struct Host<'stack, C, P: PacketPool> {
     /// Central role
     #[cfg(feature = "central")]
-    pub central: Central<'stack, C>,
+    pub central: Central<'stack, C, P>,
     /// Peripheral role
     #[cfg(feature = "peripheral")]
-    pub peripheral: Peripheral<'stack, C>,
+    pub peripheral: Peripheral<'stack, C, P>,
     /// Host runner
-    pub runner: Runner<'stack, C>,
+    pub runner: Runner<'stack, C, P>,
 }
 
-impl<'stack, C: Controller> Stack<'stack, C> {
+impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Set the random address used by this host.
     pub fn set_random_address(mut self, address: Address) -> Self {
         self.host.address.replace(address);
@@ -519,7 +613,7 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     }
 
     /// Build the stack.
-    pub fn build(&'stack self) -> Host<'stack, C> {
+    pub fn build(&'stack self) -> Host<'stack, C, P> {
         #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
         {
             if !self.host.connections.security_manager.get_random_generator_seeded() {
@@ -556,8 +650,8 @@ impl<'stack, C: Controller> Stack<'stack, C> {
     }
 
     /// Read current host metrics
-    pub fn metrics(&self) -> HostMetrics {
-        self.host.metrics()
+    pub fn metrics<F: FnOnce(&HostMetrics) -> R, R>(&self, f: F) -> R {
+        self.host.metrics(f)
     }
 
     /// Log status information of the host
@@ -576,8 +670,8 @@ impl<'stack, C: Controller> Stack<'stack, C> {
 
     #[cfg(feature = "security")]
     /// Remove a bonded device
-    pub fn remove_bond_information(&self, address: BdAddr) -> Result<(), Error> {
-        self.host.connections.security_manager.remove_bond_information(address)
+    pub fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
+        self.host.connections.security_manager.remove_bond_information(identity)
     }
 
     #[cfg(feature = "security")]

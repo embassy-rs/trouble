@@ -7,15 +7,15 @@ resolver = "2"
 [dependencies]
 embassy-executor = { version = "0.7", default-features = false, features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
 embassy-time = { version = "0.4", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-rp = { version = "0.3", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "binary-info"] }
+embassy-rp = { version = "0.4", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "binary-info"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.6", features = ["defmt"] }
 
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
-bt-hci = { version = "0.3", default-features = false, features = ["defmt"] }
 trouble-example-apps= { version = "0.1.0", path = "../apps", features = ["defmt"] }
+trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-128"] }
 cyw43 = { version = "0.3", features = ["defmt", "firmware-logs", "bluetooth"] }
-cyw43-pio = { version = "0.3", features = ["defmt"] }
+cyw43-pio = { version = "0.4", features = ["defmt"] }
 
 defmt = "0.3"
 defmt-rtt = "0.4.0"

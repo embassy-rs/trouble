@@ -73,7 +73,7 @@ async fn main(spawner: Spawner) {
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(sdc, &mut resources).set_random_address(address);
     let Host {
         mut peripheral,
@@ -82,13 +82,13 @@ async fn main(spawner: Spawner) {
     } = stack.build();
 
     let mut adv_data = [0; 31];
-    unwrap!(AdStructure::encode_slice(
+    let adv_data_len = unwrap!(AdStructure::encode_slice(
         &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
         &mut adv_data[..],
     ));
 
     let mut scan_data = [0; 31];
-    unwrap!(AdStructure::encode_slice(
+    let scan_data_len = unwrap!(AdStructure::encode_slice(
         &[AdStructure::CompleteLocalName(b"Trouble")],
         &mut scan_data[..]
     ));
@@ -100,21 +100,20 @@ async fn main(spawner: Spawner) {
                     .advertise(
                         &Default::default(),
                         Advertisement::ConnectableScannableUndirected {
-                            adv_data: &adv_data[..],
-                            scan_data: &scan_data[..],
+                            adv_data: &adv_data[..adv_data_len],
+                            scan_data: &scan_data[..scan_data_len],
                         },
                     )
                     .await
             );
             let conn = unwrap!(advertiser.accept().await);
 
-            // Size of payload we're expecting
-            const PAYLOAD_LEN: usize = 492;
-
+            const PAYLOAD_LEN: usize = L2CAP_MTU - 6;
             let config = L2capChannelConfig {
                 flow_policy: CreditFlowPolicy::MinThreshold(4),
                 initial_credits: Some(8),
-                mtu: PAYLOAD_LEN as u16,
+                mtu: Some(PAYLOAD_LEN as u16),
+                mps: Some(L2CAP_MTU as u16 - 4),
             };
             let mut ch1 = unwrap!(L2capChannel::accept(&stack, &conn, &[0x2349], &config).await);
 
@@ -131,7 +130,7 @@ async fn main(spawner: Spawner) {
             let mut bytes: u64 = 0;
             for i in 0..500 {
                 let tx = [(i % 255) as u8; PAYLOAD_LEN];
-                unwrap!(ch1.send::<_, L2CAP_MTU>(&stack, &tx).await);
+                unwrap!(ch1.send(&stack, &tx).await);
                 bytes += PAYLOAD_LEN as u64;
                 let duration = Instant::now() - last;
                 if duration.as_secs() > 10 {

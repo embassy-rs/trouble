@@ -76,7 +76,7 @@ async fn main(spawner: Spawner) {
     Timer::after(Duration::from_millis(200)).await;
 
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(sdc, &mut resources).set_random_address(address);
     let Host {
         mut central,
@@ -96,11 +96,12 @@ async fn main(spawner: Spawner) {
     let _ = join(runner.run(), async {
         loop {
             let conn = unwrap!(central.connect(&config).await);
-            const PAYLOAD_LEN: usize = 492;
+            const PAYLOAD_LEN: usize = L2CAP_MTU - 6;
             let config = L2capChannelConfig {
                 flow_policy: CreditFlowPolicy::MinThreshold(4),
                 initial_credits: Some(8),
-                mtu: PAYLOAD_LEN as u16,
+                mtu: Some(PAYLOAD_LEN as u16),
+                mps: Some(L2CAP_MTU as u16 - 4),
             };
             let mut ch1 = unwrap!(L2capChannel::create(&stack, &conn, 0x2349, &config).await);
             info!("sending l2cap data");
@@ -108,7 +109,7 @@ async fn main(spawner: Spawner) {
             let mut bytes: u64 = 0;
             for i in 0..500 {
                 let tx = [(i % 255) as u8; PAYLOAD_LEN];
-                unwrap!(ch1.send::<_, L2CAP_MTU>(&stack, &tx).await);
+                unwrap!(ch1.send(&stack, &tx).await);
                 bytes += PAYLOAD_LEN as u64;
                 let duration = Instant::now() - last;
                 if duration.as_secs() > 10 {

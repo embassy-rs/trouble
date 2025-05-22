@@ -4,25 +4,28 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
 use trouble_host::prelude::*;
 
+use crate::common::PSM_L2CAP_EXAMPLES;
+
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, const L2CAP_MTU: usize>(controller: C)
+pub async fn run<C, P>(controller: C)
 where
     C: Controller
         + ControllerCmdSync<LeSetDataLength>
         + ControllerCmdAsync<LeSetPhy>
         + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+    P: PacketPool,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> = HostResources::new();
+    let mut resources: HostResources<P, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut central,
@@ -71,14 +74,18 @@ where
             conn.set_phy(&stack, PhyKind::Le2M)
                 .await
                 .expect("set phy command failed");
+
+            const PAYLOAD_LEN: usize = 2510;
+            const L2CAP_MTU: usize = 251;
             let l2cap_channel_config = L2capChannelConfig {
-                mtu: L2CAP_MTU as u16,
+                mtu: Some(PAYLOAD_LEN as u16 - 6),
+                mps: Some(L2CAP_MTU as u16 - 4),
                 // Ensure there will be enough credits to send data throughout the entire connection event.
                 flow_policy: CreditFlowPolicy::Every(50),
                 initial_credits: Some(200),
             };
 
-            let mut ch1 = L2capChannel::create(&stack, &conn, 0x2349, &l2cap_channel_config)
+            let mut ch1 = L2capChannel::create(&stack, &conn, PSM_L2CAP_EXAMPLES, &l2cap_channel_config)
                 .await
                 .expect("L2capChannel create failed");
 
@@ -88,14 +95,13 @@ where
 
             info!("New l2cap channel created, sending some data!");
 
-            const PAYLOAD_LEN: usize = 2510 - 6;
             const NUM_PAYLOADS: u8 = 40;
 
             let start = Instant::now();
 
             for i in 0..NUM_PAYLOADS {
                 let tx = [i; PAYLOAD_LEN];
-                ch1.send::<_, L2CAP_MTU>(&stack, &tx).await.expect("L2CAP send failed");
+                ch1.send(&stack, &tx).await.expect("L2CAP send failed");
             }
 
             let duration = start.elapsed();
