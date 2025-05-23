@@ -6,7 +6,7 @@ Any target specific documentation can be found in the respective target director
 
 ## High throughput example
 
-The high throughput example showcases optimum configuration settings for achieving high throughput. 
+The high throughput example showcases optimum configuration settings for achieving high throughput.
 Throughput of around 1.4 Mbps have been measured with some of the more aggressive configurations.  
 It is important to note that these configurations compromise on energy conservation.
 
