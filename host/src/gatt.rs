@@ -696,7 +696,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         {
                             if let Some(start_handle) = found_indicate_or_notify_uuid {
                                 return Ok(Characteristic {
-                                    handle,
+                                    handle: start_handle,
                                     cccd_handle: Some(self.get_characteristic_cccd(start_handle, handle).await?),
                                     phantom: PhantomData,
                                 });
