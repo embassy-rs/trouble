@@ -40,3 +40,5 @@ We have added aliases to make this simpler (see how in [./.cargo/config.toml](./
 # cargo <chip> --bin <example_name>
 cargo esp32c6 --bin ble_bas_peripheral
 ```
+
+See [esp32c3-devkit-demo](https://github.com/jamessizeland/esp32c3-devkit-demo) for more examples of setting up esp devices with trouble, specifically the [rust devkit](https://github.com/esp-rs/esp-rust-board) which is an esp32c3.
