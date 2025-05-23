@@ -871,16 +871,16 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         let response = self.request(data).await?;
 
         match Self::response(response.pdu.as_ref())? {
-            AttRsp::Write => {
-                let listener = self
-                    .notifications
-                    .dyn_subscriber()
-                    .map_err(|_| Error::InsufficientSpace)?;
-                Ok(NotificationListener {
+            AttRsp::Write => match self.notifications.dyn_subscriber() {
+                Ok(listener) => Ok(NotificationListener {
                     listener,
                     handle: characteristic.handle,
-                })
-            }
+                }),
+                Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
+                    Err(Error::GattSubscriberLimitReached.into())
+                }
+                Err(_) => Err(Error::Other.into()),
+            },
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
             _ => Err(Error::UnexpectedGattResponse.into()),
         }

@@ -40,7 +40,7 @@ the number of connections, channels, queue lengths and expected throughput.
 * *default-packet-pool-mtu-N* - size of the default packet pool packets.
 + Configures the size of packets available in the default packet pool, if enabled. This significantly impacts the RAM usage which can be derived from the size of the pool and the mtu. The pool should be sized based on
 the number of connections, channels, queue lengths and expected throughput.
-* *gatt-client-notification-max-subscribers* - GATT client max notification subscribers.
+* *gatt-client-notification-max-subscribers-N* - GATT client max notification subscribers.
 +
 When using the GATT client, this controls how many subscribers can be created.
 * *gatt-client-notification-queue-size-N* - GATT client queue size for inbound notifications.
