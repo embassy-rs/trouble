@@ -345,6 +345,10 @@ pub enum Error {
     Disconnected,
     /// Connection limit has been reached.
     ConnectionLimitReached,
+    /// GATT subscriber limit has been reached.
+    ///
+    /// The limit can be modified using the `gatt-client-notification-max-subscribers-N` features.
+    GattSubscriberLimitReached,
     /// Other error.
     Other,
 }
