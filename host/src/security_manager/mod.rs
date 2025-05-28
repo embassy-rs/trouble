@@ -354,7 +354,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn get_peer_long_term_key(&self, identity: &Identity) -> Option<LongTermKey> {
         trace!("[security manager] Find long term key for {:?}", identity);
         self.state.borrow().bond.iter().find_map(|bond| {
-            info!("Matching address: {}", bond);
             if bond.identity.match_identity(identity) {
                 Some(bond.ltk)
             } else {
