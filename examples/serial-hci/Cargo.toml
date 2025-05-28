@@ -7,10 +7,11 @@ edition = "2021"
 env_logger = "0.10.0"
 log = "0.4"
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
-embassy-sync = { version = "0.6", features = ["log"] }
+embassy-sync = { version = "0.7", features = ["log"] }
 embassy-time = { version = "0.4", features = ["log", "std", "generic-queue-8"] }
 critical-section = { version = "1.1", features = ["std"] }
-rand = "0.8.5"
+rand = { version = "0.8.5", features = ["getrandom"] }
+rand_core = { version = "0.3" }
 tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }

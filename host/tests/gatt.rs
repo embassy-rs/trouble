@@ -43,7 +43,7 @@ async fn gatt_client_server() {
         let id = b"Trouble";
         let appearance = [0x80, 0x07];
         // Random starting value to 'prove' the incremented value is correct
-        let value: u8 = rand::prelude::random();
+        let value: u8 = rand::random();
         let mut storage: [u8; 1] = [0; 1];
         let mut expected = value.wrapping_add(1);
 
