@@ -22,7 +22,7 @@ aes = { version = "0.8.2", optional = true }
 bt-hci = { version = "0.3", features = ["embassy-time", "uuid"] }
 cmac = { version = "0.7.2", optional = true }
 embedded-io = { version = "0.6" }
-embassy-sync = "0.6.2"
+embassy-sync = "0.7"
 embassy-time = "0.4"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }

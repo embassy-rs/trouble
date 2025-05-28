@@ -91,7 +91,7 @@ async fn gatt_client_server() {
         ).unwrap();
 
         // Random starting value to 'prove' the incremented value is correct
-        let value: u8 = rand::prelude::random();
+        let value: u8 = rand::random();
         // The first write will be rejected by the write callback, so value is not expected to change the first time
         let mut expected = value;
         server.set(&server.service.value, &value).unwrap();

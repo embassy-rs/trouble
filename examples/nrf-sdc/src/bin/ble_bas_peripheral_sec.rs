@@ -3,6 +3,7 @@
 
 use defmt::unwrap;
 use embassy_executor::Spawner;
+use embassy_nrf::mode::Async;
 use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, rng};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
@@ -38,7 +39,7 @@ const L2CAP_MTU: usize = 72;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
-    rng: &'d mut rng::Rng<RNG>,
+    rng: &'d mut rng::Rng<RNG, Async>,
     mpsl: &'d MultiprotocolServiceLayer,
     mem: &'d mut sdc::Mem<N>,
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
@@ -46,7 +47,7 @@ fn build_sdc<'d, const N: usize>(
         .support_adv()?
         .support_peripheral()?
         .peripheral_count(1)?
-        .buffer_cfg(L2CAP_MTU as u8, L2CAP_MTU as u8, L2CAP_TXQ, L2CAP_RXQ)?
+        .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
         .build(p, rng, mpsl, mem)
 }
 

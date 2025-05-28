@@ -3,6 +3,7 @@
 
 use defmt::unwrap;
 use embassy_executor::Spawner;
+use embassy_nrf::mode::Async;
 use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, rng};
 use embassy_time::{Duration, Timer};
@@ -28,7 +29,7 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
-    rng: &'d mut rng::Rng<RNG>,
+    rng: &'d mut rng::Rng<RNG, Async>,
     mpsl: &'d MultiprotocolServiceLayer,
     mem: &'d mut sdc::Mem<N>,
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
