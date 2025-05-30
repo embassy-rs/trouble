@@ -2,6 +2,7 @@ use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::Timer;
 use rand_core::{CryptoRng, RngCore};
+use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -110,46 +111,47 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
     let reason = loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
-            GattConnectionEvent::Gatt { event: Err(e) } => warn!("[gatt] error processing event: {:?}", e),
-            GattConnectionEvent::Gatt { event: Ok(event) } => {
-                let result = match &event {
-                    GattEvent::Read(event) => {
-                        if event.handle() == level.handle {
+            GattConnectionEvent::Gatt { event } => {
+                #[allow(unused_mut)]
+                let mut reject_handle = None;
+
+                match event.payload().incoming() {
+                    AttClient::Request(AttReq::Read { handle, .. })
+                    | AttClient::Request(AttReq::ReadBlob { handle, .. }) => {
+                        if handle == level.handle {
                             let value = server.get(&level);
-                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                            info!("[gatt] Read from Level Characteristic: {:?}", value);
                         }
+
                         #[cfg(feature = "security")]
-                        if conn.raw().encrypted() {
-                            None
-                        } else {
-                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                        if !conn.raw().encrypted() {
+                            reject_handle = Some(handle);
                         }
-                        #[cfg(not(feature = "security"))]
-                        None
                     }
-                    GattEvent::Write(event) => {
-                        if event.handle() == level.handle {
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                    AttClient::Request(AttReq::Write { handle, data })
+                    | AttClient::Command(AttCmd::Write { handle, data }) => {
+                        if handle == level.handle {
+                            info!("[gatt] Write to Level Characteristic: {:?}", data);
                         }
+
                         #[cfg(feature = "security")]
-                        if conn.raw().encrypted() {
-                            None
-                        } else {
-                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                        if !conn.raw().encrypted() {
+                            reject_handle = Some(handle);
                         }
-                        #[cfg(not(feature = "security"))]
-                        None
                     }
+                    _ => {}
                 };
 
-                // This step is also performed at drop(), but writing it explicitly is necessary
-                // in order to ensure reply is sent.
-                let reply_result = if let Some(code) = result {
-                    event.reject(code)
+                let reply = if let Some(reject_handle) = reject_handle {
+                    // Reject the request with an error code if the connection is not encrypted.
+                    event.reject(reject_handle, AttErrorCode::INSUFFICIENT_ENCRYPTION)
                 } else {
+                    // This step is also performed at drop(), but writing it explicitly is necessary
+                    // in order to ensure reply is sent.
                     event.accept()
                 };
-                match reply_result {
+
+                match reply {
                     Ok(reply) => reply.send().await,
                     Err(e) => warn!("[gatt] error sending response: {:?}", e),
                 }

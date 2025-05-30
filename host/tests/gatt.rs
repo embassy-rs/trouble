@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use tokio::select;
-use trouble_host::prelude::*;
+use trouble_host::{
+    att::{AttClient, AttCmd, AttReq},
+    prelude::*,
+};
 
 mod common;
 
@@ -99,10 +102,10 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            GattConnectionEvent::Gatt { event } => {
-                                if let Ok(GattEvent::Write(event)) = event {
-                                    let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
-                                    assert_eq!(characteristic.handle, event.handle());
+                            GattConnectionEvent::Gatt { event } => match event.payload().incoming() {
+                                AttClient::Request(AttReq::Write { handle, .. }) | AttClient::Command(AttCmd::Write { handle, .. }) => {
+                                    let characteristic = server.table().find_characteristic_by_value_handle(handle).unwrap();
+                                    assert_eq!(characteristic.handle, handle);
                                     event.accept().unwrap().send().await;
 
                                     let value: u8 = server.table().get(&characteristic).unwrap();
@@ -117,6 +120,7 @@ async fn gatt_client_server() {
                                         done = true;
                                     }
                                 }
+                                _ => {}
                             }
                             _ => {}
                         }
