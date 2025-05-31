@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use tokio::select;
+use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::*;
 
 mod common;
@@ -129,22 +130,25 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            GattConnectionEvent::Gatt { event } => if let Ok(GattEvent::Write(event)) = event {
-                                if writes == 0 {
-                                    event.reject(AttErrorCode::VALUE_NOT_ALLOWED).unwrap().send().await;
-                                    writes += 1;
-                                } else {
-                                    let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
-                                    let value: u8 = server.table().get(&characteristic).unwrap();
-                                    assert_eq!(expected, value);
-                                    expected = expected.wrapping_add(2);
-                                    writes += 1;
-                                    if writes == 2 {
-                                        println!("expected value written twice, test pass");
+                            GattConnectionEvent::Gatt { event } => match event.payload().incoming() {
+                                AttClient::Request(AttReq::Write { handle, .. }) | AttClient::Command(AttCmd::Write { handle, .. }) => {
+                                    if writes == 0 {
+                                        event.reject(handle, AttErrorCode::VALUE_NOT_ALLOWED).unwrap().send().await;
+                                        writes += 1;
+                                    } else {
+                                        let characteristic = server.table().find_characteristic_by_value_handle(handle).unwrap();
+                                        let value: u8 = server.table().get(&characteristic).unwrap();
+                                        assert_eq!(expected, value);
+                                        expected = expected.wrapping_add(2);
+                                        writes += 1;
+                                        if writes == 2 {
+                                            println!("expected value written twice, test pass");
 
-                                        done = true;
+                                            done = true;
+                                        }
                                     }
                                 }
+                                _ => {}
                             }
                             _ => {}
                         }
