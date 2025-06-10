@@ -34,7 +34,7 @@ pub const CONNECTION_EVENT_QUEUE_SIZE: usize = raw::CONNECTION_EVENT_QUEUE_SIZE;
 /// If the controller does not support tx buffering, increasing this value will allow
 /// a higher throughput between the controller and host.
 ///
-/// Default: 1.
+/// Default: 8.
 pub const L2CAP_TX_QUEUE_SIZE: usize = raw::L2CAP_TX_QUEUE_SIZE;
 
 /// L2CAP RX queue size
@@ -46,7 +46,7 @@ pub const L2CAP_TX_QUEUE_SIZE: usize = raw::L2CAP_TX_QUEUE_SIZE;
 /// If the controller does not support rx buffering, increasing this value will allow
 /// a higher throughput between the controller and host.
 ///
-/// Default: 1.
+/// Default: 8.
 pub const L2CAP_RX_QUEUE_SIZE: usize = raw::L2CAP_RX_QUEUE_SIZE;
 
 /// L2CAP default packet pool size
@@ -54,14 +54,14 @@ pub const L2CAP_RX_QUEUE_SIZE: usize = raw::L2CAP_RX_QUEUE_SIZE;
 /// This is the default packet pool size of all l2cap channels. There has to be at least
 /// 1 packet that can be allocated, but the pool is shared among different channels.
 ///
-/// Default: 8.
+/// Default: 16.
 pub const DEFAULT_PACKET_POOL_SIZE: usize = raw::DEFAULT_PACKET_POOL_SIZE;
 
 /// L2CAP default packet pool mtu
 ///
 /// This is the default packet pool mtu for all l2cap channels.
 ///
-/// Default: 27.
+/// Default: 251.
 pub const DEFAULT_PACKET_POOL_MTU: usize = raw::DEFAULT_PACKET_POOL_MTU;
 
 /// Default: 1.
