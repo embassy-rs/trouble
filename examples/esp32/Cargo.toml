@@ -6,12 +6,12 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 embassy-executor    = { version = "0.7.0", features = ["task-arena-size-32768"] }
-esp-backtrace = { version = "0.15", features = [ "exception-handler", "panic-handler", "println" ] }
-esp-hal = { version = "1.0.0-beta.0", features = [ "unstable" ] }
-esp-hal-embassy = { version = "0.7.0" }
-esp-alloc = { version = "0.7.0" }
-esp-println = { version = "0.13.0", features = ["log"] }
-esp-wifi = { version = "0.13.0", features = [ "ble" ] }
+esp-backtrace = { version = "0.16.0", features = [ "exception-handler", "panic-handler", "println" ] }
+esp-hal = { version = "1.0.0-beta.1", features = [ "unstable" ] }
+esp-hal-embassy = { version = "0.8.1" }
+esp-alloc = { version = "0.8.0" }
+esp-println = { version = "0.14.0", features = ["log-04"] }
+esp-wifi = { version = "0.14.1", features = [ "ble" ] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
 trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
 
