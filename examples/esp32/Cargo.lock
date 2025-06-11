@@ -1880,33 +1880,3 @@ name = "zeroize"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
-
-[[patch.unused]]
-name = "esp-alloc"
-version = "0.7.0"
-source = "git+https://github.com/esp-rs/esp-hal.git?rev=56be259c41305f24276852d2af4fce16247107bd#56be259c41305f24276852d2af4fce16247107bd"
-
-[[patch.unused]]
-name = "esp-backtrace"
-version = "0.15.1"
-source = "git+https://github.com/esp-rs/esp-hal.git?rev=56be259c41305f24276852d2af4fce16247107bd#56be259c41305f24276852d2af4fce16247107bd"
-
-[[patch.unused]]
-name = "esp-hal"
-version = "1.0.0-beta.0"
-source = "git+https://github.com/esp-rs/esp-hal.git?rev=56be259c41305f24276852d2af4fce16247107bd#56be259c41305f24276852d2af4fce16247107bd"
-
-[[patch.unused]]
-name = "esp-hal-embassy"
-version = "0.7.0"
-source = "git+https://github.com/esp-rs/esp-hal.git?rev=56be259c41305f24276852d2af4fce16247107bd#56be259c41305f24276852d2af4fce16247107bd"
-
-[[patch.unused]]
-name = "esp-println"
-version = "0.13.1"
-source = "git+https://github.com/esp-rs/esp-hal.git?rev=56be259c41305f24276852d2af4fce16247107bd#56be259c41305f24276852d2af4fce16247107bd"
-
-[[patch.unused]]
-name = "esp-wifi"
-version = "0.13.0"
-source = "git+https://github.com/esp-rs/esp-hal.git?rev=56be259c41305f24276852d2af4fce16247107bd#56be259c41305f24276852d2af4fce16247107bd"
