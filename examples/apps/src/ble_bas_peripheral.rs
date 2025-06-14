@@ -1,7 +1,6 @@
 use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::Timer;
-use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -108,18 +107,16 @@ async fn gatt_events_task<P: PacketPool>(server: &Server<'_>, conn: &GattConnect
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
             GattConnectionEvent::Gatt { event } => {
-                match event.payload().incoming() {
-                    AttClient::Request(AttReq::Read { handle, .. })
-                    | AttClient::Request(AttReq::ReadBlob { handle, .. }) => {
-                        if handle == level.handle {
+                match &event {
+                    GattEvent::Read(event) => {
+                        if event.handle() == level.handle {
                             let value = server.get(&level);
-                            info!("[gatt] Read from Level Characteristic: {:?}", value);
+                            info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                         }
                     }
-                    AttClient::Request(AttReq::Write { handle, data })
-                    | AttClient::Command(AttCmd::Write { handle, data }) => {
-                        if handle == level.handle {
-                            info!("[gatt] Write to Level Characteristic: {:?}", data);
+                    GattEvent::Write(event) => {
+                        if event.handle() == level.handle {
+                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                         }
                     }
                     _ => {}
