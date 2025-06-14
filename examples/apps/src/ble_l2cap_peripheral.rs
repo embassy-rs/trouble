@@ -34,7 +34,8 @@ where
     .unwrap();
 
     let mut scan_data = [0; 31];
-    let scan_data_len = AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
+    let scan_data_len =
+        AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
 
     let _ = join(runner.run(), async {
         loop {
