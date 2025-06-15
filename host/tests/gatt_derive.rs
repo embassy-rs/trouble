@@ -129,7 +129,7 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            GattConnectionEvent::Gatt { event } => if let Ok(GattEvent::Write(event)) = event {
+                            GattConnectionEvent::Gatt { event: GattEvent::Write(event) } => {
                                 if writes == 0 {
                                     event.reject(AttErrorCode::VALUE_NOT_ALLOWED).unwrap().send().await;
                                     writes += 1;
