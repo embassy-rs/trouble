@@ -110,8 +110,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
     let reason = loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
-            GattConnectionEvent::Gatt { event: Err(e) } => warn!("[gatt] error processing event: {:?}", e),
-            GattConnectionEvent::Gatt { event: Ok(event) } => {
+            GattConnectionEvent::Gatt { event } => {
                 let result = match &event {
                     GattEvent::Read(event) => {
                         if event.handle() == level.handle {
@@ -140,10 +139,9 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         #[cfg(not(feature = "security"))]
                         None
                     }
+                    _ => None,
                 };
 
-                // This step is also performed at drop(), but writing it explicitly is necessary
-                // in order to ensure reply is sent.
                 let reply_result = if let Some(code) = result {
                     event.reject(code)
                 } else {
