@@ -1,6 +1,6 @@
 [package]
 name = "trouble-host"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "An async Rust BLE host"
 license = "Apache-2.0 OR MIT"
@@ -27,7 +27,7 @@ embassy-time = "0.4"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.8"
-trouble-host-macros = { path = "../host-macros", version = "0.1.0", optional = true }
+trouble-host-macros = { path = "../host-macros", version = "0.2.0", optional = true }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arithmetic"], optional = true }
 rand_core = "0.6"
 rand_chacha = { version = "0.3", default-features = false, optional = true }
