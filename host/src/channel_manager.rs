@@ -109,7 +109,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
     }
 
-    fn next_request_id(&self) -> u8 {
+    pub(crate) fn next_request_id(&self) -> u8 {
         self.state.borrow_mut().next_request_id()
     }
 
