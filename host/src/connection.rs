@@ -1,6 +1,6 @@
 //! BLE connection.
 
-use bt_hci::cmd::le::{LeConnUpdate, LeReadPhy, LeSetPhy};
+use bt_hci::cmd::le::{LeConnUpdate, LeReadLocalSupportedFeatures, LeReadPhy, LeReadRemoteFeatures, LeSetPhy};
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
@@ -18,6 +18,7 @@ use crate::pdu::Pdu;
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::BondInformation;
+use crate::types::l2cap::ConnParamUpdateReq;
 use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Connection configuration.
@@ -304,27 +305,54 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         params: &ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
-        T: ControllerCmdAsync<LeConnUpdate>,
+        T: ControllerCmdAsync<LeConnUpdate>
+            + ControllerCmdSync<LeReadLocalSupportedFeatures>
+            + ControllerCmdAsync<LeReadRemoteFeatures>,
     {
         let handle = self.handle();
-        match stack
-            .host
-            .async_command(LeConnUpdate::new(
-                handle,
-                params.min_connection_interval.into(),
-                params.max_connection_interval.into(),
-                params.max_latency,
-                params.supervision_timeout.into(),
-                params.event_length.into(),
-                params.event_length.into(),
-            ))
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
-                Err(crate::Error::Disconnected.into())
+        // First, check the local supported features to ensure that the connection update is supported.
+        let features = stack.host.command(LeReadLocalSupportedFeatures::new()).await?;
+        // TODO: How to read from `LeReadRemoteFeaturesComplete` event?
+        // let remote_features = stack.host.async_command(LeReadRemoteFeatures::new(handle)).await?;
+        if features.supports_conn_parameters_request_procedure() || self.role() == LeConnRole::Central {
+            match stack
+                .host
+                .async_command(LeConnUpdate::new(
+                    handle,
+                    params.min_connection_interval.into(),
+                    params.max_connection_interval.into(),
+                    params.max_latency,
+                    params.supervision_timeout.into(),
+                    params.event_length.into(),
+                    params.event_length.into(),
+                ))
+                .await
+            {
+                Ok(_) => Ok(()),
+                Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                    Err(crate::Error::Disconnected.into())
+                }
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
+        } else {
+            // Use L2CAP signaling to update connection parameters
+            info!("Connection parameters request procedure not supported, use l2cap connection parameter update req instead");
+            let identifier = stack.host.channels.next_request_id();
+            let interval_min: bt_hci::param::Duration<1_250> = params.min_connection_interval.into();
+            let interva_max: bt_hci::param::Duration<1_250> = params.max_connection_interval.into();
+            let timeout: bt_hci::param::Duration<10_000> = params.supervision_timeout.into();
+            let command = ConnParamUpdateReq {
+                interval_min: interval_min.as_u16(),
+                interval_max: interva_max.as_u16(),
+                latency: params.max_latency,
+                timeout: timeout.as_u16(),
+            };
+            let mut tx = [0; 16];
+            stack
+                .host
+                .l2cap_signal(handle, identifier, &command, &mut tx[..])
+                .await?;
+            Ok(())
         }
     }
 
