@@ -109,6 +109,47 @@ impl TryFrom<u8> for L2capSignalCode {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+pub struct LeConnParamUpdateReq {
+    pub interval_min: u16,
+    pub interval_max: u16,
+    pub latency: u16,
+    pub timeout: u16,
+}
+
+unsafe impl FixedSizeValue for LeConnParamUpdateReq {
+    fn is_valid(data: &[u8]) -> bool {
+        true
+    }
+}
+impl L2capSignal for LeConnParamUpdateReq {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::LeCreditConnReq
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Copy)]
+#[repr(u16)]
+pub enum LeConnParamUpdateRes {
+    Accepted = 0x0000,
+    Rejected = 0x0001,
+}
+
+unsafe impl FixedSizeValue for LeConnParamUpdateRes {
+    fn is_valid(data: &[u8]) -> bool {
+        true
+    }
+}
+
+impl L2capSignal for LeConnParamUpdateRes {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::LeCreditConnRes
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct LeCreditConnReq {
     pub psm: u16,
     pub scid: u16,
