@@ -111,7 +111,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
                 bt_hci::param::LeScanKind::Passive
             },
             config.interval.into(),
-            config.interval.into(),
+            config.window.into(),
             host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             if config.filter_accept_list.is_empty() {
                 bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
