@@ -45,8 +45,8 @@ use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
-    L2CAP_CID_LE_U_SIGNAL,
+    ConnParamUpdateReq, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START,
+    L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
 
@@ -576,6 +576,14 @@ where
             grant,
             fragment_size: acl_max,
         })
+    }
+
+    pub(crate) async fn send_conn_param_update_req(
+        &self,
+        handle: ConnHandle,
+        param: &ConnParamUpdateReq,
+    ) -> Result<(), BleHostError<T::Error>> {
+        self.channels.send_conn_param_update_req(handle, self, param).await
     }
 
     /// Read current host metrics

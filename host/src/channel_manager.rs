@@ -726,6 +726,17 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
+    pub(crate) async fn send_conn_param_update_req<T: Controller>(
+        &self,
+        handle: ConnHandle,
+        host: &BleHost<'d, T, P>,
+        param: &ConnParamUpdateReq,
+    ) -> Result<(), BleHostError<T::Error>> {
+        let identifier = self.next_request_id();
+        let mut tx = [0; 16];
+        host.l2cap_signal(handle, identifier, param, &mut tx[..]).await
+    }
+
     fn connected_channel_params(&self, index: ChannelIndex) -> Result<(ConnHandle, u16, u16, u16), Error> {
         let state = self.state.borrow();
         let chan = &state.channels[index.0 as usize];
