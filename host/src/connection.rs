@@ -1,6 +1,6 @@
 //! BLE connection.
 
-use bt_hci::cmd::le::{LeConnUpdate, LeReadLocalSupportedFeatures, LeReadPhy, LeReadRemoteFeatures, LeSetPhy};
+use bt_hci::cmd::le::{LeConnUpdate, LeReadLocalSupportedFeatures, LeReadPhy, LeSetPhy};
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
@@ -305,15 +305,11 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         params: &ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
-        T: ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<LeReadLocalSupportedFeatures>
-            + ControllerCmdAsync<LeReadRemoteFeatures>,
+        T: ControllerCmdAsync<LeConnUpdate> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
     {
         let handle = self.handle();
         // First, check the local supported features to ensure that the connection update is supported.
         let features = stack.host.command(LeReadLocalSupportedFeatures::new()).await?;
-        // TODO: How to read from `LeReadRemoteFeaturesComplete` event?
-        // let remote_features = stack.host.async_command(LeReadRemoteFeatures::new(handle)).await?;
         if features.supports_conn_parameters_request_procedure() || self.role() == LeConnRole::Central {
             match stack
                 .host
@@ -337,22 +333,16 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         } else {
             // Use L2CAP signaling to update connection parameters
             info!("Connection parameters request procedure not supported, use l2cap connection parameter update req instead");
-            let identifier = stack.host.channels.next_request_id();
             let interval_min: bt_hci::param::Duration<1_250> = params.min_connection_interval.into();
             let interva_max: bt_hci::param::Duration<1_250> = params.max_connection_interval.into();
             let timeout: bt_hci::param::Duration<10_000> = params.supervision_timeout.into();
-            let command = ConnParamUpdateReq {
+            let param = ConnParamUpdateReq {
                 interval_min: interval_min.as_u16(),
                 interval_max: interva_max.as_u16(),
                 latency: params.max_latency,
                 timeout: timeout.as_u16(),
             };
-            let mut tx = [0; 16];
-            stack
-                .host
-                .l2cap_signal(handle, identifier, &command, &mut tx[..])
-                .await?;
-            Ok(())
+            stack.host.send_conn_param_update_req(handle, &param).await
         }
     }
 
