@@ -142,19 +142,6 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         }
         Ok(())
     }
-
-    /// Initiate pairing
-    #[cfg(feature = "security")]
-    pub async fn pairing(&self, connection: &Connection<'stack, P>) -> Result<(), BleHostError<C::Error>> {
-        let sm = &self.stack.host.connections.security_manager;
-        sm.initiate(connection)?;
-        let reason = sm.get_result().await;
-        if reason == crate::security_manager::Reason::Success {
-            Ok(())
-        } else {
-            Err(BleHostError::BleHost(Error::Security(reason)))
-        }
-    }
 }
 
 pub(crate) fn create_phy_params<P: Copy>(phy: P, phys: PhySet) -> PhyParams<P> {
