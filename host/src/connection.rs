@@ -17,9 +17,36 @@ use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
-use crate::security_manager::BondInformation;
+use crate::security_manager::{PassKey};
 use crate::types::l2cap::ConnParamUpdateReq;
 use crate::{BleHostError, Error, Identity, PacketPool, Stack};
+
+/// Security level of a connection
+///
+/// This describes the various security levels that are supported.
+///
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum SecurityLevel {
+    /// No encryption and no authentication. All connections start on this security level.
+    NoEncryption,
+    /// Encrypted but not authenticated communication. Does not provide MITM protection.
+    Encrypted,
+    /// Encrypted and authenticated security level. MITM protected.
+    EncryptedAuthenticated,
+}
+
+impl SecurityLevel {
+    /// Check if the security level is encrypted.
+    pub fn encrypted(&self) -> bool {
+        !matches!(self, SecurityLevel::NoEncryption)
+    }
+
+    /// Check if the security level is authenticated.
+    pub fn authenticated(&self) -> bool {
+        matches!(self, SecurityLevel::EncryptedAuthenticated)
+    }
+}
 
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
@@ -97,6 +124,7 @@ pub struct ConnectParams {
 
 /// A connection event.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConnectionEvent {
     /// Connection disconnected.
     Disconnected {
@@ -131,11 +159,20 @@ pub enum ConnectionEvent {
         max_rx_time: u16,
     },
     #[cfg(feature = "security")]
-    /// Bonded event.
-    Bonded {
-        /// Bond info for this connection
-        bond_info: BondInformation,
-    },
+    /// Request to display a pass key
+    PassKeyDisplay(PassKey),
+    #[cfg(feature = "security")]
+    /// Request to display and confirm a pass key
+    PassKeyConfirm(PassKey),
+    #[cfg(feature = "security")]
+    /// Request to make the user input the pass key
+    PassKeyInput,
+    #[cfg(feature = "security")]
+    /// Pairing completed
+    PairingComplete(SecurityLevel),
+    #[cfg(feature = "security")]
+    /// Pairing completed
+    PairingFailed(Error),
 }
 
 impl Default for ConnectParams {
@@ -236,10 +273,35 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     pub fn peer_identity(&self) -> Identity {
         self.manager.peer_identity(self.index)
     }
+    /// Request a certain security level
+    ///
+    /// For a peripheral this may cause the peripheral to send a security request. For a central
+    /// this may cause the central to send a pairing request.
+    ///
+    /// If the link is already encrypted then this will always generate an error.
+    ///
+    pub fn request_security(&self) -> Result<(), Error> {
+        self.manager.request_security(self.index)
+    }
 
     /// Get the encrypted state of the connection
-    pub fn encrypted(&self) -> bool {
-        self.manager.get_encrypted(self.index)
+    pub fn security_level(&self) -> Result<SecurityLevel, Error> {
+        self.manager.get_security_level(self.index)
+    }
+
+    /// Confirm that the displayed pass key matches the one displayed on the other party
+    pub fn pass_key_confirm(&self) -> Result<(), Error> {
+        self.manager.pass_key_confirm(self.index, true)
+    }
+
+    /// The displayed pass key does not match the one displayed on the other party
+    pub fn pass_key_cancel(&self) -> Result<(), Error> {
+        self.manager.pass_key_confirm(self.index, false)
+    }
+
+    /// Input the pairing pass key
+    pub fn pass_key_input(&self, pass_key: u32) -> Result<(), Error> {
+        self.manager.pass_key_input(self.index, pass_key)
     }
 
     /// Request connection to be disconnected.

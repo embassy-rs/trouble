@@ -17,12 +17,12 @@ use heapless::Vec;
 use crate::att::{self, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
-use crate::connection::Connection;
+use crate::connection::{Connection, SecurityLevel};
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 #[cfg(feature = "security")]
-use crate::security_manager::BondInformation;
+use crate::security_manager::{PassKey};
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, PacketPool, Stack};
@@ -72,6 +72,22 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         /// The event that was returned
         event: GattEvent<'stack, 'server, P>,
     },
+
+    #[cfg(feature = "security")]
+    /// Display pass key
+    PassKeyDisplay(PassKey),
+    #[cfg(feature = "security")]
+    /// Confirm pass key
+    PassKeyConfirm(PassKey),
+    #[cfg(feature = "security")]
+    /// Input the pass key
+    PassKeyInput,
+    #[cfg(feature = "security")]
+    /// Pairing success
+    PairingComplete(SecurityLevel),
+    #[cfg(feature = "security")]
+    /// Pairing failed
+    PairingFailed(Error),
 }
 
 /// Used to manage a GATT connection with a client.
@@ -97,6 +113,21 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
         trace!("[gatt {}] connecting to server", connection.handle().raw());
         server.connect(&connection)?;
         Ok(Self { connection, server })
+    }
+
+    /// Confirm that the displayed pass key matches the one displayed on the other party
+    pub fn pass_key_confirm(&self) -> Result<(), Error> {
+        self.connection.pass_key_confirm()
+    }
+
+    /// The displayed pass key does not match the one displayed on the other party
+    pub fn pass_key_cancel(&self) -> Result<(), Error> {
+        self.connection.pass_key_cancel()
+    }
+
+    /// Input the pairing pass key
+    pub fn pass_key_input(&self, pass_key: u32) -> Result<(), Error> {
+        self.connection.pass_key_input(pass_key)
     }
 
     /// Wait for the next GATT connection event.
@@ -127,13 +158,30 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                     max_rx_octets,
                     max_rx_time,
                 },
+
                 #[cfg(feature = "security")]
-                ConnectionEvent::Bonded { bond_info } => {
-                    // Update the identity of the connection
-                    if let Err(e) = self.server.update_identity(bond_info.identity) {
-                        error!("Failed to update identity in att server: {:?}", e);
-                    }
-                    GattConnectionEvent::Bonded { bond_info }
+                ConnectionEvent::PassKeyDisplay(key) => {
+                    GattConnectionEvent::PassKeyDisplay(key)
+                }
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PassKeyConfirm(key) => {
+                    GattConnectionEvent::PassKeyConfirm(key)
+                }
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PassKeyInput => {
+                    GattConnectionEvent::PassKeyInput
+                }
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PairingComplete(lvl) => {
+                    GattConnectionEvent::PairingComplete(lvl)
+                }
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PairingFailed(err) => {
+                    GattConnectionEvent::PairingFailed(err)
                 }
             },
             Either::Second(data) => GattConnectionEvent::Gatt {

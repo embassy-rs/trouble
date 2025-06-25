@@ -12,15 +12,14 @@ use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
 use bt_hci::FromHciBytesError;
-#[cfg(feature = "security")]
-use heapless::Vec;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+pub use crate::security_manager::{IdentityResolvingKey, LongTermKey};
+pub use crate::types::capabilities::IoCapabilities;
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable
@@ -250,7 +249,7 @@ pub enum BleHostError<E> {
 pub const MAX_INVALID_DATA_LEN: usize = 16;
 
 /// Errors related to Host.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Error encoding parameters for HCI commands.
@@ -554,6 +553,7 @@ pub fn new<
 >(
     controller: C,
     resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS>,
+    io_capabilities: IoCapabilities,
 ) -> Stack<'resources, C, P> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         unsafe { core::mem::transmute(x) }
@@ -574,7 +574,7 @@ pub fn new<
 
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
-    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles);
+    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles, io_capabilities);
 
     Stack { host }
 }
@@ -664,26 +664,5 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Log status information of the host
     pub fn log_status(&self, verbose: bool) {
         self.host.log_status(verbose);
-    }
-
-    #[cfg(feature = "security")]
-    /// Get bonded devices
-    pub fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
-        self.host
-            .connections
-            .security_manager
-            .add_bond_information(bond_information)
-    }
-
-    #[cfg(feature = "security")]
-    /// Remove a bonded device
-    pub fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
-        self.host.connections.security_manager.remove_bond_information(identity)
-    }
-
-    #[cfg(feature = "security")]
-    /// Get bonded devices
-    pub fn get_bond_information(&self) -> Vec<BondInformation, BI_COUNT> {
-        self.host.connections.security_manager.get_bond_information()
     }
 }

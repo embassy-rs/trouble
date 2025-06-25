@@ -1221,14 +1221,14 @@ mod tests {
     use super::*;
     use crate::mock_controller::MockController;
     use crate::prelude::DefaultPacketPool;
-    use crate::HostResources;
+    use crate::{HostResources, IoCapabilities};
 
     #[test]
     fn channel_refcount() {
         let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
         let ble = MockController::new();
 
-        let builder = crate::new(ble, &mut resources);
+        let builder = crate::new(ble, &mut resources, IoCapabilities::NoInputNoOutput);
         let ble = builder.host;
 
         let conn = ConnHandle::new(33);
