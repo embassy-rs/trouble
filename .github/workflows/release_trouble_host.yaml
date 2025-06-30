@@ -63,7 +63,7 @@ jobs:
 
     - name: Build project
       run: |
-        cd host 
+        cd host
         cargo build --release
     
     - name: Create GitHub release
@@ -82,6 +82,7 @@ jobs:
       # Publish to the main registry
       run: |
         echo "Publishing to crates.io"  
+        cd host 
         cargo publish
       # To perform a dry run uncomment the following lines
       # run: |

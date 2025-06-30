@@ -1572,7 +1572,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "aes",
  "bt-hci",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "convert_case",
  "darling",

@@ -1353,7 +1353,7 @@ name = "trouble-example-apps"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
- "defmt 0.3.100",
+ "defmt 1.0.1",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync",
@@ -1368,12 +1368,12 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "aes",
  "bt-hci",
  "cmac",
- "defmt 0.3.100",
+ "defmt 1.0.1",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "convert_case",
  "darling",
