@@ -14,7 +14,7 @@ rand = { version = "0.8.5", features = ["getrandom"] }
 rand_core = { version = "0.3" }
 tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
-trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
+trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "std"] }
 trouble-host = { path = "../../host" }
 
 [features]
