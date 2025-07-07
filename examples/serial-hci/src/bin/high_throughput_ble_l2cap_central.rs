@@ -3,11 +3,8 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::*;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
-use trouble_example_apps::high_throughput_ble_l2cap_central;
+use trouble_example_apps::{high_throughput_ble_l2cap_central, BigAlloc};
 use trouble_host::prelude::{ExternalController, SerialTransport};
-
-#[path = "../alloc.rs"]
-mod alloc;
 
 #[tokio::main]
 async fn main() {
@@ -55,5 +52,5 @@ async fn main() {
 
     // Setting the L2CAP MTU to be ten times the size of the PDU.
     // This size of the L2CAP MTU does not consume all the controller buffers.
-    high_throughput_ble_l2cap_central::run::<_, alloc::BigAlloc>(controller).await;
+    high_throughput_ble_l2cap_central::run::<_, BigAlloc>(controller).await;
 }
