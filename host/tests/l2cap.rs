@@ -1,5 +1,6 @@
 use tokio::select;
 use tokio::time::Duration;
+use trouble_host::IoCapabilities;
 use trouble_host::prelude::*;
 
 mod common;
@@ -26,7 +27,7 @@ async fn l2cap_connection_oriented_channels() {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
         let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-        let stack = trouble_host::new(controller_peripheral, &mut resources)
+        let stack = trouble_host::new(controller_peripheral, &mut resources, IoCapabilities::NoInputNoOutput)
             .set_random_address(peripheral_address);
         let Host {
             mut peripheral,
@@ -93,7 +94,7 @@ async fn l2cap_connection_oriented_channels() {
         let controller_central = common::create_controller(&central).await;
         let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
 
-        let stack = trouble_host::new(controller_central, &mut resources);
+        let stack = trouble_host::new(controller_central, &mut resources, IoCapabilities::NoInputNoOutput);
         let Host {
             mut central,
             mut runner,

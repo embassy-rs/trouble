@@ -37,11 +37,11 @@ where
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
-    let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    let address: Address = Address::random([0xff, 0x8f, 0x19, 0x05, 0xe4, 0xff]);
     info!("Our address = {}", address);
 
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources, IoCapabilities::NoInputNoOutput)
+    let stack = trouble_host::new(controller, &mut resources, IoCapabilities::KeyboardOnly)
         .set_random_address(address)
         .set_random_generator_seed(random_generator);
     let Host {
@@ -53,7 +53,7 @@ where
         name: "TrouBLE",
         appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
     }))
-    .unwrap();
+        .unwrap();
 
     let _ = join(ble_task(runner), async {
         loop {
@@ -74,7 +74,7 @@ where
             }
         }
     })
-    .await;
+        .await;
 }
 
 /// This is a background task that is required to run forever alongside any other BLE tasks.
@@ -116,6 +116,11 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
             }
             GattConnectionEvent::PairingFailed(err) => {
                 error!("[gatt] pairing error: {:?}", err);
+            }
+            GattConnectionEvent::PassKeyInput => {
+                info!("[gatt] passkey input");
+                // Normally fetched from the user
+                conn.pass_key_input(1234)?;
             }
             GattConnectionEvent::Gatt { event } => {
                 let result = match &event {
