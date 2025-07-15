@@ -271,7 +271,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 return Ok(());
             }
         }
-        trace!("[link][disconnect] connection handle {:?} not found", h);
+        warn!("[link][disconnect] connection handle {:?} not found", h);
         Err(Error::NotFound)
     }
 
@@ -313,7 +313,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 return Ok(());
             }
         }
-        trace!("[link][connect] no available slot found for handle {:?}", handle);
+        warn!("[link][connect] no available slot found for handle {:?}", handle);
         Err(Error::NotFound)
     }
 
@@ -346,7 +346,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                                 && storage.peer_identity.unwrap().bd_addr == *peer.1
                             {
                                 storage.state = ConnectionState::Connected;
-                                trace!("[link][poll_accept] connection accepted: state: {:?}", storage);
+                                debug!("[link][poll_accept] connection accepted: state: {:?}", storage);
                                 assert_eq!(storage.refcount, 0);
                                 state.inc_ref(idx as u8);
                                 return Poll::Ready(Connection::new(idx as u8, self));
@@ -355,7 +355,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     } else {
                         storage.state = ConnectionState::Connected;
                         assert_eq!(storage.refcount, 0);
-                        trace!("[link][poll_accept] connection accepted: state: {:?}", storage);
+                        debug!("[link][poll_accept] connection accepted: state: {:?}", storage);
 
                         assert_eq!(storage.refcount, 0);
                         state.inc_ref(idx as u8);
@@ -456,7 +456,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 _ => {}
             }
         }
-        trace!("[link][pool_request_to_send] connection {:?} not found", handle);
+        warn!("[link][pool_request_to_send] connection {:?} not found", handle);
         Poll::Ready(Err(Error::NotFound))
     }
 

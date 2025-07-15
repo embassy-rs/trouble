@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aes",
  "bt-hci",

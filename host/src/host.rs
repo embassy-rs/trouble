@@ -250,17 +250,15 @@ where
                     return false;
                 } else {
                     #[cfg(feature = "defmt")]
-                    trace!(
+                    debug!(
                         "[host] connection with handle {:?} established to {:02x}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
 
                     #[cfg(feature = "log")]
-                    trace!(
+                    debug!(
                         "[host] connection with handle {:?} established to {:02x?}",
-                        handle,
-                        peer_addr
+                        handle, peer_addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
@@ -303,6 +301,13 @@ where
                     self.channels.signal(acl.handle(), data)?;
                     return Ok(());
                 }
+
+                trace!(
+                    "[host] inbound l2cap header channel = {}, fragment len = {}, total = {}",
+                    header.channel,
+                    data.len(),
+                    header.length
+                );
 
                 // We must be prepared to receive fragments.
                 if header.length as usize != data.len() {
@@ -400,6 +405,7 @@ where
             }
             // Next (potentially last) in a fragment
             AclPacketBoundary::Continuing => {
+                trace!("[host] inbound l2cap len = {}", acl.data().len(),);
                 // Get the existing fragment
                 if let Some((header, p)) = self.connections.reassembly(acl.handle(), |p| {
                     if !p.in_progress() {
@@ -543,6 +549,7 @@ where
         let len = len + (4 * n_packets);
         let n_acl = len.div_ceil(acl_max);
         let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n_acl as usize, Some(cx))).await?;
+        trace!("[host] granted send packets = {}, len = {}", n_packets, len);
         Ok(L2capSender {
             controller: &self.controller,
             handle,
@@ -1179,10 +1186,10 @@ impl<'a, 'd, T: Controller, P> L2capSender<'a, 'd, T, P> {
         //);
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
-            // info!("Sent ACL {:?}", acl);
             match self.controller.try_write_acl_data(&acl) {
                 Ok(result) => {
                     self.grant.confirm(1);
+                    trace!("[host] sent acl packet len = {}", chunk.len());
                 }
                 Err(blocking::TryError::Busy) => {
                     warn!("hci: acl data send busy");
@@ -1204,13 +1211,13 @@ impl<'a, 'd, T: Controller, P> L2capSender<'a, 'd, T, P> {
         let mut pbf = AclPacketBoundary::FirstNonFlushable;
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
-            // info!("Sent ACL {:?}", acl);
             self.controller
                 .write_acl_data(&acl)
                 .await
                 .map_err(BleHostError::Controller)?;
             self.grant.confirm(1);
             pbf = AclPacketBoundary::Continuing;
+            trace!("[host] sent acl packet len = {}", chunk.len());
         }
         Ok(())
     }

@@ -347,7 +347,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         // NOTE: This will trigger closing of the link, which might be a bit
                         // too strict. But it should be controllable via the credits given,
                         // which the remote should respect.
-                        trace!("[l2cap][cid = {}] no credits available", channel);
+                        debug!("[l2cap][cid = {}] no credits available", channel);
                         return Err(Error::OutOfMemory);
                     }
                     storage.flow_control.confirm_received(1);
@@ -389,7 +389,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                             // NOTE: This will trigger closing of the link, which might be a bit
                             // too strict. But it should be controllable via the credits given,
                             // which the remote should respect.
-                            trace!("[l2cap][cid = {}] no credits available", channel);
+                            debug!("[l2cap][cid = {}] no credits available", channel);
                             return Err(Error::OutOfMemory);
                         }
                         storage.flow_control.confirm_received(1);
@@ -420,7 +420,6 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             }
 
             if let Some(sdu) = sdu {
-                // info!("inbound SDU of length {}", sdu.len());
                 storage.inbound.try_send(sdu)?;
             }
 
@@ -456,28 +455,26 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             }
             L2capSignalCode::DisconnectionReq => {
                 let req = DisconnectionReq::from_hci_bytes_complete(data)?;
-                trace!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
+                debug!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
                 self.handle_disconnect_request(req.dcid)?;
             }
             L2capSignalCode::DisconnectionRes => {
                 let res = DisconnectionRes::from_hci_bytes_complete(data)?;
-                trace!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
+                debug!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
                 self.handle_disconnect_response(res.scid)?;
             }
             L2capSignalCode::ConnParamUpdateReq => {
                 let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
-                trace!(
+                debug!(
                     "[l2cap][conn = {:?}] connection param update request: {:?}, ignored",
-                    conn,
-                    req
+                    conn, req
                 );
             }
             L2capSignalCode::ConnParamUpdateRes => {
                 let res = ConnParamUpdateRes::from_hci_bytes_complete(data)?;
-                trace!(
+                debug!(
                     "[l2cap][conn = {:?}] connection param update response: {}",
-                    conn,
-                    res.result,
+                    conn, res.result,
                 );
             }
             r => {
@@ -521,7 +518,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         _ => {}
                     }
                 }
-                trace!(
+                debug!(
                     "[l2cap][handle_connect_response][link = {}] request with id {} not found",
                     conn.raw(),
                     identifier
@@ -540,12 +537,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         for storage in state.channels.iter_mut() {
             match storage.state {
                 ChannelState::Connected if storage.peer_cid == req.cid && Some(conn) == storage.conn => {
-                    //trace!(
-                    //    "[l2cap][handle_credit_flow][cid = {}] {} += {} credits",
-                    //    req.cid,
-                    //    storage.peer_credits,
-                    //    req.credits
-                    //);
+                    debug!(
+                        "[l2cap][handle_credit_flow][cid = {}] {} += {} credits",
+                        req.cid, storage.peer_credits, req.credits
+                    );
                     storage.peer_credits = storage.peer_credits.saturating_add(req.credits);
                     storage.credit_waker.wake();
                     return Ok(());
@@ -760,7 +755,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             if chan.state == ChannelState::Connected {
                 return Ok((chan.conn.unwrap(), chan.cid, chan.flow_control.process()));
             }
-            trace!("[l2cap][flow_control_process] channel {:?} not found", index);
+            debug!("[l2cap][flow_control_process] channel {:?} not found", index);
             Err(Error::NotFound)
         })?;
 
@@ -777,7 +772,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     chan.flow_control.confirm_granted(credits);
                     return Ok(());
                 }
-                trace!("[l2cap][flow_control_grant] channel {:?} not found", index);
+                debug!("[l2cap][flow_control_grant] channel {:?} not found", index);
                 Err(Error::NotFound)
             })?;
         }
@@ -812,7 +807,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 return Poll::Pending;
             }
         }
-        trace!("[l2cap][pool_request_to_send] channel index {:?} not found", index);
+        debug!("[l2cap][pool_request_to_send] channel index {:?} not found", index);
         Poll::Ready(Err(Error::NotFound))
     }
 
