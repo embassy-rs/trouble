@@ -88,7 +88,9 @@ pub struct ConnectParams {
     /// Maximum slave latency.
     pub max_latency: u16,
     /// Event length.
-    pub event_length: Duration,
+    pub min_event_length: Duration,
+    /// Event length.
+    pub max_event_length: Duration,
     /// Supervision timeout.
     pub supervision_timeout: Duration,
 }
@@ -131,7 +133,8 @@ impl Default for ConnectParams {
             min_connection_interval: Duration::from_millis(80),
             max_connection_interval: Duration::from_millis(80),
             max_latency: 0,
-            event_length: Duration::from_secs(0),
+            min_event_length: Duration::from_secs(0),
+            max_event_length: Duration::from_secs(0),
             supervision_timeout: Duration::from_secs(8),
         }
     }
@@ -319,8 +322,8 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                     params.max_connection_interval.into(),
                     params.max_latency,
                     params.supervision_timeout.into(),
-                    params.event_length.into(),
-                    params.event_length.into(),
+                    params.min_event_length.into(),
+                    params.max_event_length.into(),
                 ))
                 .await
             {

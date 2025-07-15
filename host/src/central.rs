@@ -47,8 +47,8 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
             config.connect_params.max_connection_interval.into(),
             config.connect_params.max_latency,
             config.connect_params.supervision_timeout.into(),
-            config.connect_params.event_length.into(),
-            config.connect_params.event_length.into(),
+            config.connect_params.min_event_length.into(),
+            config.connect_params.max_event_length.into(),
         ))
         .await?;
         match select(
@@ -97,8 +97,8 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
             conn_interval_max: config.connect_params.max_connection_interval.into(),
             max_latency: config.connect_params.max_latency,
             supervision_timeout: config.connect_params.supervision_timeout.into(),
-            min_ce_len: config.connect_params.event_length.into(),
-            max_ce_len: config.connect_params.event_length.into(),
+            min_ce_len: config.connect_params.min_event_length.into(),
+            max_ce_len: config.connect_params.max_event_length.into(),
         };
         let phy_params = create_phy_params(initiating, config.scan_config.phys);
 
