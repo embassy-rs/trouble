@@ -197,8 +197,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     ChannelState::PeerConnecting(req_id) if chan.conn == Some(conn) && psm.contains(&chan.psm) => {
                         chan.mtu = chan.mtu.min(mtu);
                         chan.mps = chan.mps.min(mps);
-                        chan.flow_control =
-                            CreditFlowControl::new(*flow_policy, initial_credits.unwrap_or(P::capacity() as u16));
+                        chan.flow_control = CreditFlowControl::new(
+                            *flow_policy,
+                            initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16),
+                        );
                         chan.state = ChannelState::Connected;
                         let mps = chan.mps;
                         let mtu = chan.mtu;
@@ -266,7 +268,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         // Allocate space for our new channel.
         let idx = self.alloc(conn, |storage| {
             cid = storage.cid;
-            credits = initial_credits.unwrap_or(P::capacity() as u16);
+            credits = initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16);
             storage.psm = psm;
             storage.mtu = mtu;
             storage.mps = mps;
