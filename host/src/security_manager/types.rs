@@ -294,48 +294,14 @@ impl PassKey {
 
 impl Display for PassKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        if self.0 < 10 {
-            write!(f, "00000{}", self.0)
-        }
-        else if self.0 < 100 {
-            write!(f, "0000{}", self.0)
-        }
-        else if self.0 < 1000 {
-            write!(f, "000{}", self.0)
-        }
-        else if self.0 < 10000 {
-            write!(f, "00{}", self.0)
-        }
-        else if self.0 < 100000 {
-            write!(f, "0{}", self.0)
-        }
-        else {
-            write!(f, "{}", self.0)
-        }
+        write!(f, "{:06}", self.0)
     }
 }
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for PassKey {
     fn format(&self, fmt: defmt::Formatter) {
-        if self.0 < 10 {
-            defmt::write!(fmt, "00000{}", self.0)
-        }
-        else if self.0 < 100 {
-            defmt::write!(fmt, "0000{}", self.0)
-        }
-        else if self.0 < 1000 {
-            defmt::write!(fmt, "000{}", self.0)
-        }
-        else if self.0 < 10000 {
-            defmt::write!(fmt, "00{}", self.0)
-        }
-        else if self.0 < 100000 {
-            defmt::write!(fmt, "0{}", self.0)
-        }
-        else {
-            defmt::write!(fmt, "{}", self.0)
-        }
+        defmt::write!(fmt, "{=u32:06}", self.0)
     }
 }
 
