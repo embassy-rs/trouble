@@ -50,6 +50,17 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         /// Supervision timeout.
         supervision_timeout: Duration,
     },
+    /// The data length was changed for this connection.
+    DataLengthUpdated {
+        /// Max TX octets.
+        max_tx_octets: u16,
+        /// Max TX time.
+        max_tx_time: u16,
+        /// Max RX octets.
+        max_rx_octets: u16,
+        /// Max RX time.
+        max_rx_time: u16,
+    },
     #[cfg(feature = "security")]
     /// Bonded event.
     Bonded {
@@ -105,6 +116,17 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                     supervision_timeout,
                 },
                 ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => GattConnectionEvent::PhyUpdated { tx_phy, rx_phy },
+                ConnectionEvent::DataLengthUpdated {
+                    max_tx_octets,
+                    max_tx_time,
+                    max_rx_octets,
+                    max_rx_time,
+                } => GattConnectionEvent::DataLengthUpdated {
+                    max_tx_octets,
+                    max_tx_time,
+                    max_rx_octets,
+                    max_rx_time,
+                },
                 #[cfg(feature = "security")]
                 ConnectionEvent::Bonded { bond_info } => {
                     // Update the identity of the connection

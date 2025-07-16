@@ -867,6 +867,17 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     );
                                 }
                             }
+                            LeEvent::LeDataLengthChange(event) => {
+                                let _ = host.connections.post_handle_event(
+                                    event.handle,
+                                    ConnectionEvent::DataLengthUpdated {
+                                        max_tx_octets: event.max_tx_octets,
+                                        max_tx_time: event.max_tx_time,
+                                        max_rx_octets: event.max_rx_octets,
+                                        max_rx_time: event.max_rx_time,
+                                    },
+                                );
+                            }
                             _ => {
                                 warn!("Unknown LE event!");
                             }
@@ -985,7 +996,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 .enable_le_scan_timeout(true)
                 .enable_le_ext_adv_report(true)
                 .enable_le_long_term_key_request(true)
-                .enable_le_phy_update_complete(true),
+                .enable_le_phy_update_complete(true)
+                .enable_le_data_length_change(true),
         )
         .exec(&host.controller)
         .await?;
