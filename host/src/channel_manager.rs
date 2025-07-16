@@ -537,9 +537,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         for storage in state.channels.iter_mut() {
             match storage.state {
                 ChannelState::Connected if storage.peer_cid == req.cid && Some(conn) == storage.conn => {
-                    debug!(
+                    trace!(
                         "[l2cap][handle_credit_flow][cid = {}] {} += {} credits",
-                        req.cid, storage.peer_credits, req.credits
+                        req.cid,
+                        storage.peer_credits,
+                        req.credits
                     );
                     storage.peer_credits = storage.peer_credits.saturating_add(req.credits);
                     storage.credit_waker.wake();

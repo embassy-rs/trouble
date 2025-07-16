@@ -1,6 +1,6 @@
 //! BLE connection.
 
-use bt_hci::cmd::le::{LeConnUpdate, LeReadLocalSupportedFeatures, LeReadPhy, LeSetPhy};
+use bt_hci::cmd::le::{LeConnUpdate, LeReadLocalSupportedFeatures, LeReadPhy, LeSetDataLength, LeSetPhy};
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
@@ -118,6 +118,17 @@ pub enum ConnectionEvent {
         peripheral_latency: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
+    },
+    /// The data length was changed for this connection.
+    DataLengthUpdated {
+        /// Max TX octets.
+        max_tx_octets: u16,
+        /// Max TX time.
+        max_tx_time: u16,
+        /// Max RX octets.
+        max_rx_octets: u16,
+        /// Max RX time.
+        max_rx_time: u16,
     },
     #[cfg(feature = "security")]
     /// Bonded event.
@@ -301,6 +312,32 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         Ok((res.tx_phy, res.rx_phy))
     }
 
+    /// Update data length for this connection.
+    pub async fn update_data_length<T>(
+        &self,
+        stack: &Stack<'_, T, P>,
+        length: u16,
+        time_us: u16,
+    ) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetDataLength> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+    {
+        let handle = self.handle();
+        // First, check the local supported features to ensure that the connection update is supported.
+        let features = stack.host.command(LeReadLocalSupportedFeatures::new()).await?;
+        if length <= 27 || features.supports_le_data_packet_length_extension() {
+            match stack.host.command(LeSetDataLength::new(handle, length, time_us)).await {
+                Ok(_) => Ok(()),
+                Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                    Err(crate::Error::Disconnected.into())
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            Err(BleHostError::BleHost(Error::InvalidValue))
+        }
+    }
+
     /// Update connection parameters for this connection.
     pub async fn update_connection_params<T>(
         &self,
@@ -335,7 +372,9 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
             }
         } else {
             // Use L2CAP signaling to update connection parameters
-            info!("Connection parameters request procedure not supported, use l2cap connection parameter update req instead");
+            info!(
+                "Connection parameters request procedure not supported, use l2cap connection parameter update req instead"
+            );
             let interval_min: bt_hci::param::Duration<1_250> = params.min_connection_interval.into();
             let interva_max: bt_hci::param::Duration<1_250> = params.max_connection_interval.into();
             let timeout: bt_hci::param::Duration<10_000> = params.supervision_timeout.into();
