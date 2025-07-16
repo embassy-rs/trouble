@@ -17,12 +17,14 @@ use heapless::Vec;
 use crate::att::{self, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
-use crate::connection::{Connection, SecurityLevel};
+use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 #[cfg(feature = "security")]
 use crate::security_manager::{PassKey};
+#[cfg(feature = "security")]
+use crate::connection::SecurityLevel;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, PacketPool, Stack};
