@@ -10,6 +10,7 @@ const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
 /// L2CAP PSM to be published to the client
+/// Only values in range 0x0040 - 0x00FF are accepted by iOS/macOS clients.
 const L2CAP_PSM: u16 = 0x00C0;
 
 /// GATT Server
@@ -22,7 +23,6 @@ struct Server {
 /// The PSM Service UUID is specific to the services iOS/macOS App is scanning for
 /// Here, we use value from https://github.com/paulw11/L2CapDemo (L2CapDemo/L2CapDemo/Constants.swift)
 /// The PSM Characteristic UUID is predefined https://developer.apple.com/documentation/corebluetooth/cbuuidl2cappsmcharacteristicstring
-/// iOS/macOS only accepts L2CAP PSM values in range 0x0040 - 0x00FF
 #[gatt_service(uuid = "12E61727-B41A-436F-B64D-4777B35F2294")]
 struct PsmService {
     #[characteristic(uuid = "ABDD3056-28FA-441D-A470-55A75A52553A", read, indicate, value = L2CAP_PSM)]
