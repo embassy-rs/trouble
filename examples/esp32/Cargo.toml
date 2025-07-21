@@ -6,24 +6,25 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 embassy-executor    = { version = "0.7.0", features = ["task-arena-size-32768"] }
-esp-backtrace = { version = "0.16.0", features = [ "exception-handler", "panic-handler", "println" ] }
-esp-hal = { version = "1.0.0-beta.1", features = [ "unstable" ] }
-esp-hal-embassy = { version = "0.8.1" }
+esp-bootloader-esp-idf = "0.2.0"
+esp-backtrace = { version = "0.17.0", features = [ "exception-handler", "panic-handler", "println" ] }
+esp-hal = { version = "1.0.0-rc.0", features = [ "unstable" ] }
+esp-hal-embassy = { version = "0.9.0" }
 esp-alloc = { version = "0.8.0" }
-esp-println = { version = "0.14.0", features = ["log-04"] }
-esp-wifi = { version = "0.14.1", features = [ "ble" ] }
+esp-println = { version = "0.15.0", features = ["log-04"] }
+esp-wifi = { version = "0.15.0", features = [ "ble" ] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
 trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
 
 [features]
 default = ["esp32c3"]
 
-esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-wifi/esp32"]
-esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-wifi/esp32c2"]
-esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-wifi/esp32c3"]
-esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6", "esp-println/esp32c6", "esp-wifi/esp32c6"]
-esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-wifi/esp32h2"]
-esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3", "esp-println/esp32s3", "esp-wifi/esp32s3"]
+esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-wifi/esp32", "esp-bootloader-esp-idf/esp32"]
+esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-wifi/esp32c2", "esp-bootloader-esp-idf/esp32c2"]
+esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-wifi/esp32c3", "esp-bootloader-esp-idf/esp32c3"]
+esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6", "esp-println/esp32c6", "esp-wifi/esp32c6", "esp-bootloader-esp-idf/esp32c6"]
+esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-wifi/esp32h2", "esp-bootloader-esp-idf/esp32h2"]
+esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3", "esp-println/esp32s3", "esp-wifi/esp32s3", "esp-bootloader-esp-idf/esp32s3"]
 
 security = [
     "trouble-example-apps/security",
