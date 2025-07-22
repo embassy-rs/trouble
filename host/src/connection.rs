@@ -17,7 +17,7 @@ use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
-use crate::security_manager::{PassKey};
+use crate::security_manager::{PassKey, BondInformation};
 use crate::types::l2cap::ConnParamUpdateReq;
 use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
@@ -159,6 +159,12 @@ pub enum ConnectionEvent {
         max_rx_time: u16,
     },
     #[cfg(feature = "security")]
+    /// Bonded event.
+    Bonded {
+        /// Bond info for this connection
+        bond_info: BondInformation,
+    },
+    #[cfg(feature = "security")]
     /// Request to display a pass key
     PassKeyDisplay(PassKey),
     #[cfg(feature = "security")]
@@ -287,6 +293,21 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// Get the encrypted state of the connection
     pub fn security_level(&self) -> Result<SecurityLevel, Error> {
         self.manager.get_security_level(self.index)
+    }
+
+    /// Get whether the connection is set as bondable or not.
+    ///
+    /// This is only relevant before pairing has started.
+    pub fn bondable(&self) -> Result<bool, Error> {
+        self.manager.get_bondable(self.index)
+    }
+
+    /// Set whether the connection is bondable or not.
+    ///
+    /// This must be set before pairing is initiated. Once the pairing procedure has started
+    /// this field is ignored.
+    pub fn set_bondable(&self, bondable: bool) -> Result<(), Error> {
+        self.manager.set_bondable(self.index, bondable)
     }
 
     /// Confirm that the displayed pass key matches the one displayed on the other party

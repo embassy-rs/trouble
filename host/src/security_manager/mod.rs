@@ -33,6 +33,7 @@ use crate::security_manager::pairing::Pairing;
 use crate::security_manager::pairing::PairingOps;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, IoCapabilities, PacketPool};
+use crate::security_manager::types::BondingFlag;
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -48,18 +49,26 @@ pub(crate) enum SecurityEventData {
 
 /// Bond Information
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct BondInformation {
+pub struct BondInformation {
     /// Long Term Key (LTK)
     pub ltk: LongTermKey,
     /// Peer identity
     pub identity: Identity,
-    // Connection Signature Resolving Key (CSRK)?
+    /// True if this bond information is from a bonded pairing
+    pub is_bonded: bool,
+    /// Security level of this long term key.
+    pub security_level: SecurityLevel,
 }
 
 impl BondInformation {
     /// Create a BondInformation
-    pub fn new(identity: Identity, ltk: LongTermKey) -> Self {
-        Self { ltk, identity }
+    pub fn new(identity: Identity, ltk: LongTermKey, security_level: SecurityLevel, is_bonded: bool) -> Self {
+        Self {
+            ltk,
+            identity,
+            is_bonded,
+            security_level,
+        }
     }
 }
 
@@ -193,6 +202,17 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Set the current local address
     pub(crate) fn set_local_address(&self, address: Address) {
         self.state.borrow_mut().local_address = Some(address);
+    }
+
+    fn get_peer_bond_information(&self, identity: &Identity) -> Option<BondInformation> {
+        trace!("[security manager] Find long term key for {:?}", identity);
+        self.state.borrow().bond.iter().find_map(|bond| {
+            if bond.identity.match_identity(identity) {
+                Some(bond.clone())
+            } else {
+                None
+            }
+        })
     }
 
     /// Get the long term key for peer
@@ -529,7 +549,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn disconnect(&self, handle: ConnHandle, identity: Option<Identity>) -> Result<(), Error> {
         self.pairing_sm.replace(None);
         if let Some(identity) = identity {
-            self.state.borrow_mut().bond.retain(|x| x.identity != identity);
+            self.state
+                .borrow_mut()
+                .bond
+                .retain(|x| x.is_bonded || x.identity != identity);
         }
 
         Ok(())
@@ -546,29 +569,39 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 Ok(()) => {
                     trace!("[smp] Encryption Changed event {}", event_data.enabled);
                     connections.with_connected_handle(event_data.handle, |storage| {
-                        if event_data.enabled {
-                            let sm = self.pairing_sm.borrow();
-                            if let Some(sm) = &*sm {
-                                let mut rng = self.rng.borrow_mut();
-                                let res = sm.handle_event(
-                                    pairing::Event::LinkEncrypted,
-                                    &mut PairingOpsImpl {
-                                        security_manager: self,
-                                        peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
-                                        connections,
-                                        storage,
-                                        conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
-                                    },
-                                    rng.deref_mut(),
-                                );
-                                let _ = self.handle_security_error(connections, storage, &res);
-                                match res {
-                                    Ok(_) => {
-                                        storage.security_level = sm.security_level();
-                                        Ok(())
-                                    }
-                                    x => x,
-                                }?
+                        let sm = self.pairing_sm.borrow();
+                        if let Some(sm) = &*sm {
+                            let mut rng = self.rng.borrow_mut();
+                            let res = sm.handle_event(
+                                pairing::Event::LinkEncryptedResult(event_data.enabled),
+                                &mut PairingOpsImpl {
+                                    security_manager: self,
+                                    peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                                    connections,
+                                    storage,
+                                    conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                                },
+                                rng.deref_mut(),
+                            );
+                            let _ = self.handle_security_error(connections, storage, &res);
+                            match res {
+                                Ok(_) => {
+                                    storage.security_level = sm.security_level();
+                                    Ok(())
+                                }
+                                x => x,
+                            }?
+                        }
+                        else if let Some(identity) = storage.peer_identity.as_ref() {
+                            match self.get_peer_bond_information(identity) {
+                                Some(bond) if event_data.enabled == true => {
+                                    info!("[smp] Encryption changed to true using bond {}", bond.identity);
+                                    storage.security_level = bond.security_level;
+                                },
+                                _ => {
+                                    warn!("[smp] Either encryption failed to enable or bond not found for {}", identity);
+                                    storage.security_level = SecurityLevel::NoEncryption
+                                },
                             }
                         }
                         Ok(())
@@ -694,16 +727,45 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         Ok(())
     }
 
-    fn try_enable_encryption(&mut self, ltk: &LongTermKey) -> Result<(), Error> {
+    fn try_enable_encryption(&mut self, ltk: &LongTermKey, security_level: SecurityLevel, is_bonded: bool) -> Result<BondInformation, Error> {
         info!("Enabling encryption for {}", self.peer_identity);
         //let bond_info = self.store_pairing()?;
         let bond_info = BondInformation {
             ltk: *ltk,
             identity: self.peer_identity,
+            is_bonded,
+            security_level,
         };
         self.security_manager.add_bond_information(bond_info.clone())?;
         self.security_manager
-            .try_send_event(SecurityEventData::EnableEncryption(self.conn_handle, bond_info))
+            .try_send_event(SecurityEventData::EnableEncryption(self.conn_handle, bond_info.clone()))?;
+        Ok(bond_info)
+    }
+
+    fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error> {
+        if let Some(bond) = self
+            .security_manager
+            .state
+            .borrow()
+            .bond
+            .iter()
+            .find(|x| x.identity.match_identity(&self.peer_identity))
+        {
+            self.security_manager
+                .try_send_event(SecurityEventData::EnableEncryption(self.conn_handle, bond.clone()))?;
+            Ok(Some(bond.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn bonding_flag(&self) -> BondingFlag {
+        if self.storage.bondable {
+            BondingFlag::Bonding
+        }
+        else {
+            BondingFlag::NoBonding
+        }
     }
 
     fn connection_handle(&mut self) -> ConnHandle {

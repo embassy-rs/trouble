@@ -18,7 +18,9 @@ use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{IdentityResolvingKey, LongTermKey};
+pub use crate::security_manager::{IdentityResolvingKey, LongTermKey, BondInformation};
+#[cfg(feature = "security")]
+use heapless::Vec;
 pub use crate::types::capabilities::IoCapabilities;
 
 /// Number of bonding information stored
@@ -664,5 +666,26 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Log status information of the host
     pub fn log_status(&self, verbose: bool) {
         self.host.log_status(verbose);
+    }
+
+    #[cfg(feature = "security")]
+    /// Get bonded devices
+    pub fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
+        self.host
+            .connections
+            .security_manager
+            .add_bond_information(bond_information)
+    }
+
+    #[cfg(feature = "security")]
+    /// Remove a bonded device
+    pub fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
+        self.host.connections.security_manager.remove_bond_information(identity)
+    }
+
+    #[cfg(feature = "security")]
+    /// Get bonded devices
+    pub fn get_bond_information(&self) -> Vec<BondInformation, BI_COUNT> {
+        self.host.connections.security_manager.get_bond_information()
     }
 }

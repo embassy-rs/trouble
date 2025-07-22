@@ -267,6 +267,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 #[cfg(feature = "security")]
                 {
                     storage.security_level = SecurityLevel::NoEncryption;
+                    storage.bondable = false;
                     let _ = self.security_manager.disconnect(h, storage.peer_identity);
                 }
                 return Ok(());
@@ -575,6 +576,38 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         }
     }
 
+    pub(crate) fn get_bondable(&self, index: u8) -> Result<bool, Error> {
+        let state = self.state.borrow();
+        match state.connections[index as usize].state {
+            ConnectionState::Connected => {
+                #[cfg(feature = "security")]
+                {
+                    Ok(state.connections[index as usize].bondable)
+                }
+                #[cfg(not(feature = "security"))]
+                Ok(false)
+            }
+            _ => Err(Error::Disconnected),
+        }
+    }
+
+    pub(crate) fn set_bondable(&self, index: u8, bondable: bool) -> Result<(), Error> {
+        let mut state = self.state.borrow_mut();
+        match state.connections[index as usize].state {
+            ConnectionState::Connected => {
+                #[cfg(feature = "security")]
+                {
+                    state.connections[index as usize].bondable = bondable;
+                    Ok(())
+                }
+                #[cfg(not(feature = "security"))]
+                Err(Error::NotSupported)
+            },
+            _ => Err(Error::Disconnected),
+        }
+
+    }
+
     pub(crate) fn handle_security_channel(
         &self,
         handle: ConnHandle,
@@ -748,6 +781,8 @@ pub struct ConnectionStorage<P> {
     pub metrics: Metrics,
     #[cfg(feature = "security")]
     pub security_level: SecurityLevel,
+    #[cfg(feature = "security")]
+    pub bondable: bool,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -836,6 +871,7 @@ impl<P> ConnectionStorage<P> {
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),
             reassembly: PacketReassembly::new(),
+            bondable: false,
         }
     }
 }
