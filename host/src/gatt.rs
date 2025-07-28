@@ -15,7 +15,7 @@ use embassy_time::Duration;
 use heapless::Vec;
 
 use crate::att::{self, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
-use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
+use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 use crate::cursor::{ReadCursor, WriteCursor};
