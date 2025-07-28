@@ -91,7 +91,7 @@ async fn gatt_client_server() {
         ).unwrap();
 
         // Random starting value to 'prove' the incremented value is correct
-        let value: u8 = rand::prelude::random();
+        let value: u8 = rand::random();
         // The first write will be rejected by the write callback, so value is not expected to change the first time
         let mut expected = value;
         server.set(&server.service.value, &value).unwrap();
@@ -129,7 +129,7 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            GattConnectionEvent::Gatt { event } => if let Ok(GattEvent::Write(event)) = event {
+                            GattConnectionEvent::Gatt { event: GattEvent::Write(event) } => {
                                 if writes == 0 {
                                     event.reject(AttErrorCode::VALUE_NOT_ALLOWED).unwrap().send().await;
                                     writes += 1;

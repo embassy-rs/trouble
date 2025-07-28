@@ -43,7 +43,7 @@ async fn gatt_client_server() {
         let id = b"Trouble";
         let appearance = [0x80, 0x07];
         // Random starting value to 'prove' the incremented value is correct
-        let value: u8 = rand::prelude::random();
+        let value: u8 = rand::random();
         let mut storage: [u8; 1] = [0; 1];
         let mut expected = value.wrapping_add(1);
 
@@ -99,23 +99,21 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
-                            GattConnectionEvent::Gatt { event } => {
-                                if let Ok(GattEvent::Write(event)) = event {
-                                    let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
-                                    assert_eq!(characteristic.handle, event.handle());
-                                    event.accept().unwrap().send().await;
+                            GattConnectionEvent::Gatt { event: GattEvent::Write(event) } => {
+                                let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
+                                assert_eq!(characteristic.handle, event.handle());
+                                event.accept().unwrap().send().await;
 
-                                    let value: u8 = server.table().get(&characteristic).unwrap();
-                                    println!("[peripheral] write value: {}", value);
-                                    assert_eq!(expected, value);
-                                    expected = expected.wrapping_add(1);
-                                    writes += 1;
-                                    if writes == 2 {
-                                        println!("expected value written twice, test pass");
-                                        // NOTE: Ensure that adapter gets polled again
-                                        tokio::time::sleep(Duration::from_secs(2)).await;
-                                        done = true;
-                                    }
+                                let value: u8 = server.table().get(&characteristic).unwrap();
+                                println!("[peripheral] write value: {}", value);
+                                assert_eq!(expected, value);
+                                expected = expected.wrapping_add(1);
+                                writes += 1;
+                                if writes == 2 {
+                                    println!("expected value written twice, test pass");
+                                    // NOTE: Ensure that adapter gets polled again
+                                    tokio::time::sleep(Duration::from_secs(2)).await;
+                                    done = true;
                                 }
                             }
                             _ => {}

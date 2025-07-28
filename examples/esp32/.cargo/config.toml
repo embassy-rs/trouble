@@ -16,6 +16,8 @@ rustflags = [
   "-C", "force-frame-pointers",
 ]
 
+target = "riscv32imc-unknown-none-elf" # adding default target for rust-analyzer
+
 [env]
 ESP_LOG = "info"
 

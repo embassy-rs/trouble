@@ -41,7 +41,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'embassy-rs/trouble'
     steps:
     - name: Checkout code
       uses: actions/checkout@v4

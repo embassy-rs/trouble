@@ -51,7 +51,7 @@ feature("default_packet_pool_size",
         default=16, min=1, max=128, pow2=True)
 feature("default_packet_pool_mtu",
         "Controls the packet MTU of the default packet pool, if enabled.",
-        default=255, vals = [27, 48, 64, 128, 251, 255, 512, 1024])
+        default=251, vals = [27, 48, 64, 128, 251, 255, 512, 1024])
 feature("gatt_client_notification_max_subscribers",
         "When using the GATT client, this controls how many subscribers can be created.",
         default=1, min=1, max=512, pow2=True)

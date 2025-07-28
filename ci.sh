@@ -34,6 +34,8 @@ cargo batch \
     --- build --release --manifest-path examples/nrf-sdc/Cargo.toml --target thumbv7em-none-eabihf --features nrf52832 \
     --- build --release --manifest-path examples/esp32/Cargo.toml --features esp32c3 --target riscv32imc-unknown-none-elf --artifact-dir tests/esp32 \
     --- build --release --manifest-path examples/serial-hci/Cargo.toml \
+    --- build --release --manifest-path examples/linux/Cargo.toml \
+    --- build --release --manifest-path examples/linux/Cargo.toml --features security \
     --- build --release --manifest-path examples/tests/Cargo.toml \
     --- build --release --manifest-path benchmarks/nrf-sdc/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
     --- build --release --manifest-path examples/rp-pico-w/Cargo.toml --target thumbv6m-none-eabi --features skip-cyw43-firmware \

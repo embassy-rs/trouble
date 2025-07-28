@@ -21,6 +21,7 @@ TrouBLE can use any controller that implements the traits from `bt-hci`. At pres
 * [Raspberry Pi Pico W](https://github.com/embassy-rs/embassy/tree/main/cyw43).
 * [Apache NimBLE Controller](https://github.com/benbrittain/apache-nimble-sys).
 * [ESP32](https://github.com/esp-rs/esp-hal).
+* [Linux HCI Sockets](examples/linux).
 
 ## Current status
 
@@ -53,6 +54,7 @@ See `examples` for example applications for different BLE controllers.
 * `esp32` which uses the BLE controller in the [esp-hal](https://github.com/esp-rs/esp-hal).
 * `rp-pico-w` which uses the BLE controller in the [Raspberry Pi Pico W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-w).
 * `rp-pico-2-w` which uses the BLE controller in the [Raspberry Pi Pico 2 W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-2-w).
+* `linux` which uses the HCI socket interface.
 
 Since a lot of the examples demo the same BLE functionality, they only contain basic wiring specific to the BLE controller, and share the 'business logic' within the `examples/apps` folder.
 

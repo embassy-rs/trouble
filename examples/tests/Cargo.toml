@@ -24,7 +24,7 @@ embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embedded-io-async = { version = "0.6.1" }
 embedded-io = { version = "0.6.1" }
 critical-section = { version = "1", features = ["std"] }
-embassy-sync = "0.6"
+embassy-sync = "0.7"
 tokio-serial = "5.4"
 tokio-util = "0.7"
 rand = "0.8.5"
