@@ -364,28 +364,34 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                 ))
                 .await
             {
-                Ok(_) => Ok(()),
+                Ok(_) => return Ok(()),
                 Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
-                    Err(crate::Error::Disconnected.into())
+                    return Err(crate::Error::Disconnected.into());
                 }
-                Err(e) => Err(e),
+                Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNSUPPORTED_REMOTE_FEATURE))) => {
+                    // We tried to send the request as a periperhal but the remote central does not support procedure.
+                    // Use the L2CAP signaling method below instead.
+                    // This code path should never be reached when acting as a central. If a bugged controller implementation
+                    // returns this error code we transmit an invalid L2CAP signal which then is rejected by the remote.
+                }
+                Err(e) => return Err(e),
             }
-        } else {
-            // Use L2CAP signaling to update connection parameters
-            info!(
-                "Connection parameters request procedure not supported, use l2cap connection parameter update req instead"
-            );
-            let interval_min: bt_hci::param::Duration<1_250> = params.min_connection_interval.into();
-            let interva_max: bt_hci::param::Duration<1_250> = params.max_connection_interval.into();
-            let timeout: bt_hci::param::Duration<10_000> = params.supervision_timeout.into();
-            let param = ConnParamUpdateReq {
-                interval_min: interval_min.as_u16(),
-                interval_max: interva_max.as_u16(),
-                latency: params.max_latency,
-                timeout: timeout.as_u16(),
-            };
-            stack.host.send_conn_param_update_req(handle, &param).await
         }
+
+        // Use L2CAP signaling to update connection parameters
+        info!(
+            "Connection parameters request procedure not supported, use l2cap connection parameter update req instead"
+        );
+        let interval_min: bt_hci::param::Duration<1_250> = params.min_connection_interval.into();
+        let interva_max: bt_hci::param::Duration<1_250> = params.max_connection_interval.into();
+        let timeout: bt_hci::param::Duration<10_000> = params.supervision_timeout.into();
+        let param = ConnParamUpdateReq {
+            interval_min: interval_min.as_u16(),
+            interval_max: interva_max.as_u16(),
+            latency: params.max_latency,
+            timeout: timeout.as_u16(),
+        };
+        stack.host.send_conn_param_update_req(handle, &param).await
     }
 
     /// Transform BLE connection into a `GattConnection`
