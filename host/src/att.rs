@@ -134,7 +134,7 @@ impl Display for AttErrorCode {
             &Self::PROCEDURE_ALREADY_IN_PROGRESS => f.write_str("procedure already in progress: the profile or service request could not be serviced because an operation that has been previousl triggered is still in progress"),
             &Self::OUT_OF_RANGE => f.write_str("out of range: the attribute value is out of range as defined by a profile or service specification"),
 
-            other => write!(f, "unknown error code {}: check the most recent bluetooth spec", other), 
+            other => write!(f, "unknown error code {other}: check the most recent bluetooth spec"),
         }
     }
 }
