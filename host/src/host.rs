@@ -472,7 +472,37 @@ where
                         }
                     }
                     #[cfg(not(feature = "gatt"))]
-                    return Err(Error::NotSupported);
+                    {
+                        if let Ok(att::Att::Client(_)) = a {
+                            drop(a);
+
+                            let opcode = pdu.as_ref()[0];
+                            let rsp = att::Att::Server(AttServer::Response(att::AttRsp::Error {
+                                request: opcode,
+                                handle: acl.handle().raw(),
+                                code: att::AttErrorCode::ATTRIBUTE_NOT_FOUND,
+                            }));
+
+                            let mut packet = pdu.into_inner();
+                            let mut w = WriteCursor::new(packet.as_mut());
+
+                            let l2cap = L2capHeader {
+                                channel: L2CAP_CID_ATT,
+                                length: rsp.size() as u16,
+                            };
+
+                            w.write_hci(&l2cap)?;
+                            w.write(rsp)?;
+
+                            let len = w.len();
+                            self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
+                            warn!("[host] got attribute request but 'gatt' feature is not enabled.");
+                            return Ok(());
+                        } else {
+                            warn!("Got unsupported ATT: {:?}", a);
+                            return Err(Error::NotSupported);
+                        }
+                    }
                 }
             }
             L2CAP_CID_LE_U_SIGNAL => {
