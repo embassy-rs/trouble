@@ -17,7 +17,7 @@ use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
-use crate::security_manager::{PassKey, BondInformation};
+use crate::security_manager::{BondInformation, PassKey};
 use crate::types::l2cap::ConnParamUpdateReq;
 use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 

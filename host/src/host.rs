@@ -2,7 +2,7 @@
 //!
 //! The host module contains the main entry point for the TrouBLE host.
 use core::cell::RefCell;
-use core::future::{poll_fn};
+use core::future::poll_fn;
 use core::mem::MaybeUninit;
 use core::task::Poll;
 
@@ -43,7 +43,7 @@ use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGran
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
 #[cfg(feature = "security")]
-use crate::security_manager::{SecurityEventData};
+use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
     ConnParamUpdateReq, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START,
     L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
@@ -509,7 +509,8 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                self.connections.handle_security_channel(acl.handle(), pdu, event_handler)?;
+                self.connections
+                    .handle_security_channel(acl.handle(), pdu, event_handler)?;
             }
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header.channel, pdu) {
                 Ok(_) => {}

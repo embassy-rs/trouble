@@ -18,17 +18,17 @@ use crate::att::{self, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, Att
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
+#[cfg(feature = "security")]
+use crate::connection::SecurityLevel;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 #[cfg(feature = "security")]
-use crate::security_manager::{PassKey};
-#[cfg(feature = "security")]
-use crate::connection::SecurityLevel;
-#[cfg(feature = "security")]
-use crate::BondInformation;
+use crate::security_manager::PassKey;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
+#[cfg(feature = "security")]
+use crate::BondInformation;
 use crate::{config, BleHostError, Error, PacketPool, Stack};
 
 /// A GATT connection event.
@@ -164,34 +164,22 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                 },
 
                 #[cfg(feature = "security")]
-                ConnectionEvent::Bonded { bond_info} => {
-                    GattConnectionEvent::Bonded { bond_info }
-                }
+                ConnectionEvent::Bonded { bond_info } => GattConnectionEvent::Bonded { bond_info },
 
                 #[cfg(feature = "security")]
-                ConnectionEvent::PassKeyDisplay(key) => {
-                    GattConnectionEvent::PassKeyDisplay(key)
-                }
+                ConnectionEvent::PassKeyDisplay(key) => GattConnectionEvent::PassKeyDisplay(key),
 
                 #[cfg(feature = "security")]
-                ConnectionEvent::PassKeyConfirm(key) => {
-                    GattConnectionEvent::PassKeyConfirm(key)
-                }
+                ConnectionEvent::PassKeyConfirm(key) => GattConnectionEvent::PassKeyConfirm(key),
 
                 #[cfg(feature = "security")]
-                ConnectionEvent::PassKeyInput => {
-                    GattConnectionEvent::PassKeyInput
-                }
+                ConnectionEvent::PassKeyInput => GattConnectionEvent::PassKeyInput,
 
                 #[cfg(feature = "security")]
-                ConnectionEvent::PairingComplete(lvl) => {
-                    GattConnectionEvent::PairingComplete(lvl)
-                }
+                ConnectionEvent::PairingComplete(lvl) => GattConnectionEvent::PairingComplete(lvl),
 
                 #[cfg(feature = "security")]
-                ConnectionEvent::PairingFailed(err) => {
-                    GattConnectionEvent::PairingFailed(err)
-                }
+                ConnectionEvent::PairingFailed(err) => GattConnectionEvent::PairingFailed(err),
             },
             Either::Second(data) => GattConnectionEvent::Gatt {
                 event: GattEvent::new(GattData::new(data, self.connection.clone()), self.server),

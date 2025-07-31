@@ -31,9 +31,9 @@ use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 use crate::security_manager::pairing::Pairing;
 use crate::security_manager::pairing::PairingOps;
+use crate::security_manager::types::BondingFlag;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, IoCapabilities, PacketPool};
-use crate::security_manager::types::BondingFlag;
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -596,17 +596,19 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                                 }
                                 x => x,
                             }?
-                        }
-                        else if let Some(identity) = storage.peer_identity.as_ref() {
+                        } else if let Some(identity) = storage.peer_identity.as_ref() {
                             match self.get_peer_bond_information(identity) {
                                 Some(bond) if event_data.enabled => {
                                     info!("[smp] Encryption changed to true using bond {:?}", bond.identity);
                                     storage.security_level = bond.security_level;
-                                },
+                                }
                                 _ => {
-                                    warn!("[smp] Either encryption failed to enable or bond not found for {:?}", identity);
+                                    warn!(
+                                        "[smp] Either encryption failed to enable or bond not found for {:?}",
+                                        identity
+                                    );
                                     storage.security_level = SecurityLevel::NoEncryption
-                                },
+                                }
                             }
                         }
                         Ok(())
@@ -732,7 +734,12 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         Ok(())
     }
 
-    fn try_enable_encryption(&mut self, ltk: &LongTermKey, security_level: SecurityLevel, is_bonded: bool) -> Result<BondInformation, Error> {
+    fn try_enable_encryption(
+        &mut self,
+        ltk: &LongTermKey,
+        security_level: SecurityLevel,
+        is_bonded: bool,
+    ) -> Result<BondInformation, Error> {
         info!("Enabling encryption for {:?}", self.peer_identity);
         //let bond_info = self.store_pairing()?;
         let bond_info = BondInformation {
@@ -767,8 +774,7 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
     fn bonding_flag(&self) -> BondingFlag {
         if self.storage.bondable {
             BondingFlag::Bonding
-        }
-        else {
+        } else {
             BondingFlag::NoBonding
         }
     }

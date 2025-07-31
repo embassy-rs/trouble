@@ -203,8 +203,7 @@ impl Pairing {
                     info!("Link encrypted!");
                     if matches!(x.0, Step::WaitingLinkEncrypted) {
                         // TODO send key data
-                    }
-                    else {
+                    } else {
                         self.pairing_data.borrow_mut().bond_information = ops.try_enable_bonded_encryption()?;
                     }
                     Step::Success
@@ -249,9 +248,7 @@ impl Pairing {
                 if is_success {
                     let pairing_data = self.pairing_data.borrow();
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
-                        ops.try_send_connection_event(ConnectionEvent::PairingComplete(
-                            bond.security_level,
-                        ))?;
+                        ops.try_send_connection_event(ConnectionEvent::PairingComplete(bond.security_level))?;
                         if pairing_data.want_bonding() {
                             ops.try_send_connection_event(ConnectionEvent::Bonded {
                                 bond_info: bond.clone(),

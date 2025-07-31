@@ -1,9 +1,9 @@
 use crate::pdu::Pdu;
+use crate::prelude::SecurityLevel;
 use crate::security_manager::crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey};
 use crate::security_manager::types::{Command, PairingFeatures, UseOutOfBand};
 use crate::security_manager::{Reason, TxPacket};
 use crate::{Address, Error, IoCapabilities, LongTermKey, PacketPool};
-use crate::prelude::SecurityLevel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -28,7 +28,7 @@ impl PairingMethod {
     pub fn security_level(&self) -> SecurityLevel {
         match self {
             PairingMethod::JustWorks => SecurityLevel::Encrypted,
-            _ => SecurityLevel::EncryptedAuthenticated
+            _ => SecurityLevel::EncryptedAuthenticated,
         }
     }
 }
@@ -85,7 +85,6 @@ pub fn choose_pairing_method(central: PairingFeatures, peripheral: PairingFeatur
         }
     }
 }
-
 
 pub fn prepare_packet<P: PacketPool>(command: Command) -> Result<TxPacket<P>, Error> {
     let packet = P::allocate().ok_or(Error::OutOfMemory)?;

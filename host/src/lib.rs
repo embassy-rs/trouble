@@ -18,10 +18,10 @@ use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{IdentityResolvingKey, LongTermKey, BondInformation};
+pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+pub use crate::types::capabilities::IoCapabilities;
 #[cfg(feature = "security")]
 use heapless::Vec;
-pub use crate::types::capabilities::IoCapabilities;
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable
@@ -103,12 +103,12 @@ pub mod prelude {
     pub use crate::peripheral::*;
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
+    #[cfg(feature = "security")]
+    pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+    pub use crate::types::capabilities::IoCapabilities;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
     pub use crate::{Address, Identity};
-    #[cfg(feature = "security")]
-    pub use crate::security_manager::{IdentityResolvingKey, LongTermKey, BondInformation};
-    pub use crate::types::capabilities::IoCapabilities;
 }
 
 #[cfg(feature = "gatt")]

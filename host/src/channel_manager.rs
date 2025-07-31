@@ -1221,7 +1221,7 @@ mod tests {
     use super::*;
     use crate::mock_controller::MockController;
     use crate::prelude::DefaultPacketPool;
-    use crate::{HostResources};
+    use crate::HostResources;
 
     #[test]
     fn channel_refcount() {

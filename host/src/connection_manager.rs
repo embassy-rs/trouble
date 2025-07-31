@@ -12,12 +12,12 @@ use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::TimeoutError;
 
 use crate::connection::{Connection, ConnectionEvent, SecurityLevel};
+use crate::host::EventHandler;
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::{config, Error, Identity, PacketPool};
-use crate::host::EventHandler;
 
 struct State<'d, P> {
     connections: &'d mut [ConnectionStorage<P>],
@@ -599,7 +599,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 ConnectionState::Connected => {
                     state.connections[index as usize].bondable = bondable;
                     Ok(())
-                },
+                }
                 _ => Err(Error::Disconnected),
             }
         }
@@ -619,10 +619,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             for storage in state.connections.iter() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if let Err(error) =
-                            self.security_manager
-                                .handle_l2cap_command(pdu, self, storage)
-                        {
+                        if let Err(error) = self.security_manager.handle_l2cap_command(pdu, self, storage) {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
                         }
