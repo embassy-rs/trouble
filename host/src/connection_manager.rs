@@ -16,7 +16,7 @@ use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
-use crate::{config, Error, Identity, IoCapabilities, PacketPool};
+use crate::{config, Error, Identity, PacketPool};
 use crate::host::EventHandler;
 
 struct State<'d, P> {
@@ -57,7 +57,7 @@ pub(crate) struct ConnectionManager<'d, P: PacketPool> {
 }
 
 impl<'d, P: PacketPool> ConnectionManager<'d, P> {
-    pub(crate) fn new(connections: &'d mut [ConnectionStorage<P::Packet>], default_att_mtu: u16, io_capabilities: IoCapabilities) -> Self {
+    pub(crate) fn new(connections: &'d mut [ConnectionStorage<P::Packet>], default_att_mtu: u16) -> Self {
         Self {
             state: RefCell::new(State {
                 connections,
@@ -69,7 +69,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             }),
             outbound: Channel::new(),
             #[cfg(feature = "security")]
-            security_manager: SecurityManager::new(io_capabilities),
+            security_manager: SecurityManager::new(),
         }
     }
 
@@ -592,20 +592,19 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     pub(crate) fn set_bondable(&self, index: u8, bondable: bool) -> Result<(), Error> {
-        let mut state = self.state.borrow_mut();
-        match state.connections[index as usize].state {
-            ConnectionState::Connected => {
-                #[cfg(feature = "security")]
-                {
+        #[cfg(feature = "security")]
+        {
+            let mut state = self.state.borrow_mut();
+            match state.connections[index as usize].state {
+                ConnectionState::Connected => {
                     state.connections[index as usize].bondable = bondable;
                     Ok(())
-                }
-                #[cfg(not(feature = "security"))]
-                Err(Error::NotSupported)
-            },
-            _ => Err(Error::Disconnected),
+                },
+                _ => Err(Error::Disconnected),
+            }
         }
-
+        #[cfg(not(feature = "security"))]
+        Err(Error::NotSupported)
     }
 
     pub(crate) fn handle_security_channel(
@@ -871,6 +870,7 @@ impl<P> ConnectionStorage<P> {
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),
             reassembly: PacketReassembly::new(),
+            #[cfg(feature = "security")]
             bondable: false,
         }
     }
@@ -991,7 +991,7 @@ mod tests {
 
     fn setup() -> &'static ConnectionManager<'static, DefaultPacketPool> {
         let storage = Box::leak(Box::new([const { ConnectionStorage::new() }; 3]));
-        let mgr = ConnectionManager::new(&mut storage[..], 23, IoCapabilities::NoInputNoOutput);
+        let mgr = ConnectionManager::new(&mut storage[..], 23);
         Box::leak(Box::new(mgr))
     }
 

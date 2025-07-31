@@ -2,7 +2,6 @@ use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetDataLength, LeSetPhy};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
-use trouble_host::IoCapabilities;
 use trouble_host::prelude::*;
 
 use crate::common::PSM_L2CAP_EXAMPLES;
@@ -27,7 +26,7 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<P, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources, IoCapabilities::NoInputNoOutput).set_random_address(address);
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut central,
         mut runner,

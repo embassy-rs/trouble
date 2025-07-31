@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use tokio::select;
-use trouble_host::IoCapabilities;
 use trouble_host::prelude::*;
 
 mod common;
@@ -33,7 +32,7 @@ async fn gatt_client_server() {
         let controller_peripheral = common::create_controller(&peripheral).await;
 
         let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-        let stack = trouble_host::new(controller_peripheral, &mut resources, IoCapabilities::NoInputNoOutput)
+        let stack = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address);
         let Host {
             mut peripheral,
@@ -132,7 +131,7 @@ async fn gatt_client_server() {
     let central = local.spawn_local(async move {
         let controller_central = common::create_controller(&central).await;
         let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-        let stack = trouble_host::new(controller_central, &mut resources, IoCapabilities::NoInputNoOutput);
+        let stack = trouble_host::new(controller_central, &mut resources);
         let Host {
             mut central,
             mut runner,

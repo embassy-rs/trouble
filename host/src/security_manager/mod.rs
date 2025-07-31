@@ -177,20 +177,25 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
     /// Io capabilities
-    io_capabilities: IoCapabilities,
+    io_capabilities: RefCell<IoCapabilities>,
 }
 
 impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Create a new SecurityManager
-    pub(crate) fn new(io_capabilities: IoCapabilities) -> Self {
+    pub(crate) fn new() -> Self {
         let random_seed = [0u8; 32];
         Self {
             rng: RefCell::new(ChaCha12Rng::from_seed(random_seed)),
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
             pairing_sm: RefCell::new(None),
-            io_capabilities,
+            io_capabilities: RefCell::new(IoCapabilities::NoInputNoOutput),
         }
+    }
+
+    /// Set the IO capabilities
+    pub(crate) fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
+        self.io_capabilities.replace(io_capabilities);
     }
 
     /// Set the current local address
@@ -322,7 +327,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 *state_machine = Some(Pairing::new_peripheral(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
-                    self.io_capabilities,
+                    *self.io_capabilities.borrow(),
                 ));
             }
 
@@ -396,7 +401,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 *state_machine = Some(Pairing::new_central(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
-                    self.io_capabilities,
+                    *self.io_capabilities.borrow(),
                 ));
             }
 
@@ -521,7 +526,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     local_address,
                     peer_address,
                     &mut ops,
-                    self.io_capabilities,
+                    *self.io_capabilities.borrow(),
                 )?);
                 Ok(())
             } else {
@@ -529,7 +534,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     local_address,
                     peer_address,
                     &mut ops,
-                    self.io_capabilities,
+                    *self.io_capabilities.borrow(),
                 )?);
                 Ok(())
             }

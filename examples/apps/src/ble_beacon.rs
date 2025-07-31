@@ -9,7 +9,6 @@ use bt_hci::cmd::le::*;
 use bt_hci::controller::ControllerCmdSync;
 use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
-use trouble_host::IoCapabilities;
 use trouble_host::prelude::*;
 
 // Use your company ID (register for free with Bluetooth SIG)
@@ -38,7 +37,7 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<DefaultPacketPool, 0, 0, 27> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources, IoCapabilities::NoInputNoOutput).set_random_address(address);
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut peripheral,
         mut runner,

@@ -558,7 +558,6 @@ pub fn new<
 >(
     controller: C,
     resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS>,
-    io_capabilities: IoCapabilities,
 ) -> Stack<'resources, C, P> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         unsafe { core::mem::transmute(x) }
@@ -579,7 +578,7 @@ pub fn new<
 
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
-    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles, io_capabilities);
+    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles);
 
     Stack { host }
 }
@@ -620,6 +619,19 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
                 .connections
                 .security_manager
                 .set_random_generator_seed(random_seed);
+        }
+        self
+    }
+    /// Set the IO capabilities used by the security manager.
+    ///
+    /// Only relevant if the feature `security` is enabled.
+    pub fn set_io_capabilities(self, io_capabilities: IoCapabilities) -> Self {
+        #[cfg(feature = "security")]
+        {
+            self.host
+                .connections
+                .security_manager
+                .set_io_capabilities(io_capabilities);
         }
         self
     }

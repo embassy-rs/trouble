@@ -48,7 +48,7 @@ use crate::types::l2cap::{
     ConnParamUpdateReq, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START,
     L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
 };
-use crate::{att, Address, BleHostError, Error, IoCapabilities, PacketPool, Stack};
+use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
 
 /// A BLE Host.
 ///
@@ -196,14 +196,13 @@ where
         connections: &'d mut [ConnectionStorage<P::Packet>],
         channels: &'d mut [ChannelStorage<P::Packet>],
         advertise_handles: &'d mut [AdvHandleState],
-        io_capabilities: IoCapabilities
     ) -> Self {
         Self {
             address: None,
             initialized: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             controller,
-            connections: ConnectionManager::new(connections, P::MTU as u16 - 4, io_capabilities),
+            connections: ConnectionManager::new(connections, P::MTU as u16 - 4),
             channels: ChannelManager::new(channels),
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),

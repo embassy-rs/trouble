@@ -1,7 +1,6 @@
 use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::Timer;
-use trouble_host::IoCapabilities;
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -39,7 +38,7 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources, IoCapabilities::NoInputNoOutput).set_random_address(address);
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
     let Host {
         mut peripheral, runner, ..
     } = stack.build();

@@ -25,9 +25,11 @@ use crate::prelude::ConnectionEvent;
 use crate::security_manager::{PassKey};
 #[cfg(feature = "security")]
 use crate::connection::SecurityLevel;
+#[cfg(feature = "security")]
+use crate::BondInformation;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, BleHostError, BondInformation, Error, PacketPool, Stack};
+use crate::{config, BleHostError, Error, PacketPool, Stack};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
