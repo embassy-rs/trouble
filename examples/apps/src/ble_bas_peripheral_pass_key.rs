@@ -112,7 +112,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
             GattConnectionEvent::PairingComplete(lvl) => {
-                info!("[gatt] pairing complete: {}", lvl);
+                info!("[gatt] pairing complete: {:?}", lvl);
             }
             GattConnectionEvent::PairingFailed(err) => {
                 error!("[gatt] pairing error: {:?}", err);
