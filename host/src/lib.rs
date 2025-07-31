@@ -106,6 +106,9 @@ pub mod prelude {
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
     pub use crate::{Address, Identity};
+    #[cfg(feature = "security")]
+    pub use crate::security_manager::{IdentityResolvingKey, LongTermKey, BondInformation};
+    pub use crate::types::capabilities::IoCapabilities;
 }
 
 #[cfg(feature = "gatt")]
