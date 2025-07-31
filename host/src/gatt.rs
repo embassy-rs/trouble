@@ -78,13 +78,6 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     },
 
     #[cfg(feature = "security")]
-    /// A bonded pairing has been established
-    Bonded {
-        /// Bond information. This should be stored by the device for future bonding.
-        bond_info: BondInformation
-    },
-
-    #[cfg(feature = "security")]
     /// Display pass key
     PassKeyDisplay(PassKey),
     #[cfg(feature = "security")]
