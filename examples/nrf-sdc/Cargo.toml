@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
-embassy-executor = { version = "0.7", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
+embassy-executor = { version = "0.7", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt", "task-arena-size-32768"] }
 embassy-time = { version = "0.4", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-nrf = { version = "0.4", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"
@@ -68,4 +68,20 @@ required-features = ["security"]
 
 [[bin]]
 name = "ble_bas_peripheral_sec"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_auth"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_central_auth"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_pass_key"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_central_pass_key"
 required-features = ["security"]

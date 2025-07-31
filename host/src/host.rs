@@ -279,7 +279,7 @@ where
         true
     }
 
-    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let handle = acl.handle();
         let (header, pdu) = match acl.boundary_flag() {
@@ -509,7 +509,8 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                self.connections.handle_security_channel(acl.handle(), pdu)?;
+                self.connections
+                    .handle_security_channel(acl.handle(), pdu, event_handler)?;
             }
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header.channel, pdu) {
                 Ok(_) => {}
@@ -796,7 +797,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
             // last = Instant::now();
             //        trace!("[host] polling took {} ms", (polled - started).as_millis());
             match result {
-                Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl) {
+                Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl, event_handler) {
                     Ok(_) => {}
                     Err(e) => {
                         warn!(
@@ -1166,10 +1167,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     Either4::Fourth(request) => {
                         #[cfg(feature = "security")]
                         {
-                            let event_data = match request {
-                                Ok(e) => e,
-                                Err(_) => SecurityEventData::Timeout,
-                            };
+                            let event_data = request.unwrap_or(SecurityEventData::Timeout);
                             host.connections.handle_security_event(host, event_data).await?;
                         }
                     }

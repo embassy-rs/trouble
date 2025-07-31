@@ -22,7 +22,8 @@ where
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator);
+        .set_random_generator_seed(random_generator)
+        .set_io_capabilities(IoCapabilities::KeyboardOnly);
 
     let Host {
         mut central,
@@ -32,7 +33,7 @@ where
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
     // Currently it matches the address used by the peripheral examples
-    let target: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    let target: Address = Address::random([0xff, 0x8f, 0x19, 0x05, 0xe4, 0xff]);
 
     let config = ConnectConfig {
         connect_params: Default::default(),
@@ -65,6 +66,11 @@ where
                     ConnectionEvent::Disconnected { reason } => {
                         error!("Disconnected: {:?}", reason);
                         break;
+                    },
+                    ConnectionEvent::PassKeyInput => {
+                        info!("Inputting pass key.");
+                        // Normally fetched from user
+                        conn.pass_key_input(1234).unwrap();
                     }
                     _ => {}
                 }
@@ -105,9 +111,9 @@ where
                     }
                 },
             )
-            .await;
+                .await;
         })
-        .await;
+            .await;
     })
-    .await;
+        .await;
 }
