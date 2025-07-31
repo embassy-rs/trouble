@@ -599,7 +599,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                         }
                         else if let Some(identity) = storage.peer_identity.as_ref() {
                             match self.get_peer_bond_information(identity) {
-                                Some(bond) if event_data.enabled == true => {
+                                Some(bond) if event_data.enabled => {
                                     info!("[smp] Encryption changed to true using bond {}", bond.identity);
                                     storage.security_level = bond.security_level;
                                 },
