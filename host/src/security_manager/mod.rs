@@ -600,11 +600,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                         else if let Some(identity) = storage.peer_identity.as_ref() {
                             match self.get_peer_bond_information(identity) {
                                 Some(bond) if event_data.enabled => {
-                                    info!("[smp] Encryption changed to true using bond {}", bond.identity);
+                                    info!("[smp] Encryption changed to true using bond {:?}", bond.identity);
                                     storage.security_level = bond.security_level;
                                 },
                                 _ => {
-                                    warn!("[smp] Either encryption failed to enable or bond not found for {}", identity);
+                                    warn!("[smp] Either encryption failed to enable or bond not found for {:?}", identity);
                                     storage.security_level = SecurityLevel::NoEncryption
                                 },
                             }
@@ -613,7 +613,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     })?;
                 }
                 Err(error) => {
-                    error!("[security manager] Encryption Changed Handle Error {}", error);
+                    error!("[security manager] Encryption Changed Handle Error {:?}", error);
                 }
             },
             Event::Le(LeEvent::LeLongTermKeyRequest(event_data)) => {
@@ -733,7 +733,7 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
     }
 
     fn try_enable_encryption(&mut self, ltk: &LongTermKey, security_level: SecurityLevel, is_bonded: bool) -> Result<BondInformation, Error> {
-        info!("Enabling encryption for {}", self.peer_identity);
+        info!("Enabling encryption for {:?}", self.peer_identity);
         //let bond_info = self.store_pairing()?;
         let bond_info = BondInformation {
             ltk: *ltk,
