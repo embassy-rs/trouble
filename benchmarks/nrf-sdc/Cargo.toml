@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
-embassy-executor = { version = "0.7", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
+embassy-executor = { version = "0.8", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
 embassy-time = { version = "0.4", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-nrf = { version = "0.4", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"

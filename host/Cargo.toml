@@ -52,7 +52,7 @@ critical-section = { version = "1", features = ["std"] }  # needed for CI builds
 rand = "0.8.5"
 rand_core = { version = "0.6", features = ["getrandom"]}
 heapless = "0.8.0"
-embassy-executor = { version = "0.7", features = ["arch-std", "executor-thread"]}
+embassy-executor = { version = "0.8", features = ["arch-std", "executor-thread"]}
 embassy-time = { version = "0.4", features = ["std"]}
 
 
