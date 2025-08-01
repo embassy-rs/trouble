@@ -1223,7 +1223,6 @@ name = "trouble-example-apps"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
- "embassy-executor",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
