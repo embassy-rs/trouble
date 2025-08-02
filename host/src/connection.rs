@@ -304,8 +304,18 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
 
     /// Set whether the connection is bondable or not.
     ///
+    /// By default a connection is **not** bondable.
+    ///
     /// This must be set before pairing is initiated. Once the pairing procedure has started
     /// this field is ignored.
+    ///
+    /// If both peripheral and central are bondable then the [`ConnectionEvent::Bonded`] event is
+    /// generated after a successful pairing. The information attached to the event should be
+    /// stored in non-volatile memory and restored on reboot using [`Stack::add_bond_information()`].
+    ///
+    /// If any party in a pairing is not bondable the [`ConnectionEvent::Bonded`] event is not generated
+    /// and any bond information should not be stored by the user.
+    ///
     pub fn set_bondable(&self, bondable: bool) -> Result<(), Error> {
         self.manager.set_bondable(self.index, bondable)
     }
