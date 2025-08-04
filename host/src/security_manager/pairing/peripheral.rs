@@ -250,8 +250,7 @@ impl Pairing {
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
                         let pairing_bond = if pairing_data.want_bonding() {
                             Some(bond.clone())
-                        }
-                        else {
+                        } else {
                             None
                         };
                         ops.try_send_connection_event(ConnectionEvent::PairingComplete {

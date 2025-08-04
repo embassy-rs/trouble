@@ -88,4 +88,8 @@ required-features = ["security"]
 
 [[bin]]
 name = "ble_bas_central_bonding"
-required-features = ["security"]
+required-features = ["security", "nrf52840"]
+
+[[bin]]
+name = "ble_bas_peripheral_bonding"
+required-features = ["security", "nrf52840"]

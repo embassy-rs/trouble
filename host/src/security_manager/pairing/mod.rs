@@ -270,11 +270,17 @@ mod tests {
 
         assert!(matches!(
             central_ops.connection_events[0],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::Encrypted, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::Encrypted,
+                bond: None
+            }
         ));
         assert!(matches!(
             peripheral_ops.connection_events[0],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::Encrypted, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::Encrypted,
+                bond: None
+            }
         ));
         assert_eq!(central_pairing.security_level(), SecurityLevel::Encrypted);
         assert_eq!(peripheral_pairing.security_level(), SecurityLevel::Encrypted);
@@ -347,11 +353,17 @@ mod tests {
 
         assert!(matches!(
             central_ops.connection_events[1],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert!(matches!(
             peripheral_ops.connection_events[1],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert_eq!(central_pairing.security_level(), SecurityLevel::EncryptedAuthenticated);
         assert_eq!(
@@ -421,11 +433,17 @@ mod tests {
 
         assert!(matches!(
             central_ops.connection_events[1],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert!(matches!(
             peripheral_ops.connection_events[1],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert_eq!(central_pairing.security_level(), SecurityLevel::EncryptedAuthenticated);
         assert_eq!(
@@ -493,11 +511,17 @@ mod tests {
 
         assert!(matches!(
             central_ops.connection_events[1],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert!(matches!(
             peripheral_ops.connection_events[1],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert_eq!(central_pairing.security_level(), SecurityLevel::EncryptedAuthenticated);
         assert_eq!(
@@ -565,11 +589,17 @@ mod tests {
 
         assert!(matches!(
             central_ops.connection_events[1],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert!(matches!(
             peripheral_ops.connection_events[1],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert_eq!(central_pairing.security_level(), SecurityLevel::EncryptedAuthenticated);
         assert_eq!(
@@ -615,19 +645,25 @@ mod tests {
 
         assert!(matches!(
             central_ops.connection_events[0],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::Encrypted, bond: Some(BondInformation {
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::Encrypted,
+                bond: Some(BondInformation {
                     is_bonded: true,
                     security_level: SecurityLevel::Encrypted,
                     ..
-                })}
+                })
+            }
         ));
         assert!(matches!(
             peripheral_ops.connection_events[0],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::Encrypted, bond: Some(BondInformation {
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::Encrypted,
+                bond: Some(BondInformation {
                     is_bonded: true,
                     security_level: SecurityLevel::Encrypted,
                     ..
-                })}
+                })
+            }
         ));
         assert_eq!(central_pairing.security_level(), SecurityLevel::Encrypted);
         assert_eq!(peripheral_pairing.security_level(), SecurityLevel::Encrypted);
@@ -679,11 +715,17 @@ mod tests {
 
         assert!(matches!(
             central_ops.connection_events[0],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert!(matches!(
             peripheral_ops.connection_events[0],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert_eq!(central_ops.connection_events.len(), 1);
         assert_eq!(peripheral_ops.connection_events.len(), 1);
@@ -758,11 +800,17 @@ mod tests {
 
         assert!(matches!(
             central_ops.connection_events[0],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert!(matches!(
             peripheral_ops.connection_events[0],
-            ConnectionEvent::PairingComplete { security_level: SecurityLevel::EncryptedAuthenticated, bond: None }
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                bond: None
+            }
         ));
         assert_eq!(central_ops.connection_events.len(), 1);
         assert_eq!(peripheral_ops.connection_events.len(), 1);
