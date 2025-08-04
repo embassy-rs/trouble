@@ -54,8 +54,8 @@ where
             conn.request_security().unwrap();
             loop {
                 match conn.next().await {
-                    ConnectionEvent::PairingComplete(lvl) => {
-                        info!("Pairing complete: {:?}", lvl);
+                    ConnectionEvent::PairingComplete { security_level, ..} => {
+                        info!("Pairing complete: {:?}", security_level);
                         break;
                     },
                     ConnectionEvent::PairingFailed(err) => {

@@ -85,3 +85,7 @@ required-features = ["security"]
 [[bin]]
 name = "ble_bas_central_pass_key"
 required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_central_bonding"
+required-features = ["security"]

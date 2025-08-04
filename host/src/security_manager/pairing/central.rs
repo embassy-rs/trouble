@@ -329,12 +329,16 @@ impl Pairing {
                 if is_success {
                     let pairing_data = self.pairing_data.borrow();
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
-                        ops.try_send_connection_event(ConnectionEvent::PairingComplete(bond.security_level))?;
-                        if pairing_data.want_bonding() {
-                            ops.try_send_connection_event(ConnectionEvent::Bonded {
-                                bond_info: bond.clone(),
-                            })?;
+                        let pairing_bond = if pairing_data.want_bonding() {
+                            Some(bond.clone())
                         }
+                        else {
+                            None
+                        };
+                        ops.try_send_connection_event(ConnectionEvent::PairingComplete {
+                            security_level: bond.security_level,
+                            bond: pairing_bond,
+                        })?;
                     } else {
                         error!("[smp] No bond information stored");
                     }

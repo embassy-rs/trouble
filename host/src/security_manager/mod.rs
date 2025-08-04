@@ -786,7 +786,7 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
     fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error> {
         let timer_changed = matches!(
             event,
-            ConnectionEvent::PairingComplete(_) | ConnectionEvent::PairingFailed(_)
+            ConnectionEvent::PairingComplete{..} | ConnectionEvent::PairingFailed(_)
         );
         self.storage.events.try_send(event).map_err(|_| Error::OutOfMemory)?;
         if timer_changed {

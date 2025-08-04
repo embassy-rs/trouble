@@ -65,12 +65,6 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         /// Max RX time.
         max_rx_time: u16,
     },
-    #[cfg(feature = "security")]
-    /// Bonded event.
-    Bonded {
-        /// Bond info for this connection
-        bond_info: BondInformation,
-    },
     /// GATT event.
     Gatt {
         /// The event that was returned
@@ -87,8 +81,13 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     /// Input the pass key
     PassKeyInput,
     #[cfg(feature = "security")]
-    /// Pairing success
-    PairingComplete(SecurityLevel),
+    /// Pairing completed
+    PairingComplete {
+        /// Security level of this pairing
+        security_level: SecurityLevel,
+        /// Bond information if the devices create a bond with this pairing.
+        bond: Option<BondInformation>,
+    },
     #[cfg(feature = "security")]
     /// Pairing failed
     PairingFailed(Error),
@@ -164,9 +163,6 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                 },
 
                 #[cfg(feature = "security")]
-                ConnectionEvent::Bonded { bond_info } => GattConnectionEvent::Bonded { bond_info },
-
-                #[cfg(feature = "security")]
                 ConnectionEvent::PassKeyDisplay(key) => GattConnectionEvent::PassKeyDisplay(key),
 
                 #[cfg(feature = "security")]
@@ -176,7 +172,9 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                 ConnectionEvent::PassKeyInput => GattConnectionEvent::PassKeyInput,
 
                 #[cfg(feature = "security")]
-                ConnectionEvent::PairingComplete(lvl) => GattConnectionEvent::PairingComplete(lvl),
+                ConnectionEvent::PairingComplete { security_level, bond } => {
+                    GattConnectionEvent::PairingComplete { security_level, bond }
+                }
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::PairingFailed(err) => GattConnectionEvent::PairingFailed(err),

@@ -159,12 +159,6 @@ pub enum ConnectionEvent {
         max_rx_time: u16,
     },
     #[cfg(feature = "security")]
-    /// Bonded event.
-    Bonded {
-        /// Bond info for this connection
-        bond_info: BondInformation,
-    },
-    #[cfg(feature = "security")]
     /// Request to display a pass key
     PassKeyDisplay(PassKey),
     #[cfg(feature = "security")]
@@ -175,7 +169,12 @@ pub enum ConnectionEvent {
     PassKeyInput,
     #[cfg(feature = "security")]
     /// Pairing completed
-    PairingComplete(SecurityLevel),
+    PairingComplete {
+        /// Security level of this pairing
+        security_level: SecurityLevel,
+        /// Bond information if the devices create a bond with this pairing.
+        bond: Option<BondInformation>,
+    },
     #[cfg(feature = "security")]
     /// Pairing completed
     PairingFailed(Error),
@@ -309,12 +308,12 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// This must be set before pairing is initiated. Once the pairing procedure has started
     /// this field is ignored.
     ///
-    /// If both peripheral and central are bondable then the [`ConnectionEvent::Bonded`] event is
-    /// generated after a successful pairing. The information attached to the event should be
-    /// stored in non-volatile memory and restored on reboot using [`Stack::add_bond_information()`].
+    /// If both peripheral and central are bondable then the [`ConnectionEvent::PairingComplete`]
+    /// event contains the bond information for the pairing. This bond information should be stored
+    /// in non-volatile memory and restored on reboot using [`Stack::add_bond_information()`].
     ///
-    /// If any party in a pairing is not bondable the [`ConnectionEvent::Bonded`] event is not generated
-    /// and any bond information should not be stored by the user.
+    /// If any party in a pairing is not bondable the [`ConnectionEvent::PairingComplete`] contains
+    /// a `None` entry for the `bond` member.
     ///
     pub fn set_bondable(&self, bondable: bool) -> Result<(), Error> {
         self.manager.set_bondable(self.index, bondable)

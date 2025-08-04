@@ -24,8 +24,13 @@ pub mod ble_bas_peripheral_auth;
 pub mod ble_bas_central_pass_key;
 #[cfg(feature = "security")]
 pub mod ble_bas_peripheral_pass_key;
+#[cfg(feature = "security")]
+pub mod ble_bas_central_bonding;
+#[cfg(feature = "security")]
+pub mod ble_bas_peripheral_bonding;
 
 #[cfg(feature = "std")]
 mod alloc;
+
 #[cfg(feature = "std")]
 pub use alloc::BigAlloc;

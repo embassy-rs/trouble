@@ -73,8 +73,8 @@ where
                                 },
                             }
                         }
-                        ConnectionEvent::PairingComplete(lvl) => {
-                            info!("Pairing complete: {:?}", lvl);
+                        ConnectionEvent::PairingComplete { security_level, .. } => {
+                            info!("Pairing complete: {:?}", security_level);
                             break;
                         },
                         ConnectionEvent::PairingFailed(err) => {
