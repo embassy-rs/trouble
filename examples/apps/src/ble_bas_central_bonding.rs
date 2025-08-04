@@ -115,7 +115,7 @@ where
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
-    let address: Address = Address::random([0xff, 0x8f, 0x08, 0x05, 0xe4, 0xff]);
+    let address: Address = Address::random([0xff, 0x8f, 0x28, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
@@ -142,7 +142,7 @@ where
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
     // Currently it matches the address used by the peripheral examples
-    let target: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    let target: Address = Address::random([0xff, 0x8f, 0x08, 0x05, 0xe4, 0xff]);
 
     let config = ConnectConfig {
         connect_params: Default::default(),
@@ -157,6 +157,7 @@ where
         info!("Connecting");
 
         let conn = central.connect(&config).await.unwrap();
+        // Allow bonding if a bond isn't already stored
         conn.set_bondable(!has_bond_info).unwrap();
         info!("Connected, creating gatt client");
 
