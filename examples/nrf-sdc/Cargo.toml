@@ -5,25 +5,25 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
-embassy-executor = { version = "0.7", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt", "task-arena-size-32768"] }
+embassy-executor = { version = "0.8", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
 embassy-time = { version = "0.4", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-nrf = { version = "0.4", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
+embassy-nrf = { version = "0.6", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7", features = ["defmt"] }
 
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
-nrf-sdc = { version = "0.1", default-features = false, features = ["defmt", "peripheral", "central"] }
-nrf-mpsl = { version = "0.1", default-features = false, features = ["defmt", "critical-section-impl"] }
+nrf-sdc = { version = "0.2", default-features = false, features = ["defmt", "peripheral", "central"] }
+nrf-mpsl = { version = "0.2", default-features = false, features = ["defmt", "critical-section-impl"] }
 bt-hci = { version = "0.3", default-features = false, features = ["defmt"] }
 trouble-host = { path = "../../host", features = ["derive", "scan"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 
-defmt = "0.3"
-defmt-rtt = "0.4.0"
+defmt = "1.0"
+defmt-rtt = "1.0"
+panic-probe = { version = "1.0", features = ["print-defmt"] }
 
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
-panic-probe = { version = "0.3", features = ["print-defmt"] }
 rand = { version = "0.8.5", default-features = false }
 static_cell = "2"
 rand_core = { version = "0.6"}
@@ -34,7 +34,7 @@ debug = 2
 
 [patch.crates-io]
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
-#embassy-nrf = {path = "../../../embassy/embassy-nrf"}
+#embassy-time-queue-utils = {path = "../../../embassy/embassy-time-queue-utils"}
 #embassy-sync = {path = "../../../embassy/embassy-sync"}
 #embassy-futures = {path = "../../../embassy/embassy-futures"}
 #embassy-time = {path = "../../../embassy/embassy-time"}
