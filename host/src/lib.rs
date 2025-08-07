@@ -299,9 +299,6 @@ pub enum Error {
     /// Failed to decode the data structure within a characteristic declaration attribute value.
     InvalidCharacteristicDeclarationData,
 
-    /// Invalid CCCD handle length.
-    InvalidCccdHandleLength(usize),
-
     /// Failed to finalize the packet.
     FailedToFinalize {
         /// Expected length.
