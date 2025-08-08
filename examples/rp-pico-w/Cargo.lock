@@ -2424,6 +2424,7 @@ dependencies = [
  "embassy-sync 0.7.0",
  "embassy-time",
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-io",
  "heapless",
  "rand_core 0.6.4",

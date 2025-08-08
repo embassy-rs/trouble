@@ -1285,6 +1285,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
+name = "sequential-storage"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56a82250c179995d4aba246dfbebc817c1a093816dbb36c3a458d9074ed77968"
+dependencies = [
+ "embedded-storage-async",
+]
+
+[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1365,9 +1374,12 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-io",
+ "embedded-storage-async",
  "heapless",
  "rand_core 0.6.4",
+ "sequential-storage",
  "static_cell",
  "trouble-host",
 ]
@@ -1387,6 +1399,7 @@ dependencies = [
  "futures",
  "heapless",
  "p256",
+ "rand",
  "rand_chacha",
  "rand_core 0.6.4",
  "static_cell",
