@@ -6,8 +6,6 @@ mod constants;
 mod crypto;
 mod pairing;
 mod types;
-pub use types::PassKey;
-
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
 use core::ops::DerefMut;
@@ -23,14 +21,13 @@ use heapless::Vec;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
 use types::Command;
-pub use types::Reason;
+pub use types::{PassKey, Reason};
 
 use crate::connection::SecurityLevel;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
-use crate::security_manager::pairing::Pairing;
-use crate::security_manager::pairing::PairingOps;
+use crate::security_manager::pairing::{Pairing, PairingOps};
 use crate::security_manager::types::BondingFlag;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, IoCapabilities, PacketPool};

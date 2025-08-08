@@ -1,3 +1,10 @@
+use core::cell::RefCell;
+use core::ops::{Deref, DerefMut};
+
+use embassy_time::Instant;
+use rand::Rng;
+use rand_core::{CryptoRng, RngCore};
+
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
 use crate::prelude::ConnectionEvent;
@@ -11,11 +18,6 @@ use crate::security_manager::pairing::{Event, PairingOps};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures, PassKey};
 use crate::security_manager::Reason;
 use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
-use core::cell::RefCell;
-use core::ops::{Deref, DerefMut};
-use embassy_time::Instant;
-use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -615,14 +617,15 @@ impl Pairing {
 
 #[cfg(test)]
 mod tests {
+    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
+    use rand_core::SeedableRng;
+
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
     use crate::security_manager::pairing::peripheral::Pairing;
     use crate::security_manager::pairing::tests::{HeaplessPool, TestOps};
     use crate::security_manager::pairing::util::make_public_key_packet;
     use crate::security_manager::types::{Command, PairingFeatures};
     use crate::{Address, IoCapabilities, LongTermKey};
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
 
     #[test]
     fn just_works() {

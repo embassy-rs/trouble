@@ -1,8 +1,9 @@
+use core::fmt::{Display, Formatter};
+
 use super::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::codec::{Decode, Encode, Type};
 use crate::security_manager::crypto::IoCap;
 use crate::{Error, IoCapabilities};
-use core::fmt::{Display, Formatter};
 
 /// Pairing Failed Reason
 // ([Vol 3] Part H, Section 3.5.5).

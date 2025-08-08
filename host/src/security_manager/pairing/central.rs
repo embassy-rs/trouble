@@ -1,3 +1,10 @@
+use core::cell::RefCell;
+use core::ops::{Deref, DerefMut};
+
+use embassy_time::Instant;
+use rand::Rng;
+use rand_core::{CryptoRng, RngCore};
+
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
 use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
@@ -10,11 +17,6 @@ use crate::security_manager::pairing::{Event, PairingOps};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures};
 use crate::security_manager::{PassKey, Reason};
 use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
-use core::cell::RefCell;
-use core::ops::{Deref, DerefMut};
-use embassy_time::Instant;
-use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
