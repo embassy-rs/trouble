@@ -1340,6 +1340,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46b71a9d9206e8b46714c74255adcaea8b11e0350c1d8456165073c3f75fc81a"
 
 [[package]]
+name = "rand"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+dependencies = [
+ "rand_core 0.6.4",
+]
+
+[[package]]
 name = "rand_chacha"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1438,6 +1447,15 @@ name = "semihosting"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e1c7d2b77d80283c750a39c52f1ab4d17234e8f30bca43550f5b2375f41d5f"
+
+[[package]]
+name = "sequential-storage"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56a82250c179995d4aba246dfbebc817c1a093816dbb36c3a458d9074ed77968"
+dependencies = [
+ "embedded-storage-async",
+]
 
 [[package]]
 name = "serde"
@@ -1584,10 +1602,13 @@ dependencies = [
  "embassy-sync 0.7.0",
  "embassy-time",
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-io",
+ "embedded-storage-async",
  "heapless",
  "log",
  "rand_core 0.6.4",
+ "sequential-storage",
  "static_cell",
  "trouble-host",
 ]
@@ -1607,6 +1628,7 @@ dependencies = [
  "heapless",
  "log",
  "p256",
+ "rand",
  "rand_chacha",
  "rand_core 0.6.4",
  "static_cell",

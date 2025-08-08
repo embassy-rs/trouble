@@ -469,6 +469,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-storage"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a21dea9854beb860f3062d10228ce9b976da520a73474aed3171ec276bc0c032"
+
+[[package]]
+name = "embedded-storage-async"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1763775e2323b7d5f0aa6090657f5e21cfa02ede71f5dc40eead06d64dcd15cc"
+dependencies = [
+ "embedded-storage",
+]
+
+[[package]]
 name = "env_logger"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1062,6 +1077,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sequential-storage"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56a82250c179995d4aba246dfbebc817c1a093816dbb36c3a458d9074ed77968"
+dependencies = [
+ "embedded-storage-async",
+]
+
+[[package]]
 name = "serial-hci"
 version = "0.1.0"
 dependencies = [
@@ -1251,10 +1275,13 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-io",
+ "embedded-storage-async",
  "heapless",
  "log",
  "rand_core 0.6.4",
+ "sequential-storage",
  "static_cell",
  "trouble-host",
 ]
@@ -1274,6 +1301,7 @@ dependencies = [
  "heapless",
  "log",
  "p256",
+ "rand",
  "rand_chacha",
  "rand_core 0.6.4",
  "static_cell",
