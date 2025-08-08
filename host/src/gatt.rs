@@ -7,14 +7,16 @@ use bt_hci::controller::Controller;
 use bt_hci::param::{ConnHandle, PhyKind, Status};
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use embassy_time::Duration;
 use heapless::Vec;
 
-use crate::att::{self, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
+#[cfg(feature = "security")]
+use crate::BondInformation;
+use crate::att::{self, ATT_HANDLE_VALUE_NTF, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns};
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
@@ -27,9 +29,7 @@ use crate::prelude::ConnectionEvent;
 use crate::security_manager::PassKey;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-#[cfg(feature = "security")]
-use crate::BondInformation;
-use crate::{config, BleHostError, Error, PacketPool, Stack};
+use crate::{BleHostError, Error, PacketPool, Stack, config};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
@@ -51,6 +51,17 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         conn_interval: Duration,
         /// Peripheral latency.
         peripheral_latency: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
+    },
+    /// A request to change the connection parameters.
+    RequestConnectionParams {
+        /// Minimum connection interval.
+        min_connection_interval: Duration,
+        /// Maximum connection interval.
+        max_connection_interval: Duration,
+        /// Maximum slave latency.
+        max_latency: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
     },
@@ -147,6 +158,17 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                 } => GattConnectionEvent::ConnectionParamsUpdated {
                     conn_interval,
                     peripheral_latency,
+                    supervision_timeout,
+                },
+                ConnectionEvent::RequestConnectionParams {
+                    min_connection_interval,
+                    max_connection_interval,
+                    max_latency,
+                    supervision_timeout,
+                } => GattConnectionEvent::RequestConnectionParams {
+                    min_connection_interval,
+                    max_connection_interval,
+                    max_latency,
                     supervision_timeout,
                 },
                 ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => GattConnectionEvent::PhyUpdated { tx_phy, rx_phy },
@@ -871,7 +893,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                                 handle,
                                 cccd_handle: Some(self.get_characteristic_cccd(handle, service.end).await?),
                                 phantom: PhantomData,
-                            })
+                            });
                         }
                         None => return Err(Error::NotFound.into()),
                     },

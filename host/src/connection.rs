@@ -158,6 +158,17 @@ pub enum ConnectionEvent {
         /// Max RX time.
         max_rx_time: u16,
     },
+    /// A request to change the connection parameters.
+    RequestConnectionParams {
+        /// Minimum connection interval.
+        min_connection_interval: Duration,
+        /// Maximum connection interval.
+        max_connection_interval: Duration,
+        /// Maximum slave latency.
+        max_latency: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
+    },
     #[cfg(feature = "security")]
     /// Request to display a pass key
     PassKeyDisplay(PassKey),
