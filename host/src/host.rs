@@ -18,7 +18,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
+use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync, blocking};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::{Event, Vendor};
@@ -27,7 +27,7 @@ use bt_hci::param::{
     LeConnRole, LeEventMask, Status,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select3, select4, Either3, Either4};
+use embassy_futures::select::{Either3, Either4, select3, select4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "gatt")]
@@ -45,10 +45,10 @@ use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    ConnParamUpdateReq, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START,
-    L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
+    ConnParamUpdateReq, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
+    L2capHeader, L2capSignal, L2capSignalHeader,
 };
-use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
+use crate::{Address, BleHostError, Error, PacketPool, Stack, att};
 
 /// A BLE Host.
 ///
@@ -332,11 +332,7 @@ where
                                 p.update(data)?
                             };
                             // Something is wrong if assembly was finished since we've not received the last fragment.
-                            if r.is_some() {
-                                Err(Error::InvalidState)
-                            } else {
-                                Ok(())
-                            }
+                            if r.is_some() { Err(Error::InvalidState) } else { Ok(()) }
                         })?;
                         return Ok(());
                     }
@@ -348,11 +344,7 @@ where
                     self.connections.reassembly(acl.handle(), |p| {
                         p.init(header.channel, header.length, packet)?;
                         let r = p.update(data)?;
-                        if r.is_some() {
-                            Err(Error::InvalidState)
-                        } else {
-                            Ok(())
-                        }
+                        if r.is_some() { Err(Error::InvalidState) } else { Ok(()) }
                     })?;
                     return Ok(());
                 } else {
@@ -909,6 +901,17 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     },
                                 );
                             }
+                            LeEvent::LeRemoteConnectionParameterRequest(event) => {
+                                let _ = host.connections.post_handle_event(
+                                    event.handle,
+                                    ConnectionEvent::RequestConnectionParams {
+                                        min_connection_interval: Duration::from_micros(event.interval_min.as_micros()),
+                                        max_connection_interval: Duration::from_micros(event.interval_min.as_micros()),
+                                        max_latency: event.max_latency,
+                                        supervision_timeout: Duration::from_micros(event.timeout.as_micros()),
+                                    },
+                                );
+                            }
                             _ => {
                                 warn!("Unknown LE event!");
                             }
@@ -1028,6 +1031,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 .enable_le_ext_adv_report(true)
                 .enable_le_long_term_key_request(true)
                 .enable_le_phy_update_complete(true)
+                .enable_le_remote_conn_parameter_request(true)
                 .enable_le_data_length_change(true),
         )
         .exec(&host.controller)
