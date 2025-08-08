@@ -11,7 +11,8 @@ use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "security")]
 use embassy_time::TimeoutError;
 
-use crate::connection::{Connection, ConnectionEvent};
+use crate::connection::{Connection, ConnectionEvent, SecurityLevel};
+use crate::host::EventHandler;
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
@@ -265,8 +266,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.metrics.reset();
                 #[cfg(feature = "security")]
                 {
-                    storage.encrypted = false;
-                    let _ = self.security_manager.disconnect(h);
+                    storage.security_level = SecurityLevel::NoEncryption;
+                    storage.bondable = false;
+                    let _ = self.security_manager.disconnect(h, storage.peer_identity);
                 }
                 return Ok(());
             }
@@ -511,23 +513,113 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         mtu
     }
 
-    pub(crate) fn get_encrypted(&self, index: u8) -> bool {
+    pub(crate) fn pass_key_confirm(&self, index: u8, confirm: bool) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
-            self.state.borrow().connections[index as usize].encrypted
+            if self.state.borrow_mut().connections[index as usize].state == ConnectionState::Connected {
+                self.security_manager.handle_pass_key_confirm(
+                    confirm,
+                    self,
+                    &self.state.borrow().connections[index as usize],
+                )
+            } else {
+                Err(Error::Disconnected)
+            }
         }
         #[cfg(not(feature = "security"))]
-        false
+        Err(Error::NotSupported)
     }
 
-    pub(crate) fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
+    pub(crate) fn pass_key_input(&self, index: u8, pass_key: u32) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            if self.state.borrow_mut().connections[index as usize].state == ConnectionState::Connected {
+                self.security_manager.handle_pass_key_input(
+                    pass_key,
+                    self,
+                    &self.state.borrow().connections[index as usize],
+                )
+            } else {
+                Err(Error::Disconnected)
+            }
+        }
+        #[cfg(not(feature = "security"))]
+        Err(Error::NotSupported)
+    }
+
+    pub(crate) fn request_security(&self, index: u8) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            let current_level = self.get_security_level(index)?;
+            if current_level != SecurityLevel::NoEncryption {
+                return Err(Error::NotSupported);
+            }
+            self.security_manager
+                .initiate(self, &self.state.borrow().connections[index as usize])
+        }
+        #[cfg(not(feature = "security"))]
+        Err(Error::NotSupported)
+    }
+
+    pub(crate) fn get_security_level(&self, index: u8) -> Result<SecurityLevel, Error> {
+        let state = self.state.borrow();
+        match state.connections[index as usize].state {
+            ConnectionState::Connected => {
+                #[cfg(feature = "security")]
+                {
+                    Ok(state.connections[index as usize].security_level)
+                }
+                #[cfg(not(feature = "security"))]
+                Ok(SecurityLevel::NoEncryption)
+            }
+            _ => Err(Error::Disconnected),
+        }
+    }
+
+    pub(crate) fn get_bondable(&self, index: u8) -> Result<bool, Error> {
+        let state = self.state.borrow();
+        match state.connections[index as usize].state {
+            ConnectionState::Connected => {
+                #[cfg(feature = "security")]
+                {
+                    Ok(state.connections[index as usize].bondable)
+                }
+                #[cfg(not(feature = "security"))]
+                Ok(false)
+            }
+            _ => Err(Error::Disconnected),
+        }
+    }
+
+    pub(crate) fn set_bondable(&self, index: u8, bondable: bool) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            let mut state = self.state.borrow_mut();
+            match state.connections[index as usize].state {
+                ConnectionState::Connected => {
+                    state.connections[index as usize].bondable = bondable;
+                    Ok(())
+                }
+                _ => Err(Error::Disconnected),
+            }
+        }
+        #[cfg(not(feature = "security"))]
+        Err(Error::NotSupported)
+    }
+
+    pub(crate) fn handle_security_channel(
+        &self,
+        handle: ConnHandle,
+        pdu: Pdu<P::Packet>,
+        event_handler: &dyn EventHandler,
+    ) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let state = self.state.borrow();
             for storage in state.connections.iter() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if let Err(error) = self.security_manager.handle(pdu, self, storage) {
+                        if let Err(error) = self.security_manager.handle_l2cap_command(pdu, self, storage) {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
                         }
@@ -543,14 +635,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn handle_security_hci_event(&self, event: bt_hci::event::Event) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
-            self.security_manager.handle_event(&event)?;
-
-            if let bt_hci::event::Event::EncryptionChangeV1(event_data) = event {
-                self.with_connected_handle(event_data.handle, |storage| {
-                    storage.encrypted = event_data.enabled;
-                    Ok(())
-                })?;
-            }
+            self.security_manager.handle_hci_event(event, self)?;
         }
         Ok(())
     }
@@ -625,9 +710,6 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                             host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
                                 .await?;
                         }
-                        // Emit the bonded event after enabling encryption
-                        self.post_event(index as u8, ConnectionEvent::Bonded { bond_info })
-                            .await;
                     } else {
                         warn!("[host] Enable encryption failed, no long term key")
                     }
@@ -637,7 +719,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             }
             crate::security_manager::SecurityEventData::Timeout => {
                 warn!("[host] Pairing timeout");
-                self.security_manager.cancel_timeout()?;
+                self.security_manager.cancel_timeout();
             }
             crate::security_manager::SecurityEventData::TimerChange => (),
         }
@@ -694,7 +776,9 @@ pub struct ConnectionStorage<P> {
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
     #[cfg(feature = "security")]
-    pub encrypted: bool,
+    pub security_level: SecurityLevel,
+    #[cfg(feature = "security")]
+    pub bondable: bool,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -778,11 +862,13 @@ impl<P> ConnectionStorage<P> {
             #[cfg(feature = "connection-metrics")]
             metrics: Metrics::new(),
             #[cfg(feature = "security")]
-            encrypted: false,
+            security_level: SecurityLevel::NoEncryption,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),
             reassembly: PacketReassembly::new(),
+            #[cfg(feature = "security")]
+            bondable: false,
         }
     }
 }

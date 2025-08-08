@@ -12,10 +12,13 @@ embassy-executor = { version = "0.8" }
 embassy-sync = { version = "0.7" }
 embassy-time = "0.4"
 embedded-hal = "1.0"
+embedded-hal-async = "1.0"
 static_cell = "2"
 embedded-io = "0.6"
 heapless = "0.8"
 rand_core = { version = "0.6", default-features = false }
+embedded-storage-async = { version = "0.4.1", optional = true }
+sequential-storage = { version = "5.0.0", optional = true }
 
 defmt = { version = "1.0.1", optional = true }
 log = { version = "0.4", optional = true }
@@ -36,5 +39,7 @@ log = [
 ]
 security = [
     "trouble-host/security",
+    "dep:sequential-storage",
+    "dep:embedded-storage-async"
 ]
 std = []

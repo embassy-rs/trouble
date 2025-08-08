@@ -16,8 +16,21 @@ pub mod ble_l2cap_peripheral;
 pub mod ble_scanner;
 pub mod high_throughput_ble_l2cap_central;
 pub mod high_throughput_ble_l2cap_peripheral;
+#[cfg(feature = "security")]
+pub mod ble_bas_central_auth;
+#[cfg(feature = "security")]
+pub mod ble_bas_peripheral_auth;
+#[cfg(feature = "security")]
+pub mod ble_bas_central_pass_key;
+#[cfg(feature = "security")]
+pub mod ble_bas_peripheral_pass_key;
+#[cfg(feature = "security")]
+pub mod ble_bas_central_bonding;
+#[cfg(feature = "security")]
+pub mod ble_bas_peripheral_bonding;
 
 #[cfg(feature = "std")]
 mod alloc;
+
 #[cfg(feature = "std")]
 pub use alloc::BigAlloc;

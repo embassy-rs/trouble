@@ -69,3 +69,27 @@ required-features = ["security"]
 [[bin]]
 name = "ble_bas_peripheral_sec"
 required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_auth"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_central_auth"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_pass_key"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_central_pass_key"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_central_bonding"
+required-features = ["security", "nrf52840"]
+
+[[bin]]
+name = "ble_bas_peripheral_bonding"
+required-features = ["security", "nrf52840"]

@@ -12,8 +12,6 @@ use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
 use bt_hci::FromHciBytesError;
-#[cfg(feature = "security")]
-use heapless::Vec;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
@@ -21,6 +19,9 @@ use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+pub use crate::types::capabilities::IoCapabilities;
+#[cfg(feature = "security")]
+use heapless::Vec;
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable
@@ -102,6 +103,9 @@ pub mod prelude {
     pub use crate::peripheral::*;
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
+    #[cfg(feature = "security")]
+    pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+    pub use crate::types::capabilities::IoCapabilities;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
     pub use crate::{Address, Identity};
@@ -250,7 +254,7 @@ pub enum BleHostError<E> {
 pub const MAX_INVALID_DATA_LEN: usize = 16;
 
 /// Errors related to Host.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Error encoding parameters for HCI commands.
@@ -612,6 +616,19 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
                 .connections
                 .security_manager
                 .set_random_generator_seed(random_seed);
+        }
+        self
+    }
+    /// Set the IO capabilities used by the security manager.
+    ///
+    /// Only relevant if the feature `security` is enabled.
+    pub fn set_io_capabilities(self, io_capabilities: IoCapabilities) -> Self {
+        #[cfg(feature = "security")]
+        {
+            self.host
+                .connections
+                .security_manager
+                .set_io_capabilities(io_capabilities);
         }
         self
     }

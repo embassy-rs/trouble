@@ -1,7 +1,8 @@
 use super::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::codec::{Decode, Encode, Type};
 use crate::security_manager::crypto::IoCap;
-use crate::Error;
+use crate::{Error, IoCapabilities};
+use core::fmt::{Display, Formatter};
 
 /// Pairing Failed Reason
 // ([Vol 3] Part H, Section 3.5.5).
@@ -280,71 +281,33 @@ impl defmt::Format for Command {
     }
 }
 
-/// Device I/O capabilities
-// ([Vol 3] Part H, Section 2.3.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IoCapabilities {
-    /// Display only
-    DisplayOnly,
-    /// Yes/no display
-    DisplayYesNo,
-    /// Keyboard only
-    KeyboardOnly,
-    /// No input and no output
-    NoInputNoOutput,
-    /// Both keyboard and display
-    KeyboardDisplay,
-}
+/// A value for use in numeric comparison
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct PassKey(pub(crate) u32);
 
-impl TryFrom<u8> for IoCapabilities {
-    type Error = Error;
-    fn try_from(val: u8) -> Result<Self, Error> {
-        Ok(match val {
-            0x00 => Self::DisplayOnly,
-            0x01 => Self::DisplayYesNo,
-            0x02 => Self::KeyboardOnly,
-            0x03 => Self::NoInputNoOutput,
-            0x04 => Self::KeyboardDisplay,
-            _ => return Err(Error::InvalidValue),
-        })
+impl PassKey {
+    /// Get the underlying value as an integer.
+    pub fn value(&self) -> u32 {
+        self.0
     }
 }
 
-impl From<IoCapabilities> for u8 {
-    fn from(val: IoCapabilities) -> u8 {
-        match val {
-            IoCapabilities::DisplayOnly => 0x00,
-            IoCapabilities::DisplayYesNo => 0x01,
-            IoCapabilities::KeyboardOnly => 0x02,
-            IoCapabilities::NoInputNoOutput => 0x03,
-            IoCapabilities::KeyboardDisplay => 0x04,
-        }
-    }
-}
-
-impl AsRef<str> for IoCapabilities {
-    fn as_ref(&self) -> &str {
-        match self {
-            IoCapabilities::DisplayOnly => "Display Only",
-            IoCapabilities::DisplayYesNo => "Display Yes/No",
-            IoCapabilities::KeyboardOnly => "Keyboard Only",
-            IoCapabilities::NoInputNoOutput => "No Input / No Output",
-            IoCapabilities::KeyboardDisplay => "Keyboard and Display",
-        }
-    }
-}
-
-impl core::fmt::Display for IoCapabilities {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.as_ref())
+impl Display for PassKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:06}", self.0)
     }
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for IoCapabilities {
+impl defmt::Format for PassKey {
     fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "{}", self.as_ref())
+        defmt::write!(fmt, "{=u32:06}", self.0)
     }
+}
+
+pub enum AppEvent {
+    PassKeyConfirm,
+    PassKeyCancel,
 }
 
 /// Out of band (OOB) authentication data
@@ -456,7 +419,7 @@ const AUTH_REQ_CT2: u8 = 0b0010_0000;
 impl AuthReq {
     /// Build a AuthReq octet
     pub fn new(bonding: BondingFlag) -> Self {
-        AuthReq((bonding as u8) | AUTH_REQ_MITM | AUTH_REQ_SECURE_CONNECTION | AUTH_REQ_CT2)
+        AuthReq((bonding as u8) | AUTH_REQ_MITM | AUTH_REQ_SECURE_CONNECTION)
     }
     /// Bond requested
     pub fn bond(&self) -> BondingFlag {
@@ -645,8 +608,8 @@ impl Default for PairingFeatures {
             use_oob: UseOutOfBand::NotPresent,
             security_properties: AuthReq::new(BondingFlag::NoBonding),
             maximum_encryption_key_size: ENCRYPTION_KEY_SIZE_128_BITS,
-            initiator_key_distribution: KeyDistributionFlags(KeyDistributionFlags::ENCRYPTION_KEY),
-            responder_key_distribution: KeyDistributionFlags(KeyDistributionFlags::ENCRYPTION_KEY),
+            initiator_key_distribution: KeyDistributionFlags(0),
+            responder_key_distribution: KeyDistributionFlags(0),
         }
     }
 }

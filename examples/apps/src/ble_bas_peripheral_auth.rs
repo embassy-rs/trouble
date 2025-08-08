@@ -1,6 +1,7 @@
 use embassy_futures::join::join;
-use embassy_futures::select::select;
+use embassy_futures::select::{select, Either};
 use embassy_time::Timer;
+use embedded_hal_async::digital::Wait;
 use rand_core::{CryptoRng, RngCore};
 use trouble_host::prelude::*;
 
@@ -29,10 +30,12 @@ struct BatteryService {
 }
 
 /// Run the BLE stack.
-pub async fn run<C, RNG>(controller: C, random_generator: &mut RNG)
+pub async fn run<C, RNG, YES, NO>(controller: C, random_generator: &mut RNG, mut yes: YES, mut no: NO)
 where
     C: Controller,
     RNG: RngCore + CryptoRng,
+    YES: embedded_hal_async::digital::Wait,
+    NO: embedded_hal_async::digital::Wait
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
@@ -42,7 +45,8 @@ where
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator);
+        .set_random_generator_seed(random_generator)
+        .set_io_capabilities(IoCapabilities::DisplayYesNo);
     let Host {
         mut peripheral, runner, ..
     } = stack.build();
@@ -52,28 +56,26 @@ where
         name: "TrouBLE",
         appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
     }))
-    .unwrap();
+        .unwrap();
 
     let _ = join(ble_task(runner), async {
         loop {
             match advertise("Trouble Example", &mut peripheral, &server).await {
                 Ok(conn) => {
-                    // set up tasks when the connection is established to a central, so they don't run when no one is connected.
-                    let a = gatt_events_task(&server, &conn);
-                    let b = custom_task(&server, &conn, &stack);
-                    // run until any task ends (usually because the connection has been closed),
-                    // then return to advertising state.
+                    let a = gatt_events_task(&server, &conn, &mut yes, &mut no);
+                    let b = custom_task(&server, &conn);
                     select(a, b).await;
+                    Timer::after_secs(1).await;
                 }
                 Err(e) => {
                     #[cfg(feature = "defmt")]
                     let e = defmt::Debug2Format(&e);
-                    panic!("[adv] error: {:?}", e);
+                    error!("[adv] error: {:?}", e);
                 }
             }
         }
     })
-    .await;
+        .await;
 }
 
 /// This is a background task that is required to run forever alongside any other BLE tasks.
@@ -105,16 +107,34 @@ async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
 ///
 /// This function will handle the GATT events and process them.
 /// This is how we interact with read and write requests.
-async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>) -> Result<(), Error> {
+async fn gatt_events_task<YES, NO>(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>, yes: &mut YES, no: &mut NO) -> Result<(), Error>
+where
+    YES: Wait,
+    NO: Wait
+{
     let level = server.battery_service.level;
     let reason = loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
-            #[cfg(feature = "security")]
-            GattConnectionEvent::PairingComplete { security_level, ..} => {
+            GattConnectionEvent::PassKeyDisplay(key) => {
+                info!("[gatt] passkey display: {}", key);
+            },
+            GattConnectionEvent::PassKeyConfirm(key) => {
+                info!("Press the yes or no button to confirm pairing with key = {}", key);
+                match select(yes.wait_for_low(), no.wait_for_low()).await {
+                    Either::First(_) => {
+                        info!("[gatt] confirming pairing");
+                        conn.pass_key_confirm()?
+                    },
+                    Either::Second(_) => {
+                        info!("[gatt] denying pairing");
+                        conn.pass_key_cancel()?
+                    },
+                }
+            },
+            GattConnectionEvent::PairingComplete { security_level, .. } => {
                 info!("[gatt] pairing complete: {:?}", security_level);
             }
-            #[cfg(feature = "security")]
             GattConnectionEvent::PairingFailed(err) => {
                 error!("[gatt] pairing error: {:?}", err);
             }
@@ -126,10 +146,10 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                             info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                         }
                         #[cfg(feature = "security")]
-                        if conn.raw().security_level()?.encrypted() {
+                        if conn.raw().security_level()?.authenticated() {
                             None
                         } else {
-                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                            Some(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
                         }
                         #[cfg(not(feature = "security"))]
                         None
@@ -139,10 +159,10 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                             info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                         }
                         #[cfg(feature = "security")]
-                        if conn.raw().security_level()?.encrypted() {
+                        if conn.raw().security_level()?.authenticated() {
                             None
                         } else {
-                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                            Some(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
                         }
                         #[cfg(not(feature = "security"))]
                         None
@@ -201,25 +221,15 @@ async fn advertise<'values, 'server, C: Controller>(
 /// This task will notify the connected central of a counter value every 2 seconds.
 /// It will also read the RSSI value every 2 seconds.
 /// and will stop when the connection is closed by the central or an error occurs.
-async fn custom_task<C: Controller, P: PacketPool>(
+async fn custom_task<P: PacketPool>(
     server: &Server<'_>,
     conn: &GattConnection<'_, '_, P>,
-    stack: &Stack<'_, C, P>,
 ) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
     loop {
         tick = tick.wrapping_add(1);
-        info!("[custom_task] notifying connection of tick {}", tick);
         if level.notify(conn, &tick).await.is_err() {
-            info!("[custom_task] error notifying connection");
-            break;
-        };
-        // read RSSI (Received Signal Strength Indicator) of the connection.
-        if let Ok(rssi) = conn.raw().rssi(stack).await {
-            info!("[custom_task] RSSI: {:?}", rssi);
-        } else {
-            info!("[custom_task] error getting RSSI");
             break;
         };
         Timer::after_secs(2).await;
