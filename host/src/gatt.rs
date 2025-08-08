@@ -7,16 +7,14 @@ use bt_hci::controller::Controller;
 use bt_hci::param::{ConnHandle, PhyKind, Status};
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::{Channel, DynamicReceiver};
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use embassy_time::Duration;
 use heapless::Vec;
 
-#[cfg(feature = "security")]
-use crate::BondInformation;
-use crate::att::{self, ATT_HANDLE_VALUE_NTF, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns};
+use crate::att::{self, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
@@ -29,7 +27,9 @@ use crate::prelude::ConnectionEvent;
 use crate::security_manager::PassKey;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-use crate::{BleHostError, Error, PacketPool, Stack, config};
+#[cfg(feature = "security")]
+use crate::BondInformation;
+use crate::{config, BleHostError, Error, PacketPool, Stack};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {

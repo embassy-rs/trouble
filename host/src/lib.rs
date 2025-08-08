@@ -12,6 +12,8 @@ use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
 use bt_hci::FromHciBytesError;
+#[cfg(feature = "security")]
+use heapless::Vec;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
@@ -20,8 +22,6 @@ use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
 pub use crate::types::capabilities::IoCapabilities;
-#[cfg(feature = "security")]
-use heapless::Vec;
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable

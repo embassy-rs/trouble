@@ -1,10 +1,11 @@
+use bt_hci::param::ConnHandle;
+use embassy_time::Instant;
+use rand_core::{CryptoRng, RngCore};
+
 use crate::connection::{ConnectionEvent, SecurityLevel};
 use crate::security_manager::types::{BondingFlag, Command};
 use crate::security_manager::TxPacket;
 use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
-use bt_hci::param::ConnHandle;
-use embassy_time::Instant;
-use rand_core::{CryptoRng, RngCore};
 
 pub mod central;
 pub mod peripheral;
@@ -139,10 +140,11 @@ pub enum Event {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{Identity, Packet};
     use rand_chacha::{ChaCha12Core, ChaCha12Rng};
     use rand_core::SeedableRng;
+
+    use super::*;
+    use crate::{Identity, Packet};
 
     #[derive(Debug)]
     pub(crate) struct TestPacket(pub(crate) heapless::Vec<u8, 128>);
