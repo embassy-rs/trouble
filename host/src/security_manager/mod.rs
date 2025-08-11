@@ -12,7 +12,7 @@ use core::ops::DerefMut;
 
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::Event;
-use bt_hci::param::{ConnHandle, LeConnRole};
+use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -569,13 +569,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         match event {
             Event::EncryptionChangeV1(event_data) => match event_data.status.to_result() {
                 Ok(()) => {
-                    trace!("[smp] Encryption Changed event {}", event_data.enabled);
+                    trace!("[smp] Encryption Changed event {:?}", event_data.enabled);
                     connections.with_connected_handle(event_data.handle, |storage| {
                         let sm = self.pairing_sm.borrow();
                         if let Some(sm) = &*sm {
                             let mut rng = self.rng.borrow_mut();
                             let res = sm.handle_event(
-                                pairing::Event::LinkEncryptedResult(event_data.enabled),
+                                pairing::Event::LinkEncryptedResult(event_data.enabled != EncryptionEnabledLevel::Off),
                                 &mut PairingOpsImpl {
                                     security_manager: self,
                                     peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
@@ -595,7 +595,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                             }?
                         } else if let Some(identity) = storage.peer_identity.as_ref() {
                             match self.get_peer_bond_information(identity) {
-                                Some(bond) if event_data.enabled => {
+                                Some(bond) if event_data.enabled != EncryptionEnabledLevel::Off => {
                                     info!("[smp] Encryption changed to true using bond {:?}", bond.identity);
                                     storage.security_level = bond.security_level;
                                 }

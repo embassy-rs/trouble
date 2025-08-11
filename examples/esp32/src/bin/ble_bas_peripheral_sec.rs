@@ -4,7 +4,9 @@
 use embassy_executor::Spawner;
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
-use esp_wifi::ble::controller::BleConnector;
+use esp_radio::Controller;
+use esp_radio::ble::controller::BleConnector;
+use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_peripheral_sec;
 use trouble_host::prelude::ExternalController;
 use {esp_alloc as _, esp_backtrace as _};
@@ -17,10 +19,12 @@ async fn main(_s: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     esp_alloc::heap_allocator!(size: 72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
+    esp_radio_preempt_baremetal::init(timg0.timer0);
 
     let mut rng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);
 
-    let init = esp_wifi::init(timg0.timer0, rng.rng.clone()).unwrap();
+    static RADIO: StaticCell<Controller<'static>> = StaticCell::new();
+    let radio = RADIO.init(esp_radio::init().unwrap());
 
     #[cfg(not(feature = "esp32"))]
     {
@@ -33,7 +37,7 @@ async fn main(_s: Spawner) {
     }
 
     let bluetooth = peripherals.BT;
-    let connector = BleConnector::new(&init, bluetooth);
+    let connector = BleConnector::new(radio, bluetooth);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
     ble_bas_peripheral_sec::run(controller, &mut rng).await;
