@@ -15,7 +15,7 @@ trouble-host = { path = "../../host", default-features = false, features = ["def
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
 nrf-sdc = { version = "0.2", default-features = false, features = ["defmt", "peripheral", "central"] }
 nrf-mpsl = { version = "0.2", default-features = false, features = ["defmt", "critical-section-impl"] }
-bt-hci = { version = "0.3", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.4", default-features = false, features = ["defmt"] }
 
 defmt = "0.3"
 defmt-rtt = "0.4.0"
@@ -40,6 +40,8 @@ debug = 2
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 #bt-hci = { path = "../../../bt-hci" }
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "c6cb1a4dd3147b36e5789fe2b5fb0bfaf14ffbc3" }
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "c6cb1a4dd3147b36e5789fe2b5fb0bfaf14ffbc3" }
 
 [features]
 nrf52832 = [

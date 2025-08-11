@@ -18,7 +18,7 @@ use crate::pdu::Pdu;
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::{BondInformation, PassKey};
-use crate::types::l2cap::ConnParamUpdateReq;
+use crate::types::l2cap::{ConnParamUpdateReq, ConnParamUpdateRes};
 use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Security level of a connection
@@ -495,6 +495,54 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
             timeout: timeout.as_u16(),
         };
         stack.host.send_conn_param_update_req(handle, &param).await
+    }
+
+    /// Respond to updated parameters.
+    pub async fn accept_connection_params<T>(
+        &self,
+        stack: &Stack<'_, T, P>,
+        params: &ConnectParams,
+    ) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdAsync<LeConnUpdate>,
+    {
+        let handle = self.handle();
+        if self.role() == LeConnRole::Central {
+            match stack
+                .host
+                .async_command(LeConnUpdate::new(
+                    handle,
+                    params.min_connection_interval.into(),
+                    params.max_connection_interval.into(),
+                    params.max_latency,
+                    params.supervision_timeout.into(),
+                    params.min_event_length.into(),
+                    params.max_event_length.into(),
+                ))
+                .await
+            {
+                Ok(_) => {
+                    // Use L2CAP signaling to update connection parameters
+                    info!(
+                        "Connection parameters request procedure not supported, use l2cap connection parameter update res instead"
+                    );
+                    let param = ConnParamUpdateRes { result: 0 };
+                    stack.host.send_conn_param_update_res(handle, &param).await?;
+                    Ok(())
+                }
+                Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                    Err(crate::Error::Disconnected.into())
+                }
+                Err(e) => {
+                    info!("Connection parameters request procedure failed");
+                    let param = ConnParamUpdateRes { result: 1 };
+                    stack.host.send_conn_param_update_res(handle, &param).await?;
+                    Err(e)
+                }
+            }
+        } else {
+            Err(crate::Error::NotSupported.into())
+        }
     }
 
     /// Transform BLE connection into a `GattConnection`

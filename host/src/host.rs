@@ -45,8 +45,8 @@ use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
-    ConnParamUpdateReq, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START,
-    L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
+    ConnParamUpdateReq, ConnParamUpdateRes, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT,
+    L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
 
@@ -298,7 +298,7 @@ where
                 // Avoids using the packet buffer for signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL {
                     assert!(data.len() == header.length as usize);
-                    self.channels.signal(acl.handle(), data)?;
+                    self.channels.signal(acl.handle(), data, &self.connections)?;
                     return Ok(());
                 }
 
@@ -622,6 +622,14 @@ where
         param: &ConnParamUpdateReq,
     ) -> Result<(), BleHostError<T::Error>> {
         self.channels.send_conn_param_update_req(handle, self, param).await
+    }
+
+    pub(crate) async fn send_conn_param_update_res(
+        &self,
+        handle: ConnHandle,
+        param: &ConnParamUpdateRes,
+    ) -> Result<(), BleHostError<T::Error>> {
+        self.channels.send_conn_param_update_res(handle, self, param).await
     }
 
     /// Read current host metrics

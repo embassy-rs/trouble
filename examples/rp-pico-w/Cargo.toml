@@ -47,3 +47,13 @@ debug = 2
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 #bt-hci = { path = "../../../bt-hci" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
+cyw43= { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
+cyw43-pio= { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
+embassy-hal-internal = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
+
+

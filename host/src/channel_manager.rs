@@ -16,7 +16,7 @@ use crate::host::BleHost;
 use crate::l2cap::sar::PacketReassembly;
 use crate::l2cap::L2capChannel;
 use crate::pdu::{Pdu, Sdu};
-use crate::prelude::L2capChannelConfig;
+use crate::prelude::{ConnectionEvent, L2capChannelConfig};
 use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capSignalCode,
     L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
@@ -430,7 +430,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     /// Handle incoming L2CAP signal
-    pub(crate) fn signal(&self, conn: ConnHandle, data: &[u8]) -> Result<(), Error> {
+    pub(crate) fn signal(
+        &self,
+        conn: ConnHandle,
+        data: &[u8],
+        manager: &ConnectionManager<'_, P>,
+    ) -> Result<(), Error> {
         let (header, data) = L2capSignalHeader::from_hci_bytes(data)?;
         //trace!(
         //    "[l2cap][conn = {:?}] received signal (req {}) code {:?}",
@@ -467,9 +472,19 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             }
             L2capSignalCode::ConnParamUpdateReq => {
                 let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
-                debug!(
-                    "[l2cap][conn = {:?}] connection param update request: {:?}, ignored",
-                    conn, req
+                debug!("[l2cap][conn = {:?}] connection param update request: {:?}", conn, req);
+                let interval_min: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_min);
+                let interva_max: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_max);
+                let timeout: bt_hci::param::Duration<10_000> = bt_hci::param::Duration::from_u16(req.timeout);
+                use embassy_time::Duration;
+                let _ = manager.post_handle_event(
+                    conn,
+                    ConnectionEvent::RequestConnectionParams {
+                        min_connection_interval: Duration::from_micros(interval_min.as_micros()),
+                        max_connection_interval: Duration::from_micros(interval_min.as_micros()),
+                        max_latency: req.latency,
+                        supervision_timeout: Duration::from_micros(timeout.as_micros()),
+                    },
                 );
             }
             L2capSignalCode::ConnParamUpdateRes => {
@@ -730,6 +745,17 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         handle: ConnHandle,
         host: &BleHost<'d, T, P>,
         param: &ConnParamUpdateReq,
+    ) -> Result<(), BleHostError<T::Error>> {
+        let identifier = self.next_request_id();
+        let mut tx = [0; 16];
+        host.l2cap_signal(handle, identifier, param, &mut tx[..]).await
+    }
+
+    pub(crate) async fn send_conn_param_update_res<T: Controller>(
+        &self,
+        handle: ConnHandle,
+        host: &BleHost<'d, T, P>,
+        param: &ConnParamUpdateRes,
     ) -> Result<(), BleHostError<T::Error>> {
         let identifier = self.next_request_id();
         let mut tx = [0; 16];

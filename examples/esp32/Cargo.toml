@@ -7,24 +7,26 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 embassy-executor    = { version = "0.7.0", features = ["task-arena-size-32768"] }
 esp-bootloader-esp-idf = "0.2.0"
-esp-backtrace = { version = "0.17.0", features = [ "exception-handler", "panic-handler", "println" ] }
+esp-backtrace = { version = "0.17.0", features = [ "panic-handler", "println" ] }
 esp-hal = { version = "1.0.0-rc.0", features = [ "unstable" ] }
 esp-hal-embassy = { version = "0.9.0" }
 esp-alloc = { version = "0.8.0" }
 esp-println = { version = "0.15.0", features = ["log-04"] }
-esp-wifi = { version = "0.15.0", features = [ "ble" ] }
+esp-radio = { version = "0.15.0", features = [ "unstable", "ble" ] }
+esp-radio-preempt-baremetal = { version = "0.0.1", features = ["log-04"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
 trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
+static_cell = "2"
 
 [features]
 default = ["esp32c3"]
 
-esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-wifi/esp32", "esp-bootloader-esp-idf/esp32"]
-esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-wifi/esp32c2", "esp-bootloader-esp-idf/esp32c2"]
-esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-wifi/esp32c3", "esp-bootloader-esp-idf/esp32c3"]
-esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6", "esp-println/esp32c6", "esp-wifi/esp32c6", "esp-bootloader-esp-idf/esp32c6"]
-esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-wifi/esp32h2", "esp-bootloader-esp-idf/esp32h2"]
-esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3", "esp-println/esp32s3", "esp-wifi/esp32s3", "esp-bootloader-esp-idf/esp32s3"]
+esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-radio/esp32", "esp-radio-preempt-baremetal/esp32", "esp-bootloader-esp-idf/esp32"]
+esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-radio-preempt-baremetal/esp32c2", "esp-radio/esp32c2", "esp-bootloader-esp-idf/esp32c2"]
+esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-radio-preempt-baremetal/esp32c3", "esp-radio/esp32c3", "esp-bootloader-esp-idf/esp32c3"]
+esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6", "esp-println/esp32c6", "esp-radio-preempt-baremetal/esp32c6", "esp-radio/esp32c6", "esp-bootloader-esp-idf/esp32c6"]
+esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-radio-preempt-baremetal/esp32h2", "esp-radio/esp32h2", "esp-bootloader-esp-idf/esp32h2"]
+esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3", "esp-println/esp32s3", "esp-radio-preempt-baremetal/esp32s3", "esp-radio/esp32s3", "esp-bootloader-esp-idf/esp32s3"]
 
 security = [
     "trouble-example-apps/security",
@@ -53,9 +55,20 @@ name = "ble_bas_peripheral_sec"
 required-features = ["security"]
 
 [patch.crates-io]
-# esp-wifi = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
-# esp-backtrace = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
-# esp-hal = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
-# esp-hal-embassy = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
-# esp-alloc = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
-# esp-println = {git = "https://github.com/esp-rs/esp-hal.git", rev = "56be259c41305f24276852d2af4fce16247107bd"}
+esp-radio = {git = "https://github.com/esp-rs/esp-hal.git", rev = "a7bd8980ea2aff28d20bc501e86886dc917c9e28"}
+esp-radio-preempt-baremetal = {git = "https://github.com/esp-rs/esp-hal.git", rev = "a7bd8980ea2aff28d20bc501e86886dc917c9e28"}
+esp-backtrace = {git = "https://github.com/esp-rs/esp-hal.git", rev = "a7bd8980ea2aff28d20bc501e86886dc917c9e28"}
+esp-hal = {git = "https://github.com/esp-rs/esp-hal.git", rev = "a7bd8980ea2aff28d20bc501e86886dc917c9e28"}
+esp-bootloader-esp-idf = {git = "https://github.com/esp-rs/esp-hal.git", rev = "a7bd8980ea2aff28d20bc501e86886dc917c9e28"}
+esp-hal-embassy = {git = "https://github.com/esp-rs/esp-hal.git", rev = "a7bd8980ea2aff28d20bc501e86886dc917c9e28"}
+esp-alloc = {git = "https://github.com/esp-rs/esp-hal.git", rev = "a7bd8980ea2aff28d20bc501e86886dc917c9e28"}
+esp-println = {git = "https://github.com/esp-rs/esp-hal.git", rev = "a7bd8980ea2aff28d20bc501e86886dc917c9e28"}
+
+#esp-backtrace = { path = "../../../esp-hal/esp-backtrace" }
+#esp-bootloader-esp-idf = { path = "../../../esp-hal/esp-bootloader-esp-idf" }
+#esp-hal = { path = "../../../esp-hal/esp-hal" }
+#esp-hal-embassy = { path = "../../../esp-hal/esp-hal-embassy" }
+#esp-alloc = { path = "../../../esp-hal/esp-alloc" }
+#esp-println = { path = "../../../esp-hal/esp-println" }
+#esp-radio = { path = "../../../esp-hal/esp-radio" }
+#esp-radio-preempt-baremetal = { path = "../../../esp-hal/esp-radio-preempt-baremetal" }
