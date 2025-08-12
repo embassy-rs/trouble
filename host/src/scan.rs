@@ -44,7 +44,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
     {
         let host = &self.central.stack.host;
         let drop = crate::host::OnDrop::new(|| {
-            host.scan_command_state.cancel(false);
+            host.scan_command_state.cancel(true);
         });
         host.scan_command_state.request().await;
         self.central.set_accept_filter(config.filter_accept_list).await?;
