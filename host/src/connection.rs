@@ -107,6 +107,8 @@ pub enum PhySet {
 }
 
 /// Connection parameters.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectParams {
     /// Minimum connection interval.
     pub min_connection_interval: Duration,
