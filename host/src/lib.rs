@@ -12,6 +12,7 @@ use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
 use bt_hci::FromHciBytesError;
+use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::Vec;
 use rand_core::{CryptoRng, RngCore};
@@ -700,4 +701,12 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     pub fn get_bond_information(&self) -> Vec<BondInformation, BI_COUNT> {
         self.host.connections.security_manager.get_bond_information()
     }
+}
+
+pub(crate) fn bt_hci_duration<const US: u32>(d: Duration) -> bt_hci::param::Duration<US> {
+    bt_hci::param::Duration::from_micros(d.as_micros())
+}
+
+pub(crate) fn bt_hci_ext_duration<const US: u16>(d: Duration) -> bt_hci::param::ExtDuration<US> {
+    bt_hci::param::ExtDuration::from_micros(d.as_micros())
 }

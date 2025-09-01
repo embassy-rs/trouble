@@ -10,7 +10,7 @@ use embassy_time::Instant;
 
 use crate::command::CommandState;
 use crate::connection::ScanConfig;
-use crate::{BleHostError, Central, PacketPool};
+use crate::{bt_hci_duration, BleHostError, Central, PacketPool};
 
 /// A scanner that wraps a central to provide additional functionality
 /// around BLE scanning.
@@ -51,8 +51,8 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
 
         let scanning = ScanningPhy {
             active_scan: config.active,
-            scan_interval: config.interval.into(),
-            scan_window: config.window.into(),
+            scan_interval: bt_hci_duration(config.interval),
+            scan_window: bt_hci_duration(config.window),
         };
         let phy_params = crate::central::create_phy_params(scanning, config.phys);
         let host = &self.central.stack.host;
@@ -70,7 +70,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         host.command(LeSetExtScanEnable::new(
             true,
             FilterDuplicates::Disabled,
-            config.timeout.into(),
+            bt_hci_duration(config.timeout),
             bt_hci::param::Duration::from_secs(0),
         ))
         .await?;
@@ -80,7 +80,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             deadline: if config.timeout.as_ticks() == 0 {
                 None
             } else {
-                Some(Instant::now() + config.timeout.into())
+                Some(Instant::now() + config.timeout)
             },
             done: false,
         })
@@ -110,8 +110,8 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             } else {
                 bt_hci::param::LeScanKind::Passive
             },
-            config.interval.into(),
-            config.window.into(),
+            bt_hci_duration(config.interval),
+            bt_hci_duration(config.window),
             host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             if config.filter_accept_list.is_empty() {
                 bt_hci::param::ScanningFilterPolicy::BasicUnfiltered

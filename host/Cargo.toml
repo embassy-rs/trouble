@@ -19,7 +19,7 @@ target = "thumbv7em-none-eabi"
 
 [dependencies]
 aes = { version = "0.8.2", optional = true }
-bt-hci = { version = "0.4", features = ["embassy-time", "uuid"] }
+bt-hci = { version = "0.4", features = ["uuid"] }
 cmac = { version = "0.7.2", optional = true }
 embedded-io = { version = "0.6" }
 embassy-sync = "0.7"

@@ -89,7 +89,6 @@ checksum = "a496a585c0e2e00195e558af18342f79afd67598d3edb32e78c006e606a31386"
 dependencies = [
  "btuuid",
  "embassy-sync 0.7.0",
- "embassy-time",
  "embedded-io",
  "embedded-io-async",
  "futures-intrusive",
