@@ -322,16 +322,6 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     pub fn new(
         att_table: AttributeTable<'values, M, ATT_MAX>,
     ) -> AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX> {
-        att_table.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                trace!(
-                    "Entire table handle {} uuid {:x?}, last: {}",
-                    att.handle,
-                    att.uuid,
-                    att.last_handle_in_group
-                );
-            }
-        });
         let cccd_tables = CccdTables::new(&att_table);
         AttributeServer {
             att_table,
@@ -442,37 +432,22 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let mut data = WriteCursor::new(buf);
 
         let (mut header, mut body) = data.split(2)?;
-        warn!("Looking for group: {:x?} between {} and {}", group_type, start, end);
-        // self.att_table.iterate(|mut it| {
-        //     while let Some(att) = it.next() {
-        //         trace!("Entire table handle {} uuid {:x?}", att.handle, att.uuid);
-        //     }
-        // });
         let err = self.att_table.iterate(|mut it| {
             let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
-            let mut found = false;
             while let Some(att) = it.next() {
+                // trace!("[read_by_group] Check attribute {:x} {}", att.uuid, att.handle);
                 if &att.uuid == group_type && att.handle >= start && att.handle <= end {
-                    debug!("[read_by_group] found! {:x?} {}", att.uuid, att.handle);
+                    // debug!("[read_by_group] found! {:x} {}", att.uuid, att.handle);
                     handle = att.handle;
 
                     body.write(att.handle)?;
                     body.write(att.last_handle_in_group)?;
-                    debug!("last_handle_in_group: {:?}", att.last_handle_in_group);
                     err = self.read_attribute_data(connection, 0, att, body.write_buf());
-                    debug!("read_attribute_data: {:?}", err);
                     if let Ok(len) = err {
                         body.commit(len)?;
                     }
-                    found = true;
                     break;
                 }
-            }
-            if !found {
-                warn!(
-                    "[read_by_group] Dit not find attribute {:x?} between {}  {}",
-                    group_type, start, end
-                );
             }
             err
         });
