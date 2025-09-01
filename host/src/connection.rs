@@ -19,7 +19,7 @@ use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::{BondInformation, PassKey};
 use crate::types::l2cap::{ConnParamUpdateReq, ConnParamUpdateRes};
-use crate::{BleHostError, Error, Identity, PacketPool, Stack};
+use crate::{bt_hci_duration, BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Security level of a connection
 ///
@@ -456,19 +456,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         // First, check the local supported features to ensure that the connection update is supported.
         let features = stack.host.command(LeReadLocalSupportedFeatures::new()).await?;
         if features.supports_conn_parameters_request_procedure() || self.role() == LeConnRole::Central {
-            match stack
-                .host
-                .async_command(LeConnUpdate::new(
-                    handle,
-                    params.min_connection_interval.into(),
-                    params.max_connection_interval.into(),
-                    params.max_latency,
-                    params.supervision_timeout.into(),
-                    params.min_event_length.into(),
-                    params.max_event_length.into(),
-                ))
-                .await
-            {
+            match stack.host.async_command(into_le_conn_update(handle, params)).await {
                 Ok(_) => return Ok(()),
                 Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                     return Err(crate::Error::Disconnected.into());
@@ -487,9 +475,9 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         info!(
             "Connection parameters request procedure not supported, use l2cap connection parameter update req instead"
         );
-        let interval_min: bt_hci::param::Duration<1_250> = params.min_connection_interval.into();
-        let interva_max: bt_hci::param::Duration<1_250> = params.max_connection_interval.into();
-        let timeout: bt_hci::param::Duration<10_000> = params.supervision_timeout.into();
+        let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);
+        let interva_max: bt_hci::param::Duration<1_250> = bt_hci_duration(params.max_connection_interval);
+        let timeout: bt_hci::param::Duration<10_000> = bt_hci_duration(params.supervision_timeout);
         let param = ConnParamUpdateReq {
             interval_min: interval_min.as_u16(),
             interval_max: interva_max.as_u16(),
@@ -510,19 +498,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     {
         let handle = self.handle();
         if self.role() == LeConnRole::Central {
-            match stack
-                .host
-                .async_command(LeConnUpdate::new(
-                    handle,
-                    params.min_connection_interval.into(),
-                    params.max_connection_interval.into(),
-                    params.max_latency,
-                    params.supervision_timeout.into(),
-                    params.min_event_length.into(),
-                    params.max_event_length.into(),
-                ))
-                .await
-            {
+            match stack.host.async_command(into_le_conn_update(handle, params)).await {
                 Ok(_) => {
                     // Use L2CAP signaling to update connection parameters
                     info!(
@@ -562,4 +538,16 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     ) -> Result<GattConnection<'stack, 'server, P>, Error> {
         GattConnection::try_new(self, server)
     }
+}
+
+fn into_le_conn_update(handle: ConnHandle, params: &ConnectParams) -> LeConnUpdate {
+    LeConnUpdate::new(
+        handle,
+        bt_hci_duration(params.min_connection_interval),
+        bt_hci_duration(params.max_connection_interval),
+        params.max_latency,
+        bt_hci_duration(params.supervision_timeout),
+        bt_hci_duration(params.min_event_length),
+        bt_hci_duration(params.max_event_length),
+    )
 }

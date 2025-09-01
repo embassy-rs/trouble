@@ -5,7 +5,7 @@ use embassy_time::Duration;
 
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::types::uuid::Uuid;
-use crate::{codec, Address};
+use crate::{bt_hci_duration, codec, Address};
 
 /// Transmit power levels.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -57,11 +57,7 @@ impl<'d> AdvertisementSet<'d> {
         let mut ret = [NEW_SET; N];
         for (i, set) in sets.iter().enumerate() {
             ret[i].adv_handle = AdvHandle::new(i as u8);
-            ret[i].duration = set
-                .params
-                .timeout
-                .unwrap_or(embassy_time::Duration::from_micros(0))
-                .into();
+            ret[i].duration = bt_hci_duration(set.params.timeout.unwrap_or(embassy_time::Duration::from_micros(0)));
             ret[i].max_ext_adv_events = set.params.max_events.unwrap_or(0);
         }
         ret

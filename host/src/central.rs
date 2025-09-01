@@ -5,7 +5,7 @@ use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
 use embassy_futures::select::{select, Either};
 
 use crate::connection::{ConnectConfig, Connection, PhySet};
-use crate::{BleHostError, Error, PacketPool, Stack};
+use crate::{bt_hci_duration, BleHostError, Error, PacketPool, Stack};
 
 /// A type implementing the BLE central role.
 pub struct Central<'stack, C, P: PacketPool> {
@@ -37,18 +37,18 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
         host.async_command(LeCreateConn::new(
-            config.scan_config.interval.into(),
-            config.scan_config.window.into(),
+            bt_hci_duration(config.scan_config.interval),
+            bt_hci_duration(config.scan_config.window),
             true,
             AddrKind::PUBLIC,
             BdAddr::default(),
             host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
-            config.connect_params.min_connection_interval.into(),
-            config.connect_params.max_connection_interval.into(),
+            bt_hci_duration(config.connect_params.min_connection_interval),
+            bt_hci_duration(config.connect_params.max_connection_interval),
             config.connect_params.max_latency,
-            config.connect_params.supervision_timeout.into(),
-            config.connect_params.min_event_length.into(),
-            config.connect_params.max_event_length.into(),
+            bt_hci_duration(config.connect_params.supervision_timeout),
+            bt_hci_duration(config.connect_params.min_event_length),
+            bt_hci_duration(config.connect_params.max_event_length),
         ))
         .await?;
         match select(
@@ -91,14 +91,14 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         self.set_accept_filter(config.scan_config.filter_accept_list).await?;
 
         let initiating = InitiatingPhy {
-            scan_interval: config.scan_config.interval.into(),
-            scan_window: config.scan_config.window.into(),
-            conn_interval_min: config.connect_params.min_connection_interval.into(),
-            conn_interval_max: config.connect_params.max_connection_interval.into(),
+            scan_interval: bt_hci_duration(config.scan_config.interval),
+            scan_window: bt_hci_duration(config.scan_config.window),
+            conn_interval_min: bt_hci_duration(config.connect_params.min_connection_interval),
+            conn_interval_max: bt_hci_duration(config.connect_params.max_connection_interval),
             max_latency: config.connect_params.max_latency,
-            supervision_timeout: config.connect_params.supervision_timeout.into(),
-            min_ce_len: config.connect_params.min_event_length.into(),
-            max_ce_len: config.connect_params.max_event_length.into(),
+            supervision_timeout: bt_hci_duration(config.connect_params.supervision_timeout),
+            min_ce_len: bt_hci_duration(config.connect_params.min_event_length),
+            max_ce_len: bt_hci_duration(config.connect_params.max_event_length),
         };
         let phy_params = create_phy_params(initiating, config.scan_config.phys);
 
