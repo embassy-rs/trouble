@@ -322,6 +322,16 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     pub fn new(
         att_table: AttributeTable<'values, M, ATT_MAX>,
     ) -> AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX> {
+        att_table.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                trace!(
+                    "Entire table handle {} uuid {:x?}, last: {}",
+                    att.handle,
+                    att.uuid,
+                    att.last_handle_in_group
+                );
+            }
+        });
         let cccd_tables = CccdTables::new(&att_table);
         AttributeServer {
             att_table,
@@ -432,22 +442,37 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let mut data = WriteCursor::new(buf);
 
         let (mut header, mut body) = data.split(2)?;
+        warn!("Looking for group: {:x?} between {} and {}", group_type, start, end);
+        // self.att_table.iterate(|mut it| {
+        //     while let Some(att) = it.next() {
+        //         trace!("Entire table handle {} uuid {:x?}", att.handle, att.uuid);
+        //     }
+        // });
         let err = self.att_table.iterate(|mut it| {
             let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
+            let mut found = false;
             while let Some(att) = it.next() {
-                // trace!("[read_by_group] Check attribute {:x} {}", att.uuid, att.handle);
                 if &att.uuid == group_type && att.handle >= start && att.handle <= end {
-                    // debug!("[read_by_group] found! {:x} {}", att.uuid, att.handle);
+                    debug!("[read_by_group] found! {:x?} {}", att.uuid, att.handle);
                     handle = att.handle;
 
                     body.write(att.handle)?;
                     body.write(att.last_handle_in_group)?;
+                    debug!("last_handle_in_group: {:?}", att.last_handle_in_group);
                     err = self.read_attribute_data(connection, 0, att, body.write_buf());
+                    debug!("read_attribute_data: {:?}", err);
                     if let Ok(len) = err {
                         body.commit(len)?;
                     }
+                    found = true;
                     break;
                 }
+            }
+            if !found {
+                warn!(
+                    "[read_by_group] Dit not find attribute {:x?} between {}  {}",
+                    group_type, start, end
+                );
             }
             err
         });
@@ -782,5 +807,128 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     /// Set the CCCD table for a connection
     pub fn set_cccd_table(&self, connection: &Connection<'_, P>, table: CccdTable<CCCD_MAX>) {
         self.cccd_tables.set_cccd_table(&connection.peer_identity(), table);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connection_manager::tests::{setup, ADDR_1};
+    use crate::prelude::*;
+    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+    use core::task::Poll;
+
+    type FacadeDummyType = [u8; 0];
+
+    #[test]
+    fn test_attribute_server_last_handle() {
+        let _ = env_logger::try_init();
+        const MAX_ATTRIBUTES: usize = 64;
+        const CONNECTIONS_MAX: usize = 3;
+        const CCCD_MAX: usize = 100;
+        const L2CAP_CHANNELS_MAX: usize = 5;
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+        let mut table: AttributeTable<'_, NoopRawMutex, { MAX_ATTRIBUTES }> = AttributeTable::new();
+
+        const DESCRIPTOR_UUID: Uuid = Uuid::new_long([0; 16]);
+        // Add a first service, contents don't really matter, but the issue doesn't manifest without this.
+        {
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_long([10; 16]).into(),
+            });
+            let _dummy_characteristic = svc
+                .add_characteristic_ro::<[u8; 2], _>(Uuid::new_long([1; 16]), &[0, 0])
+                .build();
+        }
+
+        // Add an interior service that is exactly 16 handles long.
+        {
+            // Pairing service.
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_long([0; 16]).into(),
+            });
+            let _service_instance = svc
+                .add_characteristic_ro::<[u8; 2], _>(Uuid::new_long([1; 16]), &[0, 0])
+                .build();
+            for i in 0..4 {
+                // pair_setup, pair_verify, features, pairings
+                let _dummy_char = svc
+                    .add_characteristic::<FacadeDummyType, _>(
+                        Uuid::new_long([i + 2; 16]),
+                        &[CharacteristicProp::Read, CharacteristicProp::Write],
+                        FacadeDummyType::default(),
+                        &mut [],
+                    )
+                    .add_descriptor_ro::<u16, _>(DESCRIPTOR_UUID, &[0, 0]);
+            }
+        }
+        // Now add the service at the end, for this service.
+        {
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_long([8; 16]).into(),
+            });
+            let _service_instance = svc
+                .add_characteristic_ro::<[u8; 2], _>(Uuid::new_long([1; 16]), &[0, 0])
+                .build();
+            let _dummy_characteristic = svc
+                .add_characteristic_ro::<[u8; 2], _>(Uuid::new_long([1; 16]), &[0, 0])
+                .build();
+        }
+
+        table.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                let handle = att.handle;
+                let uuid = &att.uuid;
+                info!(
+                    "last_handle_in_group for 0x{:0>4x?}, 0x{:0>2x?}  0x{:0>2x?}",
+                    handle, uuid, att.last_handle_in_group
+                );
+            }
+        });
+
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CCCD_MAX, CONNECTIONS_MAX>::new(table);
+
+        let mgr = setup();
+
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Peripheral
+        ));
+
+        if let Poll::Ready(conn_handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) {
+            // We now have a connection, so we can pass it to our attribute server and mock the request.
+            // [2025-09-01T22:49:38Z DEBUG trouble_host::attribute_server] last_handle_in_group: 96
+            // [2025-09-01T22:49:38Z DEBUG trouble_host::attribute_server] read_attribute_data: Ok(16)
+            // [2025-09-01T22:49:38Z TRACE trouble_host::host] [host] granted send packets = 1, len = 30
+            // [2025-09-01T22:49:38Z TRACE trouble_host::host] [host] sent acl packet len = 26
+            // [2025-09-01T22:49:39Z TRACE trouble_host::host] [host] inbound l2cap header channel = 4, fragment len = 7, total = 7
+            // [2025-09-01T22:49:39Z INFO  main_ble::ble_bas_peripheral] [gatt-attclient]: ReadByGroupType { start: 97, end: 65535, group_type: Uuid16([0, 40]) }
+            // In trace, the "group_type: Uuid16([0, 40]) }" is decimal, so this becomes group type 0x2800, which is the
+            // primary service group.
+            let group_type = Uuid::new_short(0x2800);
+
+            // We should be able to obtain three services.
+            let mut buffer = [0u8; 64];
+
+            let mut start = 0;
+            let end = u16::MAX;
+            for _i in 0..3 {
+                let length = server
+                    .handle_read_by_group_type_req(&conn_handle, &mut buffer, start, end, &group_type)
+                    .unwrap();
+                let response = &buffer[0..length];
+                trace!("  0x{:0>2x?}", response);
+                // It should be a correct response.
+                assert_eq!(response[0], att::ATT_READ_BY_GROUP_TYPE_RSP);
+                let last_handle = u16::from_le_bytes([response[4], response[5]]);
+                start = last_handle + 1;
+            }
+        } else {
+            panic!("expected connection to be accepted");
+        };
     }
 }

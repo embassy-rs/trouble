@@ -973,7 +973,7 @@ impl<P> Drop for PacketGrant<'_, '_, P> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     extern crate std;
 
@@ -983,10 +983,10 @@ mod tests {
 
     use crate::prelude::*;
 
-    const ADDR_1: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
-    const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+    pub const ADDR_1: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+    pub const ADDR_2: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
 
-    fn setup() -> &'static ConnectionManager<'static, DefaultPacketPool> {
+    pub fn setup() -> &'static ConnectionManager<'static, DefaultPacketPool> {
         let storage = Box::leak(Box::new([const { ConnectionStorage::new() }; 3]));
         let mgr = ConnectionManager::new(&mut storage[..], 23);
         Box::leak(Box::new(mgr))
