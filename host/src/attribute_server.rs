@@ -390,23 +390,58 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
 
         let (mut header, mut body) = data.split(2)?;
         let err = self.att_table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
+            let mut ret = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 // trace!("[read_by_type] Check attribute {:?} {}", att.uuid, att.handle);
                 if &att.uuid == attribute_type && att.handle >= start && att.handle <= end {
                     body.write(att.handle)?;
                     handle = att.handle;
 
-                    err = self.read_attribute_data(connection, 0, att, body.write_buf());
-                    if let Ok(len) = err {
-                        body.commit(len)?;
+                    let new_ret = self.read_attribute_data(connection, 0, att, body.write_buf());
+                    match (new_ret, ret) {
+                        (Ok(first_length), Err(_)) => {
+                            // First successful read, store this length, all subsequent ones must match it.
+                            // debug!("[read_by_type] found first entry {:x?}, handle {}", att.uuid, handle);
+                            ret = new_ret;
+                            body.commit(first_length)?;
+                        }
+                        (Ok(new_length), Ok(old_length)) => {
+                            // Any matching attribute after the first, verify the lengths are identical, if not break.
+                            if new_length == old_length {
+                                // debug!("[read_by_type] found equal length {}, handle {}", new_length, handle);
+                                body.commit(new_length)?;
+                            } else {
+                                // We encountered a different length,  unwind the handle.
+                                // debug!("[read_by_type] different length: {}, old: {}", new_length, old_length);
+                                body.truncate(body.len() - 2);
+                                // And then break to ensure we respond with the previously found entries.
+                                break;
+                            }
+                        }
+                        (Err(error_code), Ok(_old_length)) => {
+                            // New read failed, but we had a previous value, return what we had thus far, truncate to
+                            // remove the previously written handle.
+                            body.truncate(body.len() - 2);
+                            // We do silently drop the error here.
+                            // debug!("[read_by_group] new error: {:?}, returning result thus far", error_code);
+                            break;
+                        }
+                        (Err(_), Err(_)) => {
+                            // Error on the first possible read, return this error.
+                            ret = new_ret;
+                            break;
+                        }
                     }
-
-                    // debug!("[read_by_type] found! {:?} {}", att.uuid, att.handle);
-                    break;
+                    // If we get here, we always have had a successful read, and we can check that we still have space
+                    // left in the buffer to write the next entry if it exists.
+                    if let Ok(expected_length) = ret {
+                        if body.available() < expected_length + 2 {
+                            break;
+                        }
+                    }
                 }
             }
-            err
+            ret
         });
 
         match err {
