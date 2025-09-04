@@ -6,7 +6,7 @@ resolver = "2"
 
 [dependencies]
 embassy-executor = { version = "0.8", default-features = false, features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
-embassy-time = { version = "0.4", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-time = { version = "0.5", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-rp = { version = "0.7", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "binary-info"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7", features = ["defmt"] }
@@ -57,5 +57,3 @@ embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e36
 embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
 embassy-hal-internal = { git = "https://github.com/embassy-rs/embassy.git", rev = "76e369b8aa5641b6f3f4440824f559def6cf6192" }
-
-
