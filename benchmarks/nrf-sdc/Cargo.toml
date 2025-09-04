@@ -5,9 +5,9 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
-embassy-executor = { version = "0.8", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
+embassy-executor = { version = "0.9", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
 embassy-time = { version = "0.5", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-nrf = { version = "0.6", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
+embassy-nrf = { version = "0.7", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7", features = ["defmt"] }
 trouble-host = { path = "../../host", default-features = false, features = ["defmt", "l2cap-rx-queue-size-4", "l2cap-tx-queue-size-4", "central", "peripheral", "scan", "gatt", "default-packet-pool", "default-packet-pool-mtu-251"] }
