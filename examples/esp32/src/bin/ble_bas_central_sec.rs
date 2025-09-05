@@ -19,7 +19,7 @@ async fn main(_s: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     esp_alloc::heap_allocator!(size: 72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_radio_preempt_baremetal::init(timg0.timer0);
+    esp_preempt::init(timg0.timer0);
 
     let mut rng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);
 

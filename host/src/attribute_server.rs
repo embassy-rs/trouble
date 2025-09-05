@@ -784,3 +784,141 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         self.cccd_tables.set_cccd_table(&connection.peer_identity(), table);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connection_manager::tests::{setup, ADDR_1};
+    use crate::prelude::*;
+    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+    use core::task::Poll;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    #[test]
+    fn test_attribute_server_last_handle_of_group() {
+        // This test comes from a situation where a service had exactly 16 handles, this resulted in the
+        // last_handle_in_group field of the ReadByGroupType response was 16 aligned (96 to be exact), in this situation
+        // the next request will start at 96 + 1, which was one handle beyond the start of the next service.
+        //
+        // Snippet from the original failure mode:
+        // WARN  trouble_host::attribute_server] Looking for group: Uuid16([0, 28]) between 75 and 65535
+        // DEBUG trouble_host::attribute_server] [read_by_group] found! Uuid16([0, 28]) 80
+        // DEBUG trouble_host::attribute_server] last_handle_in_group: 96
+        // DEBUG trouble_host::attribute_server] read_attribute_data: Ok(16)
+        // TRACE trouble_host::host] [host] granted send packets = 1, len = 30
+        // TRACE trouble_host::host] [host] sent acl packet len = 26
+        // TRACE trouble_host::host] [host] inbound l2cap header channel = 4, fragment len = 7, total = 7
+        // INFO  main_ble::ble_bas_peripheral] [gatt-attclient]: ReadByGroupType { start: 97, end: 65535, group_type: Uuid16([0, 40]) }
+        // INFO  main_ble::ble_bas_peripheral] [gatt] other event
+        // WARN  trouble_host::attribute_server] Looking for group: Uuid16([0, 28]) between 97 and 65535
+        // WARN  trouble_host::attribute_server] [read_by_group] Dit not find attribute Uuid16([0, 28]) between 97  65535
+
+        // The request:
+        // INFO  main_ble::ble_bas_peripheral] [gatt-attclient]: ReadByGroupType { start: 97, end: 65535, group_type: Uuid16([0, 40]) }
+        // In trace, the "group_type: Uuid16([0, 40]) }" is decimal, so this becomes group type 0x2800, which is the
+        // primary service group.
+        let primary_service_group_type = Uuid::new_short(0x2800);
+
+        let _ = env_logger::try_init();
+        const MAX_ATTRIBUTES: usize = 1024;
+        const CONNECTIONS_MAX: usize = 3;
+        const CCCD_MAX: usize = 1024;
+        const L2CAP_CHANNELS_MAX: usize = 5;
+        type FacadeDummyType = [u8; 0];
+
+        // Instead of only checking the failure mode, we fuzz the length of the interior service to cross over several
+        // multiples of 16.
+        for interior_handle_count in 0..=64u8 {
+            debug!("Testing with interior handle count of {}", interior_handle_count);
+
+            // Create a new table.
+            let mut table: AttributeTable<'_, NoopRawMutex, { MAX_ATTRIBUTES }> = AttributeTable::new();
+
+            // Add a first service, contents don't really matter, but the issue doesn't manifest without this.
+            {
+                let svc = table.add_service(Service {
+                    uuid: Uuid::new_long([10; 16]).into(),
+                });
+            }
+
+            // Add an interior service that has a varying length.
+            {
+                let mut svc = table.add_service(Service {
+                    uuid: Uuid::new_long([0; 16]).into(),
+                });
+
+                for c in 0..interior_handle_count {
+                    let _service_instance = svc
+                        .add_characteristic_ro::<[u8; 2], _>(Uuid::new_long([c; 16]), &[0, 0])
+                        .build();
+                }
+            }
+            // Now add the service at the end, contents don't really matter.
+            {
+                table.add_service(Service {
+                    uuid: Uuid::new_long([8; 16]).into(),
+                });
+            }
+
+            // Print the table for debugging.
+            table.iterate(|mut it| {
+                while let Some(att) = it.next() {
+                    let handle = att.handle;
+                    let uuid = &att.uuid;
+                    trace!(
+                        "last_handle_in_group for 0x{:0>4x?}, 0x{:0>2x?}  0x{:0>2x?}",
+                        handle,
+                        uuid,
+                        att.last_handle_in_group
+                    );
+                }
+            });
+
+            // Create a server.
+            let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CCCD_MAX, CONNECTIONS_MAX>::new(table);
+
+            // Create the connection manager.
+            let mgr = setup();
+
+            // Try to connect.
+            assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+            unwrap!(mgr.connect(
+                ConnHandle::new(0),
+                AddrKind::RANDOM,
+                BdAddr::new(ADDR_1),
+                LeConnRole::Peripheral
+            ));
+
+            if let Poll::Ready(conn_handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) {
+                // We now have a connection, we can send the mocked requests to our attribute server.
+                let mut buffer = [0u8; 64];
+
+                let mut start = 0;
+                let end = u16::MAX;
+                // There are always three services that we should be able to discover.
+                for _ in 0..3 {
+                    let length = server
+                        .handle_read_by_group_type_req(
+                            &conn_handle,
+                            &mut buffer,
+                            start,
+                            end,
+                            &primary_service_group_type,
+                        )
+                        .unwrap();
+                    let response = &buffer[0..length];
+                    trace!("  0x{:0>2x?}", response);
+                    // It should be a successful response, because the service should be found, this will assert if
+                    // we failed to retrieve the third service.
+                    assert_eq!(response[0], att::ATT_READ_BY_GROUP_TYPE_RSP);
+                    // The last handle of this group is at byte 4 & 5, so retrieve that and update the start for the
+                    // next cycle.
+                    let last_handle = u16::from_le_bytes([response[4], response[5]]);
+                    start = last_handle + 1;
+                }
+            } else {
+                panic!("expected connection to be accepted");
+            };
+        }
+    }
+}

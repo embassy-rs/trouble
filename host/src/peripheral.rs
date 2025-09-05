@@ -12,7 +12,7 @@ use embassy_futures::select::{select, Either};
 
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
 use crate::connection::Connection;
-use crate::{Address, BleHostError, Error, PacketPool, Stack};
+use crate::{bt_hci_duration, bt_hci_ext_duration, Address, BleHostError, Error, PacketPool, Stack};
 
 /// Type which implements the BLE peripheral role.
 pub struct Peripheral<'d, C, P: PacketPool> {
@@ -64,8 +64,8 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         });
 
         host.command(LeSetAdvParams::new(
-            params.interval_min.into(),
-            params.interval_max.into(),
+            bt_hci_duration(params.interval_min),
+            bt_hci_duration(params.interval_max),
             kind,
             host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             peer.kind,
@@ -91,7 +91,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
 
         let advset: [AdvSet; 1] = [AdvSet {
             adv_handle: AdvHandle::new(0),
-            duration: params.timeout.unwrap_or(embassy_time::Duration::from_micros(0)).into(),
+            duration: bt_hci_duration(params.timeout.unwrap_or(embassy_time::Duration::from_micros(0))),
             max_ext_adv_events: 0,
         }];
 
@@ -188,8 +188,8 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             host.command(LeSetExtAdvParams::new(
                 handle,
                 data.props,
-                params.interval_min.into(),
-                params.interval_max.into(),
+                bt_hci_ext_duration(params.interval_min),
+                bt_hci_ext_duration(params.interval_max),
                 params.channel_map.unwrap_or(AdvChannelMap::ALL),
                 host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
                 peer.kind,
@@ -228,11 +228,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
                 .await?;
             }
             handles[i].adv_handle = handle;
-            handles[i].duration = set
-                .params
-                .timeout
-                .unwrap_or(embassy_time::Duration::from_micros(0))
-                .into();
+            handles[i].duration = bt_hci_duration(set.params.timeout.unwrap_or(embassy_time::Duration::from_micros(0)));
             handles[i].max_ext_adv_events = set.params.max_events.unwrap_or(0);
         }
 

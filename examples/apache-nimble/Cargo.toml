@@ -10,10 +10,10 @@ panic-probe = { version = "1.0", features = ["print-defmt"] }
 cortex-m-rt = "0.7.0"
 cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
 apache-nimble = { version = "0.1.0", features = ["port-layer-embassy", "nrf52840", "controller"] }
-embassy-time = { version = "0.4.0", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-sync = "0.6.0"
 embassy-futures = "0.1.0"
-embassy-executor = { version = "0.8.0", features = ["defmt", "executor-thread", "arch-cortex-m"] }
+embassy-executor = { version = "0.9.0", features = ["defmt", "executor-thread", "arch-cortex-m"] }
 embassy-nrf = { version = "0.3.0", features = ["defmt", "nfc-pins-as-gpio", "time-driver-rtc1", "nrf52840"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 static_cell = "1.0.0"

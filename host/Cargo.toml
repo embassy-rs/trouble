@@ -19,11 +19,11 @@ target = "thumbv7em-none-eabi"
 
 [dependencies]
 aes = { version = "0.8.2", optional = true }
-bt-hci = { version = "0.4", features = ["embassy-time", "uuid"] }
+bt-hci = { version = "0.4", features = ["uuid"] }
 cmac = { version = "0.7.2", optional = true }
 embedded-io = { version = "0.6" }
 embassy-sync = "0.7"
-embassy-time = "0.4"
+embassy-time = "0.5"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.9"
@@ -53,9 +53,8 @@ critical-section = { version = "1", features = ["std"] }  # needed for CI builds
 rand = "0.8.5"
 rand_core = { version = "0.6", features = ["getrandom"]}
 heapless = "0.9"
-embassy-executor = { version = "0.8", features = ["arch-std", "executor-thread"]}
-embassy-time = { version = "0.4", features = ["std"]}
-
+embassy-executor = { version = "0.9", features = ["arch-std", "executor-thread"]}
+embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 
 [features]
 defmt = ["dep:defmt", "embassy-time/defmt", "bt-hci/defmt"]

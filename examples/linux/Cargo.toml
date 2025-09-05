@@ -11,10 +11,11 @@ libc = "0.2"
 bt-hci = "0.4"
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "std"] }
 trouble-host = { path = "../../host", features = ["scan"] }
-embassy-time = { version = "0.4", features = ["std", "generic-queue-8"] }
+embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 rand = { version = "0.8.5", features = ["getrandom"] }
 env_logger = "0.11"
 log = "0.4"
+critical-section = { version = "1", features = ["std"] }
 
 [features]
 security = [

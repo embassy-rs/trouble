@@ -613,7 +613,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
 
 impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
     fn drop(&mut self) {
-        let last_handle = self.table.handle + 1;
+        let last_handle = self.table.handle;
         self.table.with_inner(|inner| {
             for item in inner.attributes[self.start..].iter_mut() {
                 item.last_handle_in_group = last_handle;
