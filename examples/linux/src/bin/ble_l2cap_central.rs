@@ -1,6 +1,6 @@
 use bt_hci::controller::ExternalController;
+use bt_hci_linux::Transport;
 use trouble_example_apps::ble_l2cap_central;
-use trouble_linux_examples::Transport;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), std::io::Error> {
