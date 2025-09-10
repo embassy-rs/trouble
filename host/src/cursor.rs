@@ -5,26 +5,29 @@ use bt_hci::WriteHci;
 
 use crate::codec::{Decode, Encode, Error};
 
-// Not a byte writer. It is just a cursor to track where a byte slice is being written.
+/// Not a byte writer. It is just a cursor to track where a byte slice is being written.
 pub struct WriteCursor<'d> {
     pos: usize,
     data: &'d mut [u8],
 }
 
 impl<'d> WriteCursor<'d> {
+    /// Creates a new write cursor at the beginning of the data.
     pub fn new(data: &'d mut [u8]) -> Self {
         Self { pos: 0, data }
     }
 
+    /// Rewinds the cursor back to the beginning of the buffer.
     pub fn reset(&mut self) {
         self.pos = 0;
     }
 
+    /// Moves the cursor back to the specified position from the start. This can only rewind the cursor.
     pub fn truncate(&mut self, npos: usize) {
         self.pos = self.pos.min(npos);
     }
 
-    // Split into two cursors
+    /// Split into two cursors
     pub fn split(&mut self, nbytes: usize) -> Result<(WriteCursor<'_>, WriteCursor<'_>), Error> {
         if self.available() < nbytes {
             Err(Error::InsufficientSpace)
@@ -81,11 +84,12 @@ impl<'d> WriteCursor<'d> {
         }
     }
 
-    // Reserve a spot for a slice of data and return it
+    /// Obtain a mutable slice of the remaining writable buffer, be sure to [commit] bytes written.
     pub fn write_buf(&mut self) -> &mut [u8] {
         &mut self.data[self.pos..]
     }
 
+    /// Commits the specified length to the buffer, data may be written there through the [write_buf] method.
     pub fn commit(&mut self, len: usize) -> Result<(), Error> {
         if self.available() < len {
             Err(Error::InsufficientSpace)
@@ -95,14 +99,17 @@ impl<'d> WriteCursor<'d> {
         }
     }
 
+    /// Returns amount of bytes that remain available.
     pub fn available(&self) -> usize {
         self.data.len() - self.pos
     }
 
+    /// Returns the current length of the data written.
     pub fn len(&self) -> usize {
         self.pos
     }
 
+    /// Returns the byte slice that was written by this cursor.
     pub fn finish(self) -> &'d mut [u8] {
         &mut self.data[..self.pos]
     }

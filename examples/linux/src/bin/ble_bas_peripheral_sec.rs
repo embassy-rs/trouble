@@ -1,7 +1,7 @@
 use bt_hci::controller::ExternalController;
+use bt_hci_linux::Transport;
 use rand::rngs::OsRng;
 use trouble_example_apps::ble_bas_peripheral_sec;
-use trouble_linux_examples::Transport;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), std::io::Error> {
