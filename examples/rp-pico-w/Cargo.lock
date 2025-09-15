@@ -152,7 +152,7 @@ dependencies = [
  "embedded-io",
  "embedded-io-async",
  "futures-intrusive",
- "heapless",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -328,7 +328,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-io-async",
  "futures",
- "heapless",
+ "heapless 0.8.0",
  "num_enum 0.5.11",
 ]
 
@@ -608,7 +608,7 @@ dependencies = [
  "embedded-io-async",
  "futures-core",
  "futures-sink",
- "heapless",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -644,7 +644,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80e2ee86063bd028a420a5fb5898c18c87a8898026da1d4c852af2c443d0a454"
 dependencies = [
  "embassy-executor-timer-queue",
- "heapless",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -993,6 +993,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
 dependencies = [
  "defmt 0.3.100",
+ "hash32",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1edcd5a338e64688fbdcb7531a846cfd3476a54784dcb918a0844682bc7ada5"
+dependencies = [
  "hash32",
  "stable_deref_trait",
 ]
@@ -2428,7 +2438,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-io",
- "heapless",
+ "heapless 0.9.1",
  "rand_core 0.6.4",
  "static_cell",
  "trouble-host",
@@ -2436,7 +2446,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "bt-hci",
  "defmt 1.0.1",
@@ -2445,7 +2455,7 @@ dependencies = [
  "embassy-time",
  "embedded-io",
  "futures",
- "heapless",
+ "heapless 0.9.1",
  "rand_core 0.6.4",
  "static_cell",
  "trouble-host-macros",
