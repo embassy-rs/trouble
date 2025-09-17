@@ -326,6 +326,11 @@ pub enum AttRsp<'d> {
         /// Attribute value
         data: &'d [u8],
     },
+    /// Read Blob Response
+    ReadBlob {
+        /// Attribute value part
+        data: &'d [u8],
+    },
     /// Write Response
     Write,
 }
@@ -497,6 +502,7 @@ impl<'d> AttRsp<'d> {
             Self::FindInformation { it } => 1 + it.cursor.len(), // 1 for format byte
             Self::Error { .. } => 4,
             Self::Read { data } => data.len(),
+            Self::ReadBlob { data } => data.len(),
             Self::ReadByType { it } => it.cursor.len(),
             Self::Write => 0,
         }
@@ -545,6 +551,10 @@ impl<'d> AttRsp<'d> {
                 w.write(ATT_READ_RSP)?;
                 w.append(data)?;
             }
+            Self::ReadBlob { data } => {
+                w.write(ATT_READ_BLOB_RSP)?;
+                w.append(data)?;
+            }
             Self::Write => {
                 w.write(ATT_WRITE_RSP)?;
             }
@@ -574,6 +584,7 @@ impl<'d> AttRsp<'d> {
                 Ok(Self::Error { request, handle, code })
             }
             ATT_READ_RSP => Ok(Self::Read { data: r.remaining() }),
+            ATT_READ_BLOB_RSP => Ok(Self::ReadBlob { data: r.remaining() }),
             ATT_READ_BY_TYPE_RSP => {
                 let item_len: u8 = r.read()?;
                 Ok(Self::ReadByType {
@@ -682,6 +693,7 @@ impl<'d> AttReq<'d> {
                 attribute_type,
             } => 4 + attribute_type.as_raw().len(),
             Self::Read { .. } => 2,
+            Self::ReadBlob { .. } => 4, // handle (2 bytes) + offset (2 bytes)
             Self::Write { handle, data } => 2 + data.len(),
             _ => unimplemented!(),
         }
@@ -726,6 +738,11 @@ impl<'d> AttReq<'d> {
             Self::Read { handle } => {
                 w.write(ATT_READ_REQ)?;
                 w.write(*handle)?;
+            }
+            Self::ReadBlob { handle, offset } => {
+                w.write(ATT_READ_BLOB_REQ)?;
+                w.write(*handle)?;
+                w.write(*offset)?;
             }
             Self::Write { handle, data } => {
                 w.write(ATT_WRITE_REQ)?;
