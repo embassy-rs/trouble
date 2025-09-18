@@ -87,9 +87,9 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a496a585c0e2e00195e558af18342f79afd67598d3edb32e78c006e606a31386"
+checksum = "e9172c3df73e30f9bcbf80d0f5a4700fbc6d6771329142d05c06bb7ece7032c7"
 dependencies = [
  "btuuid",
  "embassy-sync",
