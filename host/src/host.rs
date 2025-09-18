@@ -20,8 +20,15 @@ use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
-use bt_hci::event::le::LeEvent;
-use bt_hci::event::{Event, Vendor};
+#[cfg(feature = "scan")]
+use bt_hci::event::le::LeAdvertisingReport;
+#[cfg(feature = "scan")]
+use bt_hci::event::le::LeExtendedAdvertisingReport;
+use bt_hci::event::le::{
+    LeAdvertisingSetTerminated, LeConnectionComplete, LeConnectionUpdateComplete, LeDataLengthChange,
+    LeEnhancedConnectionComplete, LeEventKind, LeEventPacket, LePhyUpdateComplete, LeRemoteConnectionParameterRequest,
+};
+use bt_hci::event::{DisconnectionComplete, EventKind, NumberOfCompletedPackets, Vendor};
 use bt_hci::param::{
     AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, EventMaskPage2, FilterDuplicates,
     LeConnRole, LeEventMask, Status,
@@ -831,108 +838,141 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                     }
                 },
                 Ok(ControllerToHostPacket::Event(event)) => {
-                    match event {
-                        Event::Le(ref le_event) => match le_event {
-                            LeEvent::LeConnectionComplete(e) => {
-                                if !host.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
-                                    let _ = host
-                                        .command(Disconnect::new(
-                                            e.handle,
-                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                        ))
-                                        .await;
-                                    host.connect_command_state.canceled();
+                    match event.kind {
+                        EventKind::Le => {
+                            let event = unwrap!(LeEventPacket::from_hci_bytes_complete(event.data));
+                            match event.kind {
+                                LeEventKind::LeConnectionComplete => {
+                                    let e = unwrap!(LeConnectionComplete::from_hci_bytes_complete(event.data));
+                                    if !host.handle_connection(
+                                        e.status,
+                                        e.handle,
+                                        e.peer_addr_kind,
+                                        e.peer_addr,
+                                        e.role,
+                                    ) {
+                                        let _ = host
+                                            .command(Disconnect::new(
+                                                e.handle,
+                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                            ))
+                                            .await;
+                                        host.connect_command_state.canceled();
+                                    }
                                 }
-                            }
-                            LeEvent::LeEnhancedConnectionComplete(e) => {
-                                if !host.handle_connection(e.status, e.handle, e.peer_addr_kind, e.peer_addr, e.role) {
-                                    let _ = host
-                                        .command(Disconnect::new(
-                                            e.handle,
-                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                        ))
-                                        .await;
-                                    host.connect_command_state.canceled();
+                                LeEventKind::LeEnhancedConnectionComplete => {
+                                    let e = unwrap!(LeEnhancedConnectionComplete::from_hci_bytes_complete(event.data));
+                                    if !host.handle_connection(
+                                        e.status,
+                                        e.handle,
+                                        e.peer_addr_kind,
+                                        e.peer_addr,
+                                        e.role,
+                                    ) {
+                                        let _ = host
+                                            .command(Disconnect::new(
+                                                e.handle,
+                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                            ))
+                                            .await;
+                                        host.connect_command_state.canceled();
+                                    }
                                 }
-                            }
-                            LeEvent::LeScanTimeout(_) => {}
-                            LeEvent::LeAdvertisingSetTerminated(set) => {
-                                host.advertise_state.terminate(set.adv_handle);
-                            }
-                            LeEvent::LeExtendedAdvertisingReport(data) => {
-                                #[cfg(feature = "scan")]
-                                {
-                                    event_handler.on_ext_adv_reports(data.reports.iter());
+                                LeEventKind::LeScanTimeout => {}
+                                LeEventKind::LeAdvertisingSetTerminated => {
+                                    let set = unwrap!(LeAdvertisingSetTerminated::from_hci_bytes_complete(event.data));
+                                    host.advertise_state.terminate(set.adv_handle);
                                 }
-                            }
-                            LeEvent::LeAdvertisingReport(data) => {
-                                #[cfg(feature = "scan")]
-                                {
-                                    event_handler.on_adv_reports(data.reports.iter());
+                                LeEventKind::LeExtendedAdvertisingReport => {
+                                    #[cfg(feature = "scan")]
+                                    {
+                                        let data =
+                                            unwrap!(LeExtendedAdvertisingReport::from_hci_bytes_complete(event.data));
+                                        event_handler.on_ext_adv_reports(data.reports.iter());
+                                    }
                                 }
-                            }
-                            LeEvent::LeLongTermKeyRequest(_) => {
-                                host.connections.handle_security_hci_event(event)?;
-                            }
-                            LeEvent::LePhyUpdateComplete(event) => {
-                                if let Err(e) = event.status.to_result() {
-                                    warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
-                                } else {
+                                LeEventKind::LeAdvertisingReport => {
+                                    #[cfg(feature = "scan")]
+                                    {
+                                        let data = unwrap!(LeAdvertisingReport::from_hci_bytes_complete(event.data));
+                                        event_handler.on_adv_reports(data.reports.iter());
+                                    }
+                                }
+                                LeEventKind::LeLongTermKeyRequest => {
+                                    host.connections.handle_security_hci_le_event(event)?;
+                                }
+                                LeEventKind::LePhyUpdateComplete => {
+                                    let event = unwrap!(LePhyUpdateComplete::from_hci_bytes_complete(event.data));
+                                    if let Err(e) = event.status.to_result() {
+                                        warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
+                                    } else {
+                                        let _ = host.connections.post_handle_event(
+                                            event.handle,
+                                            ConnectionEvent::PhyUpdated {
+                                                tx_phy: event.tx_phy,
+                                                rx_phy: event.rx_phy,
+                                            },
+                                        );
+                                    }
+                                }
+                                LeEventKind::LeConnectionUpdateComplete => {
+                                    let event =
+                                        unwrap!(LeConnectionUpdateComplete::from_hci_bytes_complete(event.data));
+                                    if let Err(e) = event.status.to_result() {
+                                        warn!(
+                                            "[host] error updating connection parameters for {:?}: {:?}",
+                                            event.handle, e
+                                        );
+                                    } else {
+                                        let _ = host.connections.post_handle_event(
+                                            event.handle,
+                                            ConnectionEvent::ConnectionParamsUpdated {
+                                                conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
+                                                peripheral_latency: event.peripheral_latency,
+                                                supervision_timeout: Duration::from_micros(
+                                                    event.supervision_timeout.as_micros(),
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
+                                LeEventKind::LeDataLengthChange => {
+                                    let event = unwrap!(LeDataLengthChange::from_hci_bytes_complete(event.data));
                                     let _ = host.connections.post_handle_event(
                                         event.handle,
-                                        ConnectionEvent::PhyUpdated {
-                                            tx_phy: event.tx_phy,
-                                            rx_phy: event.rx_phy,
+                                        ConnectionEvent::DataLengthUpdated {
+                                            max_tx_octets: event.max_tx_octets,
+                                            max_tx_time: event.max_tx_time,
+                                            max_rx_octets: event.max_rx_octets,
+                                            max_rx_time: event.max_rx_time,
                                         },
                                     );
                                 }
-                            }
-                            LeEvent::LeConnectionUpdateComplete(event) => {
-                                if let Err(e) = event.status.to_result() {
-                                    warn!(
-                                        "[host] error updating connection parameters for {:?}: {:?}",
-                                        event.handle, e
-                                    );
-                                } else {
+                                LeEventKind::LeRemoteConnectionParameterRequest => {
+                                    let event = unwrap!(LeRemoteConnectionParameterRequest::from_hci_bytes_complete(
+                                        event.data
+                                    ));
                                     let _ = host.connections.post_handle_event(
                                         event.handle,
-                                        ConnectionEvent::ConnectionParamsUpdated {
-                                            conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
-                                            peripheral_latency: event.peripheral_latency,
-                                            supervision_timeout: Duration::from_micros(
-                                                event.supervision_timeout.as_micros(),
+                                        ConnectionEvent::RequestConnectionParams {
+                                            min_connection_interval: Duration::from_micros(
+                                                event.interval_min.as_micros(),
                                             ),
+                                            max_connection_interval: Duration::from_micros(
+                                                event.interval_min.as_micros(),
+                                            ),
+                                            max_latency: event.max_latency,
+                                            supervision_timeout: Duration::from_micros(event.timeout.as_micros()),
                                         },
                                     );
                                 }
+                                _ => {
+                                    warn!("Unknown LE event!");
+                                }
                             }
-                            LeEvent::LeDataLengthChange(event) => {
-                                let _ = host.connections.post_handle_event(
-                                    event.handle,
-                                    ConnectionEvent::DataLengthUpdated {
-                                        max_tx_octets: event.max_tx_octets,
-                                        max_tx_time: event.max_tx_time,
-                                        max_rx_octets: event.max_rx_octets,
-                                        max_rx_time: event.max_rx_time,
-                                    },
-                                );
-                            }
-                            LeEvent::LeRemoteConnectionParameterRequest(event) => {
-                                let _ = host.connections.post_handle_event(
-                                    event.handle,
-                                    ConnectionEvent::RequestConnectionParams {
-                                        min_connection_interval: Duration::from_micros(event.interval_min.as_micros()),
-                                        max_connection_interval: Duration::from_micros(event.interval_min.as_micros()),
-                                        max_latency: event.max_latency,
-                                        supervision_timeout: Duration::from_micros(event.timeout.as_micros()),
-                                    },
-                                );
-                            }
-                            _ => {
-                                warn!("Unknown LE event!");
-                            }
-                        },
-                        Event::DisconnectionComplete(e) => {
+                        }
+                        EventKind::DisconnectionComplete => {
+                            let e = unwrap!(DisconnectionComplete::from_hci_bytes_complete(event.data));
                             let handle = e.handle;
                             let reason = if let Err(e) = e.status.to_result() {
                                 info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
@@ -954,7 +994,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             let mut m = host.metrics.borrow_mut();
                             m.disconnect_events = m.disconnect_events.wrapping_add(1);
                         }
-                        Event::NumberOfCompletedPackets(c) => {
+                        EventKind::NumberOfCompletedPackets => {
+                            let c = unwrap!(NumberOfCompletedPackets::from_hci_bytes_complete(event.data));
                             // Explicitly ignoring for now
                             for entry in c.completed_packets.iter() {
                                 match (entry.handle(), entry.num_completed_packets()) {
@@ -968,10 +1009,11 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 }
                             }
                         }
-                        Event::Vendor(vendor) => {
+                        EventKind::Vendor => {
+                            let vendor = unwrap!(Vendor::from_hci_bytes_complete(event.data));
                             event_handler.on_vendor(&vendor);
                         }
-                        Event::EncryptionChangeV1(_) => {
+                        EventKind::EncryptionChangeV1 => {
                             host.connections.handle_security_hci_event(event)?;
                         }
                         // Ignore

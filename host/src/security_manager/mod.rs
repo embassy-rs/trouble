@@ -10,9 +10,10 @@ use core::cell::RefCell;
 use core::future::{poll_fn, Future};
 use core::ops::DerefMut;
 
-use bt_hci::event::le::LeEvent;
-use bt_hci::event::Event;
+use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
+use bt_hci::event::{EncryptionChangeV1, EventKind, EventPacket};
 use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
+use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -561,62 +562,80 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle recevied events from HCI
-    pub(crate) fn handle_hci_event<P: PacketPool>(
+    pub(crate) fn handle_hci_le_event<P: PacketPool>(
         &self,
-        event: Event,
+        event: LeEventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
-        match event {
-            Event::EncryptionChangeV1(event_data) => match event_data.status.to_result() {
-                Ok(()) => {
-                    trace!("[smp] Encryption Changed event {:?}", event_data.enabled);
-                    connections.with_connected_handle(event_data.handle, |storage| {
-                        let sm = self.pairing_sm.borrow();
-                        if let Some(sm) = &*sm {
-                            let mut rng = self.rng.borrow_mut();
-                            let res = sm.handle_event(
-                                pairing::Event::LinkEncryptedResult(event_data.enabled != EncryptionEnabledLevel::Off),
-                                &mut PairingOpsImpl {
-                                    security_manager: self,
-                                    peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
-                                    connections,
-                                    storage,
-                                    conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
-                                },
-                                rng.deref_mut(),
-                            );
-                            let _ = self.handle_security_error(connections, storage, &res);
-                            match res {
-                                Ok(_) => {
-                                    storage.security_level = sm.security_level();
-                                    Ok(())
-                                }
-                                x => x,
-                            }?
-                        } else if let Some(identity) = storage.peer_identity.as_ref() {
-                            match self.get_peer_bond_information(identity) {
-                                Some(bond) if event_data.enabled != EncryptionEnabledLevel::Off => {
-                                    info!("[smp] Encryption changed to true using bond {:?}", bond.identity);
-                                    storage.security_level = bond.security_level;
-                                }
-                                _ => {
-                                    warn!(
-                                        "[smp] Either encryption failed to enable or bond not found for {:?}",
-                                        identity
-                                    );
-                                    storage.security_level = SecurityLevel::NoEncryption
+        match event.kind {
+            LeEventKind::LeLongTermKeyRequest => {
+                let event_data = LeLongTermKeyRequest::from_hci_bytes_complete(event.data)?;
+                self.try_send_event(SecurityEventData::SendLongTermKey(event_data.handle))?;
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+
+    /// Handle recevied events from HCI
+    pub(crate) fn handle_hci_event<P: PacketPool>(
+        &self,
+        event: EventPacket,
+        connections: &ConnectionManager<'_, P>,
+    ) -> Result<(), Error> {
+        match event.kind {
+            EventKind::EncryptionChangeV1 => {
+                let event_data = EncryptionChangeV1::from_hci_bytes_complete(event.data)?;
+                match event_data.status.to_result() {
+                    Ok(()) => {
+                        trace!("[smp] Encryption Changed event {:?}", event_data.enabled);
+                        connections.with_connected_handle(event_data.handle, |storage| {
+                            let sm = self.pairing_sm.borrow();
+                            if let Some(sm) = &*sm {
+                                let mut rng = self.rng.borrow_mut();
+                                let res = sm.handle_event(
+                                    pairing::Event::LinkEncryptedResult(
+                                        event_data.enabled != EncryptionEnabledLevel::Off,
+                                    ),
+                                    &mut PairingOpsImpl {
+                                        security_manager: self,
+                                        peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                                        connections,
+                                        storage,
+                                        conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                                    },
+                                    rng.deref_mut(),
+                                );
+                                let _ = self.handle_security_error(connections, storage, &res);
+                                match res {
+                                    Ok(_) => {
+                                        storage.security_level = sm.security_level();
+                                        Ok(())
+                                    }
+                                    x => x,
+                                }?
+                            } else if let Some(identity) = storage.peer_identity.as_ref() {
+                                match self.get_peer_bond_information(identity) {
+                                    Some(bond) if event_data.enabled != EncryptionEnabledLevel::Off => {
+                                        info!("[smp] Encryption changed to true using bond {:?}", bond.identity);
+                                        storage.security_level = bond.security_level;
+                                    }
+                                    _ => {
+                                        warn!(
+                                            "[smp] Either encryption failed to enable or bond not found for {:?}",
+                                            identity
+                                        );
+                                        storage.security_level = SecurityLevel::NoEncryption
+                                    }
                                 }
                             }
-                        }
-                        Ok(())
-                    })?;
+                            Ok(())
+                        })?;
+                    }
+                    Err(error) => {
+                        error!("[security manager] Encryption Changed Handle Error {:?}", error);
+                    }
                 }
-                Err(error) => {
-                    error!("[security manager] Encryption Changed Handle Error {:?}", error);
-                }
-            },
-            Event::Le(LeEvent::LeLongTermKeyRequest(event_data)) => {
-                self.try_send_event(SecurityEventData::SendLongTermKey(event_data.handle))?;
             }
             _ => (),
         }
