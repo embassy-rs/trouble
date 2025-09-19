@@ -231,3 +231,23 @@ fn check_for_characteristic(
     characteristics.push(Characteristic::new(field, args));
     REMOVE // Successfully parsed, remove the field from the fields vec.
 }
+
+/// Create a UUID object from a string or other convertible literal, similar to how UUIDs can be
+/// specified in a [macro@gatt_service] derivation.
+///
+/// Useful for exporting UUIDs into user contexts.
+///
+/// # Example
+///
+/// ```rust
+/// use trouble_host::prelude::*;
+///
+/// const MY_LONG_UUID: Uuid = uuid!("01234567-89AB-CDEF-0123-456789ABCDEF");
+/// const MY_SHORT_UUID: Uuid = uuid!("9999");
+/// const MY_INT_UUID: Uuid = uuid!(1337u16);
+/// ```
+#[proc_macro]
+pub fn uuid(args: TokenStream) -> TokenStream {
+    let uuid = parse_macro_input!(args as uuid::UuidArgs);
+    return uuid.uuid.into();
+}

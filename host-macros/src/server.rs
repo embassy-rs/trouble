@@ -8,7 +8,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
-use syn::{Expr, Result, parse_quote};
+use syn::{parse_quote, Expr, Result};
 
 #[derive(Default)]
 pub(crate) struct ServerArgs {
