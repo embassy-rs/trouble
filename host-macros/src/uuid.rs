@@ -4,9 +4,10 @@
 
 use core::str::FromStr;
 
-use darling::FromMeta;
+use darling::{Error, FromMeta};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
+use syn::{parse::Result, spanned::Spanned, Expr};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Uuid {
@@ -46,5 +47,56 @@ impl quote::ToTokens for Uuid {
                 tokens.extend(quote!(::trouble_host::types::uuid::Uuid::new_long([#s])));
             }
         }
+    }
+}
+
+/// Parse the UUID argument of the service attribute.
+///
+/// The UUID can be specified as a string literal, an integer literal, or an expression that impl Into<Uuid>.
+pub(crate) fn parse_arg_uuid(value: &Expr) -> Result<TokenStream2> {
+    match value {
+        Expr::Lit(lit) => {
+            if let syn::Lit::Str(lit_str) = &lit.lit {
+                let uuid_string = Uuid::from_string(&lit_str.value()).map_err(|_| {
+                    Error::custom(
+                        "Invalid UUID string.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
+                    )
+                    .with_span(&lit.span())
+                })?;
+                Ok(quote::quote! {#uuid_string})
+            } else if let syn::Lit::Int(lit_int) = &lit.lit {
+                let uuid_string = Uuid::Uuid16(lit_int.base10_parse::<u16>().map_err(|_| {
+                    Error::custom("Invalid 16bit UUID literal.  Expect i.e. \"0x180f\"").with_span(&lit.span())
+                })?);
+                Ok(quote::quote! {#uuid_string})
+            } else {
+                Err(Error::custom(
+                    "Invalid UUID literal.  Expect i.e. \"180f\" or \"0000180f-0000-1000-8000-00805f9b34fb\"",
+                )
+                .with_span(&lit.span())
+                .into())
+            }
+        }
+        other => {
+            let span = other.span(); // span will highlight if the value does not impl Into<Uuid>
+            Ok(quote::quote_spanned! { span =>
+                {
+                    let uuid: trouble_host::types::uuid::Uuid = #other.into();
+                    uuid
+                }
+            })
+        }
+    }
+}
+
+pub(crate) struct UuidArgs {
+    pub uuid: proc_macro2::TokenStream,
+}
+
+impl syn::parse::Parse for UuidArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let expr = input.parse()?;
+        let uuid = parse_arg_uuid(&expr)?;
+        Ok(UuidArgs { uuid })
     }
 }

@@ -7,7 +7,7 @@ use std::fmt::Display;
 use std::thread;
 
 use proc_macro2::TokenStream;
-use quote::{ToTokens, quote};
+use quote::{quote, ToTokens};
 
 /// A type to collect errors together and format them.
 ///
