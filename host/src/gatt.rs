@@ -943,27 +943,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         characteristic: &Characteristic<T>,
         dest: &mut [u8],
     ) -> Result<usize, BleHostError<C::Error>> {
-        self.read_handle(characteristic.handle, dest).await
-    }
-
-    /// Read a long characteristic value using blob reads if necessary.
-    ///
-    /// This method automatically handles characteristics longer than ATT MTU
-    /// by using Read Blob requests to fetch the complete value.
-    pub async fn read_characteristic_long<T: AsGatt>(
-        &self,
-        characteristic: &Characteristic<T>,
-        dest: &mut [u8],
-    ) -> Result<usize, BleHostError<C::Error>> {
-        self.read_handle_long(characteristic.handle, dest).await
-    }
-
-    async fn read_handle(
-        &self,
-        handle: u16,
-        dest: &mut [u8],
-    ) -> Result<usize, BleHostError<C::Error>> {
-        let response = self.request(att::AttReq::Read { handle }).await?;
+        let response = self
+            .request(att::AttReq::Read {
+                handle: characteristic.handle,
+            })
+            .await?;
 
         match Self::response(response.pdu.as_ref())? {
             AttRsp::Read { data } => {
@@ -976,80 +960,71 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         }
     }
 
-    async fn read_handle_long(
+    /// Read a long characteristic value using blob reads if necessary.
+    ///
+    /// This method automatically handles characteristics longer than ATT MTU
+    /// by using Read Blob requests to fetch the complete value.
+    pub async fn read_characteristic_long<T: AsGatt>(
         &self,
-        handle: u16,
+        characteristic: &Characteristic<T>,
         dest: &mut [u8],
     ) -> Result<usize, BleHostError<C::Error>> {
-        // First read
-        let response = self.request(att::AttReq::Read { handle }).await?;
-        
-        let mut total;
+        // first read, use regular read
+        let first_read_len = self.read_characteristic(characteristic, dest).await?;
         let att_mtu = self.connection.att_mtu() as usize;
-        let mtu_minus_one = att_mtu.saturating_sub(1); // ATT opcode
-        
-        // Debug logging
-        debug!("[read_handle_long] ATT MTU: {}, MTU-1: {}", att_mtu, mtu_minus_one);
-        
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::Read { data } => {
-                debug!("[read_handle_long] First read returned {} bytes", data.len());
-                let len = data.len().min(dest.len());
-                dest[..len].copy_from_slice(&data[..len]);
-                total = len;
-                
-                // Continue with blob reads if needed
-                // Try blob reads if we might have more data
-                // Some devices may not fill the entire MTU even if there's more data
-                if total < dest.len() {
-                    let mut offset = data.len() as u16;
-                    
-                    // Try at least one blob read to see if there's more data
-                    loop {
-                        debug!("[read_handle_long] Attempting blob read at offset {}", offset);
-                        let response = self.request(att::AttReq::ReadBlob { handle, offset }).await?;
-                        
-                        match Self::response(response.pdu.as_ref())? {
-                            AttRsp::ReadBlob { data } => {
-                                debug!("[read_handle_long] Blob read returned {} bytes", data.len());
-                                if data.is_empty() {
-                                    break; // End of attribute
-                                }
-                                
-                                let len = data.len().min(dest.len() - total);
-                                dest[total..total + len].copy_from_slice(&data[..len]);
-                                total += len;
-                                offset += data.len() as u16;
-                                
-                                // If we got less than MTU-1 bytes, we've read everything
-                                // Or if we've filled the destination buffer
-                                if data.len() < mtu_minus_one || total >= dest.len() {
-                                    break;
-                                }
-                            }
-                            AttRsp::Error { code, .. } if code == att::AttErrorCode::INVALID_OFFSET => {
-                                debug!("[read_handle_long] Got INVALID_OFFSET, no more data");
-                                break; // Reached end
-                            }
-                            AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_LONG => {
-                                debug!("[read_handle_long] Attribute not long, no blob reads needed");
-                                break; // Attribute fits in single read
-                            }
-                            AttRsp::Error { code, .. } => {
-                                debug!("[read_handle_long] Got error: {:?}", code);
-                                return Err(Error::Att(code).into());
-                            }
-                            _ => return Err(Error::UnexpectedGattResponse.into()),
-                        }
+
+        if first_read_len != att_mtu - 1 {
+            // att_mtu-1 indicates there's more to read
+            return Ok(first_read_len);
+        }
+
+        // Try at least one blob read to see if there's more data
+        let mut offset = first_read_len;
+        loop {
+            let response = self
+                .request(att::AttReq::ReadBlob {
+                    handle: characteristic.handle,
+                    offset: offset as u16,
+                })
+                .await?;
+
+            match Self::response(response.pdu.as_ref())? {
+                AttRsp::ReadBlob { data } => {
+                    debug!("[read_characteristic_long] Blob read returned {} bytes", data.len());
+                    if data.is_empty() {
+                        break; // End of attribute
+                    }
+
+                    let blob_read_len = data.len();
+
+                    // need to limit length to copy b/c copy_from_slice panics if
+                    // the slices' lengths don't match, and `dest` might be too small.
+                    let len_to_copy = blob_read_len.min(dest.len() - offset);
+                    dest[offset..offset + len_to_copy].copy_from_slice(&data[..len_to_copy]);
+                    offset += len_to_copy;
+
+                    // If we got less than MTU-1 bytes, we've read everything
+                    // Or if we've filled the destination buffer
+                    if blob_read_len < att_mtu - 1 || len_to_copy < blob_read_len {
+                        break;
                     }
                 }
-                
-                debug!("[read_handle_long] Total bytes read: {}", total);
-                Ok(total)
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::INVALID_OFFSET => {
+                    trace!("[read_characteristic_long] Got INVALID_OFFSET, no more data");
+                    break; // Reached end
+                }
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_LONG => {
+                    trace!("[read_characteristic_long] read_handle_long] Attribute not long, no blob reads needed");
+                    break; // Attribute fits in single read
+                }
+                AttRsp::Error { code, .. } => {
+                    trace!("[read_characteristic] Got error: {:?}", code);
+                    return Err(Error::Att(code).into());
+                }
+                _ => return Err(Error::UnexpectedGattResponse.into()),
             }
-            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
-            _ => Err(Error::UnexpectedGattResponse.into()),
         }
+        Ok(offset)
     }
 
     /// Read a characteristic described by a UUID.
