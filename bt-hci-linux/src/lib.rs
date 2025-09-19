@@ -37,6 +37,12 @@ impl embedded_io::Error for Error {
     }
 }
 
+impl From<bt_hci::FromHciBytesError> for Error {
+    fn from(e: bt_hci::FromHciBytesError) -> Self {
+        Self::FromHciBytesError(e)
+    }
+}
+
 pub struct Socket {
     fd: AsyncFd<OwnedFd>,
 }
