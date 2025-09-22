@@ -29,8 +29,8 @@ async fn main(_s: Spawner) {
         software_interrupt.software_interrupt0,
     );
 
-    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1); // while alive, 'Trng::try_new()' succeeds
-    let mut trng = Trng::try_new().unwrap();
+    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
+    let mut trng = Trng::try_new().unwrap();    // Ok when there's a TrngSource accessible
 
     static RADIO: StaticCell<Controller<'static>> = StaticCell::new();
     let radio = RADIO.init(esp_radio::init().unwrap());
