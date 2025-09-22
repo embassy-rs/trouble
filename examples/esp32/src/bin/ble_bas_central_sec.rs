@@ -3,6 +3,7 @@
 
 use embassy_executor::Spawner;
 use esp_hal::clock::CpuClock;
+use esp_hal::rng::{Trng, TrngSource};
 use esp_hal::timer::timg::TimerGroup;
 use esp_radio::Controller;
 use esp_radio::ble::controller::BleConnector;
@@ -21,7 +22,8 @@ async fn main(_s: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_preempt::start(timg0.timer0);
 
-    let mut rng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);
+    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1); // while alive, 'Trng::try_new()' succeeds
+    let mut trng = Trng::try_new().unwrap();
 
     static RADIO: StaticCell<Controller<'static>> = StaticCell::new();
     let radio = RADIO.init(esp_radio::init().unwrap());
@@ -40,5 +42,5 @@ async fn main(_s: Spawner) {
     let connector = BleConnector::new(radio, bluetooth);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
-    ble_bas_central_sec::run(controller, &mut rng).await;
+    ble_bas_central_sec::run(controller, &mut trng).await;
 }
