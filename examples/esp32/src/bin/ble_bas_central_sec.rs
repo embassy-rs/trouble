@@ -22,8 +22,8 @@ async fn main(_s: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_preempt::start(timg0.timer0);
 
-    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1); // while alive, 'Trng::try_new()' succeeds
-    let mut trng = Trng::try_new().unwrap();
+    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
+    let mut trng = Trng::try_new().unwrap();    // Ok when there's a TrngSource accessible
 
     static RADIO: StaticCell<Controller<'static>> = StaticCell::new();
     let radio = RADIO.init(esp_radio::init().unwrap());
