@@ -55,14 +55,14 @@ name = "ble_bas_peripheral_sec"
 required-features = ["security"]
 
 [patch.crates-io]
-esp-radio = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-0.5"}
-esp-preempt = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-0.5"}
-esp-backtrace = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-0.5"}
-esp-hal = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-0.5"}
-esp-bootloader-esp-idf = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-0.5"}
-esp-hal-embassy = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-0.5"}
-esp-alloc = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-0.5"}
-esp-println = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-0.5"}
+esp-radio = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
+esp-preempt = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
+esp-backtrace = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
+esp-hal = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
+esp-bootloader-esp-idf = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
+esp-hal-embassy = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
+esp-alloc = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
+esp-println = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
 
 #esp-backtrace = { path = "../../../esp-hal/esp-backtrace" }
 #esp-bootloader-esp-idf = { path = "../../../esp-hal/esp-bootloader-esp-idf" }
