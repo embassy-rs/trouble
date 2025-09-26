@@ -82,6 +82,7 @@ jobs:
       # Publish to the main registry
       run: |
         echo "Publishing to crates.io"  
+        cd host-macros
         cargo publish
       # To perform a dry run uncomment the following lines
       # run: |
