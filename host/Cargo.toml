@@ -81,7 +81,7 @@ security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:rand_chacha", "gatt", "dep:
 # generator (CSPRNG) to require a cryptographically secure seed
 dev-disable-csprng-seed-requirement = []
 
-# Default packet pool. Enabling this will make available a packet pool tuned according to the default-packet-pool->>mtu<< and default-packet-pool->>mtu<<.
+# Enabling this will make available a packet pool tuned according to the default-packet-pool-mtu and default-packet-pool-size.
 default-packet-pool = []
 
 # Optimization where l2cap SDU reassembly saves some buffer copy.
