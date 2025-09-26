@@ -49,11 +49,11 @@ debug = 2
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 #bt-hci = { path = "../../../bt-hci" }
-cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "e46f3af64ff0c94e80cb1536ac42bbea12810653" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "e46f3af64ff0c94e80cb1536ac42bbea12810653" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "e46f3af64ff0c94e80cb1536ac42bbea12810653" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "e46f3af64ff0c94e80cb1536ac42bbea12810653" }
-embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "e46f3af64ff0c94e80cb1536ac42bbea12810653" }
-cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "e46f3af64ff0c94e80cb1536ac42bbea12810653" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "e46f3af64ff0c94e80cb1536ac42bbea12810653" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "e46f3af64ff0c94e80cb1536ac42bbea12810653" }
+cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
+cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }

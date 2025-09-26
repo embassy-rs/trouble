@@ -40,8 +40,8 @@ debug = 2
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 #bt-hci = { path = "../../../bt-hci" }
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "61be6361062cbb4dee7239b5ae207270ba562298"}
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "61be6361062cbb4dee7239b5ae207270ba562298"}
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1bc7380cd5d7a031f37511b69da13fc6caded816"}
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1bc7380cd5d7a031f37511b69da13fc6caded816"}
 
 [features]
 nrf52832 = [

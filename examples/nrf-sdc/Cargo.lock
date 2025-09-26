@@ -98,9 +98,9 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9172c3df73e30f9bcbf80d0f5a4700fbc6d6771329142d05c06bb7ece7032c7"
+checksum = "bb938a3b4c5cc6c2409275bad789c0346a0495fa071a0acc5d72b9bd3175a2f7"
 dependencies = [
  "btuuid",
  "defmt 1.0.1",
@@ -982,7 +982,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=61be6361062cbb4dee7239b5ae207270ba562298#61be6361062cbb4dee7239b5ae207270ba562298"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1bc7380cd5d7a031f37511b69da13fc6caded816#1bc7380cd5d7a031f37511b69da13fc6caded816"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -998,7 +998,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=61be6361062cbb4dee7239b5ae207270ba562298#61be6361062cbb4dee7239b5ae207270ba562298"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1bc7380cd5d7a031f37511b69da13fc6caded816#1bc7380cd5d7a031f37511b69da13fc6caded816"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1017,7 +1017,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=61be6361062cbb4dee7239b5ae207270ba562298#61be6361062cbb4dee7239b5ae207270ba562298"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1bc7380cd5d7a031f37511b69da13fc6caded816#1bc7380cd5d7a031f37511b69da13fc6caded816"
 dependencies = [
  "bt-hci 0.5.0",
  "critical-section",
@@ -1035,7 +1035,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=61be6361062cbb4dee7239b5ae207270ba562298#61be6361062cbb4dee7239b5ae207270ba562298"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1bc7380cd5d7a031f37511b69da13fc6caded816#1bc7380cd5d7a031f37511b69da13fc6caded816"
 dependencies = [
  "bindgen",
  "doxygen-rs",
