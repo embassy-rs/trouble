@@ -156,6 +156,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bt-hci"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb938a3b4c5cc6c2409275bad789c0346a0495fa071a0acc5d72b9bd3175a2f7"
+dependencies = [
+ "btuuid",
+ "defmt 1.0.1",
+ "embassy-sync",
+ "embedded-io",
+ "embedded-io-async",
+ "futures-intrusive",
+ "heapless 0.9.1",
+]
+
+[[package]]
 name = "btuuid"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -327,7 +342,7 @@ name = "cyw43"
 version = "0.5.0"
 source = "git+https://github.com/embassy-rs/embassy.git?rev=e46f3af64ff0c94e80cb1536ac42bbea12810653#e46f3af64ff0c94e80cb1536ac42bbea12810653"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.5.0",
  "cortex-m",
  "cortex-m-rt",
  "defmt 1.0.1",
@@ -2560,7 +2575,7 @@ dependencies = [
 name = "trouble-example-apps"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.6.0",
  "defmt 1.0.1",
  "embassy-executor",
  "embassy-futures",
@@ -2577,9 +2592,9 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.6.0",
  "defmt 1.0.1",
  "embassy-futures",
  "embassy-sync",

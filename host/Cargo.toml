@@ -1,6 +1,6 @@
 [package]
 name = "trouble-host"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "An async Rust BLE host"
 license = "Apache-2.0 OR MIT"
@@ -19,7 +19,7 @@ target = "thumbv7em-none-eabi"
 
 [dependencies]
 aes = { version = "0.8.2", optional = true }
-bt-hci = { version = ">=0.5.0, <0.7.0", features = ["uuid"] }
+bt-hci = { version = "0.6", features = ["uuid"] }
 cmac = { version = "0.7.2", optional = true }
 embedded-io = { version = "0.6" }
 embassy-sync = "0.7"

@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 trouble-host = { path = "../../host", features = ["derive", "log"] }
-bt-hci = { version = "0.5" }
+bt-hci = { version = "0.6" }
 serde = { version = "1", features = ["derive"] }
 futures = "0.3"
 serde_json = "1"

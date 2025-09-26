@@ -87,16 +87,16 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9172c3df73e30f9bcbf80d0f5a4700fbc6d6771329142d05c06bb7ece7032c7"
+checksum = "bb938a3b4c5cc6c2409275bad789c0346a0495fa071a0acc5d72b9bd3175a2f7"
 dependencies = [
  "btuuid",
  "embassy-sync",
  "embedded-io",
  "embedded-io-async",
  "futures-intrusive",
- "heapless 0.8.0",
+ "heapless 0.9.1",
  "log",
 ]
 
@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aes",
  "bt-hci",
