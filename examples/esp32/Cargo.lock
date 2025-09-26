@@ -1807,13 +1807,10 @@ name = "trouble-example-apps"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
- "embassy-executor",
  "embassy-futures",
  "embassy-sync 0.7.2",
  "embassy-time",
- "embedded-hal 1.0.0",
  "embedded-hal-async",
- "embedded-io",
  "embedded-storage-async",
  "heapless 0.9.1",
  "log",
@@ -1848,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "convert_case",
  "darling 0.20.11",

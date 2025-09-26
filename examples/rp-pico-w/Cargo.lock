@@ -668,9 +668,6 @@ name = "embedded-hal"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
-dependencies = [
- "defmt 0.3.100",
-]
 
 [[package]]
 name = "embedded-hal-async"
@@ -2562,13 +2559,10 @@ version = "0.1.0"
 dependencies = [
  "bt-hci",
  "defmt 1.0.1",
- "embassy-executor",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
- "embedded-hal 1.0.0",
  "embedded-hal-async",
- "embedded-io",
  "heapless 0.9.1",
  "rand_core 0.6.4",
  "static_cell",
@@ -2595,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "convert_case",
  "darling",
