@@ -17,6 +17,7 @@ following controllers are available:
 * link:https://github.com/embassy-rs/embassy/tree/main/cyw43[Raspberry Pi Pico W]
 * link:https://github.com/benbrittain/apache-nimble-sys[Apache NimBLE Controller]
 * link:https://github.com/esp-rs/esp-hal[ESP32]
+* link:https://github.com/embassy-rs/trouble/tree/main/bt-hci-linux[Linux Bluez]
 
 The link:https://github.com/embassy-rs/trouble/tree/main/examples[examples] show how you can use Trouble with the different controllers.
 
