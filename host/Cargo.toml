@@ -67,7 +67,7 @@ central = []
 # Enable GATT support
 gatt = []
 # Enable scan support
-scan = []
+scan = ["central"]
 # Enable macros
 derive = ["trouble-host-macros"]
 # Enable controller-to-host flow control
@@ -122,24 +122,24 @@ l2cap-tx-queue-size-32 = []
 l2cap-tx-queue-size-64 = []
 
 # Controls the pool size of the default packet pool, if enabled.
-default-packet-pool-size-1 = []
-default-packet-pool-size-2 = []
-default-packet-pool-size-4 = []
-default-packet-pool-size-8 = []
-default-packet-pool-size-16 = [] # Default
-default-packet-pool-size-32 = []
-default-packet-pool-size-64 = []
-default-packet-pool-size-128 = []
+default-packet-pool-size-1 = ["default-packet-pool"]
+default-packet-pool-size-2 = ["default-packet-pool"]
+default-packet-pool-size-4 = ["default-packet-pool"]
+default-packet-pool-size-8 = ["default-packet-pool"]
+default-packet-pool-size-16 = ["default-packet-pool"] # Default
+default-packet-pool-size-32 = ["default-packet-pool"]
+default-packet-pool-size-64 = ["default-packet-pool"]
+default-packet-pool-size-128 = ["default-packet-pool"]
 
 # Controls the packet MTU of the default packet pool, if enabled.
-default-packet-pool-mtu-27 = []
-default-packet-pool-mtu-48 = []
-default-packet-pool-mtu-64 = []
-default-packet-pool-mtu-128 = []
-default-packet-pool-mtu-251 = [] # Default
-default-packet-pool-mtu-255 = []
-default-packet-pool-mtu-512 = []
-default-packet-pool-mtu-1024 = []
+default-packet-pool-mtu-27 = ["default-packet-pool"]
+default-packet-pool-mtu-48 = ["default-packet-pool"]
+default-packet-pool-mtu-64 = ["default-packet-pool"]
+default-packet-pool-mtu-128 = ["default-packet-pool"]
+default-packet-pool-mtu-251 = ["default-packet-pool"] # Default
+default-packet-pool-mtu-255 = ["default-packet-pool"]
+default-packet-pool-mtu-512 = ["default-packet-pool"]
+default-packet-pool-mtu-1024 = ["default-packet-pool"]
 
 # When using the GATT client, this controls how many subscribers can be created.
 gatt-client-notification-max-subscribers-1 = [] # Default
