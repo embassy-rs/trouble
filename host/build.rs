@@ -28,10 +28,11 @@ fn main() {
         .to_ascii_uppercase()
         .replace('-', "_");
 
-    //disabled; potentially unnecessary
-    // only rebuild if build.rs changed. Otherwise Cargo will rebuild if any other file changed.
-    //println!("cargo::rustc-check-cfg=cfg(test)");
-    //println!("cargo::rerun-if-changed=build.rs");
+    // We don't use any external files: only run the build script if it has changed.
+    // Otherwise, Cargo will re-run it on each build.
+    println!("cargo::rerun-if-changed=build.rs");
+
+    println!("cargo::rustc-check-cfg=cfg(test)");
 
     // Rebuild if config envvar changed.
     for (name, _) in CONFIGS {
