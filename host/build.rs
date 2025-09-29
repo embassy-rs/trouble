@@ -28,10 +28,10 @@ fn main() {
         .to_ascii_uppercase()
         .replace('-', "_");
 
-    // only rebuild if build.rs changed. Otherwise Cargo will rebuild if any
-    // other file changed.
-    println!("cargo::rustc-check-cfg=cfg(test)");
-    println!("cargo:rerun-if-changed=build.rs");
+    //disabled; potentially unnecessary
+    // only rebuild if build.rs changed. Otherwise Cargo will rebuild if any other file changed.
+    //println!("cargo::rustc-check-cfg=cfg(test)");
+    //println!("cargo::rerun-if-changed=build.rs");
 
     // Check feature usage.
     //
@@ -119,7 +119,7 @@ fn main() {
 
     // Rebuild if config envvar changed.
     for (name, _) in CONFIGS {
-        println!("cargo:rerun-if-env-changed={crate_name}_{name}");
+        println!("cargo::rerun-if-env-changed={crate_name}_{name}");
     }
 
     let mut configs = HashMap::new();
