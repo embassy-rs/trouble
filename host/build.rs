@@ -33,6 +33,84 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(test)");
     println!("cargo:rerun-if-changed=build.rs");
 
+    // Check feature usage.
+    //
+    // Helps both document inter-feature relations, and stop builds ASAP if invariants are not
+    // fulfilled. For the developer, this leads to more straightforward error messages.
+    //
+    // Reference: Cargo features > https://embassy.dev/trouble/#_cargo_features
+    {
+        // 'scan' needs 'central'
+        #[cfg(all(feature = "scan", not(feature = "central")))]
+        compile_error!("Feature 'scan' also needs 'central' to be enabled.");
+
+        // Also in 'fmt.rs'
+        #[cfg(all(feature = "defmt", feature = "log"))]
+        compile_error!("You may not enable both `defmt` and `log` features.");
+
+        // Also in 'lib.rs'
+        #[cfg(not(any(feature = "central", feature = "peripheral")))]
+        compile_error!("Must enable at least one of: `central`, `peripheral`");
+
+        //...
+
+        // Only one of (or none) 'default-packet-pool-size-{X}' is allowed
+        {
+            let n = 0;
+            #[cfg(feature = "default-packet-pool-size-1")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-size-2")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-size-4")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-size-8")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-size-16")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-size-32")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-size-64")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-size-128")]
+            let n = n+1;
+
+            assert!(n <= 1, "📍 More than one 'default-packet-pool-size-X' feature is enabled.");
+
+            #[cfg(not(feature = "default-packet-pool"))]
+            if n>0 {
+                panic!("📍 'default-packet-pool-size-{{X}}' feature also needs 'default-packet-pool' to be enabled.");
+            }
+        }
+
+        // Only one of (or none) 'default-packet-pool-mtu-{X}' is allowed
+        {
+            let n = 0;
+            #[cfg(feature = "default-packet-pool-mtu-27")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-mtu-48")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-mtu-64")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-mtu-128")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-mtu-251")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-mtu-255")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-mtu-512")]
+            let n = n+1;
+            #[cfg(feature = "default-packet-pool-mtu-1024")]
+            let n = n+1;
+
+            assert!(n <= 1, "📍 More than one 'default-packet-pool-mtu-X' feature is enabled.");
+
+            #[cfg(not(feature = "default-packet-pool"))]
+            if n>0 {
+                panic!("📍 'default-packet-pool-mtu-{{X}}' feature also needs 'default-packet-pool' to be enabled.");
+            }
+        }
+    }
+
     // Rebuild if config envvar changed.
     for (name, _) in CONFIGS {
         println!("cargo:rerun-if-env-changed={crate_name}_{name}");
