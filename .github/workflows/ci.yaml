@@ -33,3 +33,67 @@ jobs:
       - name: CI
         run: |
           ./ci.sh
+  # Check binary-size, stolen from https://github.com/tweedegolf/sequential-storage/blob/master/.github/workflows/ci.yaml
+  binary-size:
+        runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/cache@v3
+        id: cache-cargo
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ./example/nrf-sdc/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - run: rustup target add thumbv7em-none-eabihf
+      - run: rustup component add rust-src llvm-tools
+      - if: steps.cache-cargo.outputs.cache-hit != 'true'
+        run: cargo install cargo-binutils
+
+      - name: Check out the repo with the full git history
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: '0'
+      - name: Build new binary
+        working-directory: ./example/nrf-sdc
+        run: |
+          echo 'RESULT<<EOF' >> $GITHUB_OUTPUT
+          cargo size --release --features nrf52840 --bin ble_bas_peripheral >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+        id: new-size
+      - name: Save binary
+        run: |
+          mv ./example/nrf-sdc/target/thumbv7em-none-eabihf/release/example ./example/nrf-sdc/target/thumbv7em-none-eabihf/release/original.elf
+      - name: If it's a PR checkout the base commit
+        if: ${{ github.event.pull_request }}
+        run: git checkout ${{ github.event.pull_request.base.sha }}
+      - name: Rebuild with the base commit
+        if: ${{ github.event.pull_request }}
+        working-directory: ./example/nrf-sdc
+        run: cargo build --release --features nrf52840 --bin ble_bas_peripheral
+      - name: Run Bloaty to compare both output files
+        if: ${{ github.event.pull_request }}
+        id: bloaty-comparison
+        uses: carlosperate/bloaty-action@v1
+        with:
+          bloaty-args: ./example/nrf-sdc/target/thumbv7em-none-eabihf/release/original.elf -- ./example/nrf-sdc/target/thumbv7em-none-eabihf/release/example
+          output-to-summary: true
+      - name: Add a PR comment with the bloaty diff
+        if: ${{ github.event.pull_request }}
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## PR build size\n \`\`\`\n${{ join(steps.new-size.outputs.*, '\n') }}\n\`\`\`\n ### Diff\n\`\`\`\n${{ steps.bloaty-comparison.outputs.bloaty-output-encoded }}\`\`\`\n`
+            })
