@@ -632,10 +632,18 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         Ok(())
     }
 
-    pub(crate) fn handle_security_hci_event(&self, event: bt_hci::event::Event) -> Result<(), Error> {
+    pub(crate) fn handle_security_hci_event(&self, event: bt_hci::event::EventPacket) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             self.security_manager.handle_hci_event(event, self)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_security_hci_le_event(&self, event: bt_hci::event::le::LeEventPacket) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            self.security_manager.handle_hci_le_event(event, self)?;
         }
         Ok(())
     }

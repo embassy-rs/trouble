@@ -4,14 +4,14 @@ compile_error!("Only Linux is supported");
 use core::future::Future;
 use core::mem;
 use core::pin::Pin;
-use core::task::{Context, Poll, ready};
+use core::task::{ready, Context, Poll};
 use std::io;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 
 use bt_hci::transport::{self, WithIndicator};
 use bt_hci::{ControllerToHostPacket, FromHciBytes as _, HostToControllerPacket, WriteHci as _};
 use tokio::io::unix::AsyncFd;
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf, ReadHalf, WriteHalf, split};
+use tokio::io::{split, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf, ReadHalf, WriteHalf};
 use tokio::sync::Mutex;
 
 const BTPROTO_HCI: libc::c_int = 1;
@@ -34,6 +34,12 @@ pub enum Error {
 impl embedded_io::Error for Error {
     fn kind(&self) -> embedded_io::ErrorKind {
         embedded_io::ErrorKind::Other
+    }
+}
+
+impl From<bt_hci::FromHciBytesError> for Error {
+    fn from(e: bt_hci::FromHciBytesError) -> Self {
+        Self::FromHciBytesError(e)
     }
 }
 

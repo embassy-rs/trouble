@@ -859,12 +859,14 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
 
 #[cfg(test)]
 mod tests {
+    use core::task::Poll;
+
+    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
     use super::*;
     use crate::connection_manager::tests::{setup, ADDR_1};
     use crate::prelude::*;
-    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
-    use core::task::Poll;
-    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
     #[test]
     fn test_attribute_server_last_handle_of_group() {

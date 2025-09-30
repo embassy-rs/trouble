@@ -4,8 +4,8 @@
 use embassy_executor::Spawner;
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
-use esp_radio::Controller;
 use esp_radio::ble::controller::BleConnector;
+use esp_radio::Controller;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_l2cap_peripheral;
 use trouble_host::prelude::ExternalController;
@@ -19,7 +19,14 @@ async fn main(_s: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     esp_alloc::heap_allocator!(size: 72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_preempt::init(timg0.timer0);
+    #[cfg(target_arch = "riscv32")]
+    let software_interrupt = esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+
+    esp_preempt::start(
+        timg0.timer0,
+        #[cfg(target_arch = "riscv32")]
+        software_interrupt.software_interrupt0,
+    );
 
     static RADIO: StaticCell<Controller<'static>> = StaticCell::new();
     let radio = RADIO.init(esp_radio::init().unwrap());
