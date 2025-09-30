@@ -58,26 +58,29 @@ fn main() {
         {
             let n = 0;
             #[cfg(feature = "default-packet-pool-size-1")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-size-2")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-size-4")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-size-8")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-size-16")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-size-32")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-size-64")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-size-128")]
-            let n = n+1;
+            let n = n + 1;
 
-            assert!(n <= 1, "📍 More than one 'default-packet-pool-size-X' feature is enabled.");
+            assert!(
+                n <= 1,
+                "📍 More than one 'default-packet-pool-size-X' feature is enabled."
+            );
 
             #[cfg(not(feature = "default-packet-pool"))]
-            if n>0 {
+            if n > 0 {
                 panic!("📍 'default-packet-pool-size-{{X}}' feature also needs 'default-packet-pool' to be enabled.");
             }
         }
@@ -86,26 +89,29 @@ fn main() {
         {
             let n = 0;
             #[cfg(feature = "default-packet-pool-mtu-27")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-mtu-48")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-mtu-64")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-mtu-128")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-mtu-251")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-mtu-255")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-mtu-512")]
-            let n = n+1;
+            let n = n + 1;
             #[cfg(feature = "default-packet-pool-mtu-1024")]
-            let n = n+1;
+            let n = n + 1;
 
-            assert!(n <= 1, "📍 More than one 'default-packet-pool-mtu-X' feature is enabled.");
+            assert!(
+                n <= 1,
+                "📍 More than one 'default-packet-pool-mtu-X' feature is enabled."
+            );
 
             #[cfg(not(feature = "default-packet-pool"))]
-            if n>0 {
+            if n > 0 {
                 panic!("📍 'default-packet-pool-mtu-{{X}}' feature also needs 'default-packet-pool' to be enabled.");
             }
         }
