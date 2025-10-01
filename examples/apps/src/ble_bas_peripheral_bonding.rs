@@ -12,7 +12,7 @@ use trouble_host::prelude::*;
 const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
-const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
+const L2CAP_CHANNELS_MAX: usize = 4; // Signal + att
 
 // GATT Server definition
 #[gatt_server]
@@ -46,7 +46,6 @@ pub(crate) struct HidService {
     pub(crate) output_keyboard: [u8; 1],
 }
 
-
 /// Battery service
 #[gatt_service(uuid = service::BATTERY)]
 struct BatteryService {
@@ -74,8 +73,7 @@ impl Key for StoredAddr {
     fn deserialize_from(buffer: &[u8]) -> Result<(Self, usize), SerializationError> {
         if buffer.len() < 6 {
             Err(SerializationError::BufferTooSmall)
-        }
-        else {
+        } else {
             Ok((StoredAddr(BdAddr::new(buffer[0..6].try_into().unwrap())), 6))
         }
     }
@@ -102,18 +100,17 @@ impl<'a> Value<'a> for StoredBondInformation {
 
     fn deserialize_from(buffer: &'a [u8]) -> Result<Self, SerializationError>
     where
-        Self: Sized
+        Self: Sized,
     {
         if buffer.len() < 17 {
             Err(SerializationError::BufferTooSmall)
-        }
-        else {
+        } else {
             let ltk = LongTermKey::from_le_bytes(buffer[0..16].try_into().unwrap());
             let security_level = match buffer[16] {
                 0 => SecurityLevel::NoEncryption,
                 1 => SecurityLevel::Encrypted,
                 2 => SecurityLevel::EncryptedAuthenticated,
-                _ => return Err(SerializationError::InvalidData)
+                _ => return Err(SerializationError::InvalidData),
             };
             Ok(StoredBondInformation { ltk, security_level })
         }
@@ -121,24 +118,38 @@ impl<'a> Value<'a> for StoredBondInformation {
 }
 
 fn flash_range<S: NorFlash>() -> Range<u32> {
-    0..2*S::ERASE_SIZE as u32
+    0..2 * S::ERASE_SIZE as u32
 }
 
-async fn store_bonding_info<S: NorFlash>(storage: &mut S, info: &BondInformation) -> Result<(), sequential_storage::Error<S::Error>> {
-    // Assumes that S::ERASE_SIZE is large enough
-    sequential_storage::erase_all(storage, 0..S::ERASE_SIZE as u32).await?;
-    let mut buffer = [0;32];
+async fn store_bonding_info<S: NorFlash>(
+    storage: &mut S,
+    info: &BondInformation,
+) -> Result<(), sequential_storage::Error<S::Error>> {
+    // Use flash range from 640KB, should be good for both ESP32 & nRF52840 examples
+    let start_addr = 0xA0000 as u32;
+    let storage_range = start_addr..(start_addr + 8 * S::ERASE_SIZE as u32);
+    sequential_storage::erase_all(storage, storage_range.clone()).await?;
+    let mut buffer = [0; 32];
     let key = StoredAddr(info.identity.bd_addr);
-    let value = StoredBondInformation { ltk: info.ltk, security_level: info.security_level };
-    sequential_storage::map::store_item(storage, flash_range::<S>(), &mut NoCache::new(), &mut buffer, &key, &value).await?;
+    let value = StoredBondInformation {
+        ltk: info.ltk,
+        security_level: info.security_level,
+    };
+    sequential_storage::map::store_item(storage, storage_range, &mut NoCache::new(), &mut buffer, &key, &value).await?;
     Ok(())
 }
 
-async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformation>
-{
-    let mut buffer = [0;32];
+async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformation> {
+    let mut buffer = [0; 32];
     let mut cache = NoCache::new();
-    let mut iter = sequential_storage::map::fetch_all_items::<StoredAddr, _, _>(storage, flash_range::<S>(), &mut cache, &mut buffer).await.ok()?;
+    let mut iter = sequential_storage::map::fetch_all_items::<StoredAddr, _, _>(
+        storage,
+        flash_range::<S>(),
+        &mut cache,
+        &mut buffer,
+    )
+    .await
+    .ok()?;
     while let Some((key, value)) = iter.next::<StoredBondInformation>(&mut buffer).await.ok()? {
         return Some(BondInformation {
             identity: Identity {
@@ -147,7 +158,7 @@ async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformati
             },
             security_level: value.security_level,
             is_bonded: true,
-            ltk: value.ltk
+            ltk: value.ltk,
         });
     }
     None
@@ -174,8 +185,7 @@ where
         info!("Loaded bond information");
         stack.add_bond_information(bond_info).unwrap();
         true
-    }
-    else {
+    } else {
         info!("No bond information found");
         false
     };
@@ -189,7 +199,7 @@ where
         name: "TrouBLE",
         appearance: &appearance::human_interface_device::GENERIC_HUMAN_INTERFACE_DEVICE,
     }))
-        .unwrap();
+    .unwrap();
 
     let _ = join(ble_task(runner), async {
         loop {
@@ -203,6 +213,7 @@ where
                     // run until any task ends (usually because the connection has been closed),
                     // then return to advertising state.
                     select(a, b).await;
+                    info!("Connection dropped");
                 }
                 Err(e) => {
                     #[cfg(feature = "defmt")]
@@ -212,7 +223,7 @@ where
             }
         }
     })
-        .await;
+    .await;
 }
 
 /// This is a background task that is required to run forever alongside any other BLE tasks.
@@ -244,13 +255,18 @@ async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
 ///
 /// This function will handle the GATT events and process them.
 /// This is how we interact with read and write requests.
-async fn gatt_events_task<S: NorFlash>(storage: &mut S, server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>, bond_stored: &mut bool) -> Result<(), Error> {
+async fn gatt_events_task<S: NorFlash>(
+    storage: &mut S,
+    server: &Server<'_>,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    bond_stored: &mut bool,
+) -> Result<(), Error> {
     let level = server.battery_service.level;
     let reason = loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
             #[cfg(feature = "security")]
-            GattConnectionEvent::PairingComplete { security_level, bond} => {
+            GattConnectionEvent::PairingComplete { security_level, bond } => {
                 info!("[gatt] pairing complete: {:?}", security_level);
                 if let Some(bond) = bond {
                     store_bonding_info(storage, &bond).await.unwrap();
@@ -321,7 +337,10 @@ async fn advertise<'values, 'server, C: Controller>(
     let len = AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[service::BATTERY.to_le_bytes(), service::HUMAN_INTERFACE_DEVICE.to_le_bytes()]),
+            AdStructure::ServiceUuids16(&[
+                service::BATTERY.to_le_bytes(),
+                service::HUMAN_INTERFACE_DEVICE.to_le_bytes(),
+            ]),
             AdStructure::CompleteLocalName(name.as_bytes()),
         ],
         &mut advertiser_data[..],

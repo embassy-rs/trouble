@@ -6,6 +6,7 @@ use embassy_executor::Spawner;
 use embassy_nrf::mode::Async;
 use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, qspi, rng};
+use nrf_sdc::mpsl::Flash;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use rand_chacha::ChaCha12Rng;
@@ -40,7 +41,7 @@ const L2CAP_MTU: usize = 72;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
-    rng: &'d mut rng::Rng<RNG, Async>,
+    rng: &'d mut rng::Rng<Async>,
     mpsl: &'d MultiprotocolServiceLayer,
     mem: &'d mut sdc::Mem<N>,
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
@@ -64,7 +65,13 @@ async fn main(spawner: Spawner) {
         skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
     };
     static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
-    let mpsl = MPSL.init(unwrap!(mpsl::MultiprotocolServiceLayer::new(mpsl_p, Irqs, lfclk_cfg)));
+    static SESSION_MEM: StaticCell<mpsl::SessionMem<1>> = StaticCell::new();
+    let mpsl = MPSL.init(unwrap!(mpsl::MultiprotocolServiceLayer::with_timeslots(
+        mpsl_p,
+        Irqs,
+        lfclk_cfg,
+        SESSION_MEM.init(mpsl::SessionMem::new())
+    )));
     spawner.must_spawn(mpsl_task(&*mpsl));
 
     let sdc_p = sdc::Peripherals::new(
@@ -75,27 +82,11 @@ async fn main(spawner: Spawner) {
     let mut rng = rng::Rng::new(p.RNG, Irqs);
     let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
 
-    let mut sdc_mem = sdc::Mem::<3312>::new();
+    let mut sdc_mem = sdc::Mem::<5000>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    // Config for the MX25R64 present in the nRF52840 DK
-    let mut config = qspi::Config::default();
-    config.read_opcode = qspi::ReadOpcode::READ4IO;
-    config.write_opcode = qspi::WriteOpcode::PP4IO;
-    config.write_page_size = qspi::WritePageSize::_256BYTES;
-    config.frequency = qspi::Frequency::M32;
-    config.capacity = 8*1024*1024;
+    // Use internal Flash as the storage
+    let mut flash = Flash::take(mpsl, p.NVMC);
 
-    let mut qspi: qspi::Qspi<_> = qspi::Qspi::new(
-        p.QSPI, Irqs, p.P0_19, p.P0_17, p.P0_20, p.P0_21, p.P0_22, p.P0_23, config,
-    );
-    let input = embassy_nrf::gpio::Input::new(p.P0_11, embassy_nrf::gpio::Pull::Up);
-    // Allow time for button to settle
-    embassy_time::Timer::after(embassy_time::Duration::from_millis(100)).await;
-    if input.is_low() {
-        defmt::info!("Erasing flash");
-        qspi.erase(0).await.unwrap();
-    }
-
-    ble_bas_peripheral_bonding::run(sdc, &mut rng_2, &mut qspi).await;
+    ble_bas_peripheral_bonding::run(sdc, &mut rng_2, &mut flash).await;
 }
