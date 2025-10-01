@@ -858,6 +858,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp-storage"
+version = "0.7.0"
+source = "git+https://github.com/lulf/esp-hal.git?branch=bt-hci-fix#e61e6e7a2521138a7949bf9912e84fed59ca2536"
+dependencies = [
+ "cfg-if",
+ "document-features",
+ "embedded-storage",
+ "esp-hal",
+ "esp-hal-procmacros",
+ "esp-metadata-generated",
+ "esp-rom-sys",
+ "esp-sync",
+ "xtensa-lx",
+]
+
+[[package]]
 name = "esp-sync"
 version = "0.0.0"
 source = "git+https://github.com/lulf/esp-hal.git?branch=bt-hci-fix#6f5b86064ee145f983c5530d4adaa65d07351dd0"
@@ -1788,6 +1804,7 @@ dependencies = [
 name = "trouble-esp32-examples"
 version = "0.1.0"
 dependencies = [
+ "embassy-embedded-hal",
  "embassy-executor",
  "esp-alloc",
  "esp-backtrace",
@@ -1797,6 +1814,7 @@ dependencies = [
  "esp-preempt",
  "esp-println",
  "esp-radio",
+ "esp-storage",
  "static_cell",
  "trouble-example-apps",
  "trouble-host",
