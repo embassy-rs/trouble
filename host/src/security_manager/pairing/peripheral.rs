@@ -1,6 +1,8 @@
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
+use bt_hci::param::AddrKind;
+use bt_hci::param::BdAddr;
 use embassy_time::Instant;
 use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
@@ -17,6 +19,7 @@ use crate::security_manager::pairing::util::{
 use crate::security_manager::pairing::{Event, PairingOps};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures, PassKey};
 use crate::security_manager::Reason;
+use crate::IdentityResolvingKey;
 use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
 
 #[derive(Debug, Clone)]
@@ -34,6 +37,8 @@ enum Step {
     // TODO add OOB
     WaitingDHKeyEa,
     WaitingLinkEncrypted,
+    WaitingIdentitityInformation,
+    WaitingIdentitityAddressInformation,
     SendingKeys(i32),
     ReceivingKeys(i32),
     Success,
@@ -199,7 +204,7 @@ impl Pairing {
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let current_state = self.current_step.borrow().clone();
-        let next_state = match (current_state, event) {
+        let next_step = match (current_state, event) {
             x @ (Step::WaitingPairingRequest | Step::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
                 if res {
                     info!("Link encrypted!");
@@ -208,7 +213,19 @@ impl Pairing {
                     } else {
                         self.pairing_data.borrow_mut().bond_information = ops.try_enable_bonded_encryption()?;
                     }
-                    Step::Success
+
+                    if self
+                        .pairing_data
+                        .borrow()
+                        .peer_features
+                        .initiator_key_distribution
+                        .identity_key()
+                    {
+                        // Remote will share identity key
+                        Step::WaitingIdentitityInformation
+                    } else {
+                        Step::Success
+                    }
                 } else {
                     error!("Failed to enable encryption!");
                     Step::Error(Error::Security(Reason::KeyRejected))
@@ -238,7 +255,7 @@ impl Pairing {
             _ => Step::Error(Error::InvalidState),
         };
 
-        match next_state {
+        match next_step {
             Step::Error(x) => {
                 self.current_step.replace(Step::Error(x.clone()));
                 ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
@@ -250,11 +267,13 @@ impl Pairing {
                 if is_success {
                     let pairing_data = self.pairing_data.borrow();
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
+                        debug!("bond info: {:?}", bond);
                         let pairing_bond = if pairing_data.want_bonding() {
                             Some(bond.clone())
                         } else {
                             None
                         };
+
                         ops.try_send_connection_event(ConnectionEvent::PairingComplete {
                             security_level: bond.security_level,
                             bond: pairing_bond,
@@ -353,13 +372,47 @@ impl Pairing {
 
                 (x, Command::KeypressNotification) => x,
 
+                (Step::WaitingIdentitityInformation, Command::IdentityInformation) => {
+                    Self::handle_identity_information(command.payload, pairing_data)?
+                }
+
+                (Step::WaitingIdentitityAddressInformation, Command::IdentityAddressInformation) => {
+                    Self::handle_identity_address_information(command.payload, pairing_data)?
+                }
+
                 _ => return Err(Error::InvalidState),
             }
         };
 
-        self.current_step.replace(next_step);
+        match next_step {
+            Step::Error(x) => {
+                self.current_step.replace(Step::Error(x.clone()));
+                ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
+                Err(x)
+            }
+            x => {
+                let is_success = matches!(x, Step::Success);
+                self.current_step.replace(x);
+                if is_success {
+                    debug!("Step::Success");
+                    if let Some(bond) = pairing_data.bond_information.as_ref() {
+                        debug!("bond info: {:?}", bond);
+                        let pairing_bond = if pairing_data.want_bonding() {
+                            ops.try_update_bond_information(bond)?;
+                            Some(bond.clone())
+                        } else {
+                            None
+                        };
 
-        Ok(())
+                        ops.try_send_connection_event(ConnectionEvent::PairingComplete {
+                            security_level: bond.security_level,
+                            bond: pairing_bond,
+                        })?;
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 
     fn handle_pairing_request<P: PacketPool, OPS: PairingOps<P>>(
@@ -373,6 +426,13 @@ impl Pairing {
         }
         if !peer_features.security_properties.secure_connection() {
             return Err(Error::Security(Reason::UnspecifiedReason));
+        }
+
+        if peer_features.initiator_key_distribution.identity_key() {
+            pairing_data
+                .local_features
+                .initiator_key_distribution
+                .set_identity_key();
         }
 
         pairing_data.peer_features = peer_features;
@@ -403,6 +463,44 @@ impl Pairing {
         }
 
         Ok(())
+    }
+
+    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
+        let irk = IdentityResolvingKey::new(u128::from_le_bytes(
+            payload.try_into().map_err(|_| Error::InvalidValue)?,
+        ));
+        if let Some(ref mut bond) = &mut pairing_data.bond_information {
+            bond.identity.irk = Some(irk);
+        }
+
+        trace!("Identity information: IRK: {:?}", irk);
+        Ok(Step::WaitingIdentitityAddressInformation)
+    }
+
+    fn handle_identity_address_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
+        let addr_type = payload[0];
+        let kind = if addr_type == 0 {
+            AddrKind::PUBLIC
+        } else if addr_type == 1 {
+            AddrKind::RANDOM
+        } else {
+            // Impossible
+            error!("[security manager] Invalid address type: {:?}", addr_type);
+            return Err(Error::InvalidValue);
+        };
+        let addr = BdAddr::new(payload[1..7].try_into().map_err(|_| Error::InvalidValue)?);
+        pairing_data.peer_address = Address { kind, addr };
+
+        if let Some(ref mut bond) = &mut pairing_data.bond_information {
+            bond.identity.bd_addr = addr;
+        }
+
+        trace!(
+            "Identity address information: addr_type: {:?}, addr: {:?}",
+            addr_type,
+            addr
+        );
+        Ok(Step::Success)
     }
 
     fn handle_public_key(payload: &[u8], pairing_data: &mut PairingData) {

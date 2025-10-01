@@ -21,6 +21,7 @@ pub trait PairingOps<P: PacketPool> {
         security_level: SecurityLevel,
         is_bonded: bool,
     ) -> Result<BondInformation, Error>;
+    fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error>;
     fn connection_handle(&mut self) -> ConnHandle;
     fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error>;
     fn bonding_flag(&self) -> BondingFlag;
@@ -217,6 +218,10 @@ mod tests {
             } else {
                 Ok(None)
             }
+        }
+
+        fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error> {
+            Ok(())
         }
 
         fn connection_handle(&mut self) -> ConnHandle {
