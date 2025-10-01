@@ -750,6 +750,10 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         Ok(())
     }
 
+    fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error> {
+        self.security_manager.add_bond_information(bond.clone())
+    }
+
     fn try_enable_encryption(
         &mut self,
         ltk: &LongTermKey,
@@ -757,14 +761,13 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         is_bonded: bool,
     ) -> Result<BondInformation, Error> {
         info!("Enabling encryption for {:?}", self.peer_identity);
-        //let bond_info = self.store_pairing()?;
         let bond_info = BondInformation {
             ltk: *ltk,
             identity: self.peer_identity,
             is_bonded,
             security_level,
         };
-        self.security_manager.add_bond_information(bond_info.clone())?;
+        self.try_update_bond_information(&bond_info)?;
         self.security_manager
             .try_send_event(SecurityEventData::EnableEncryption(self.conn_handle, bond_info.clone()))?;
         Ok(bond_info)
