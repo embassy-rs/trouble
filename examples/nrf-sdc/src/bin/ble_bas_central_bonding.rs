@@ -87,7 +87,7 @@ async fn main(spawner: Spawner) {
     config.frequency = qspi::Frequency::M32;
     config.capacity = 8*1024*1024;
 
-    let mut qspi: qspi::Qspi<_> = qspi::Qspi::new(
+    let mut qspi: qspi::Qspi = qspi::Qspi::new(
         p.QSPI, Irqs, p.P0_19, p.P0_17, p.P0_20, p.P0_21, p.P0_22, p.P0_23, config,
     );
     let input = embassy_nrf::gpio::Input::new(p.P0_11, embassy_nrf::gpio::Pull::Up);
