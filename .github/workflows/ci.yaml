@@ -35,7 +35,7 @@ jobs:
           ./ci.sh
   # Check binary-size, stolen from https://github.com/tweedegolf/sequential-storage/blob/master/.github/workflows/ci.yaml
   binary-size:
-        runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       pull-requests: write
