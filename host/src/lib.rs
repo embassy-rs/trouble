@@ -16,7 +16,7 @@ use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::Vec;
 #[cfg(feature = "security")]
-use rand_core::{CryptoRng, RngCore};
+use rand::rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;

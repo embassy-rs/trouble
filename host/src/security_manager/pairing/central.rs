@@ -2,8 +2,8 @@ use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
 use embassy_time::Instant;
+use rand::rand_core::{CryptoRng, RngCore};
 use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};

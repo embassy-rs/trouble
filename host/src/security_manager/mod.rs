@@ -20,7 +20,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
-use rand_core::SeedableRng;
+use rand::rand_core::SeedableRng;
 use types::Command;
 pub use types::{PassKey, Reason};
 

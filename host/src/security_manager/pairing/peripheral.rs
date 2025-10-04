@@ -2,8 +2,8 @@ use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
 use embassy_time::Instant;
+use rand::rand_core::{CryptoRng, RngCore};
 use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
@@ -619,7 +619,7 @@ impl Pairing {
 #[cfg(test)]
 mod tests {
     use chacha20::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
+    use rand::rand_core::SeedableRng;
 
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
     use crate::security_manager::pairing::peripheral::Pairing;
