@@ -21,12 +21,13 @@ defmt = "1.0"
 defmt-rtt = "1.0"
 panic-probe = { version = "1.0", features = ["print-defmt"] }
 
+chacha20 = { version = "0.10.0-rc.2", default-features = false, features = ["rng"] }
 cortex-m = { version = "0.7" }
 cortex-m-rt = "0.7"
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
-rand_core = { version = "0.6"}
-rand_chacha = { version = "0.3", default-features = false }
+#rand_core = { version = "0.6"}
+#rand_chacha = { version = "0.3", default-features = false }
 
 [build-dependencies]
 reqwest = { version = "0.12.9", features = ["blocking"]}

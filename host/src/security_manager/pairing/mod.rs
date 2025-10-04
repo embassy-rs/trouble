@@ -140,7 +140,7 @@ pub enum Event {
 
 #[cfg(test)]
 mod tests {
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
+    use chacha20::{ChaCha12Core, ChaCha12Rng};
     use rand_core::SeedableRng;
 
     use super::*;
