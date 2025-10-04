@@ -619,7 +619,7 @@ impl Pairing {
 #[cfg(test)]
 mod tests {
     use chacha20::{ChaCha12Core, ChaCha12Rng};
-    use rand::rand_core::SeedableRng;
+    use rand::SeedableRng;
 
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
     use crate::security_manager::pairing::peripheral::Pairing;
