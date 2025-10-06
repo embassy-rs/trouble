@@ -47,6 +47,6 @@ cargo fmt --check --manifest-path ./host/Cargo.toml
 cargo clippy --manifest-path ./host/Cargo.toml --features gatt,peripheral,central
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture
+cargo test --manifest-path ./host/Cargo.toml --features security --lib -- --nocapture
+cargo test --manifest-path ./host/Cargo.toml --features security --no-run -- --nocapture
 cargo test --manifest-path ./examples/tests/Cargo.toml --no-run -- --nocapture
-
-cargo test --manifest-path ./host/Cargo.toml --features security
