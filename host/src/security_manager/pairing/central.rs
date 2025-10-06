@@ -386,9 +386,6 @@ impl Pairing {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
                         PairingMethod::PassKeyEntry { central, .. } => {
                             if central == PassKeyEntryAction::Display {
-                                // Note: 'Uniform::new*()' are aimed at cases where multiple samples would be fetched.
-                                //      "Constructors may do extra work up front to allow faster sampling of multiple values.
-                                //       Where only a single sample is required it is suggested to use Rng::random_range [...]"
                                 //pairing_data.local_secret_ra = rng.random_range(0..=999999);
                                 pairing_data.local_secret_ra =
                                     rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());

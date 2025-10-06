@@ -563,7 +563,7 @@ pub fn new<
     }
 
     // Safety:
-    // - HostResources has the exceeding lifetime as the returned Stack.    <<--??
+    // - HostResources has the exceeding lifetime as the returned Stack.
     // - Internal lifetimes are elided (made 'static) to simplify API usage
     // - This _should_ be OK, because there are no references held to the resources
     //   when the stack is shut down.
@@ -610,10 +610,7 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     }
     #[cfg(feature = "security")]
     /// Set the random generator seed for random generator used by security manager
-    pub fn set_random_generator_seed<RNG>(self, _random_generator: &mut RNG) -> Self
-    where
-        RNG: RngCore + CryptoRng,
-    {
+    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
         {
             let mut random_seed = [0u8; 32];
             _random_generator.fill_bytes(&mut random_seed);

@@ -49,4 +49,4 @@ cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./examples/tests/Cargo.toml --no-run -- --nocapture
 
-cargo test --manifest-path ./host/Cargo.toml --features security  # Q: what place above should this be fitted in?  Should '--lib' or '--no-run' be used??
+cargo test --manifest-path ./host/Cargo.toml --features security
