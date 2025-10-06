@@ -15,7 +15,8 @@ use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::Vec;
-use rand_core::{CryptoRng, RngCore};
+#[cfg(feature = "security")]
+use rand::rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
@@ -436,14 +437,14 @@ pub trait Controller:
     + ControllerCmdAsync<LeCreateConn>
     + ControllerCmdSync<LeClearFilterAcceptList>
     + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
-    + for<'t> ControllerCmdSync<LeSetAdvEnable>
+    + ControllerCmdSync<LeSetAdvEnable>
     + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
     + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
     + ControllerCmdSync<LeReadBufferSize>
-    + for<'t> ControllerCmdSync<LeSetAdvData>
+    + ControllerCmdSync<LeSetAdvData>
     + ControllerCmdSync<LeSetAdvParams>
-    + for<'t> ControllerCmdSync<LeSetAdvEnable>
-    + for<'t> ControllerCmdSync<LeSetScanResponseData>
+    + ControllerCmdSync<LeSetAdvEnable>
+    + ControllerCmdSync<LeSetScanResponseData>
     + ControllerCmdSync<LeLongTermKeyRequestReply>
     + ControllerCmdAsync<LeEnableEncryption>
     + ControllerCmdSync<ReadBdAddr>
@@ -471,14 +472,14 @@ impl<
             + ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdAsync<LeCreateConn>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
-            + for<'t> ControllerCmdSync<LeSetAdvData>
+            + ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>
+            + ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetScanResponseData>
             + ControllerCmdSync<LeLongTermKeyRequestReply>
             + ControllerCmdAsync<LeEnableEncryption>
             + ControllerCmdSync<ReadBdAddr>,
@@ -607,9 +608,9 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         self.host.connections.security_manager.set_local_address(address);
         self
     }
+    #[cfg(feature = "security")]
     /// Set the random generator seed for random generator used by security manager
     pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
-        #[cfg(feature = "security")]
         {
             let mut random_seed = [0u8; 32];
             _random_generator.fill_bytes(&mut random_seed);
@@ -620,11 +621,11 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         }
         self
     }
+    #[cfg(feature = "security")]
     /// Set the IO capabilities used by the security manager.
     ///
     /// Only relevant if the feature `security` is enabled.
     pub fn set_io_capabilities(self, io_capabilities: IoCapabilities) -> Self {
-        #[cfg(feature = "security")]
         {
             self.host
                 .connections

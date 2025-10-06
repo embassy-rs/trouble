@@ -2,8 +2,8 @@ use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
 use embassy_time::Instant;
+use rand::rand_core::{CryptoRng, RngCore};
 use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
@@ -305,8 +305,9 @@ impl Pairing {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
                         PairingMethod::PassKeyEntry { peripheral, .. } => {
                             if peripheral == PassKeyEntryAction::Display {
+                                //pairing_data.local_secret_rb = rng.random_range(0..=999999);
                                 pairing_data.local_secret_rb =
-                                    rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                                    rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
                                 pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     pairing_data.local_secret_rb as u32,
@@ -617,8 +618,8 @@ impl Pairing {
 
 #[cfg(test)]
 mod tests {
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
+    use chacha20::{ChaCha12Core, ChaCha12Rng};
+    use rand::SeedableRng;
 
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
     use crate::security_manager::pairing::peripheral::Pairing;

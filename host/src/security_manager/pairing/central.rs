@@ -2,8 +2,8 @@ use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
 use embassy_time::Instant;
+use rand::rand_core::{CryptoRng, RngCore};
 use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
@@ -386,8 +386,10 @@ impl Pairing {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
                         PairingMethod::PassKeyEntry { central, .. } => {
                             if central == PassKeyEntryAction::Display {
+                                //pairing_data.local_secret_ra = rng.random_range(0..=999999);
                                 pairing_data.local_secret_ra =
-                                    rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                                    rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
+
                                 pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     pairing_data.local_secret_ra as u32,

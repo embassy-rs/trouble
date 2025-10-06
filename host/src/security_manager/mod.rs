@@ -14,13 +14,13 @@ use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EventKind, EventPacket};
 use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
 use bt_hci::FromHciBytes;
+use chacha20::ChaCha12Rng;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
+use rand::SeedableRng;
 use types::Command;
 pub use types::{PassKey, Reason};
 
