@@ -11,7 +11,6 @@ embassy-sync = { version = "0.7", features = ["log"] }
 embassy-time = { version = "0.5", features = ["log", "std", "generic-queue-8"] }
 critical-section = { version = "1.1", features = ["std"] }
 rand = { version = "0.10.0-rc.0", default-features = false, features = ["os_rng"], optional = true }
-#rand_core = { version = "0.9.3", default-features = false, optional = true }
 tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "std"] }

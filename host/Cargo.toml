@@ -31,7 +31,6 @@ heapless = "0.9"
 trouble-host-macros = { path = "../host-macros", version = "0.3.0", optional = true }
 p256 = { version = "0.14.0-pre.11", default-features = false, features = ["ecdh","arithmetic"], optional = true }
 rand = { version="0.10.0-rc.0", default-features = false, optional = true}
-#rand_core = { version = "0.9.3", default-features = false, optional = true }
 static_cell = "2.1.0"
 zerocopy = "0.8.21"
 
@@ -51,7 +50,6 @@ tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] }  # needed for CI builds
 rand = { version = "0.10.0-rc.0", default-features = false, features = ["os_rng","thread_rng"] }
-#rand_core = { version = "0.9.3", default-features = false }
 heapless = "0.9"
 #embassy-executor = { version = "0.9", features = ["arch-std", "executor-thread"]}
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
@@ -76,10 +74,7 @@ controller-host-flow-control = []
 connection-metrics = []
 # Enable additional channel metrics
 channel-metrics = []
-security = [ "dep:p256", "dep:aes", "dep:chacha20", "dep:cmac",
-  "dep:rand",
-  #"dep:rand_core"
-  "gatt" ]
+security = [ "dep:p256", "dep:aes", "dep:chacha20", "dep:cmac", "dep:rand", "gatt" ]
 # For development. Disable security manager cryptographically secure pseudorandom number
 # generator (CSPRNG) to require a cryptographically secure seed
 dev-disable-csprng-seed-requirement = []
