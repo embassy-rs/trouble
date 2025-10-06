@@ -49,7 +49,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            ./example/nrf-sdc/target/
+            ./examples/nrf-sdc/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - run: rustup target add thumbv7em-none-eabihf
@@ -62,7 +62,7 @@ jobs:
         with:
           fetch-depth: '0'
       - name: Build new binary
-        working-directory: ./example/nrf-sdc
+        working-directory: ./examples/nrf-sdc
         run: |
           echo 'RESULT<<EOF' >> $GITHUB_OUTPUT
           cargo size --release --features nrf52840 --bin ble_bas_peripheral >> $GITHUB_OUTPUT
@@ -70,20 +70,20 @@ jobs:
         id: new-size
       - name: Save binary
         run: |
-          mv ./example/nrf-sdc/target/thumbv7em-none-eabihf/release/example ./example/nrf-sdc/target/thumbv7em-none-eabihf/release/original.elf
+          mv ./examples/nrf-sdc/target/thumbv7em-none-eabihf/release/example ./examples/nrf-sdc/target/thumbv7em-none-eabihf/release/original.elf
       - name: If it's a PR checkout the base commit
         if: ${{ github.event.pull_request }}
         run: git checkout ${{ github.event.pull_request.base.sha }}
       - name: Rebuild with the base commit
         if: ${{ github.event.pull_request }}
-        working-directory: ./example/nrf-sdc
+        working-directory: ./examples/nrf-sdc
         run: cargo build --release --features nrf52840 --bin ble_bas_peripheral
       - name: Run Bloaty to compare both output files
         if: ${{ github.event.pull_request }}
         id: bloaty-comparison
         uses: carlosperate/bloaty-action@v1
         with:
-          bloaty-args: ./example/nrf-sdc/target/thumbv7em-none-eabihf/release/original.elf -- ./example/nrf-sdc/target/thumbv7em-none-eabihf/release/example
+          bloaty-args: ./examples/nrf-sdc/target/thumbv7em-none-eabihf/release/original.elf -- ./examples/nrf-sdc/target/thumbv7em-none-eabihf/release/example
           output-to-summary: true
       - name: Add a PR comment with the bloaty diff
         if: ${{ github.event.pull_request }}
