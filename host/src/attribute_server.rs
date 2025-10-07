@@ -253,7 +253,7 @@ pub struct AttributeServer<
 > {
     att_table: AttributeTable<'values, M, ATT_MAX>,
     cccd_tables: CccdTables<M, CCCD_MAX, CONN_MAX>,
-    _p: PhantomData<P>,
+    _p: PhantomData<P>, // Q: may we have a comment on the use of this?  Ties 'PacketPool', somehow.
 }
 
 pub(crate) mod sealed {
@@ -939,8 +939,9 @@ mod tests {
                 while let Some(att) = it.next() {
                     let handle = att.handle;
                     let uuid = &att.uuid;
+                    //"last_handle_in_group for 0x{:0>4x?}, 0x{:0>2x?}  0x{:0>2x?}", // "Unknown display hint: '0>4x?' by IDE; does this not get tested? #TEMP
                     trace!(
-                        "last_handle_in_group for 0x{:0>4x?}, 0x{:0>2x?}  0x{:0>2x?}",
+                        "last_handle_in_group for 0x{:04x}, 0x{:02x}  0x{:02x}", // not sure which is the intended format, here!
                         handle,
                         uuid,
                         att.last_handle_in_group
@@ -981,7 +982,9 @@ mod tests {
                         )
                         .unwrap();
                     let response = &buffer[0..length];
+                    #[cfg(false)] // bad format
                     trace!("  0x{:0>2x?}", response);
+                    trace!("  0x{:02x}", response);
                     // It should be a successful response, because the service should be found, this will assert if
                     // we failed to retrieve the third service.
                     assert_eq!(response[0], att::ATT_READ_BY_GROUP_TYPE_RSP);

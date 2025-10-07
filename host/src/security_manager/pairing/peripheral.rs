@@ -109,7 +109,7 @@ impl Pairing {
     pub fn timeout_at(&self) -> Instant {
         let step = self.current_step.borrow();
         if matches!(step.deref(), Step::Success | Step::Error(_)) {
-            Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE
+            Instant::MAX // timeout disabled
         } else {
             self.pairing_data.borrow().timeout_at
         }
