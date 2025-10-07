@@ -462,7 +462,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                     return Err(crate::Error::Disconnected.into());
                 }
                 Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNSUPPORTED_REMOTE_FEATURE))) => {
-                    // We tried to send the request as a periperhal but the remote central does not support procedure.
+                    // We tried to send the request as a peripheral but the remote central does not support procedure.
                     // Use the L2CAP signaling method below instead.
                     // This code path should never be reached when acting as a central. If a bugged controller implementation
                     // returns this error code we transmit an invalid L2CAP signal which then is rejected by the remote.

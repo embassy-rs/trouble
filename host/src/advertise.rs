@@ -35,7 +35,7 @@ pub enum TxPower {
     Plus20dBm = 20,
 }
 
-/// Configuriation for a single advertisement set.
+/// Configuration for a single advertisement set.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdvertisementSet<'d> {

@@ -463,8 +463,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         result: &Result<(), Error>,
     ) -> Result<(), Error> {
         if let Err(error) = result {
-            let reason = if let Error::Security(secuity_error) = error {
-                *secuity_error
+            let reason = if let Error::Security(security_error) = error {
+                *security_error
             } else {
                 Reason::UnspecifiedReason
             };
@@ -561,12 +561,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
-    /// Handle recevied events from HCI
+    /// Handle received events from HCI
     pub(crate) fn handle_hci_le_event<P: PacketPool>(
         &self,
         event: LeEventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
+        #[allow(clippy::single_match)]
         match event.kind {
             LeEventKind::LeLongTermKeyRequest => {
                 let event_data = LeLongTermKeyRequest::from_hci_bytes_complete(event.data)?;
@@ -577,12 +578,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
-    /// Handle recevied events from HCI
+    /// Handle received events from HCI
     pub(crate) fn handle_hci_event<P: PacketPool>(
         &self,
         event: EventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
+        #[allow(clippy::single_match)]
         match event.kind {
             EventKind::EncryptionChangeV1 => {
                 let event_data = EncryptionChangeV1::from_hci_bytes_complete(event.data)?;
@@ -728,7 +730,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             .borrow()
             .as_ref()
             .map(|x| x.timeout_at())
-            .unwrap_or(Instant::now() + constants::TIMEOUT_DISABLE);
+            .unwrap_or(Instant::MAX /*no timeout*/);
         // try to pop an event from the channel
         poll_fn(|cx| self.events.poll_receive(cx)).with_deadline(deadline)
     }
