@@ -6,11 +6,13 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 embassy-executor = "0.9.0"
+embassy-embedded-hal = "0.5"
 esp-bootloader-esp-idf = "0.2.0"
 esp-backtrace = { version = "0.17.0", features = [ "panic-handler", "println" ] }
 esp-hal = { version = "1.0.0-rc.0", features = [ "unstable" ] }
 esp-hal-embassy = { version = "0.9.0" }
 esp-alloc = { version = "0.8.0" }
+esp-storage = { version = "0.7.0" }
 esp-println = { version = "0.15.0", features = ["log-04"] }
 esp-radio = { version = "0.15.0", features = [ "unstable", "ble" ] }
 esp-preempt = { version = "0.0.1", features = ["log-04"] }
@@ -21,12 +23,12 @@ static_cell = "2"
 [features]
 default = ["esp32c3"]
 
-esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-radio/esp32", "esp-preempt/esp32", "esp-bootloader-esp-idf/esp32"]
-esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-preempt/esp32c2", "esp-radio/esp32c2", "esp-bootloader-esp-idf/esp32c2"]
-esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-preempt/esp32c3", "esp-radio/esp32c3", "esp-bootloader-esp-idf/esp32c3"]
-esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6", "esp-println/esp32c6", "esp-preempt/esp32c6", "esp-radio/esp32c6", "esp-bootloader-esp-idf/esp32c6"]
-esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-preempt/esp32h2", "esp-radio/esp32h2", "esp-bootloader-esp-idf/esp32h2"]
-esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3", "esp-println/esp32s3", "esp-preempt/esp32s3", "esp-radio/esp32s3", "esp-bootloader-esp-idf/esp32s3"]
+esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-storage/esp32", "esp-radio/esp32", "esp-preempt/esp32", "esp-bootloader-esp-idf/esp32"]
+esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-hal-embassy/esp32c2", "esp-println/esp32c2", "esp-storage/esp32c2", "esp-preempt/esp32c2", "esp-radio/esp32c2", "esp-bootloader-esp-idf/esp32c2"]
+esp32c3 = ["esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3", "esp-println/esp32c3", "esp-storage/esp32c3", "esp-preempt/esp32c3", "esp-radio/esp32c3", "esp-bootloader-esp-idf/esp32c3"]
+esp32c6 = ["esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-hal-embassy/esp32c6", "esp-println/esp32c6", "esp-storage/esp32c6", "esp-preempt/esp32c6", "esp-radio/esp32c6", "esp-bootloader-esp-idf/esp32c6"]
+esp32h2 = ["esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-hal-embassy/esp32h2", "esp-println/esp32h2", "esp-storage/esp32h2", "esp-preempt/esp32h2", "esp-radio/esp32h2", "esp-bootloader-esp-idf/esp32h2"]
+esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3", "esp-println/esp32s3", "esp-storage/esp32s3", "esp-preempt/esp32s3", "esp-radio/esp32s3", "esp-bootloader-esp-idf/esp32s3"]
 
 security = [
     "trouble-example-apps/security",
@@ -54,9 +56,14 @@ required-features = ["security"]
 name = "ble_bas_peripheral_sec"
 required-features = ["security"]
 
+[[bin]]
+name = "ble_bas_peripheral_bonding"
+required-features = ["security"]
+
 [patch.crates-io]
 esp-radio = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
 esp-preempt = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
+esp-storage = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
 esp-backtrace = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
 esp-hal = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
 esp-bootloader-esp-idf = {git = "https://github.com/lulf/esp-hal.git", branch = "bt-hci-fix"}
