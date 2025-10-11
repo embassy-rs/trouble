@@ -1,6 +1,8 @@
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
+use bt_hci::param::AddrKind;
+use bt_hci::param::BdAddr;
 use embassy_time::Instant;
 use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
@@ -17,6 +19,7 @@ use crate::security_manager::pairing::util::{
 use crate::security_manager::pairing::{Event, PairingOps};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures, PassKey};
 use crate::security_manager::Reason;
+use crate::IdentityResolvingKey;
 use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
 
 #[derive(Debug, Clone)]
@@ -34,6 +37,8 @@ enum Step {
     // TODO add OOB
     WaitingDHKeyEa,
     WaitingLinkEncrypted,
+    WaitingIdentitityInformation,
+    WaitingIdentitityAddressInformation,
     SendingKeys(i32),
     ReceivingKeys(i32),
     Success,
@@ -199,7 +204,7 @@ impl Pairing {
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let current_state = self.current_step.borrow().clone();
-        let next_state = match (current_state, event) {
+        let next_step = match (current_state, event) {
             x @ (Step::WaitingPairingRequest | Step::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
                 if res {
                     info!("Link encrypted!");
@@ -208,7 +213,19 @@ impl Pairing {
                     } else {
                         self.pairing_data.borrow_mut().bond_information = ops.try_enable_bonded_encryption()?;
                     }
-                    Step::Success
+
+                    if self
+                        .pairing_data
+                        .borrow()
+                        .peer_features
+                        .initiator_key_distribution
+                        .identity_key()
+                    {
+                        // Remote will share identity key
+                        Step::WaitingIdentitityInformation
+                    } else {
+                        Step::Success
+                    }
                 } else {
                     error!("Failed to enable encryption!");
                     Step::Error(Error::Security(Reason::KeyRejected))
@@ -238,7 +255,7 @@ impl Pairing {
             _ => Step::Error(Error::InvalidState),
         };
 
-        match next_state {
+        match next_step {
             Step::Error(x) => {
                 self.current_step.replace(Step::Error(x.clone()));
                 ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
@@ -250,11 +267,13 @@ impl Pairing {
                 if is_success {
                     let pairing_data = self.pairing_data.borrow();
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
+                        debug!("bond info: {:?}", bond);
                         let pairing_bond = if pairing_data.want_bonding() {
                             Some(bond.clone())
                         } else {
                             None
                         };
+
                         ops.try_send_connection_event(ConnectionEvent::PairingComplete {
                             security_level: bond.security_level,
                             bond: pairing_bond,
@@ -353,13 +372,47 @@ impl Pairing {
 
                 (x, Command::KeypressNotification) => x,
 
+                (Step::WaitingIdentitityInformation, Command::IdentityInformation) => {
+                    Self::handle_identity_information(command.payload, pairing_data)?
+                }
+
+                (Step::WaitingIdentitityAddressInformation, Command::IdentityAddressInformation) => {
+                    Self::handle_identity_address_information(command.payload, pairing_data)?
+                }
+
                 _ => return Err(Error::InvalidState),
             }
         };
 
-        self.current_step.replace(next_step);
+        match next_step {
+            Step::Error(x) => {
+                self.current_step.replace(Step::Error(x.clone()));
+                ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
+                Err(x)
+            }
+            x => {
+                let is_success = matches!(x, Step::Success);
+                self.current_step.replace(x);
+                if is_success {
+                    debug!("Step::Success");
+                    if let Some(bond) = pairing_data.bond_information.as_ref() {
+                        debug!("bond info: {:?}", bond);
+                        let pairing_bond = if pairing_data.want_bonding() {
+                            ops.try_update_bond_information(bond)?;
+                            Some(bond.clone())
+                        } else {
+                            None
+                        };
 
-        Ok(())
+                        ops.try_send_connection_event(ConnectionEvent::PairingComplete {
+                            security_level: bond.security_level,
+                            bond: pairing_bond,
+                        })?;
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 
     fn handle_pairing_request<P: PacketPool, OPS: PairingOps<P>>(
@@ -373,6 +426,13 @@ impl Pairing {
         }
         if !peer_features.security_properties.secure_connection() {
             return Err(Error::Security(Reason::UnspecifiedReason));
+        }
+
+        if peer_features.initiator_key_distribution.identity_key() {
+            pairing_data
+                .local_features
+                .responder_key_distribution
+                .set_identity_key();
         }
 
         pairing_data.peer_features = peer_features;
@@ -403,6 +463,44 @@ impl Pairing {
         }
 
         Ok(())
+    }
+
+    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
+        let irk = IdentityResolvingKey::new(u128::from_le_bytes(
+            payload.try_into().map_err(|_| Error::InvalidValue)?,
+        ));
+        if let Some(ref mut bond) = &mut pairing_data.bond_information {
+            bond.identity.irk = Some(irk);
+        }
+
+        trace!("Identity information: IRK: {:?}", irk);
+        Ok(Step::WaitingIdentitityAddressInformation)
+    }
+
+    fn handle_identity_address_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
+        let addr_type = payload[0];
+        let kind = if addr_type == 0 {
+            AddrKind::PUBLIC
+        } else if addr_type == 1 {
+            AddrKind::RANDOM
+        } else {
+            // Impossible
+            error!("[security manager] Invalid address type: {:?}", addr_type);
+            return Err(Error::InvalidValue);
+        };
+        let addr = BdAddr::new(payload[1..7].try_into().map_err(|_| Error::InvalidValue)?);
+        pairing_data.peer_address = Address { kind, addr };
+
+        if let Some(ref mut bond) = &mut pairing_data.bond_information {
+            bond.identity.bd_addr = addr;
+        }
+
+        trace!(
+            "Identity address information: addr_type: {:?}, addr: {:?}",
+            addr_type,
+            addr
+        );
+        Ok(Step::Success)
     }
 
     fn handle_public_key(payload: &[u8], pairing_data: &mut PairingData) {
@@ -617,15 +715,19 @@ impl Pairing {
 
 #[cfg(test)]
 mod tests {
+    use core::ops::Deref;
     use rand_chacha::{ChaCha12Core, ChaCha12Rng};
     use rand_core::SeedableRng;
 
+    use super::{Pairing, Step};
+    use crate::prelude::{ConnectionEvent, SecurityLevel};
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
-    use crate::security_manager::pairing::peripheral::Pairing;
     use crate::security_manager::pairing::tests::{HeaplessPool, TestOps};
     use crate::security_manager::pairing::util::make_public_key_packet;
+    use crate::security_manager::pairing::Event;
     use crate::security_manager::types::{Command, PairingFeatures};
     use crate::{Address, IoCapabilities, LongTermKey};
+    use bt_hci::param::{AddrKind, BdAddr};
 
     #[test]
     fn just_works() {
@@ -762,6 +864,158 @@ mod tests {
             );
             assert_eq!(pairing_ops.encryptions.len(), 1);
             assert!(matches!(pairing_ops.encryptions[0], LongTermKey(_)));
+        }
+    }
+
+    #[test]
+    fn just_works_with_irk_distribution() {
+        let mut pairing_ops: TestOps<10> = TestOps {
+            bondable: true,
+            ..Default::default()
+        };
+        let pairing = Pairing::new(
+            Address::random([1, 2, 3, 4, 5, 6]),
+            Address::random([7, 8, 9, 10, 11, 12]),
+            IoCapabilities::NoInputNoOutput,
+        );
+        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+
+        // Central sends pairing request with identity_key bit set, expects pairing response from peripheral
+        let pairing_request = [
+            0x03, // IO Capabilities
+            0x00, // OOB data flag
+            0x09, // Auth Req(Secure Connection + Bonding)
+            16,   // Maximum Encryption Key Size
+            0x02, // Initiator Key Distribution(identity_key = true)
+            0x00, // Responder Key Distribution
+        ];
+
+        pairing
+            .handle_l2cap_command::<HeaplessPool, _, _>(
+                Command::PairingRequest,
+                &pairing_request,
+                &mut pairing_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        {
+            let pairing_data = pairing.pairing_data.borrow();
+            let sent_packets = &pairing_ops.sent_packets;
+
+            assert!(pairing_data.local_features.responder_key_distribution.identity_key());
+            assert!(pairing_data.peer_features.initiator_key_distribution.identity_key());
+
+            assert_eq!(sent_packets.len(), 1);
+            assert_eq!(sent_packets[0].command, Command::PairingResponse);
+            let response_payload = sent_packets[0].payload();
+            // Check AuthReq and identity key bit in response
+            assert_eq!(response_payload[2] & 0x09, 0x09);
+            assert_eq!(response_payload[5] & 0x02, 0x02);
+        }
+
+        // Central sends public key, expects peripheral public key followed by peripheral confirm
+        let secret_key = SecretKey::new(&mut rng);
+        let packet = make_public_key_packet::<HeaplessPool>(&secret_key.public_key()).unwrap();
+        pairing
+            .handle_l2cap_command::<HeaplessPool, _, _>(
+                Command::PairingPublicKey,
+                packet.payload(),
+                &mut pairing_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        // Central sends Nonce, expects Nonce
+        pairing
+            .handle_l2cap_command::<HeaplessPool, _, _>(
+                Command::PairingRandom,
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                &mut pairing_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        // Central sends DHKey Check, expects encrypted link
+        pairing
+            .handle_l2cap_command::<HeaplessPool, _, _>(
+                Command::PairingDhKeyCheck,
+                &[
+                    0x06, 0x32, 0x9c, 0x2c, 0x99, 0xc2, 0xb1, 0x62, 0x6a, 0x02, 0x0e, 0x56, 0x46, 0xf6, 0x0e, 0x97,
+                ],
+                &mut pairing_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        pairing
+            .handle_event(Event::LinkEncryptedResult(true), &mut pairing_ops, &mut rng)
+            .unwrap();
+
+        // Waiting identity information check
+        assert!(matches!(
+            pairing.current_step.borrow().deref(),
+            Step::WaitingIdentitityInformation
+        ));
+
+        // Central sends identity information(IRK)
+        let irk_data: [u8; 16] = [
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
+        ];
+        pairing
+            .handle_l2cap_command::<HeaplessPool, _, _>(
+                Command::IdentityInformation,
+                &irk_data,
+                &mut pairing_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        // Central sends identity address information
+        let addr_data: [u8; 7] = [
+            0x00, // Public address type
+            0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, // Address
+        ];
+        pairing
+            .handle_l2cap_command::<HeaplessPool, _, _>(
+                Command::IdentityAddressInformation,
+                &addr_data,
+                &mut pairing_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        // The step should be `Success` after `IdentityAddressInformation` command
+        assert!(matches!(pairing.current_step.borrow().deref(), Step::Success));
+
+        // Verify identity and address
+        {
+            let pairing_data = pairing.pairing_data.borrow();
+            let bond = pairing_data.bond_information.as_ref().unwrap();
+
+            assert!(bond.identity.irk.is_some());
+            let stored_irk = bond.identity.irk.unwrap();
+            assert_eq!(stored_irk.0, u128::from_le_bytes(irk_data));
+
+            assert_eq!(bond.identity.bd_addr, BdAddr::new([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]));
+            assert_eq!(pairing_data.peer_address.kind, AddrKind::PUBLIC);
+            assert_eq!(
+                pairing_data.peer_address.addr,
+                BdAddr::new([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC])
+            );
+        }
+
+        // Verify completeness
+        assert_eq!(pairing_ops.connection_events.len(), 1);
+        match &pairing_ops.connection_events[0] {
+            ConnectionEvent::PairingComplete { security_level, bond } => {
+                assert_eq!(*security_level, SecurityLevel::Encrypted);
+                assert!(bond.is_some());
+                let bond_info = bond.as_ref().unwrap();
+                assert!(bond_info.identity.irk.is_some());
+                assert_eq!(bond_info.identity.irk.unwrap().0, u128::from_le_bytes(irk_data));
+            }
+            _ => panic!("Unexpected connection event"),
         }
     }
 }
