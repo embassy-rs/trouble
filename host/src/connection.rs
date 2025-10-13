@@ -6,6 +6,11 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
     AddrKind, AllPhys, BdAddr, ConnHandle, DisconnectReason, LeConnRole, PhyKind, PhyMask, PhyOptions, Status,
 };
+#[cfg(feature = "connection-params-update")]
+use bt_hci::{
+    cmd::le::{LeRemoteConnectionParameterRequestNegativeReply, LeRemoteConnectionParameterRequestReply},
+    param::RemoteConnectionParamsRejectReason,
+};
 #[cfg(feature = "gatt")]
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
@@ -18,6 +23,7 @@ use crate::pdu::Pdu;
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::{BondInformation, PassKey};
+#[cfg(feature = "connection-params-update")]
 use crate::types::l2cap::{ConnParamUpdateReq, ConnParamUpdateRes};
 use crate::{bt_hci_duration, BleHostError, Error, Identity, PacketPool, Stack};
 
@@ -161,6 +167,9 @@ pub enum ConnectionEvent {
         max_rx_time: u16,
     },
     /// A request to change the connection parameters.
+    ///
+    /// If connection parameter update procedure is supported, the [`Connection::accept_connection_params()`] should be called
+    /// to respond to the request.
     RequestConnectionParams {
         /// Minimum connection interval.
         min_connection_interval: Duration,
@@ -471,41 +480,75 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
             }
         }
 
-        // Use L2CAP signaling to update connection parameters
-        info!(
-            "Connection parameters request procedure not supported, use l2cap connection parameter update req instead"
-        );
-        let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);
-        let interva_max: bt_hci::param::Duration<1_250> = bt_hci_duration(params.max_connection_interval);
-        let timeout: bt_hci::param::Duration<10_000> = bt_hci_duration(params.supervision_timeout);
-        let param = ConnParamUpdateReq {
-            interval_min: interval_min.as_u16(),
-            interval_max: interva_max.as_u16(),
-            latency: params.max_latency,
-            timeout: timeout.as_u16(),
-        };
-        stack.host.send_conn_param_update_req(handle, &param).await
+        #[cfg(feature = "connection-params-update")]
+        {
+            // Use L2CAP signaling to update connection parameters
+            info!(
+                "Connection parameters request procedure not supported, use l2cap connection parameter update req instead"
+            );
+            let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);
+            let interval_max: bt_hci::param::Duration<1_250> = bt_hci_duration(params.max_connection_interval);
+            let timeout: bt_hci::param::Duration<10_000> = bt_hci_duration(params.supervision_timeout);
+            let param = ConnParamUpdateReq {
+                interval_min: interval_min.as_u16(),
+                interval_max: interval_max.as_u16(),
+                latency: params.max_latency,
+                timeout: timeout.as_u16(),
+            };
+            stack.host.send_conn_param_update_req(handle, &param).await?;
+        }
+        Ok(())
     }
 
+    #[cfg(feature = "connection-params-update")]
     /// Respond to updated parameters.
+    ///
+    /// This should only be called if a request to update the connection parameters was received.
     pub async fn accept_connection_params<T>(
         &self,
         stack: &Stack<'_, T, P>,
         params: &ConnectParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
-        T: ControllerCmdAsync<LeConnUpdate>,
+        T: ControllerCmdAsync<LeConnUpdate>
+            + ControllerCmdSync<LeReadLocalSupportedFeatures>
+            + ControllerCmdAsync<LeRemoteConnectionParameterRequestReply>
+            + ControllerCmdAsync<LeRemoteConnectionParameterRequestNegativeReply>,
     {
         let handle = self.handle();
         if self.role() == LeConnRole::Central {
+            let features = stack.host.command(LeReadLocalSupportedFeatures::new()).await?;
             match stack.host.async_command(into_le_conn_update(handle, params)).await {
                 Ok(_) => {
-                    // Use L2CAP signaling to update connection parameters
-                    info!(
-                        "Connection parameters request procedure not supported, use l2cap connection parameter update res instead"
-                    );
-                    let param = ConnParamUpdateRes { result: 0 };
-                    stack.host.send_conn_param_update_res(handle, &param).await?;
+                    if features.supports_conn_parameters_request_procedure() {
+                        let interval_min: bt_hci::param::Duration<1_250> =
+                            bt_hci_duration(params.min_connection_interval);
+                        let interval_max: bt_hci::param::Duration<1_250> =
+                            bt_hci_duration(params.max_connection_interval);
+                        let timeout: bt_hci::param::Duration<10_000> = bt_hci_duration(params.supervision_timeout);
+                        if let Err(e) = stack
+                            .host
+                            .async_command(LeRemoteConnectionParameterRequestReply::new(
+                                handle,
+                                interval_min,
+                                interval_max,
+                                params.max_latency,
+                                timeout,
+                                bt_hci_duration(params.min_event_length),
+                                bt_hci_duration(params.max_event_length),
+                            ))
+                            .await
+                        {
+                            return Err(e);
+                        }
+                    } else {
+                        // Use L2CAP signaling to update connection parameters
+                        info!(
+                            "Connection parameters request procedure not supported, using l2cap connection parameter update res instead"
+                        );
+                        let param = ConnParamUpdateRes { result: 0 };
+                        stack.host.send_conn_param_update_res(handle, &param).await?;
+                    }
                     Ok(())
                 }
                 Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
@@ -513,8 +556,18 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                 }
                 Err(e) => {
                     info!("Connection parameters request procedure failed");
-                    let param = ConnParamUpdateRes { result: 1 };
-                    stack.host.send_conn_param_update_res(handle, &param).await?;
+                    if features.supports_conn_parameters_request_procedure() {
+                        stack
+                            .host
+                            .async_command(LeRemoteConnectionParameterRequestNegativeReply::new(
+                                handle,
+                                RemoteConnectionParamsRejectReason::UnacceptableConnParameters,
+                            ))
+                            .await?;
+                    } else {
+                        let param = ConnParamUpdateRes { result: 1 };
+                        stack.host.send_conn_param_update_res(handle, &param).await?;
+                    }
                     Err(e)
                 }
             }

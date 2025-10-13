@@ -87,6 +87,9 @@ default-packet-pool = []
 # Optimization where l2cap SDU reassembly saves some buffer copy.
 l2cap-sdu-reassembly-optimization = []
 
+# Support connection parameter update procedure
+connection-params-update = []
+
 default = ["peripheral", "central", "gatt", "derive", "default-packet-pool"]
 
 

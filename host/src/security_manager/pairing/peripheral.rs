@@ -1,8 +1,7 @@
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
-use bt_hci::param::AddrKind;
-use bt_hci::param::BdAddr;
+use bt_hci::param::{AddrKind, BdAddr};
 use embassy_time::Instant;
 use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
@@ -19,8 +18,7 @@ use crate::security_manager::pairing::util::{
 use crate::security_manager::pairing::{Event, PairingOps};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures, PassKey};
 use crate::security_manager::Reason;
-use crate::IdentityResolvingKey;
-use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
+use crate::{Address, BondInformation, Error, IdentityResolvingKey, IoCapabilities, LongTermKey, PacketPool};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -716,6 +714,8 @@ impl Pairing {
 #[cfg(test)]
 mod tests {
     use core::ops::Deref;
+
+    use bt_hci::param::{AddrKind, BdAddr};
     use rand_chacha::{ChaCha12Core, ChaCha12Rng};
     use rand_core::SeedableRng;
 
@@ -727,7 +727,6 @@ mod tests {
     use crate::security_manager::pairing::Event;
     use crate::security_manager::types::{Command, PairingFeatures};
     use crate::{Address, IoCapabilities, LongTermKey};
-    use bt_hci::param::{AddrKind, BdAddr};
 
     #[test]
     fn just_works() {
