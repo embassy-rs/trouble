@@ -431,7 +431,7 @@ impl Pairing {
         if peer_features.initiator_key_distribution.identity_key() {
             pairing_data
                 .local_features
-                .responder_key_distribution
+                .initiator_key_distribution
                 .set_identity_key();
         }
 
