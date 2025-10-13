@@ -37,6 +37,8 @@ enum Step {
     // TODO add OOB
     WaitingDHKeyEa,
     WaitingLinkEncrypted,
+    // TODO: WaitingIdentitity is actually a subset of `ReceivingKeys(i32)`,
+    // they can be removed after implementing the full receiving keys procedure.
     WaitingIdentitityInformation,
     WaitingIdentitityAddressInformation,
     SendingKeys(i32),
@@ -288,7 +290,11 @@ impl Pairing {
     pub fn security_level(&self) -> SecurityLevel {
         let step = self.current_step.borrow();
         match step.deref() {
-            Step::SendingKeys(_) | Step::ReceivingKeys(_) | Step::Success => self
+            Step::WaitingIdentitityInformation
+            | Step::WaitingIdentitityAddressInformation
+            | Step::SendingKeys(_)
+            | Step::ReceivingKeys(_)
+            | Step::Success => self
                 .pairing_data
                 .borrow()
                 .bond_information
