@@ -1078,22 +1078,22 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             .exec(&host.controller)
             .await?;
 
-        LeSetEventMask::new(
-            LeEventMask::new()
-                .enable_le_conn_complete(true)
-                .enable_le_enhanced_conn_complete(true)
-                .enable_le_conn_update_complete(true)
-                .enable_le_adv_set_terminated(true)
-                .enable_le_adv_report(true)
-                .enable_le_scan_timeout(true)
-                .enable_le_ext_adv_report(true)
-                .enable_le_long_term_key_request(true)
-                .enable_le_phy_update_complete(true)
-                .enable_le_remote_conn_parameter_request(true)
-                .enable_le_data_length_change(true),
-        )
-        .exec(&host.controller)
-        .await?;
+        let mask = LeEventMask::new()
+            .enable_le_conn_complete(true)
+            .enable_le_enhanced_conn_complete(true)
+            .enable_le_conn_update_complete(true)
+            .enable_le_adv_set_terminated(true)
+            .enable_le_adv_report(true)
+            .enable_le_scan_timeout(true)
+            .enable_le_ext_adv_report(true)
+            .enable_le_long_term_key_request(true)
+            .enable_le_phy_update_complete(true)
+            .enable_le_data_length_change(true);
+
+        #[cfg(feature = "connection-params-update")]
+        let mask = mask.enable_le_remote_conn_parameter_request(true);
+
+        LeSetEventMask::new(mask).exec(&host.controller).await?;
 
         info!(
             "[host] using packet pool with MTU {} capacity {}",
