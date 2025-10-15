@@ -2564,14 +2564,13 @@ dependencies = [
  "embassy-time",
  "embedded-hal-async",
  "heapless 0.9.1",
- "rand_core 0.6.4",
  "static_cell",
  "trouble-host",
 ]
 
 [[package]]
 name = "trouble-host"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bt-hci",
  "defmt 1.0.1",
@@ -2581,7 +2580,6 @@ dependencies = [
  "embedded-io",
  "futures",
  "heapless 0.9.1",
- "rand_core 0.6.4",
  "static_cell",
  "trouble-host-macros",
  "zerocopy",

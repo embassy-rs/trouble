@@ -27,7 +27,6 @@ critical-section = { version = "1", features = ["std"] }
 embassy-sync = "0.7"
 tokio-serial = "5.4"
 tokio-util = "0.7"
-rand = "0.8.5"
 heapless = "0.9"
 anyhow = "1"
 tempfile = "3.15"

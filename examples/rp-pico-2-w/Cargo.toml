@@ -21,12 +21,11 @@ defmt = "1.0"
 defmt-rtt = "1.0"
 panic-probe = { version = "1.0", features = ["print-defmt"] }
 
+chacha20 = { version = "0.10.0-rc.2", default-features = false, features = ["rng"] }
 cortex-m = { version = "0.7" }
 cortex-m-rt = "0.7"
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
-rand_core = { version = "0.6"}
-rand_chacha = { version = "0.3", default-features = false }
 
 [build-dependencies]
 reqwest = { version = "0.12.9", features = ["blocking"]}
@@ -48,7 +47,6 @@ debug = 2
 #embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-#bt-hci = { path = "../../../bt-hci" }
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
 embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
