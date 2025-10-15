@@ -2,3 +2,6 @@
 **/target_ci
 Cargo.lock
 .idea
+
+# Created if running 'cargo test', locally
+/tests/
