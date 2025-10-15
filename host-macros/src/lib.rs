@@ -110,6 +110,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
     // If there was an error parsing the characteristics, return the error
     if let Some(err) = err {
         let desc = err.to_string();
+        #[allow(clippy::uninlined_format_args)]
         ctxt.error_spanned_by(
             err.into_compile_error(),
             format!("Parsing characteristics was unsuccessful:\n{}", desc),
@@ -249,5 +250,6 @@ fn check_for_characteristic(
 #[proc_macro]
 pub fn uuid(args: TokenStream) -> TokenStream {
     let uuid = parse_macro_input!(args as uuid::UuidArgs);
+    #[allow(clippy::needless_return)]
     return uuid.uuid.into();
 }

@@ -7,7 +7,9 @@ use core::str::FromStr;
 use darling::{Error, FromMeta};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse::Result, spanned::Spanned, Expr};
+use syn::parse::Result;
+use syn::spanned::Spanned;
+use syn::Expr;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Uuid {
