@@ -474,14 +474,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
                 debug!("[l2cap][conn = {:?}] connection param update request: {:?}", conn, req);
                 let interval_min: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_min);
-                let interva_max: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_max);
+                let interval_max: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_max);
                 let timeout: bt_hci::param::Duration<10_000> = bt_hci::param::Duration::from_u16(req.timeout);
                 use embassy_time::Duration;
                 let _ = manager.post_handle_event(
                     conn,
                     ConnectionEvent::RequestConnectionParams {
                         min_connection_interval: Duration::from_micros(interval_min.as_micros()),
-                        max_connection_interval: Duration::from_micros(interval_min.as_micros()),
+                        max_connection_interval: Duration::from_micros(interval_min.as_micros()), // Q: why didn't anything catch 'interva_max' unused?
                         max_latency: req.latency,
                         supervision_timeout: Duration::from_micros(timeout.as_micros()),
                     },

@@ -343,7 +343,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 if r == role {
                     if !peers.is_empty() {
                         for peer in peers.iter() {
-                            // TODO: Accept advertsing peers which use IRK
+                            // TODO: Accept advertising peers which use IRK
                             if storage.peer_addr_kind.unwrap() == peer.0
                                 && storage.peer_identity.unwrap().bd_addr == *peer.1
                             {

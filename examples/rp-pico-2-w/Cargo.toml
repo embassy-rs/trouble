@@ -39,16 +39,9 @@ debug = 2
 
 [patch.crates-io]
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
-#embassy-nrf = {path = "../../../embassy/embassy-nrf"}
 #embassy-sync = {path = "../../../embassy/embassy-sync"}
 #embassy-futures = {path = "../../../embassy/embassy-futures"}
 #embassy-time = {path = "../../../embassy/embassy-time"}
-#embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
-#embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
-#embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
-#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
-#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-#bt-hci = { path = "../../../bt-hci" }
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
 embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }

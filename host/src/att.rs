@@ -90,7 +90,7 @@ impl AttErrorCode {
     pub const WRITE_REQUEST_REJECTED: Self = Self { value: 0xFC };
     /// The client characteristic configuration descriptor (CCCD) is not configured according to the requirements of the profile or service
     pub const CCCD_IMPROPERLY_CONFIGURED: Self = Self { value: 0xFD };
-    /// The profile or service request could not be serviced because an operation that has been previousl triggered is still in progress
+    /// The profile or service request could not be serviced because an operation that has been previously triggered is still in progress
     pub const PROCEDURE_ALREADY_IN_PROGRESS: Self = Self { value: 0xFE };
     /// The attribute value is out of range as defined by a profile or service specification
     pub const OUT_OF_RANGE: Self = Self { value: 0xFF };
@@ -131,7 +131,7 @@ impl Display for AttErrorCode {
 
             &Self::WRITE_REQUEST_REJECTED => f.write_str("write request rejected: the write request could not be fulfilled for reasons other than permissions"),
             &Self::CCCD_IMPROPERLY_CONFIGURED => f.write_str("CCCD improperly configured: the client characteristic configuration descriptor (CCCD) is not configured according to the requirements of the profile or service"),
-            &Self::PROCEDURE_ALREADY_IN_PROGRESS => f.write_str("procedure already in progress: the profile or service request could not be serviced because an operation that has been previousl triggered is still in progress"),
+            &Self::PROCEDURE_ALREADY_IN_PROGRESS => f.write_str("procedure already in progress: the profile or service request could not be serviced because an operation that has been previously triggered is still in progress"),
             &Self::OUT_OF_RANGE => f.write_str("out of range: the attribute value is out of range as defined by a profile or service specification"),
 
             other => write!(f, "unknown error code {other}: check the most recent bluetooth spec"),

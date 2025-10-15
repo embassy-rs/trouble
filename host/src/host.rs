@@ -723,7 +723,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeSetScanEnable>
             + ControllerCmdSync<LeSetExtScanEnable>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
@@ -747,7 +747,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdAsync<LeConnUpdate>
             + ControllerCmdSync<SetControllerToHostFlowControl>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeSetScanEnable>
@@ -1045,7 +1045,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + ControllerCmdSync<SetControllerToHostFlowControl>
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + ControllerCmdSync<LeSetScanEnable>
             + ControllerCmdSync<LeSetExtScanEnable>

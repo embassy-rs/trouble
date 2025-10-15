@@ -41,9 +41,6 @@ debug = 2
 #embassy-sync = {path = "../../../embassy/embassy-sync"}
 #embassy-futures = {path = "../../../embassy/embassy-futures"}
 #embassy-time = {path = "../../../embassy/embassy-time"}
-#embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
-#embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
-#embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
 #cyw43 = {path = "../../../embassy/cyw43"}
 #cyw43-pio = {path = "../../../embassy/cyw43-pio"}
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
@@ -54,7 +51,3 @@ embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad6
 cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
-#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
-#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-#bt-hci = { path = "../../../bt-hci" }
-#bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "83a9e179ff019ed60abb73705f54383f89fc60fc" }
