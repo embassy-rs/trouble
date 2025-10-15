@@ -59,7 +59,7 @@ impl<const MTU: usize, const N: usize> State<MTU, N> {
 }
 
 /// A packet pool holds a pool of packet buffers that can be dynamically allocated
-/// and free'd.
+/// and freed.
 pub struct StaticPacketPool<M: RawMutex, const MTU: usize, const N: usize> {
     state: Mutex<M, RefCell<State<MTU, N>>>,
 }

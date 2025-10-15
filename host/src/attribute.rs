@@ -402,7 +402,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// The provided data must exactly match the size of the storage for the characteristic,
     /// otherwise this function will panic.
     ///
-    /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
+    /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characteristic,
     /// an error is returned
     pub fn set<T: AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
         let gatt_value = input.as_gatt();
@@ -563,7 +563,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         }
     }
 
-    /// Add a characteristic to this service with a refererence to a mutable storage buffer.
+    /// Add a characteristic to this service with a reference to a mutable storage buffer.
     pub fn add_characteristic<T: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
@@ -588,7 +588,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         )
     }
 
-    /// Add a characteristic to this service with a refererence to an immutable storage buffer.
+    /// Add a characteristic to this service with a reference to an immutable storage buffer.
     pub fn add_characteristic_ro<T: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,

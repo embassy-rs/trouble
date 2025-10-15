@@ -10,10 +10,8 @@ bt-hci = { version = "0.6" }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7" }
 embassy-time = "0.5"
-#embedded-hal = "1.0"
 embedded-hal-async = "1.0"
 static_cell = "2"
-#embedded-io = "0.6"
 heapless = "0.9"
 rand_core = { version = "0.6", default-features = false }
 
@@ -30,8 +28,6 @@ defmt = [
     "dep:defmt",
     "trouble-host/defmt",
     "bt-hci/defmt",
-    #"embedded-io/defmt-03",
-    #"embedded-hal/defmt-03"
 ]
 log = [
     "dep:log",

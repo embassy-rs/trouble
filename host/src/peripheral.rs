@@ -31,10 +31,10 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         data: Advertisement<'k>,
     ) -> Result<Advertiser<'d, C, P>, BleHostError<C::Error>>
     where
-        C: for<'t> ControllerCmdSync<LeSetAdvData>
+        C: ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+            + ControllerCmdSync<LeSetAdvEnable>
+            + ControllerCmdSync<LeSetScanResponseData>,
     {
         let host = &self.stack.host;
 
@@ -106,14 +106,14 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         })
     }
 
-    /// Update the advertisment adv_data and/or scan_data. Does not change any
+    /// Update the advertisement adv_data and/or scan_data. Does not change any
     /// other advertising parameters. If no advertising is active, this will not
     /// produce any observable effect. This is typically useful when
     /// implementing a BLE beacon that only broadcasts advertisement data and
     /// does not accept any connections.
     pub async fn update_adv_data<'k>(&mut self, data: Advertisement<'k>) -> Result<(), BleHostError<C::Error>>
     where
-        C: for<'t> ControllerCmdSync<LeSetAdvData> + for<'t> ControllerCmdSync<LeSetScanResponseData>,
+        C: ControllerCmdSync<LeSetAdvData> + ControllerCmdSync<LeSetScanResponseData>,
     {
         let host = &self.stack.host;
         let data: RawAdvertisement = data.into();
@@ -243,7 +243,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         })
     }
 
-    /// Update the extended advertisment adv_data and/or scan_data for multiple
+    /// Update the extended advertisement adv_data and/or scan_data for multiple
     /// advertising sets. Does not change any other advertising parameters. If
     /// no advertising is active, this will not produce any observable effect.
     /// This is typically useful when implementing a BLE beacon that only
