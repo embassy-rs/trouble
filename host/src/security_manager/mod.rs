@@ -14,13 +14,13 @@ use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EventKind, EventPacket};
 use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
 use bt_hci::FromHciBytes;
+use chacha20::ChaCha12Rng;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
+use rand::SeedableRng;
 use types::Command;
 pub use types::{PassKey, Reason};
 
@@ -567,6 +567,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         event: LeEventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
+        #[allow(clippy::single_match)]
         match event.kind {
             LeEventKind::LeLongTermKeyRequest => {
                 let event_data = LeLongTermKeyRequest::from_hci_bytes_complete(event.data)?;
@@ -583,6 +584,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         event: EventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
+        #[allow(clippy::single_match)]
         match event.kind {
             EventKind::EncryptionChangeV1 => {
                 let event_data = EncryptionChangeV1::from_hci_bytes_complete(event.data)?;

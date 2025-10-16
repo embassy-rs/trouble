@@ -10,8 +10,7 @@ embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embassy-sync = { version = "0.7", features = ["log"] }
 embassy-time = { version = "0.5", features = ["log", "std", "generic-queue-8"] }
 critical-section = { version = "1.1", features = ["std"] }
-rand = { version = "0.8.5", features = ["getrandom"] }
-rand_core = { version = "0.3" }
+rand = { version = "0.10.0-rc.0", default-features = false, features = ["os_rng"], optional = true }
 tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "std"] }
@@ -20,4 +19,13 @@ trouble-host = { path = "../../host" }
 [features]
 security = [
     "trouble-example-apps/security",
+    "dep:rand"
 ]
+
+[[bin]]
+name = "ble_bas_central_sec"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_sec"
+required-features = ["security"]
