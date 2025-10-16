@@ -262,6 +262,11 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.next_gatt(self.index).await
     }
 
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn next_gatt_client(&self) -> Pdu<P::Packet> {
+        self.manager.next_gatt_client(self.index).await
+    }
+
     /// Check if still connected
     pub fn is_connected(&self) -> bool {
         self.manager.is_connected(self.index)

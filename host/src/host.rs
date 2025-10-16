@@ -37,8 +37,6 @@ use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
-#[cfg(feature = "gatt")]
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::Duration;
 use futures::pin_mut;
 
@@ -71,8 +69,6 @@ pub(crate) struct BleHost<'d, T, P: PacketPool> {
     pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d, P>,
     pub(crate) channels: ChannelManager<'d, P>,
-    #[cfg(feature = "gatt")]
-    pub(crate) att_client: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), { crate::config::L2CAP_RX_QUEUE_SIZE }>,
     pub(crate) advertise_state: AdvState<'d>,
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
@@ -211,8 +207,6 @@ where
             controller,
             connections: ConnectionManager::new(connections, P::MTU as u16 - 4),
             channels: ChannelManager::new(channels),
-            #[cfg(feature = "gatt")]
-            att_client: Channel::new(),
             advertise_state: AdvState::new(advertise_handles),
             advertise_command_state: CommandState::new(),
             scan_command_state: CommandState::new(),
@@ -470,7 +464,7 @@ where
                             self.connections.post_gatt(acl.handle(), pdu)?;
                         }
                         Ok(att::Att::Server(_)) => {
-                            if let Err(e) = self.att_client.try_send((acl.handle(), pdu)) {
+                            if let Err(e) = self.connections.post_gatt_client(acl.handle(), pdu) {
                                 return Err(Error::OutOfMemory);
                             }
                         }

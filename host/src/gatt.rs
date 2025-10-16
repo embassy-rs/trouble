@@ -9,7 +9,7 @@ use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
-use embassy_sync::channel::{Channel, DynamicReceiver};
+use embassy_sync::channel::Channel;
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use embassy_time::Duration;
 use heapless::Vec;
@@ -650,7 +650,6 @@ const NOTIF_QSIZE: usize = config::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
 /// A GATT client capable of using the GATT protocol.
 pub struct GattClient<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> {
     known_services: RefCell<Vec<ServiceHandle, MAX_SERVICES>>,
-    rx: DynamicReceiver<'reference, (ConnHandle, Pdu<P::Packet>)>,
     stack: &'reference Stack<'reference, T, P>,
     connection: Connection<'reference, P>,
     response_channel: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), 1>,
@@ -754,7 +753,6 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         connection.send(Pdu::new(buf, len)).await;
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),
-            rx: stack.host.att_client.receiver().into(),
             stack,
             connection: connection.clone(),
 
@@ -1173,7 +1171,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Task which handles GATT rx data (needed for notifications to work)
     pub async fn task(&self) -> Result<(), BleHostError<C::Error>> {
         loop {
-            let (handle, pdu) = self.rx.receive().await;
+            let handle = self.connection.handle();
+            let pdu = self.connection.next_gatt_client().await;
             let data = pdu.as_ref();
             // handle notifications
             if pdu.as_ref()[0] == ATT_HANDLE_VALUE_NTF {
