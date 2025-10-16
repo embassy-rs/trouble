@@ -9,7 +9,6 @@ use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, Packet
 
 pub mod central;
 pub mod peripheral;
-// pub mod central;
 mod util;
 
 pub trait PairingOps<P: PacketPool> {

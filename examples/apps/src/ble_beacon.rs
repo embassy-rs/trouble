@@ -2,7 +2,7 @@
 //
 // A beacon is a device that advertises packets that are constantly being
 // updated to reflect the current state of the device, but usually does not
-// accept any conections. This allows broadcasting device information.
+// accept any connections. This allows broadcasting device information.
 //
 
 use bt_hci::cmd::le::*;

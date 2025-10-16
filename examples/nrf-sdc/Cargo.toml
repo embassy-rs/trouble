@@ -34,13 +34,9 @@ debug = 2
 
 [patch.crates-io]
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
-#embassy-time-queue-utils = {path = "../../../embassy/embassy-time-queue-utils"}
 #embassy-sync = {path = "../../../embassy/embassy-sync"}
 #embassy-futures = {path = "../../../embassy/embassy-futures"}
 #embassy-time = {path = "../../../embassy/embassy-time"}
-#embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
-#embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
-#embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1bc7380cd5d7a031f37511b69da13fc6caded816"}
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1bc7380cd5d7a031f37511b69da13fc6caded816"}
 #bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "83a9e179ff019ed60abb73705f54383f89fc60fc" }
