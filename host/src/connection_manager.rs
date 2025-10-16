@@ -133,6 +133,24 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         })
     }
 
+    #[cfg(feature = "gatt")]
+    pub(crate) fn post_gatt_client(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
+        self.with_mut(|state| {
+            for entry in state.connections.iter() {
+                if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+                    entry.gatt_client.try_send(pdu).map_err(|_| Error::OutOfMemory)?;
+                    return Ok(());
+                }
+            }
+            Err(Error::NotFound)
+        })
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn next_gatt_client(&self, index: u8) -> Pdu<P::Packet> {
+        poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].gatt_client.poll_receive(cx))).await
+    }
+
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];
@@ -791,6 +809,8 @@ pub struct ConnectionStorage<P> {
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
     pub gatt: GattChannel<P>,
+    #[cfg(feature = "gatt")]
+    pub(crate) gatt_client: GattChannel<P>,
 }
 
 /// Connection metrics
@@ -874,6 +894,8 @@ impl<P> ConnectionStorage<P> {
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),
+            #[cfg(feature = "gatt")]
+            gatt_client: GattChannel::new(),
             reassembly: PacketReassembly::new(),
             #[cfg(feature = "security")]
             bondable: false,
