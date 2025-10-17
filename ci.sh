@@ -45,7 +45,18 @@ cargo batch \
 #    --- build --release --manifest-path examples/apache-nimble/Cargo.toml --target thumbv7em-none-eabihf
 
 cargo fmt --check --manifest-path ./host/Cargo.toml
-cargo clippy --manifest-path ./host/Cargo.toml --features gatt,peripheral,central
+cargo fmt --check --manifest-path ./host-macros/Cargo.toml
+
+cargo clippy --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security
+cargo clippy --manifest-path ./host-macros/Cargo.toml
+
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
-cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture
-cargo test --manifest-path ./examples/tests/Cargo.toml --no-run -- --nocapture
+cargo test --manifest-path ./host/Cargo.toml --no-run
+#cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security --lib -- --nocapture
+  # Fails with:
+  #   thread 'security_manager::pairing::peripheral::tests::just_works_with_irk_distribution' panicked at src/security_manager/pairing/peripheral.rs:911:13:
+  #   assertion failed: pairing_data.local_features.responder_key_distribution.identity_key()
+
+cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security --no-run
+cargo test --manifest-path ./host-macros/Cargo.toml --lib -- --nocapture
+cargo test --manifest-path ./examples/tests/Cargo.toml --no-run

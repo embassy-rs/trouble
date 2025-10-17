@@ -567,6 +567,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         event: LeEventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
+        #[allow(clippy::single_match)]
         match event.kind {
             LeEventKind::LeLongTermKeyRequest => {
                 let event_data = LeLongTermKeyRequest::from_hci_bytes_complete(event.data)?;
@@ -583,6 +584,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         event: EventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
+        #[allow(clippy::single_match)]
         match event.kind {
             EventKind::EncryptionChangeV1 => {
                 let event_data = EncryptionChangeV1::from_hci_bytes_complete(event.data)?;
