@@ -7,7 +7,7 @@ resolver = "2"
 [dependencies]
 embassy-executor = { version = "0.9", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
 embassy-time = { version = "0.5", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-nrf = { version = "0.7", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
+embassy-nrf = { version = "0.8", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7", features = ["defmt"] }
 
@@ -15,7 +15,7 @@ futures = { version = "0.3", default-features = false, features = ["async-await"
 nrf-sdc = { version = "0.4", default-features = false, features = ["defmt", "peripheral", "central"] }
 nrf-mpsl = { version = "0.3", default-features = false, features = ["defmt", "critical-section-impl"] }
 bt-hci = { version = "0.6", default-features = false, features = ["defmt"] }
-trouble-host = { path = "../../host", features = ["derive", "scan"] }
+trouble-host = { path = "../../host", features = ["derive", "scan", "gatt"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 
 defmt = "1.0"
@@ -41,8 +41,8 @@ debug = 2
 #embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
 #embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
 #embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1bc7380cd5d7a031f37511b69da13fc6caded816"}
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1bc7380cd5d7a031f37511b69da13fc6caded816"}
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c"}
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c"}
 #bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "83a9e179ff019ed60abb73705f54383f89fc60fc" }
 
 [features]
