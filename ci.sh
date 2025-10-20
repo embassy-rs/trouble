@@ -2,6 +2,13 @@
 
 set -eo pipefail
 
+# Cargo 'fmt' and 'clippy' early on.
+cargo +nightly fmt --check --manifest-path ./host/Cargo.toml
+cargo +nightly fmt --check --manifest-path ./host-macros/Cargo.toml
+
+cargo clippy --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security
+cargo clippy --manifest-path ./host-macros/Cargo.toml
+
 if ! command -v cargo-batch &> /dev/null; then
     mkdir -p $HOME/.cargo/bin
     curl -L https://github.com/embassy-rs/cargo-batch/releases/download/batch-0.6.0/cargo-batch > $HOME/.cargo/bin/cargo-batch
@@ -44,18 +51,9 @@ cargo batch \
     --- build --release --manifest-path examples/rp-pico-2-w/Cargo.toml --target thumbv8m.main-none-eabihf --features skip-cyw43-firmware
 #    --- build --release --manifest-path examples/apache-nimble/Cargo.toml --target thumbv7em-none-eabihf
 
-cargo fmt --check --manifest-path ./host/Cargo.toml
-cargo fmt --check --manifest-path ./host-macros/Cargo.toml
-
-cargo clippy --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security
-cargo clippy --manifest-path ./host-macros/Cargo.toml
-
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --no-run
-#cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security --lib -- --nocapture
-  # Fails with:
-  #   thread 'security_manager::pairing::peripheral::tests::just_works_with_irk_distribution' panicked at src/security_manager/pairing/peripheral.rs:911:13:
-  #   assertion failed: pairing_data.local_features.responder_key_distribution.identity_key()
+cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security --lib -- --nocapture
 
 cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security --no-run
 cargo test --manifest-path ./host-macros/Cargo.toml --lib -- --nocapture

@@ -12,6 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: actions/checkout@v4
       - name: Add dependencies
         run: |
@@ -30,6 +31,9 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Add Cargo components
+        run: |
+          rustup +nightly component add rustfmt
       - name: CI
         run: |
           ./ci.sh

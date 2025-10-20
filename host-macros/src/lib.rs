@@ -250,6 +250,5 @@ fn check_for_characteristic(
 #[proc_macro]
 pub fn uuid(args: TokenStream) -> TokenStream {
     let uuid = parse_macro_input!(args as uuid::UuidArgs);
-    #[allow(clippy::needless_return)]
-    return uuid.uuid.into();
+    uuid.uuid.into()
 }
