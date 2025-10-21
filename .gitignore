@@ -1,4 +1,16 @@
-**/target
-**/target_ci
+**/target/
+/target_ci/
+
+# Ignore lock files, except where we don't.
+#   - examples: ignore, they are just samples
+#   - tests: keep. This provides a common ground of dependencies for CI, for example, without providing too much hassle
+#       for co-developers.
+#
+# Note: 'host/' carries both a library and tests. We have the Cargo.lock and expect it *not to be used* by dependencies
+#       (this should be confirmed).
 Cargo.lock
+!/examples/tests/Cargo.lock
+!/host/Cargo.lock
+
+/tests/
 .idea
