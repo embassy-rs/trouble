@@ -74,6 +74,9 @@ jobs:
       - name: Save binary
         run: |
           mv ./examples/nrf52/target/thumbv7em-none-eabihf/release/ble_bas_peripheral ./examples/nrf52/target/thumbv7em-none-eabihf/release/original.elf
+      - name: "[PR] transitioning from 'nrf-sdc' to 'nrf52' needs this." #hack
+        if: ${{ github.event.pull_request }}
+        run: git restore examples/nrf52/Cargo.lock
       - name: If it's a PR checkout the base commit
         if: ${{ github.event.pull_request }}
         run: git checkout ${{ github.event.pull_request.base.sha }}

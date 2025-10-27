@@ -3,8 +3,8 @@ use core::ops::{Deref, DerefMut};
 
 use bt_hci::param::{AddrKind, BdAddr};
 use embassy_time::Instant;
+use rand::rand_core::{CryptoRng, RngCore};
 use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
@@ -329,7 +329,7 @@ impl Pairing {
                         PairingMethod::PassKeyEntry { peripheral, .. } => {
                             if peripheral == PassKeyEntryAction::Display {
                                 pairing_data.local_secret_rb =
-                                    rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                                    rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
                                 pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     pairing_data.local_secret_rb as u32,
@@ -722,8 +722,8 @@ mod tests {
     use core::ops::Deref;
 
     use bt_hci::param::{AddrKind, BdAddr};
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
+    use chacha20::{ChaCha12Core, ChaCha12Rng};
+    use rand::SeedableRng;
 
     use super::{Pairing, Step};
     use crate::prelude::{ConnectionEvent, SecurityLevel};

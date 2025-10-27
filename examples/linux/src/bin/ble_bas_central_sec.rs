@@ -1,6 +1,7 @@
 use bt_hci::controller::ExternalController;
 use bt_hci_linux::Transport;
 use rand::rngs::OsRng;
+use rand::TryRngCore;
 use trouble_example_apps::ble_bas_central_sec;
 
 #[tokio::main(flavor = "current_thread")]
@@ -15,6 +16,6 @@ async fn main() -> Result<(), std::io::Error> {
     };
     let transport = Transport::new(dev)?;
     let controller = ExternalController::<_, 8>::new(transport);
-    ble_bas_central_sec::run(controller, &mut OsRng).await;
+    ble_bas_central_sec::run(controller, &mut OsRng.unwrap_mut()).await;
     Ok(())
 }

@@ -12,7 +12,7 @@ bt-hci = "0.6"
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "std"] }
 trouble-host = { path = "../../host", features = ["scan"] }
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
-rand = { version = "0.8.5", features = ["getrandom"] }
+rand = { version = "0.10.0-rc.0", default-features = false, features = ["os_rng"], optional = true }
 env_logger = "0.11"
 log = "0.4"
 critical-section = { version = "1", features = ["std"] }
@@ -21,6 +21,7 @@ bt-hci-linux = { version = "0.1.0", path = "../../bt-hci-linux" }
 [features]
 security = [
     "trouble-example-apps/security",
+    "dep:rand"
 ]
 
 [[bin]]
