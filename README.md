@@ -48,7 +48,7 @@ compile with older versions but that may change in any new patch release.
 
 See `examples` for example applications for different BLE controllers.
 
-* `nrf-sdc` for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
+* `nrf52` for the nRF52 based using the [`nrf-sdc`](https://github.com/alexmoon/nrf-sdc) crate.
 * `serial-hci` which runs on std using a controller attached via a serial port (Such as [this Zephyr sample](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/samples/bluetooth/hci_uart/README.html)).
 * `apache-nimble` which uses the controller from the [NimBLE stack](https://github.com/apache/mynewt-nimble) through high-level bindings from the [`apache-nimble`](https://github.com/benbrittain/apache-nimble-sys) crate.
 * `esp32` which uses the BLE controller in the [esp-hal](https://github.com/esp-rs/esp-hal).
