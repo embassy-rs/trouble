@@ -7,7 +7,7 @@ use trouble_host::prelude::*;
 #[tokio::test]
 async fn ble_l2cap_peripheral_nrf52() {
     let _ = pretty_env_logger::try_init();
-    let firmware = "bins/nrf-sdc/ble_l2cap_peripheral";
+    let firmware = "bins/nrf52/ble_l2cap_peripheral";
     let local = tokio::task::LocalSet::new();
     local
         .run_until(run_l2cap_peripheral_test(
