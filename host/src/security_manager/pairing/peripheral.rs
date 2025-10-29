@@ -908,7 +908,7 @@ mod tests {
             let pairing_data = pairing.pairing_data.borrow();
             let sent_packets = &pairing_ops.sent_packets;
 
-            assert!(pairing_data.local_features.responder_key_distribution.identity_key());
+            assert!(pairing_data.local_features.initiator_key_distribution.identity_key());
             assert!(pairing_data.peer_features.initiator_key_distribution.identity_key());
 
             assert_eq!(sent_packets.len(), 1);
@@ -916,7 +916,7 @@ mod tests {
             let response_payload = sent_packets[0].payload();
             // Check AuthReq and identity key bit in response
             assert_eq!(response_payload[2] & 0x09, 0x09);
-            assert_eq!(response_payload[5] & 0x02, 0x02);
+            assert_eq!(response_payload[4] & 0x02, 0x02);
         }
 
         // Central sends public key, expects peripheral public key followed by peripheral confirm
