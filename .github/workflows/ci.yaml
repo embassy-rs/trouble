@@ -36,12 +36,18 @@ jobs:
           du -h ~/.cargo/registry/index/
           du -h ~/.cargo/registry/cache/
           du -h ~/.cargo/git/db/
-          du -h target_ci/
+          du -h target_ci/ | grep -v \.fingerprint
+        #
+        # 18G	target_ci/
+      - name: Remove 'target_ci/debug' artefacts (eventually from cache)
+        run: |
+          rm -rf target_ci/debug
 
-      - run: "false"
       - name: CI
         run: |
           ./ci.sh
+          test ! -d target_ci/debug || (echo -e >&2 "Seems 'target_ci/debug' got created:\n"; du -h -d 1 target_ci/debug)
+
   # Check binary-size, stolen from https://github.com/tweedegolf/sequential-storage/blob/master/.github/workflows/ci.yaml
   binary-size:
     runs-on: ubuntu-latest
