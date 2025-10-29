@@ -128,7 +128,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             deadline: if config.timeout.as_ticks() == 0 {
                 None
             } else {
-                Some(Instant::now() + config.timeout.into())
+                Some(Instant::now() + config.timeout)
             },
             done: false,
         })
