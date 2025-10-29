@@ -14,13 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Free disk space
-        run: |
-          .ci/free_disk_space.sh
-      - name: Add dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends libudev-dev
       - name: Set up cargo cache
         uses: actions/cache@v3
         continue-on-error: true
@@ -34,12 +27,22 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: List cargo cache contents
+        run: |
+          du -h ~/.cargo/bin/
+          du -h ~/.cargo/registry/index/
+          du -h ~/.cargo/registry/cache/
+          du -h ~/.cargo/git/db/
+          du -h target_ci/
+
+      - run: "false"  # STOP
       - name: CI
         run: |
           ./ci.sh
   # Check binary-size, stolen from https://github.com/tweedegolf/sequential-storage/blob/master/.github/workflows/ci.yaml
   binary-size:
     runs-on: ubuntu-latest
+    if: false
     permissions:
       actions: read
       pull-requests: write
