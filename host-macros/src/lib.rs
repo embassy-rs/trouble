@@ -112,7 +112,7 @@ pub fn gatt_service(args: TokenStream, item: TokenStream) -> TokenStream {
         let desc = err.to_string();
         ctxt.error_spanned_by(
             err.into_compile_error(),
-            format!("Parsing characteristics was unsuccessful:\n{}", desc),
+            format!("Parsing characteristics was unsuccessful:\n{desc}"),
         );
         return ctxt.check().unwrap_err().into();
     }
@@ -249,5 +249,5 @@ fn check_for_characteristic(
 #[proc_macro]
 pub fn uuid(args: TokenStream) -> TokenStream {
     let uuid = parse_macro_input!(args as uuid::UuidArgs);
-    return uuid.uuid.into();
+    uuid.uuid.into()
 }
