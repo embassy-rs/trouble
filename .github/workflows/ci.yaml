@@ -13,9 +13,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: true
         with:
           path: |
