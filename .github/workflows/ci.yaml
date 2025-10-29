@@ -14,6 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Clear some space    # without this, even setting up the cache doesn't work!!!
+        run: |
+          sudo rm -rf /usr/share/dotnet/
       - name: Set up cargo cache
         uses: actions/cache@v4
         continue-on-error: true
