@@ -35,7 +35,7 @@ jobs:
           du -h ~/.cargo/git/db/
           du -h target_ci/
 
-      - run: "false"  # STOP
+      - run: "false"
       - name: CI
         run: |
           ./ci.sh
