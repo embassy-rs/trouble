@@ -30,9 +30,9 @@ fn main() {
 
     // We don't use any external files: only run the build script if it has changed.
     // Otherwise, Cargo will re-run it on each build.
-    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build.rs");
 
-    println!("cargo::rustc-check-cfg=cfg(test)");
+    println!("cargo:rustc-check-cfg=cfg(test)");
 
     // Check feature usage.
     //
@@ -120,7 +120,7 @@ fn main() {
 
     // Rebuild if config envvar changed.
     for (name, _) in CONFIGS {
-        println!("cargo::rerun-if-env-changed={crate_name}_{name}");
+        println!("cargo:rerun-if-env-changed={crate_name}_{name}");
     }
 
     let mut configs = HashMap::new();

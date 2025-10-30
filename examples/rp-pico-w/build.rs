@@ -21,7 +21,7 @@ fn main() {
         .unwrap()
         .write_all(include_bytes!("memory.x"))
         .unwrap();
-    println!("cargo::rustc-link-search={}", out.display());
+    println!("cargo:rustc-link-search={}", out.display());
 
     #[cfg(not(feature = "skip-cyw43-firmware"))]
     download_cyw43_firmware();
@@ -30,12 +30,12 @@ fn main() {
     // any file in the project changes. By specifying `memory.x`
     // here, we ensure the build script is only re-run when
     // `memory.x` is changed.
-    println!("cargo::rerun-if-changed=memory.x");
+    println!("cargo:rerun-if-changed=memory.x");
 
-    println!("cargo::rustc-link-arg-bins=--nmagic");
-    println!("cargo::rustc-link-arg-bins=-Tlink.x");
-    println!("cargo::rustc-link-arg-bins=-Tlink-rp.x");
-    println!("cargo::rustc-link-arg-bins=-Tdefmt.x");
+    println!("cargo:rustc-link-arg-bins=--nmagic");
+    println!("cargo:rustc-link-arg-bins=-Tlink.x");
+    println!("cargo:rustc-link-arg-bins=-Tlink-rp.x");
+    println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
 }
 
 #[cfg(not(feature = "skip-cyw43-firmware"))]
@@ -50,8 +50,8 @@ fn download_cyw43_firmware() {
         "README.md",
         ];
 
-    println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo::rerun-if-changed={}", download_folder);
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed={}", download_folder);
     std::fs::create_dir_all(download_folder).expect("Failed to create download directory");
 
     // download each file into the folder "cyw43-firmware"
