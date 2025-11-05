@@ -12,7 +12,7 @@ cargo binstall probe-rs-tools # or cargo install if you don't use binstall
 You may also need to install the chip's toolchain too, if so that would be done with, for example:
 
 ```bash
-rustup target add thumbv7em-none-eabihf
+rustup target add thumbv8m.main-none-eabihf
 ```
 
 Build dependencies (nrf-sdc) also require clang to compile:
@@ -28,18 +28,14 @@ brew install llvm
 
 We use features to turn on the appropriate configurations for the chip you are flashing to.  Currently supported chips are:
 
-- `nrf52832`
-- `nrf52833`
-- `nrf52840`
+- `nrf54l15`
 
 ## Run
 
 To build and run an example on your device, plug it in and run i.e.:
 
 ```bash
-cd examples/nrf52 # make sure you are in the right directory
+cd examples/nrf54 # make sure you are in the right directory
 
-cargo run --release --features nrf52833 --target thumbv7em-none-eabihf --bin ble_bas_peripheral
+cargo run --release --features nrf54l15 --target thumbv8m.main-none-eabihf --bin ble_bas_peripheral
 ```
-
-See [microbit-bsp](https://github.com/lulf/microbit-bsp) for more examples of setting up nrf devices with trouble, specifically the BBC Microbit which is an nrf52833.
