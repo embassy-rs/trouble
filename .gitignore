@@ -1,4 +1,7 @@
 **/target
 **/target_ci
-Cargo.lock
+host/Cargo.lock
+host-macros/Cargo.lock
+bt-hci-linux/Cargo.lock
+examples/apps/Cargo.lock
 .idea
