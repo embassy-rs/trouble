@@ -5,3 +5,4 @@ host-macros/Cargo.lock
 bt-hci-linux/Cargo.lock
 examples/apps/Cargo.lock
 .idea
+tests/
