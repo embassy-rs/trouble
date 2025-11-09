@@ -50,8 +50,8 @@ embassy-futures = {git = "https://github.com/embassy-rs/embassy.git", rev="dda42
 embassy-time = {git = "https://github.com/embassy-rs/embassy.git", rev="dda429ce6642deaa490f8737e1373e2e2ba79655"}
 embassy-time-driver = {git = "https://github.com/embassy-rs/embassy.git", rev="dda429ce6642deaa490f8737e1373e2e2ba79655"}
 embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="dda429ce6642deaa490f8737e1373e2e2ba79655"}
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8d9c4076a54f307540f230c45acd66d6f8267a3d"}
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8d9c4076a54f307540f230c45acd66d6f8267a3d"}
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1bcd64523471ddd5eea38f5c7227aef3b59c623a"}
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1bcd64523471ddd5eea38f5c7227aef3b59c623a"}
 #bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "83a9e179ff019ed60abb73705f54383f89fc60fc" }
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
