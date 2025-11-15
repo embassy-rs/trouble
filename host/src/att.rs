@@ -32,7 +32,7 @@ pub(crate) const ATT_READ_BLOB_REQ: u8 = 0x0c;
 pub(crate) const ATT_READ_BLOB_RSP: u8 = 0x0d;
 pub(crate) const ATT_HANDLE_VALUE_NTF: u8 = 0x1b;
 pub(crate) const ATT_HANDLE_VALUE_IND: u8 = 0x1d;
-pub(crate) const ATT_HANDLE_VALUE_CMF: u8 = 0x1e;
+pub(crate) const ATT_HANDLE_VALUE_CFM: u8 = 0x1e;
 
 /// Attribute Error Code
 ///
@@ -666,7 +666,7 @@ impl<'d> AttClient<'d> {
     fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<Self, codec::Error> {
         let decoded = match opcode {
             ATT_WRITE_CMD => Self::Command(AttCmd::decode_with_opcode(opcode, r)?),
-            ATT_HANDLE_VALUE_CMF => Self::Confirmation(AttCfm::decode_with_opcode(opcode, r)?),
+            ATT_HANDLE_VALUE_CFM => Self::Confirmation(AttCfm::decode_with_opcode(opcode, r)?),
             _ => Self::Request(AttReq::decode_with_opcode(opcode, r)?),
         };
         Ok(decoded)
@@ -904,7 +904,7 @@ impl AttCfm {
         let mut w = WriteCursor::new(dest);
         match self {
             Self::ConfirmIndication => {
-                w.write(ATT_HANDLE_VALUE_CMF)?;
+                w.write(ATT_HANDLE_VALUE_CFM)?;
             }
         }
         Ok(())
@@ -913,7 +913,7 @@ impl AttCfm {
     fn decode_with_opcode(opcode: u8, r: ReadCursor<'_>) -> Result<Self, codec::Error> {
         let payload = r.remaining();
         match opcode {
-            ATT_HANDLE_VALUE_CMF => Ok(Self::ConfirmIndication),
+            ATT_HANDLE_VALUE_CFM => Ok(Self::ConfirmIndication),
             code => {
                 warn!("[att] unknown opcode {:x}", code);
                 Err(codec::Error::InvalidValue)
