@@ -671,7 +671,8 @@ impl<T: FromGatt> Characteristic<T> {
     ///
     /// If the characteristic does not support indications, an error is returned.
     ///
-    /// This function does not block for the confirmation to the indication message.
+    /// This function does not block for the confirmation to the indication message, if the client sends a confirmation
+    /// this will be seen on the [GattConnection] as a [crate::att::AttClient::Confirmation] event.
     pub async fn indicate<P: PacketPool>(
         &self,
         connection: &GattConnection<'_, '_, P>,
@@ -694,10 +695,6 @@ impl<T: FromGatt> Characteristic<T> {
         };
         let pdu = gatt::assemble(connection, crate::att::AttServer::Unsolicited(uns))?;
         connection.send(pdu).await;
-
-        // This Indication message will get a conformation back in the form of AttClient::Confirmation(_)
-        // We can't really call connection.next_gatt() here, because another future may already be blocked on
-        // the next event on the connection, that future will get the confirmation instead of this one.
         Ok(())
     }
 
