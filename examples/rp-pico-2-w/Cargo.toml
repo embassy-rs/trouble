@@ -21,7 +21,7 @@ defmt = "1.0"
 defmt-rtt = "1.0"
 panic-probe = { version = "1.0", features = ["print-defmt"] }
 
-chacha20 = { version = "0.10.0-rc.2", default-features = false, features = ["rng"] }
+chacha20 = { version = "0.10.0-rc.5", default-features = false, features = ["rng"] }
 cortex-m = { version = "0.7" }
 cortex-m-rt = "0.7"
 static_cell = "2"
