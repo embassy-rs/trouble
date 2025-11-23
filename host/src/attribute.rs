@@ -9,7 +9,9 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use heapless::Vec;
 
-use crate::att::AttErrorCode;
+use crate::att::{AttErrorCode, AttUns};
+use crate::gatt;
+
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
@@ -654,18 +656,44 @@ impl<T: FromGatt> Characteristic<T> {
             return Ok(());
         }
 
-        let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
-        let mut w = WriteCursor::new(tx.as_mut());
-        let (mut header, mut data) = w.split(4)?;
-        data.write(crate::att::ATT_HANDLE_VALUE_NTF)?;
-        data.write(self.handle)?;
-        data.append(value)?;
+        let uns = AttUns::Notify {
+            handle: self.handle,
+            data: value,
+        };
+        let pdu = gatt::assemble(connection, crate::att::AttServer::Unsolicited(uns))?;
+        connection.send(pdu).await;
+        Ok(())
+    }
 
-        header.write(data.len() as u16)?;
-        header.write(4_u16)?;
-        let total = header.len() + data.len();
+    /// Write a value to a characteristic, and indicate a connection with the new value of the characteristic.
+    ///
+    /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
+    ///
+    /// If the characteristic does not support indications, an error is returned.
+    ///
+    /// This function does not block for the confirmation to the indication message, if the client sends a confirmation
+    /// this will be seen on the [GattConnection] as a [crate::att::AttClient::Confirmation] event.
+    pub async fn indicate<P: PacketPool>(
+        &self,
+        connection: &GattConnection<'_, '_, P>,
+        value: &T,
+    ) -> Result<(), Error> {
+        let value = value.as_gatt();
+        let server = connection.server;
+        server.set(self.handle, value)?;
 
-        let pdu = crate::pdu::Pdu::new(tx, total);
+        let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
+        let connection = connection.raw();
+        if !server.should_indicate(connection, cccd_handle) {
+            // No reason to fail?
+            return Ok(());
+        }
+
+        let uns = AttUns::Indicate {
+            handle: self.handle,
+            data: value,
+        };
+        let pdu = gatt::assemble(connection, crate::att::AttServer::Unsolicited(uns))?;
         connection.send(pdu).await;
         Ok(())
     }
@@ -936,5 +964,16 @@ impl CCCD {
     /// Check if notifications are enabled
     pub fn should_notify(&self) -> bool {
         (self.0 & (CCCDFlag::Notify as u16)) != 0
+    }
+
+    /// Enable or disable indication
+    pub fn set_indicate(&mut self, is_enabled: bool) {
+        let mask: u16 = CCCDFlag::Indicate as u16;
+        self.0 = if is_enabled { self.0 | mask } else { self.0 & !mask };
+    }
+
+    /// Check if indications are enabled
+    pub fn should_indicate(&self) -> bool {
+        (self.0 & (CCCDFlag::Indicate as u16)) != 0
     }
 }
