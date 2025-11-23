@@ -91,6 +91,24 @@ impl<const ENTRIES: usize> CccdTable<ENTRIES> {
         }
         false
     }
+
+    fn set_indicate(&mut self, cccd_handle: u16, is_enabled: bool) {
+        for (handle, value) in self.inner.iter_mut() {
+            if *handle == cccd_handle {
+                trace!("\n\n\n[cccd] set_indicate({}) = {}", cccd_handle, is_enabled);
+                value.set_indicate(is_enabled);
+                break;
+            }
+        }
+    }
+    fn should_indicate(&self, cccd_handle: u16) -> bool {
+        for (handle, value) in self.inner.iter() {
+            if *handle == cccd_handle {
+                return value.should_indicate();
+            }
+        }
+        false
+    }
 }
 
 /// A table of CCCD values for each connected client.
@@ -203,6 +221,30 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
+    fn set_indicate(&self, peer_identity: &Identity, cccd_handle: u16, is_enabled: bool) {
+        self.state.lock(|n| {
+            let mut n = n.borrow_mut();
+            for (client, table) in n.iter_mut() {
+                if client.identity.match_identity(peer_identity) {
+                    table.set_indicate(cccd_handle, is_enabled);
+                    break;
+                }
+            }
+        })
+    }
+
+    fn should_indicate(&self, peer_identity: &Identity, cccd_handle: u16) -> bool {
+        self.state.lock(|n| {
+            let n = n.borrow();
+            for (client, table) in n.iter() {
+                if client.identity.match_identity(peer_identity) {
+                    return table.should_indicate(cccd_handle);
+                }
+            }
+            false
+        })
+    }
+
     fn get_cccd_table(&self, peer_identity: &Identity) -> Option<CccdTable<CCCD_MAX>> {
         self.state.lock(|n| {
             let n = n.borrow();
@@ -269,6 +311,7 @@ pub(crate) mod sealed {
             rx: &mut [u8],
         ) -> Result<Option<usize>, Error>;
         fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool;
+        fn should_indicate(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool;
         fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
         fn update_identity(&self, identity: Identity) -> Result<(), Error>;
     }
@@ -305,6 +348,9 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
     fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
         AttributeServer::should_notify(self, connection, cccd_handle)
     }
+    fn should_indicate(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
+        AttributeServer::should_indicate(self, connection, cccd_handle)
+    }
 
     fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error> {
         self.att_table.set_raw(characteristic, input)
@@ -336,6 +382,11 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
 
     pub(crate) fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
         self.cccd_tables.should_notify(&connection.peer_identity(), cccd_handle)
+    }
+
+    pub(crate) fn should_indicate(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
+        self.cccd_tables
+            .should_indicate(&connection.peer_identity(), cccd_handle)
     }
 
     fn read_attribute_data(
@@ -372,6 +423,8 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
             {
                 self.cccd_tables
                     .set_notify(&connection.peer_identity(), att.handle, notifications);
+                self.cccd_tables
+                    .set_indicate(&connection.peer_identity(), att.handle, indications);
             }
         }
         err
