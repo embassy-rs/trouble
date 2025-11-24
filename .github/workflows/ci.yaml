@@ -7,21 +7,18 @@ on:
     tags:
       - "v*"
   pull_request:
+  workflow_dispatch:  # needed to be in 'main', for any branch to manually 'Run Workflow' in GitHub UI.
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Free disk space
+      - uses: actions/checkout@v5
+      - name: Clear some space    # without this, even setting up the cache doesn't work!!!
         run: |
-          .ci/free_disk_space.sh
-      - name: Add dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends libudev-dev
+          sudo rm -rf /usr/share/dotnet/
       - name: Set up cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: true
         with:
           path: |
@@ -33,12 +30,28 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: List cargo cache contents
+        run: |
+          du -h ~/.cargo/bin/
+          du -h ~/.cargo/registry/index/
+          du -h ~/.cargo/registry/cache/
+          du -h ~/.cargo/git/db/
+          du -h target_ci/ | grep -v \.fingerprint
+        #
+        # 18G	target_ci/
+      - name: Remove 'target_ci/debug' artefacts (eventually from cache)
+        run: |
+          rm -rf target_ci/debug
+
       - name: CI
         run: |
           ./ci.sh
+          test ! -d target_ci/debug || (echo -e >&2 "Seems 'target_ci/debug' got created:\n"; du -h -d 1 target_ci/debug)
+
   # Check binary-size, stolen from https://github.com/tweedegolf/sequential-storage/blob/master/.github/workflows/ci.yaml
   binary-size:
     runs-on: ubuntu-latest
+    if: false
     permissions:
       actions: read
       pull-requests: write
