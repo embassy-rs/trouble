@@ -112,10 +112,10 @@ impl AsRef<str> for Reason {
             Reason::InvalidParameters => "Command and/or parameter invalid",
             Reason::DHKeyCheckFailed => "DH key check value does not match",
             Reason::NumericComparisonFailed => "Numeric comparison values do not match",
-            Reason::BrEdrPairingInProgress => "Pairing in progess over BR/EDR",
+            Reason::BrEdrPairingInProgress => "Pairing in progress over BR/EDR",
             Reason::GenerationNotAllowed => "Link key generation failed",
             Reason::KeyRejected => "Device rejected distributed key",
-            Reason::Busy => "Device is not ready to peform pairing",
+            Reason::Busy => "Device is not ready to perform pairing",
         }
     }
 }
@@ -525,7 +525,7 @@ impl KeyDistributionFlags {
     pub(crate) fn set_encryption_key(&mut self) {
         self.0 |= Self::ENCRYPTION_KEY;
     }
-    /// Set the identity key flag   
+    /// Set the identity key flag
     pub(crate) fn set_identity_key(&mut self) {
         self.0 |= Self::IDENTITY_KEY;
     }

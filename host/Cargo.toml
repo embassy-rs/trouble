@@ -26,7 +26,7 @@ embassy-sync = "0.7"
 embassy-time = "0.5"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
-heapless = "0.9"
+heapless = "0.9"  # "gatt", "security"
 trouble-host-macros = { path = "../host-macros", version = "0.3.0", optional = true }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arithmetic"], optional = true }
 rand_core = "0.6"

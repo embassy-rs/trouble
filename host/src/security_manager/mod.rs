@@ -463,8 +463,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         result: &Result<(), Error>,
     ) -> Result<(), Error> {
         if let Err(error) = result {
-            let reason = if let Error::Security(secuity_error) = error {
-                *secuity_error
+            let reason = if let Error::Security(security_error) = error {
+                *security_error
             } else {
                 Reason::UnspecifiedReason
             };
@@ -561,7 +561,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
-    /// Handle recevied events from HCI
+    /// Handle received events from HCI
     pub(crate) fn handle_hci_le_event<P: PacketPool>(
         &self,
         event: LeEventPacket,
@@ -578,7 +578,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
-    /// Handle recevied events from HCI
+    /// Handle received events from HCI
     pub(crate) fn handle_hci_event<P: PacketPool>(
         &self,
         event: EventPacket,
@@ -730,7 +730,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             .borrow()
             .as_ref()
             .map(|x| x.timeout_at())
-            .unwrap_or(Instant::now() + constants::TIMEOUT_DISABLE);
+            .unwrap_or(Instant::MAX);
         // try to pop an event from the channel
         poll_fn(|cx| self.events.poll_receive(cx)).with_deadline(deadline)
     }

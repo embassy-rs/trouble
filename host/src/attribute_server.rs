@@ -295,7 +295,7 @@ pub struct AttributeServer<
 > {
     att_table: AttributeTable<'values, M, ATT_MAX>,
     cccd_tables: CccdTables<M, CCCD_MAX, CONN_MAX>,
-    _p: PhantomData<P>,
+    _p: PhantomData<P>, // please comment on the purpose
 }
 
 pub(crate) mod sealed {
@@ -992,8 +992,9 @@ mod tests {
                 while let Some(att) = it.next() {
                     let handle = att.handle;
                     let uuid = &att.uuid;
+                    // bad format: "last_handle_in_group for 0x{:0>4x?}, 0x{:0>2x?}  0x{:0>2x?}", // "Unknown display hint: '0>4x?'
                     trace!(
-                        "last_handle_in_group for 0x{:0>4x?}, 0x{:0>2x?}  0x{:0>2x?}",
+                        "last_handle_in_group for 0x{:04x}, 0x{:02x}  0x{:02x}", // not sure which is the intended format, here!
                         handle,
                         uuid,
                         att.last_handle_in_group
@@ -1034,7 +1035,8 @@ mod tests {
                         )
                         .unwrap();
                     let response = &buffer[0..length];
-                    trace!("  0x{:0>2x?}", response);
+                    // bad format: "  0x{:0>2x?}" <-- "unknown display hint"
+                    trace!("  0x{:02x}", response);
                     // It should be a successful response, because the service should be found, this will assert if
                     // we failed to retrieve the third service.
                     assert_eq!(response[0], att::ATT_READ_BY_GROUP_TYPE_RSP);
