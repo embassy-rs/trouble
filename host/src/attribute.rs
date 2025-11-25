@@ -10,14 +10,12 @@ use embassy_sync::blocking_mutex::Mutex;
 use heapless::Vec;
 
 use crate::att::{AttErrorCode, AttUns};
-use crate::gatt;
-
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
-use crate::{Error, PacketPool, MAX_INVALID_DATA_LEN};
+use crate::{gatt, Error, PacketPool, MAX_INVALID_DATA_LEN};
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]

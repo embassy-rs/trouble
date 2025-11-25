@@ -322,7 +322,10 @@ impl Pairing {
                 }
                 (Step::WaitingPublicKey, Command::PairingPublicKey) => {
                     Self::handle_public_key(command.payload, pairing_data);
-                    Self::generate_private_public_key_pair(pairing_data, rng)?;
+                    Self::generate_private_public_key_pair(pairing_data,
+                                                           #[cfg(not(feature = "_getrandom"))]
+                                                           rng
+                    )?;
                     Self::send_public_key(ops, pairing_data.local_public_key.as_ref().unwrap())?;
                     match pairing_data.pairing_method {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
@@ -512,11 +515,32 @@ impl Pairing {
         pairing_data.peer_public_key = Some(peer_public_key);
     }
 
+    #[cfg(not(feature = "_getrandom"))]
     fn generate_private_public_key_pair<RNG: CryptoRng + RngCore>(
         pairing_data: &mut PairingData,
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let secret_key = SecretKey::new(rng);
+        let public_key = secret_key.public_key();
+        let peer_public_key = pairing_data
+            .peer_public_key
+            .ok_or(Error::Security(Reason::InvalidParameters))?;
+        pairing_data.dh_key = Some(
+            secret_key
+                .dh_key(peer_public_key)
+                .ok_or(Error::Security(Reason::InvalidParameters))?,
+        );
+        pairing_data.local_public_key = Some(public_key);
+        pairing_data.private_key = Some(secret_key);
+
+        Ok(())
+    }
+    #[cfg(feature = "_getrandom")]
+    fn generate_private_public_key_pair/*<RNG: CryptoRng + RngCore>*/(
+        pairing_data: &mut PairingData,
+        //rng: &mut RNG,
+    ) -> Result<(), Error> {
+        let secret_key = SecretKey::new(/*rng*/);
         let public_key = secret_key.public_key();
         let peer_public_key = pairing_data
             .peer_public_key
