@@ -58,7 +58,11 @@ async fn main(spawner: Spawner) {
     config.lfclk_source = config::LfclkSource::ExternalXtal;
     let p = embassy_nrf::init(config);
     let mpsl_p = mpsl::Peripherals::new(
-        p.GRTC,
+        p.GRTC_CH7,
+        p.GRTC_CH8,
+        p.GRTC_CH9,
+        p.GRTC_CH10,
+        p.GRTC_CH11,
         p.TIMER10,
         p.TIMER20,
         p.TEMP,

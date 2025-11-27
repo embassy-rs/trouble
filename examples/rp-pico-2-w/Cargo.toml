@@ -47,11 +47,11 @@ debug = 2
 #embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
-embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
-cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "faacad613ea26a28de216cf32ac4cc64f7862d4c" }
+cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
+cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
