@@ -458,11 +458,11 @@ dependencies = [
 [[package]]
 name = "embassy-embedded-hal"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "defmt 1.0.1",
  "embassy-futures",
- "embassy-hal-internal 0.3.0 (git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655)",
+ "embassy-hal-internal 0.3.0 (git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137)",
  "embassy-sync",
  "embassy-time",
  "embedded-hal 0.2.7",
@@ -476,7 +476,7 @@ dependencies = [
 [[package]]
 name = "embassy-executor"
 version = "0.9.1"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "cordyceps",
  "cortex-m",
@@ -490,7 +490,7 @@ dependencies = [
 [[package]]
 name = "embassy-executor-macros"
 version = "0.7.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -501,12 +501,12 @@ dependencies = [
 [[package]]
 name = "embassy-executor-timer-queue"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 
 [[package]]
 name = "embassy-futures"
 version = "0.1.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 
 [[package]]
 name = "embassy-hal-internal"
@@ -520,7 +520,7 @@ dependencies = [
 [[package]]
 name = "embassy-hal-internal"
 version = "0.3.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -531,7 +531,7 @@ dependencies = [
 [[package]]
 name = "embassy-nrf"
 version = "0.8.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if",
@@ -541,7 +541,7 @@ dependencies = [
  "defmt 1.0.1",
  "document-features",
  "embassy-embedded-hal",
- "embassy-hal-internal 0.3.0 (git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655)",
+ "embassy-hal-internal 0.3.0 (git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137)",
  "embassy-sync",
  "embassy-time-driver",
  "embassy-time-queue-utils",
@@ -562,7 +562,7 @@ dependencies = [
 [[package]]
 name = "embassy-sync"
 version = "0.7.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -576,7 +576,7 @@ dependencies = [
 [[package]]
 name = "embassy-time"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -592,7 +592,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-driver"
 version = "0.2.1"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "document-features",
 ]
@@ -600,7 +600,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-queue-utils"
 version = "0.3.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "embassy-executor-timer-queue",
  "heapless 0.8.0",
@@ -609,7 +609,7 @@ dependencies = [
 [[package]]
 name = "embassy-usb-driver"
 version = "0.2.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=dda429ce6642deaa490f8737e1373e2e2ba79655#dda429ce6642deaa490f8737e1373e2e2ba79655"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7ff2baf4e29c47c622e21c4eeba2d20596b65137#7ff2baf4e29c47c622e21c4eeba2d20596b65137"
 dependencies = [
  "defmt 1.0.1",
  "embedded-io-async",
@@ -1030,7 +1030,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1bcd64523471ddd5eea38f5c7227aef3b59c623a#1bcd64523471ddd5eea38f5c7227aef3b59c623a"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e559dc97c7feee707cb8b6084affb5c55aa043e3#e559dc97c7feee707cb8b6084affb5c55aa043e3"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -1047,7 +1047,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1bcd64523471ddd5eea38f5c7227aef3b59c623a#1bcd64523471ddd5eea38f5c7227aef3b59c623a"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e559dc97c7feee707cb8b6084affb5c55aa043e3#e559dc97c7feee707cb8b6084affb5c55aa043e3"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1056,7 +1056,7 @@ dependencies = [
 [[package]]
 name = "nrf-pac"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/nrf-pac.git?rev=58198c23bce72edc10b4e1656d1b54441fc74e7c#58198c23bce72edc10b4e1656d1b54441fc74e7c"
+source = "git+https://github.com/embassy-rs/nrf-pac.git?rev=176dc4afe1dd8df78f3cbda4479ab5151aa32252#176dc4afe1dd8df78f3cbda4479ab5151aa32252"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -1065,7 +1065,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1bcd64523471ddd5eea38f5c7227aef3b59c623a#1bcd64523471ddd5eea38f5c7227aef3b59c623a"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e559dc97c7feee707cb8b6084affb5c55aa043e3#e559dc97c7feee707cb8b6084affb5c55aa043e3"
 dependencies = [
  "bt-hci",
  "critical-section",
@@ -1083,7 +1083,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1bcd64523471ddd5eea38f5c7227aef3b59c623a#1bcd64523471ddd5eea38f5c7227aef3b59c623a"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e559dc97c7feee707cb8b6084affb5c55aa043e3#e559dc97c7feee707cb8b6084affb5c55aa043e3"
 dependencies = [
  "bindgen",
  "doxygen-rs",
