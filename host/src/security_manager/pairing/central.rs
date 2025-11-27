@@ -2,8 +2,8 @@ use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
 use embassy_time::Instant;
+use rand::rand_core::{CryptoRng, RngCore};
 use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
@@ -376,7 +376,10 @@ impl Pairing {
                 }
                 (Step::WaitingPairingResponse(_), Command::PairingResponse) => {
                     Self::handle_pairing_response(command.payload, ops, pairing_data)?;
-                    Self::generate_private_public_key_pair(pairing_data, rng)?;
+                    Self::generate_private_public_key_pair(pairing_data,
+                                                           #[cfg(not(feature = "_getrandom"))]
+                                                           rng
+                    )?;
                     Self::send_public_key(ops, pairing_data.local_public_key.as_ref().unwrap())?;
                     Step::WaitingPublicKey
                 }
@@ -387,7 +390,7 @@ impl Pairing {
                         PairingMethod::PassKeyEntry { central, .. } => {
                             if central == PassKeyEntryAction::Display {
                                 pairing_data.local_secret_ra =
-                                    rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                                    rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
                                 pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     pairing_data.local_secret_ra as u32,
@@ -468,11 +471,24 @@ impl Pairing {
         Ok(())
     }
 
+    #[cfg(not(feature = "_getrandom"))]
     fn generate_private_public_key_pair<RNG: CryptoRng + RngCore>(
         pairing_data: &mut PairingData,
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let secret_key = SecretKey::new(rng);
+        let public_key = secret_key.public_key();
+        pairing_data.local_public_key = Some(public_key);
+        pairing_data.private_key = Some(secret_key);
+
+        Ok(())
+    }
+    #[cfg(feature = "_getrandom")]
+    fn generate_private_public_key_pair/*<RNG: CryptoRng + RngCore>*/(
+        pairing_data: &mut PairingData,
+        //rng: &mut RNG,
+    ) -> Result<(), Error> {
+        let secret_key = SecretKey::new(/*rng*/);
         let public_key = secret_key.public_key();
         pairing_data.local_public_key = Some(public_key);
         pairing_data.private_key = Some(secret_key);

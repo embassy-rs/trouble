@@ -1,6 +1,6 @@
 use bt_hci::param::ConnHandle;
 use embassy_time::Instant;
-use rand_core::{CryptoRng, RngCore};
+use rand::rand_core::{CryptoRng, RngCore};
 
 use crate::connection::{ConnectionEvent, SecurityLevel};
 use crate::security_manager::types::{BondingFlag, Command};
@@ -141,8 +141,8 @@ pub enum Event {
 
 #[cfg(test)]
 mod tests {
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
+    use chacha20::{ChaCha12Core, ChaCha12Rng};
+    use rand::SeedableRng;
 
     use super::*;
     use crate::{Identity, Packet};

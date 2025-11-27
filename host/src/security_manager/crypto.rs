@@ -1,12 +1,12 @@
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use aes::Aes128;
 use bt_hci::param::BdAddr;
 use cmac::digest;
 use p256::ecdh;
-use rand_core::{CryptoRng, RngCore};
+use rand::rand_core::{CryptoRng, RngCore};
 
 use crate::Address;
 
@@ -333,8 +333,22 @@ impl SecretKey {
     /// Generates a new random secret key.
     #[allow(clippy::new_without_default)]
     #[inline(always)]
+    #[cfg(not(feature = "_getrandom"))]
     pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
-        Self(p256::NonZeroScalar::random(rng))
+        // Update note: '::random()' is deprecated in 0.14.0. Can use:
+        //      - '::generate()'; no 'rng' param needed, but that needs "getrandom" feature
+        //      - '::try_from_rng' (which deprecated '::random' falls back to; smaller step.
+        //
+        // Just checking, how much not needing to carry the 'rng' would help.
+        Self(p256::NonZeroScalar::try_from_rng(rng).unwrap())
+    }
+
+    /// Generates a new random secret key.
+    #[allow(clippy::new_without_default)]
+    #[inline(always)]
+    #[cfg(feature = "_getrandom")]
+    pub fn new/*<T: RngCore + CryptoRng>*/(/*rng: &mut T*/) -> Self {
+        Self(p256::NonZeroScalar::generate())
     }
 
     /// Computes the associated public key.
@@ -492,7 +506,8 @@ pub(super) fn u256<T: From<[u8; 32]>>(hi: u128, lo: u128) -> T {
 #[allow(clippy::unusual_byte_groupings)]
 #[cfg(test)]
 mod tests {
-    use p256::elliptic_curve::rand_core::OsRng;
+    use rand::rngs::OsRng;
+    use rand::TryRngCore;
 
     use super::*;
     extern crate std;
@@ -658,10 +673,10 @@ mod tests {
 
     #[test]
     fn testtest() {
-        let skb = SecretKey::new(&mut OsRng::default());
+        let skb = SecretKey::new(&mut OsRng.unwrap_mut());
         let _pkb = skb.public_key();
 
-        let ska = SecretKey::new(&mut OsRng::default());
+        let ska = SecretKey::new(&mut OsRng.unwrap_mut());
         let pka = ska.public_key();
 
         let _dh_key = skb.dh_key(pka).unwrap();
@@ -676,7 +691,7 @@ mod tests {
             0x71, 0xe4, 0x95, 0x17, 0x71, 0x98, 0x82, 0x8f, 0xf8, 0x79, 0x94,
         ];
 
-        let skb = SecretKey::new(&mut OsRng::default());
+        let skb = SecretKey::new(&mut OsRng.unwrap_mut());
         let _pkb = skb.public_key();
 
         let pka = PublicKey::from_bytes(&bytes);
@@ -687,7 +702,7 @@ mod tests {
     #[test]
     fn nonce() {
         // No fair dice rolls for us!
-        assert_ne!(Nonce::new(&mut OsRng::default()), Nonce::new(&mut OsRng::default()));
+        assert_ne!(Nonce::new(&mut OsRng.unwrap_mut()), Nonce::new(&mut OsRng.unwrap_mut()));
     }
 
     /// Confirm value generation function ([Vol 3] Part H, Section D.2).
