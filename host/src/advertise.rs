@@ -384,6 +384,9 @@ pub enum AdStructure<'a> {
     /// The UUID data matches the ble network's endian order (should be little endian).
     CompleteServiceUuids128(&'a [[u8; 16]]),
 
+    /// Sets the Tx Power Level in dBm.
+    TxPowerLevel(i8),
+
     /// Service data with 16-bit service UUID.
     /// The UUID data matches the ble network's endian order (should be little endian).
     ServiceData16 {
@@ -476,6 +479,9 @@ impl AdStructure<'_> {
             AdStructure::CompleteLocalName(name) => {
                 w.append(&[(name.len() + 1) as u8, 0x09])?;
                 w.append(name)?;
+            }
+            AdStructure::TxPowerLevel(power) => {
+                w.append(&[0x02, 0x0a, *power as u8])?;
             }
             AdStructure::ServiceData16 { uuid, data } => {
                 w.append(&[(data.len() + 3) as u8, 0x16])?;
@@ -576,8 +582,9 @@ impl<'d> AdStructureIter<'d> {
             0x08 => Ok(AdStructure::ShortenedLocalName(data)),
             // Complete Local Name
             0x09 => Ok(AdStructure::CompleteLocalName(data)),
+            // Tx Power Level
+            0x0a => Ok(AdStructure::TxPowerLevel(data[0] as i8)),
             /*
-            0x0A Tx Power Level
             0x0D Class of Device
             0x0E Simple Pairing Hash C-192
             0x0F Simple Pairing Randomizer R-192
