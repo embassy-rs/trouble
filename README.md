@@ -44,6 +44,24 @@ See the [documentation](https://embassy.dev/trouble) and the [rustdoc](https://d
 Trouble is guaranteed to compile on stable Rust 1.80 and up. It *might*
 compile with older versions but that may change in any new patch release.
 
+## Preparations
+
+>The below only concerns you, if you plan to build:
+>
+>- `benchmarks`
+>- `examples/nrf52`
+>- `examples/nrf54`
+
+Some of the dependencies are brought in as a git submodule. You will need to initialize the submodules by:
+
+```
+$ git submodule update --init --depth 1
+$ git -C sub/nrf-sdc submodule update --init --depth 1
+```
+
+>The first command populates the `sub/nrf-sdc` folder. The second populates its internal submodules.
+
+
 ## Examples
 
 See `examples` for example applications for different BLE controllers.

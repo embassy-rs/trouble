@@ -45,8 +45,6 @@ debug = 2
 #embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
 #embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
 #embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
-#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
-#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }
 embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "7ff2baf4e29c47c622e21c4eeba2d20596b65137" }

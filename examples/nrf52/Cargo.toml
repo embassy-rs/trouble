@@ -40,8 +40,11 @@ debug = 2
 #embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
 #embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
 #embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c"}
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c"}
+
+#nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "e559dc9"}
+#nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "e559dc9"}
+nrf-sdc = { path = "../../sub/nrf-sdc/nrf-sdc" }
+nrf-mpsl = { path = "../../sub/nrf-sdc/nrf-mpsl" }
 #bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "83a9e179ff019ed60abb73705f54383f89fc60fc" }
 
 [features]

@@ -747,8 +747,8 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=11d5c3c#11d5c3c3653af73b511133c2f8231f33eb0696f4"
 dependencies = [
+ "cfg-if",
  "cortex-m",
  "critical-section",
  "defmt 1.0.1",
@@ -763,7 +763,6 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=11d5c3c#11d5c3c3653af73b511133c2f8231f33eb0696f4"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -782,7 +781,6 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=11d5c3c#11d5c3c3653af73b511133c2f8231f33eb0696f4"
 dependencies = [
  "bt-hci",
  "critical-section",
@@ -800,7 +798,6 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=11d5c3c#11d5c3c3653af73b511133c2f8231f33eb0696f4"
 dependencies = [
  "bindgen",
  "doxygen-rs",

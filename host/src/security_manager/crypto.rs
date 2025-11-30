@@ -1,6 +1,7 @@
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
+#![cfg_attr(rustfmt, rustfmt_skip)]     // REMOVE before 'pr-rand-catchup' is ready!
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use aes::Aes128;
 use bt_hci::param::BdAddr;
