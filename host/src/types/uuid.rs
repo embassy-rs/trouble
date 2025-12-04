@@ -1,6 +1,6 @@
 //! UUID types.
 
-use bt_hci::uuid::BluetoothUuid16;
+use bt_hci::uuid::{BluetoothUuid128, BluetoothUuid16};
 
 use crate::codec::{Decode, Encode, Error, Type};
 
@@ -17,6 +17,12 @@ pub enum Uuid {
 impl From<BluetoothUuid16> for Uuid {
     fn from(data: bt_hci::uuid::BluetoothUuid16) -> Self {
         Uuid::Uuid16(data.into())
+    }
+}
+
+impl From<BluetoothUuid128> for Uuid {
+    fn from(data: bt_hci::uuid::BluetoothUuid128) -> Self {
+        Uuid::Uuid128(data.into())
     }
 }
 

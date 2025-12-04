@@ -255,14 +255,14 @@ impl<'stack, P: PacketPool> GattData<'stack, P> {
 
     /// Respond directly to request.
     pub async fn reply(self, rsp: AttRsp<'_>) -> Result<(), Error> {
-        let pdu = send(&self.connection, AttServer::Response(rsp))?;
+        let pdu = assemble(&self.connection, AttServer::Response(rsp))?;
         self.connection.send(pdu).await;
         Ok(())
     }
 
     /// Send an unsolicited ATT PDU without having a request (e.g. notification or indication)
     pub async fn send_unsolicited(connection: &Connection<'_, P>, uns: AttUns<'_>) -> Result<(), Error> {
-        let pdu = send(connection, AttServer::Unsolicited(uns))?;
+        let pdu = assemble(connection, AttServer::Unsolicited(uns))?;
         connection.send(pdu).await;
         Ok(())
     }
@@ -563,11 +563,14 @@ fn process_reject<'stack, P: PacketPool>(
     // We know it has been checked, therefore this cannot fail
     let request = pdu.as_ref()[0];
     let rsp = AttRsp::Error { request, handle, code };
-    let pdu = send(connection, AttServer::Response(rsp))?;
+    let pdu = assemble(connection, AttServer::Response(rsp))?;
     Ok(Reply::new(connection.clone(), Some(pdu)))
 }
 
-fn send<'stack, P: PacketPool>(conn: &Connection<'stack, P>, att: AttServer<'_>) -> Result<Pdu<P::Packet>, Error> {
+pub(crate) fn assemble<'stack, P: PacketPool>(
+    conn: &Connection<'stack, P>,
+    att: AttServer<'_>,
+) -> Result<Pdu<P::Packet>, Error> {
     let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
     let mut w = WriteCursor::new(tx.as_mut());
     let (mut header, mut data) = w.split(4)?;
