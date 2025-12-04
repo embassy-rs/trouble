@@ -1,0 +1,4 @@
+[submodule "sub/nrf-sdc"]
+	path = sub/nrf-sdc
+	url = https://github.com/alexmoon/nrf-sdc
+	shallow = true

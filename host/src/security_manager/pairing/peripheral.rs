@@ -1,10 +1,11 @@
+#![cfg_attr(rustfmt, rustfmt_skip)]     // REMOVE before 'pr-rand-catchup' is ready!
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
 use bt_hci::param::{AddrKind, BdAddr};
 use embassy_time::Instant;
+use rand::rand_core::{CryptoRng, RngCore};
 use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
@@ -322,14 +323,17 @@ impl Pairing {
                 }
                 (Step::WaitingPublicKey, Command::PairingPublicKey) => {
                     Self::handle_public_key(command.payload, pairing_data);
-                    Self::generate_private_public_key_pair(pairing_data, rng)?;
+                    Self::generate_private_public_key_pair(pairing_data,
+                                                           #[cfg(not(feature = "_getrandom"))]
+                                                           rng
+                    )?;
                     Self::send_public_key(ops, pairing_data.local_public_key.as_ref().unwrap())?;
                     match pairing_data.pairing_method {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
                         PairingMethod::PassKeyEntry { peripheral, .. } => {
                             if peripheral == PassKeyEntryAction::Display {
                                 pairing_data.local_secret_rb =
-                                    rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                                    rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
                                 pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     pairing_data.local_secret_rb as u32,
@@ -512,11 +516,32 @@ impl Pairing {
         pairing_data.peer_public_key = Some(peer_public_key);
     }
 
+    #[cfg(not(feature = "_getrandom"))]
     fn generate_private_public_key_pair<RNG: CryptoRng + RngCore>(
         pairing_data: &mut PairingData,
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let secret_key = SecretKey::new(rng);
+        let public_key = secret_key.public_key();
+        let peer_public_key = pairing_data
+            .peer_public_key
+            .ok_or(Error::Security(Reason::InvalidParameters))?;
+        pairing_data.dh_key = Some(
+            secret_key
+                .dh_key(peer_public_key)
+                .ok_or(Error::Security(Reason::InvalidParameters))?,
+        );
+        pairing_data.local_public_key = Some(public_key);
+        pairing_data.private_key = Some(secret_key);
+
+        Ok(())
+    }
+    #[cfg(feature = "_getrandom")]
+    fn generate_private_public_key_pair/*<RNG: CryptoRng + RngCore>*/(
+        pairing_data: &mut PairingData,
+        //rng: &mut RNG,
+    ) -> Result<(), Error> {
+        let secret_key = SecretKey::new(/*rng*/);
         let public_key = secret_key.public_key();
         let peer_public_key = pairing_data
             .peer_public_key
@@ -722,8 +747,8 @@ mod tests {
     use core::ops::Deref;
 
     use bt_hci::param::{AddrKind, BdAddr};
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
+    use chacha20::{ChaCha12Core, ChaCha12Rng};
+    use rand::SeedableRng;
 
     use super::{Pairing, Step};
     use crate::prelude::{ConnectionEvent, SecurityLevel};
