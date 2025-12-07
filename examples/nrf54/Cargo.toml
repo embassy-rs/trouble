@@ -13,7 +13,7 @@ embassy-nrf = { version = "0.8", default-features = false, features = ["defmt", 
 
 #futures = { version = "0.3", default-features = false, features = ["async-await"]}
 nrf-sdc = { version = "0.4", default-features = false, features = ["defmt", "peripheral", "central"] }
-#nrf-mpsl = { version = "0.3", default-features = false, features = ["defmt", "critical-section-impl"] }
+nrf-mpsl = { version = "0.3", default-features = false, features = ["defmt", "critical-section-impl"] } # critical-section-impl needed
 #bt-hci = { version = "0.6", default-features = false, features = ["defmt"] }
 trouble-host = { path = "../../host", features = ["derive", "scan", "gatt"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
@@ -52,7 +52,7 @@ embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="
 #nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "e559dc9"}
 #nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "e559dc9"}
 nrf-sdc = { path = "../../sub/nrf-sdc/nrf-sdc" }
-#nrf-mpsl = { path = "../../sub/nrf-sdc/nrf-mpsl" }
+nrf-mpsl = { path = "../../sub/nrf-sdc/nrf-mpsl" }
 #bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "83a9e179ff019ed60abb73705f54383f89fc60fc" }
 
 [features]

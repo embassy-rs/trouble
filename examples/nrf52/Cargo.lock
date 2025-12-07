@@ -945,6 +945,7 @@ version = "0.3.0"
 dependencies = [
  "cfg-if",
  "cortex-m",
+ "critical-section",
  "defmt 1.0.1",
  "embassy-nrf",
  "embassy-sync",
@@ -1451,6 +1452,7 @@ dependencies = [
  "embassy-executor",
  "embassy-nrf",
  "embassy-time",
+ "nrf-mpsl",
  "nrf-sdc",
  "panic-probe",
  "rand_core 0.10.0-rc-2",
