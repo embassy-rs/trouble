@@ -8,8 +8,8 @@ env_logger = "0.10.0"
 log = "0.4"
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
 embassy-sync = { version = "0.7", features = ["log"] }
-#?embassy-time = { version = "0.5", features = ["log", "std", "generic-queue-8"] }
-#?critical-section = { version = "1.1", features = ["std"] }
+embassy-time = { version = "0.5", features = ["log", "std", "generic-queue-8"] } # needed
+critical-section = { version = "1.1", features = ["std"] } # needed
 rand = { version = "0.10.0-rc.5", default-features = false, features = ["os_rng"], optional = true }
 tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"

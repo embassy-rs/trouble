@@ -1616,6 +1616,7 @@ dependencies = [
  "defmt-rtt",
  "embassy-executor",
  "embassy-nrf",
+ "embassy-sync",
  "embassy-time",
  "nrf-mpsl",
  "nrf-sdc",
