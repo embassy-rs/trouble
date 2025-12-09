@@ -11,21 +11,19 @@ use bt_hci::{
     cmd::le::{LeRemoteConnectionParameterRequestNegativeReply, LeRemoteConnectionParameterRequestReply},
     param::RemoteConnectionParamsRejectReason,
 };
-#[cfg(feature = "gatt")]
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
 use crate::connection_manager::ConnectionManager;
 #[cfg(feature = "connection-metrics")]
 pub use crate::connection_manager::Metrics as ConnectionMetrics;
-use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
-use crate::prelude::{AttributeServer, GattConnection};
+use crate::gatt::{AttributeServer, AttributeTable, GattConnection, PeerState};
+use crate::pdu::Pdu;
 #[cfg(feature = "security")]
 use crate::security_manager::{BondInformation, PassKey};
 #[cfg(feature = "connection-params-update")]
 use crate::types::l2cap::ConnParamUpdateRes;
-use crate::{bt_hci_duration, BleHostError, Error, Identity, PacketPool, Stack};
+use crate::{BleHostError, Error, Identity, PacketPool, Stack, bt_hci_duration};
 
 /// Security level of a connection
 ///
@@ -583,18 +581,12 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
 
     /// Transform BLE connection into a `GattConnection`
     #[cfg(feature = "gatt")]
-    pub fn with_attribute_server<
-        'values,
-        'server,
-        M: RawMutex,
-        const ATT_MAX: usize,
-        const CCCD_MAX: usize,
-        const CONN_MAX: usize,
-    >(
+    pub fn with_attribute_server<'values, 'server, T: AttributeTable, C: PeerState>(
         self,
-        server: &'server AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>,
-    ) -> Result<GattConnection<'stack, 'server, P>, Error> {
-        GattConnection::try_new(self, server)
+        server: &'server AttributeServer<T>,
+        peer: &'server C,
+    ) -> Result<GattConnection<'stack, 'server, P, T, C>, Error> {
+        GattConnection::try_new(self, server, peer)
     }
 }
 

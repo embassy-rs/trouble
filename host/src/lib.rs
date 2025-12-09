@@ -8,10 +8,10 @@
 use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
+use bt_hci::FromHciBytesError;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
-use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::Vec;
@@ -84,10 +84,8 @@ pub mod prelude {
     pub use super::{BleHostError, Controller, Error, Host, HostResources, Packet, PacketPool, Stack};
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
-    #[cfg(feature = "gatt")]
-    pub use crate::attribute::*;
-    #[cfg(feature = "gatt")]
-    pub use crate::attribute_server::*;
+    //  #[cfg(feature = "gatt")]
+    //   pub use crate::attribute::*;
     #[cfg(feature = "central")]
     pub use crate::central::*;
     pub use crate::connection::*;
@@ -109,13 +107,12 @@ pub mod prelude {
     pub use crate::types::capabilities::IoCapabilities;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
+    pub use crate::types::uuid::Uuid;
     pub use crate::{Address, Identity};
 }
 
-#[cfg(feature = "gatt")]
-pub mod attribute;
-#[cfg(feature = "gatt")]
-mod attribute_server;
+//#[cfg(feature = "gatt")]
+//pub mod attribute;
 #[cfg(feature = "gatt")]
 pub mod gatt;
 
@@ -451,38 +448,38 @@ pub trait Controller:
 }
 
 impl<
-        C: bt_hci::controller::Controller
-            + embedded_io::ErrorType
-            + ControllerCmdSync<LeReadBufferSize>
-            + ControllerCmdSync<Disconnect>
-            + ControllerCmdSync<SetEventMask>
-            + ControllerCmdSync<SetEventMaskPage2>
-            + ControllerCmdSync<LeSetEventMask>
-            + ControllerCmdSync<LeSetRandomAddr>
-            + ControllerCmdSync<HostBufferSize>
-            + ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<LeReadFilterAcceptListSize>
-            + ControllerCmdSync<LeClearFilterAcceptList>
-            + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
-            + ControllerCmdSync<SetControllerToHostFlowControl>
-            + ControllerCmdSync<Reset>
-            + ControllerCmdSync<ReadRssi>
-            + ControllerCmdSync<LeSetScanEnable>
-            + ControllerCmdSync<LeSetExtScanEnable>
-            + ControllerCmdSync<LeCreateConnCancel>
-            + ControllerCmdAsync<LeCreateConn>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
-            + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
-            + ControllerCmdSync<LeReadBufferSize>
-            + for<'t> ControllerCmdSync<LeSetAdvData>
-            + ControllerCmdSync<LeSetAdvParams>
-            + for<'t> ControllerCmdSync<LeSetAdvEnable>
-            + for<'t> ControllerCmdSync<LeSetScanResponseData>
-            + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>
-            + ControllerCmdSync<ReadBdAddr>,
-    > Controller for C
+    C: bt_hci::controller::Controller
+        + embedded_io::ErrorType
+        + ControllerCmdSync<LeReadBufferSize>
+        + ControllerCmdSync<Disconnect>
+        + ControllerCmdSync<SetEventMask>
+        + ControllerCmdSync<SetEventMaskPage2>
+        + ControllerCmdSync<LeSetEventMask>
+        + ControllerCmdSync<LeSetRandomAddr>
+        + ControllerCmdSync<HostBufferSize>
+        + ControllerCmdAsync<LeConnUpdate>
+        + ControllerCmdSync<LeReadFilterAcceptListSize>
+        + ControllerCmdSync<LeClearFilterAcceptList>
+        + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
+        + ControllerCmdSync<SetControllerToHostFlowControl>
+        + ControllerCmdSync<Reset>
+        + ControllerCmdSync<ReadRssi>
+        + ControllerCmdSync<LeSetScanEnable>
+        + ControllerCmdSync<LeSetExtScanEnable>
+        + ControllerCmdSync<LeCreateConnCancel>
+        + ControllerCmdAsync<LeCreateConn>
+        + for<'t> ControllerCmdSync<LeSetAdvEnable>
+        + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
+        + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
+        + ControllerCmdSync<LeReadBufferSize>
+        + for<'t> ControllerCmdSync<LeSetAdvData>
+        + ControllerCmdSync<LeSetAdvParams>
+        + for<'t> ControllerCmdSync<LeSetAdvEnable>
+        + for<'t> ControllerCmdSync<LeSetScanResponseData>
+        + ControllerCmdSync<LeLongTermKeyRequestReply>
+        + ControllerCmdAsync<LeEnableEncryption>
+        + ControllerCmdSync<ReadBdAddr>,
+> Controller for C
 {
 }
 

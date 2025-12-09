@@ -1,14 +1,16 @@
 #![no_std]
 #![no_main]
 
-use defmt::unwrap;
+use defmt::{info, unwrap};
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_nrf::{bind_interrupts, config, cracen, mode::Blocking};
+use embassy_time::{Duration, Timer};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
-use trouble_example_apps::ble_bas_peripheral;
 use trouble_host::prelude::*;
+
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -108,5 +110,117 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<4720>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    ble_bas_peripheral::run(sdc).await;
+    let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    const CONNECTIONS_MAX: usize = 2;
+    const L2CAP_CHANNELS_MAX: usize = 2;
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+    let stack = trouble_host::new(sdc, &mut resources).set_random_address(address);
+    let Host {
+        mut peripheral,
+        mut runner,
+        ..
+    } = stack.build();
+
+    let mut adv_data = [0; 31];
+    let adv_data_len = unwrap!(AdStructure::encode_slice(
+        &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
+        &mut adv_data[..],
+    ));
+
+    let mut scan_data = [0; 31];
+    let scan_data_len = unwrap!(AdStructure::encode_slice(
+        &[AdStructure::CompleteLocalName(b"Trouble")],
+        &mut scan_data[..]
+    ));
+
+    let table = BasTable::new();
+    let server = AttributeServer::new(table);
+    let state = ClientState::new();
+
+    let _ = join(runner.run(), async {
+        loop {
+            let advertiser = unwrap!(
+                peripheral
+                    .advertise(
+                        &Default::default(),
+                        Advertisement::ConnectableScannableUndirected {
+                            adv_data: &adv_data[..adv_data_len],
+                            scan_data: &scan_data[..scan_data_len],
+                        },
+                    )
+                    .await
+            );
+            let conn = unwrap!(advertiser.accept().await);
+            let conn = unwrap!(conn.with_attribute_server(&server, &state));
+
+            while let Ok(event) = conn.next().await {
+                info!("Event: {:?}", event);
+            }
+
+            Timer::after(Duration::from_secs(2)).await;
+            break;
+        }
+    })
+    .await;
 }
+
+struct BasTable {}
+
+impl BasTable {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl AttributeTable for BasTable {
+    type Attribute = MyAttribute;
+    type Iterator = MyIter;
+
+    fn iter(&self) -> Self::Iterator {
+        MyIter {}
+    }
+}
+
+struct MyAttribute {}
+struct MyIter {}
+
+impl Iterator for MyIter {
+    type Item = MyAttribute;
+    fn next(&mut self) -> Option<Self::Item> {
+        None
+    }
+}
+
+impl Attribute for MyAttribute {
+    type Error = ();
+
+    fn handle(&self) -> u16 {
+        todo!()
+    }
+    fn uuid(&self) -> Uuid {
+        todo!()
+    }
+    fn last(&self) -> u16 {
+        todo!()
+    }
+    fn kind(&self) -> AttributeKind {
+        todo!()
+    }
+
+    async fn read(&self, offset: u16, output: &mut [u8]) -> Result<usize, Self::Error> {
+        todo!()
+    }
+
+    async fn write(&self, offset: u16, input: &[u8]) -> Result<(), Self::Error> {
+        todo!()
+    }
+}
+
+struct ClientState {}
+impl ClientState {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl PeerState for ClientState {}

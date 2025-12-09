@@ -7,10 +7,6 @@
 //! In addition, this profile includes common format requirements for
 //! parameters accessible on the user interface level.
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use heapless::String;
-use static_cell::StaticCell;
-
 use crate::prelude::*;
 
 /// Advertising packet is limited to 31 bytes. 9 of these are used by other GAP data, leaving 22 bytes for the Device Name characteristic
@@ -67,6 +63,7 @@ impl<'a> GapConfig<'a> {
         })
     }
 
+    /*
     /// Add the GAP config to the attribute table
     pub fn build<M: RawMutex, const MAX: usize>(
         self,
@@ -76,9 +73,10 @@ impl<'a> GapConfig<'a> {
             GapConfig::Peripheral(config) => config.build(table),
             GapConfig::Central(config) => config.build(table),
         }
-    }
+    }*/
 }
 
+/*
 impl<'a> PeripheralConfig<'a> {
     /// Add the peripheral GAP config to the attribute table
     fn build<M: RawMutex, const MAX: usize>(self, table: &mut AttributeTable<'a, M, MAX>) -> Result<(), &'static str> {
@@ -118,3 +116,4 @@ impl<'a> CentralConfig<'a> {
         Ok(())
     }
 }
+*/

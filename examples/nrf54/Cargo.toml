@@ -15,8 +15,8 @@ futures = { version = "0.3", default-features = false, features = ["async-await"
 nrf-sdc = { version = "0.4", default-features = false, features = ["defmt", "peripheral", "central"] }
 nrf-mpsl = { version = "0.3", default-features = false, features = ["defmt", "critical-section-impl"] }
 bt-hci = { version = "0.6", default-features = false, features = ["defmt"] }
-trouble-host = { path = "../../host", features = ["derive", "scan", "gatt"] }
-trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
+trouble-host = { path = "../../host", features = ["gatt", "defmt", "peripheral"] }
+#trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 
 defmt = "1.0"
 defmt-rtt = "1.0"
@@ -60,7 +60,4 @@ nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "e559dc97c7f
 nrf54l15 = [
     "embassy-nrf/nrf54l15-app-s",
     "nrf-sdc/nrf54l15-app-s",
-]
-security = [
-    "trouble-example-apps/security",
 ]
