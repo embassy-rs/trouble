@@ -10,6 +10,7 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
+use trouble_host::gatt::{AttributeKind, AttributeTable, Attribute, PeerState};
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -134,7 +135,7 @@ async fn main(spawner: Spawner) {
     ));
 
     let table = BasTable::new();
-    let server = AttributeServer::new(table);
+    let server = AttributeServer::new(&table);
     let state = ClientState::new();
 
     let _ = join(runner.run(), async {
@@ -164,55 +165,199 @@ async fn main(spawner: Spawner) {
     .await;
 }
 
-struct BasTable {}
+struct BasTable {
+    battery_level: u8,
+    cccd_notifications: bool,
+}
 
 impl BasTable {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            battery_level: 10,
+            cccd_notifications: false,
+        }
     }
 }
 
-impl AttributeTable for BasTable {
-    type Attribute = MyAttribute;
-    type Iterator = MyIter;
+impl<'a> AttributeTable for &'a BasTable {
+    type Attribute = MyAttribute<'a>;
+    type Iterator = MyIter<'a>;
 
     fn iter(&self) -> Self::Iterator {
-        MyIter {}
+        MyIter {
+            table: self,
+            index: 0,
+        }
     }
 }
 
-struct MyAttribute {}
-struct MyIter {}
+enum MyAttribute<'a> {
+    ServiceDeclaration,
+    CharacteristicDeclaration,
+    CharacteristicValue(&'a BasTable),
+    ValidRangeDescriptor,
+    MeasurementDescriptor,
+    Cccd(&'a BasTable),
+}
 
-impl Iterator for MyIter {
-    type Item = MyAttribute;
+struct MyIter<'a> {
+    table: &'a BasTable,
+    index: usize,
+}
+
+impl<'a> Iterator for MyIter<'a> {
+    type Item = MyAttribute<'a>;
     fn next(&mut self) -> Option<Self::Item> {
-        None
+        let item = match self.index {
+            0 => Some(MyAttribute::ServiceDeclaration),
+            1 => Some(MyAttribute::CharacteristicDeclaration),
+            2 => Some(MyAttribute::CharacteristicValue(self.table)),
+            3 => Some(MyAttribute::ValidRangeDescriptor),
+            4 => Some(MyAttribute::MeasurementDescriptor),
+            5 => Some(MyAttribute::Cccd(self.table)),
+            _ => None,
+        };
+        self.index += 1;
+        item
     }
 }
 
-impl Attribute for MyAttribute {
-    type Error = ();
+impl<'a> Attribute for MyAttribute<'a> {
+    type Error = AttErrorCode;
 
     fn handle(&self) -> u16 {
-        todo!()
+        match self {
+            MyAttribute::ServiceDeclaration => 1,
+            MyAttribute::CharacteristicDeclaration => 2,
+            MyAttribute::CharacteristicValue(_) => 3,
+            MyAttribute::ValidRangeDescriptor => 4,
+            MyAttribute::MeasurementDescriptor => 5,
+            MyAttribute::Cccd(_) => 6,
+        }
     }
+
     fn uuid(&self) -> Uuid {
-        todo!()
+        match self {
+            MyAttribute::ServiceDeclaration => Uuid::from(declarations::PRIMARY_SERVICE),
+            MyAttribute::CharacteristicDeclaration => Uuid::from(declarations::CHARACTERISTIC),
+            MyAttribute::CharacteristicValue(_) => Uuid::from(characteristic::BATTERY_LEVEL),
+            MyAttribute::ValidRangeDescriptor => Uuid::from(descriptors::VALID_RANGE),
+            MyAttribute::MeasurementDescriptor => Uuid::from(descriptors::MEASUREMENT_DESCRIPTION),
+            MyAttribute::Cccd(_) => Uuid::from(descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION),
+        }
     }
+
     fn last(&self) -> u16 {
-        todo!()
+        // All attributes in this service group end at handle 6
+        6
     }
+
     fn kind(&self) -> AttributeKind {
-        todo!()
+        match self {
+            MyAttribute::ServiceDeclaration => AttributeKind::Service,
+            MyAttribute::CharacteristicDeclaration => AttributeKind::Declaration,
+            MyAttribute::CharacteristicValue(_) => AttributeKind::Data,
+            MyAttribute::ValidRangeDescriptor => AttributeKind::Data,
+            MyAttribute::MeasurementDescriptor => AttributeKind::Data,
+            MyAttribute::Cccd(_) => AttributeKind::Cccd,
+        }
     }
 
     async fn read(&self, offset: u16, output: &mut [u8]) -> Result<usize, Self::Error> {
-        todo!()
+        let offset = offset as usize;
+        match self {
+            MyAttribute::ServiceDeclaration => {
+                // Service UUID: 0x180F (Battery Service)
+                let uuid = service::BATTERY.as_le_bytes();
+                if offset >= uuid.len() {
+                    return Ok(0);
+                }
+                let len = (uuid.len() - offset).min(output.len());
+                output[..len].copy_from_slice(&uuid[offset..offset + len]);
+                Ok(len)
+            }
+            MyAttribute::CharacteristicDeclaration => {
+                // Characteristic declaration: properties (1 byte) + handle (2 bytes) + UUID
+                // Properties: Read (0x02) | Notify (0x10) = 0x12
+                let properties = 0x12u8;
+                let handle = 3u16; // Handle of the characteristic value
+                let uuid = characteristic::BATTERY_LEVEL.as_le_bytes();
+
+                let mut data = [0u8; 19]; // 1 + 2 + 16 max
+                data[0] = properties;
+                data[1..3].copy_from_slice(&handle.to_le_bytes());
+                data[3..3 + uuid.len()].copy_from_slice(uuid);
+                let total_len = 3 + uuid.len();
+
+                if offset >= total_len {
+                    return Ok(0);
+                }
+                let len = (total_len - offset).min(output.len());
+                output[..len].copy_from_slice(&data[offset..offset + len]);
+                Ok(len)
+            }
+            MyAttribute::CharacteristicValue(table) => {
+                if offset > 0 {
+                    return Ok(0);
+                }
+                if output.is_empty() {
+                    return Ok(0);
+                }
+                output[0] = table.battery_level;
+                Ok(1)
+            }
+            MyAttribute::ValidRangeDescriptor => {
+                // Valid range: [0, 100]
+                let range = [0u8, 100u8];
+                if offset >= range.len() {
+                    return Ok(0);
+                }
+                let len = (range.len() - offset).min(output.len());
+                output[..len].copy_from_slice(&range[offset..offset + len]);
+                Ok(len)
+            }
+            MyAttribute::MeasurementDescriptor => {
+                // Measurement description: "Battery Level"
+                let description = b"Battery Level";
+                if offset >= description.len() {
+                    return Ok(0);
+                }
+                let len = (description.len() - offset).min(output.len());
+                output[..len].copy_from_slice(&description[offset..offset + len]);
+                Ok(len)
+            }
+            MyAttribute::Cccd(table) => {
+                if offset > 0 {
+                    return Ok(0);
+                }
+                if output.len() < 2 {
+                    return Ok(0);
+                }
+                // CCCD value: bit 0 = notifications, bit 1 = indications
+                let value = if table.cccd_notifications { 0x01u16 } else { 0x00u16 };
+                output[0..2].copy_from_slice(&value.to_le_bytes());
+                Ok(2)
+            }
+        }
     }
 
-    async fn write(&self, offset: u16, input: &[u8]) -> Result<(), Self::Error> {
-        todo!()
+    async fn write(&self, _offset: u16, _input: &[u8]) -> Result<(), Self::Error> {
+        match self {
+            MyAttribute::CharacteristicValue(_table) => {
+                // For now, we'll allow writing but won't update the value
+                // In a real implementation, you'd need interior mutability
+                Ok(())
+            }
+            MyAttribute::Cccd(_table) => {
+                // Update CCCD - would need interior mutability in real implementation
+                // For now, just accept the write
+                Ok(())
+            }
+            _ => {
+                // Other attributes are not writable
+                Err(AttErrorCode::WRITE_NOT_PERMITTED)
+            }
+        }
     }
 }
 
@@ -223,4 +368,30 @@ impl ClientState {
     }
 }
 
-impl PeerState for ClientState {}
+impl PeerState for ClientState {
+    type Error = ();
+
+    fn connect(&self, _peer: &Identity) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn disconnect(&self, _peer: &Identity) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn set_notify(&self, _peer: &Identity, _handle: u16, _enable: bool) {
+        // No-op for now
+    }
+
+    fn set_indicate(&self, _peer: &Identity, _handle: u16, _enable: bool) {
+        // No-op for now
+    }
+
+    fn should_notify(&self, _peer: &Identity, _handle: u16) -> bool {
+        false
+    }
+
+    fn should_indicate(&self, _peer: &Identity, _handle: u16) -> bool {
+        false
+    }
+}
