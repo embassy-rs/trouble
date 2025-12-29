@@ -197,17 +197,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
 
 [[package]]
-name = "chacha20"
-version = "0.10.0-rc.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99cbf41c6ec3c4b9eaf7f8f5c11a72cd7d3aa0428125c20d5ef4d09907a0f019"
-dependencies = [
- "cfg-if",
- "cpufeatures",
- "rand_core 0.10.0-rc-2",
-]
-
-[[package]]
 name = "codespan-reporting"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1833,12 +1822,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 
 [[package]]
-name = "rand_core"
-version = "0.10.0-rc-2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "104a23e4e8b77312a823b6b5613edbac78397e2f34320bc7ac4277013ec4478e"
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2615,7 +2598,6 @@ dependencies = [
 name = "trouble-rp23-examples"
 version = "0.1.0"
 dependencies = [
- "chacha20",
  "cortex-m",
  "cortex-m-rt",
  "cyw43",

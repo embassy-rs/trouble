@@ -13,7 +13,7 @@ embassy-time = "0.5"
 embedded-hal-async = "1.0"
 static_cell = "2"       # host-macros
 heapless = "0.9"             # ble_scanner.rs
-rand_core = { version = "0.10.0-rc-2", default-features = false, optional = true }
+rand_core = { version = "0.10.0-rc-3", default-features = false, optional = true }
 
 # Used by 'security' feature
 embedded-storage-async = { version = "0.4.1", optional = true }

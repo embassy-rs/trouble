@@ -20,7 +20,6 @@ target = "thumbv7em-none-eabi"
 [dependencies]
 aes = { version = "0.9.0-rc.2", optional = true }
 bt-hci = { version = "0.6", features = ["uuid"] }
-chacha20 = { version = "0.10.0-rc.5", default-features = false, features = ["rng"], optional = true }
 cmac = { version = "0.8.0-rc.3", optional = true }
 embedded-io = { version = "0.6" }
 embassy-sync = "0.7"
@@ -30,7 +29,7 @@ futures = { version = "0.3", default-features = false }
 heapless = "0.9"
 trouble-host-macros = { path = "../host-macros", version = "0.3.0", optional = true }
 p256 = { version = "0.14.0-rc.1", default-features = false, features = ["ecdh","arithmetic"], optional = true } # "getrandom"
-rand = { version="0.10.0-rc.5", default-features = false, optional = true}
+rand = { version="0.10.0-rc.5", default-features = false, features = ["chacha"], optional = true }
 static_cell = "2.1.0"
 zerocopy = "0.8.21"
 
@@ -39,6 +38,7 @@ log = { version = "0.4.16", optional = true }
 defmt = { version = "1.0.1", optional = true }
 
 [dev-dependencies]
+chacha20 = { version = "0.10.0-rc.6", default-features = false }
 tokio = { version = "1", default-features = false, features = [
   "time",
   "rt-multi-thread",
@@ -49,9 +49,13 @@ embedded-io = { version = "0.6.1" }
 tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] } # needed
-rand = { version = "0.10.0-rc.5", default-features = false, features = ["os_rng","thread_rng"] }  # tests
+rand = { version = "0.10.0-rc.5", default-features = false, features = ["chacha", "sys_rng","thread_rng"] } # tests
 heapless = "0.9"
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
+
+[patch.crates-io]
+rand = { git = "https://github.com/rust-random/rand" }
+  # 0.10.0-rc5+
 
 [features]
 defmt = ["dep:defmt", "embassy-time/defmt", "bt-hci/defmt"]
@@ -73,7 +77,7 @@ controller-host-flow-control = []
 connection-metrics = []
 # Enable additional channel metrics
 channel-metrics = []
-security = [ "dep:aes", "dep:chacha20", "dep:cmac", "dep:p256", "dep:rand", "gatt" ]
+security = ["dep:aes", "dep:cmac", "dep:p256", "dep:rand", "gatt"]
 # For development. Disable security manager cryptographically secure pseudorandom number
 # generator (CSPRNG) to require a cryptographically secure seed
 dev-disable-csprng-seed-requirement = []
@@ -103,7 +107,7 @@ connection-params-update = []
 _getrandom = ["p256?/getrandom"]
 
 default = ["peripheral", "central", "gatt", "derive", "default-packet-pool",
-    #"_getrandom"
+  #"_getrandom"
 ]
 
 

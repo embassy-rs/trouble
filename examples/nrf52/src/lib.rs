@@ -2,10 +2,10 @@
 #![cfg(feature = "security")]
 
 use {
-    chacha20::ChaCha12Rng,
     core::default::Default,
     embassy_nrf::mode::Async,
-    rand_core::SeedableRng
+    rand::rand_core::SeedableRng,
+    rand::rngs::ChaCha12Rng,
 };
 
 // Needed until 'embassy_nrf' supports 'rand_core' 0.10.

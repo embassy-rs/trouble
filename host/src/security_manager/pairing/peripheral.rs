@@ -53,8 +53,7 @@ struct NumericCompareConfirmSentTag {}
 impl NumericCompareConfirmSentTag {
     fn new<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
         ops: &mut OPS,
-        pairing_data: &mut PairingData,
-        rng: &mut RNG,
+        pairing_data: &mut PairingData, rng: &mut RNG,
     ) -> Result<Self, Error> {
         pairing_data.local_nonce = Nonce::new(rng);
         pairing_data.confirm = Self::compute_confirm(pairing_data)?;
@@ -248,7 +247,8 @@ impl Pairing {
                 pairing_data.local_secret_rb = input as u128;
                 pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
                 match confirm {
-                    Some(payload) => Self::handle_pass_key_confirm(0, &payload, ops, pairing_data.deref_mut(), rng)?,
+                    Some(payload) =>
+                        Self::handle_pass_key_confirm(0, &payload, ops, pairing_data.deref_mut(), rng)?,
                     None => Step::WaitingPassKeyEntryConfirm(0),
                 }
             }
@@ -323,17 +323,13 @@ impl Pairing {
                 }
                 (Step::WaitingPublicKey, Command::PairingPublicKey) => {
                     Self::handle_public_key(command.payload, pairing_data);
-                    Self::generate_private_public_key_pair(pairing_data,
-                                                           #[cfg(not(feature = "_getrandom"))]
-                                                           rng
-                    )?;
+                    Self::generate_private_public_key_pair(pairing_data, rng)?;
                     Self::send_public_key(ops, pairing_data.local_public_key.as_ref().unwrap())?;
                     match pairing_data.pairing_method {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
                         PairingMethod::PassKeyEntry { peripheral, .. } => {
                             if peripheral == PassKeyEntryAction::Display {
-                                pairing_data.local_secret_rb =
-                                    rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
+                                pairing_data.local_secret_rb = rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
                                 pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     pairing_data.local_secret_rb as u32,
@@ -516,32 +512,11 @@ impl Pairing {
         pairing_data.peer_public_key = Some(peer_public_key);
     }
 
-    #[cfg(not(feature = "_getrandom"))]
     fn generate_private_public_key_pair<RNG: CryptoRng + RngCore>(
         pairing_data: &mut PairingData,
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let secret_key = SecretKey::new(rng);
-        let public_key = secret_key.public_key();
-        let peer_public_key = pairing_data
-            .peer_public_key
-            .ok_or(Error::Security(Reason::InvalidParameters))?;
-        pairing_data.dh_key = Some(
-            secret_key
-                .dh_key(peer_public_key)
-                .ok_or(Error::Security(Reason::InvalidParameters))?,
-        );
-        pairing_data.local_public_key = Some(public_key);
-        pairing_data.private_key = Some(secret_key);
-
-        Ok(())
-    }
-    #[cfg(feature = "_getrandom")]
-    fn generate_private_public_key_pair/*<RNG: CryptoRng + RngCore>*/(
-        pairing_data: &mut PairingData,
-        //rng: &mut RNG,
-    ) -> Result<(), Error> {
-        let secret_key = SecretKey::new(/*rng*/);
         let public_key = secret_key.public_key();
         let peer_public_key = pairing_data
             .peer_public_key
@@ -747,7 +722,8 @@ mod tests {
     use core::ops::Deref;
 
     use bt_hci::param::{AddrKind, BdAddr};
-    use chacha20::{ChaCha12Core, ChaCha12Rng};
+    use chacha20::ChaCha12Core;
+    use rand::rngs::ChaCha12Rng;
     use rand::SeedableRng;
 
     use super::{Pairing, Step};
@@ -759,6 +735,8 @@ mod tests {
     use crate::security_manager::types::{Command, PairingFeatures};
     use crate::{Address, IoCapabilities, LongTermKey};
 
+    // Note: Even with 'secret_key' created from a seeded Rng (with '::new_from()'), the public
+    //      key tested isn't stable. Needs more study... #tbd.
     #[test]
     fn just_works() {
         let mut pairing_ops: TestOps<10> = TestOps::default();
@@ -825,6 +803,7 @@ mod tests {
             let local_public = pairing_data.local_public_key.unwrap();
             assert_eq!(local_public, PublicKey::from_bytes(sent_packets[1].payload()));
             assert_eq!(sent_packets[1].command, Command::PairingPublicKey);
+
             // These magic values depends on the random number generator and the seed.
             assert_eq!(
                 sent_packets[1].payload(),

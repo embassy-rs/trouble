@@ -8,7 +8,6 @@ resolver = "2"
 embassy-executor = { version = "0.9", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
 embassy-time = { version = "0.5", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-nrf = { version = "0.8", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
-#embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7", features = ["defmt"] }
 
 nrf-sdc = { version = "0.4", default-features = false, features = ["defmt", "peripheral", "central"] }
@@ -20,10 +19,9 @@ defmt = "1.0"
 defmt-rtt = "1.0"
 panic-probe = { version = "1.0", features = ["print-defmt"] }
 
-chacha20 = { version = "0.10.0-rc.5", default-features = false, features = ["rng"], optional = true }
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
-rand_core = { version = "0.10.0-rc-2", default-features = false, optional = true }
+rand = { version = "0.10.0-rc.5", default-features = false, features = ["chacha"], optional = true }
 static_cell = "2"
 
 [profile.release]
@@ -43,7 +41,7 @@ debug = 2
 embassy-executor = {git = "https://github.com/embassy-rs/embassy.git", rev="7ff2baf4e29c47c622e21c4eeba2d20596b65137"}
 embassy-nrf = {git = "https://github.com/embassy-rs/embassy.git", rev="7ff2baf4e29c47c622e21c4eeba2d20596b65137"}
 embassy-sync = {git = "https://github.com/embassy-rs/embassy.git", rev="7ff2baf4e29c47c622e21c4eeba2d20596b65137"}
-embassy-futures = {git = "https://github.com/embassy-rs/embassy.git", rev="7ff2baf4e29c47c622e21c4eeba2d20596b65137"}
+#embassy-futures = {git = "https://github.com/embassy-rs/embassy.git", rev="7ff2baf4e29c47c622e21c4eeba2d20596b65137"}
 embassy-time = {git = "https://github.com/embassy-rs/embassy.git", rev="7ff2baf4e29c47c622e21c4eeba2d20596b65137"}
 embassy-time-driver = {git = "https://github.com/embassy-rs/embassy.git", rev="7ff2baf4e29c47c622e21c4eeba2d20596b65137"}
 embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="7ff2baf4e29c47c622e21c4eeba2d20596b65137"}
@@ -52,6 +50,9 @@ embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="
 nrf-sdc = { path = "../../sub/nrf-sdc/nrf-sdc" }
 nrf-mpsl = { path = "../../sub/nrf-sdc/nrf-mpsl" }
 
+rand = { git = "https://github.com/rust-random/rand" }
+    # 0.10.0-rc5+
+
 [features]
 nrf54l15 = [
     "embassy-nrf/nrf54l15-app-s",
@@ -59,6 +60,5 @@ nrf54l15 = [
 ]
 security = [
     "trouble-example-apps/security",
-    "dep:rand_core",
-    "dep:chacha20"
+    "dep:rand",
 ]
