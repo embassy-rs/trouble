@@ -28,7 +28,7 @@ embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.9"
 trouble-host-macros = { path = "../host-macros", version = "0.3.0", optional = true }
-p256 = { version = "0.14.0-rc.1", default-features = false, features = ["ecdh","arithmetic"], optional = true } # "getrandom"
+p256 = { version = "0.14.0-rc.2", default-features = false, features = ["ecdh","arithmetic"], optional = true } # "getrandom"
 rand = { version="0.10.0-rc.5", default-features = false, features = ["chacha"], optional = true }
 static_cell = "2.1.0"
 zerocopy = "0.8.21"
@@ -49,7 +49,7 @@ embedded-io = { version = "0.6.1" }
 tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] } # needed
-rand = { version = "0.10.0-rc.5", default-features = false, features = ["chacha", "sys_rng","thread_rng"] } # tests
+rand = { version = "0.10.0-rc.5", default-features = false, features = ["chacha", "sys_rng", "thread_rng"] } # tests
 heapless = "0.9"
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 
@@ -91,20 +91,10 @@ l2cap-sdu-reassembly-optimization = []
 # Support connection parameter update procedure
 connection-params-update = []
 
-# API change in 'p256' ; studying our choices
-#
-# Using 'p256/getrandom' (and '::generate()'), two tests fail:
-#   <<
-#       thread 'security_manager::pairing::peripheral::tests::just_works_with_irk_distribution' panicked at src/security_manager/pairing/peripheral.rs:978:14:
-#       called `Result::unwrap()` on an `Err` value: Security(DHKeyCheckFailed)
-#       test security_manager::pairing::peripheral::tests::just_works ... FAILED
-#       test security_manager::pairing::peripheral::tests::just_works_with_irk_distribution ... FAILED
-#   <<
-# However, is it something to do with the tests, or is it genuinly pushing to not use 'p256/getrandom' (and '::generate()')?
-#
-# The other option is clear and works, but it burdens the code with passing 'RNG' type.
-#
-_getrandom = ["p256?/getrandom"]
+# API change in 'p256' allows (future) simplification of our code, by not needing to pass the 'RNG' type around.
+# However, this became complex in the code - I will prepare it for discussion as a separate PR after this 'rand' 0.10
+# transition has settled.
+#_getrandom = ["p256?/getrandom"]
 
 default = ["peripheral", "central", "gatt", "derive", "default-packet-pool",
   #"_getrandom"

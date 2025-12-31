@@ -14,6 +14,8 @@ embedded-hal-async = "1.0"
 static_cell = "2"       # host-macros
 heapless = "0.9"             # ble_scanner.rs
 rand_core = { version = "0.10.0-rc-3", default-features = false, optional = true }
+# tbd. (consider) moving to using 'rand' only, to be in-line with use elsewhere in the repo (and to have same version)
+#rand = { version = "0.10.0-rc.5", default-features = false, optional = true }
 
 # Used by 'security' feature
 embedded-storage-async = { version = "0.4.1", optional = true }
@@ -22,6 +24,12 @@ sequential-storage = { version = "5.0.0", optional = true }
 defmt = { version = "1.0.1", optional = true }
 log = { version = "0.4", optional = true }
 
+[patch.crates-io]
+rand = { git = "https://github.com/rust-random/rand" }
+    # 0.10.0-rc5+
+
+#chacha20 = { git = "https://github.com/RustCrypto/stream-ciphers/tree/master" }
+#    # embedded (in other libs) 'chacha20' to be latest; eventually, remove
 
 [features]
 defmt = [
@@ -38,6 +46,7 @@ security = [
     "trouble-host/security",
     "dep:sequential-storage",
     "dep:embedded-storage-async",
-    "dep:rand_core"
+    "dep:rand_core",
+    #"dep:rand"
 ]
 std = []
