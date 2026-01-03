@@ -7,3 +7,4 @@ examples/apps/Cargo.lock
 tester/app/Cargo.lock
 .idea
 tests/
+.direnv
