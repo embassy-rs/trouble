@@ -52,11 +52,16 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             return Err(Error::ExtendedAdvertisingNotSupported.into());
         }
 
-        let kind = match (data.props.connectable_adv(), data.props.scannable_adv()) {
-            (true, true) => AdvKind::AdvInd,
-            (true, false) => AdvKind::AdvDirectIndLow,
-            (false, true) => AdvKind::AdvScanInd,
-            (false, false) => AdvKind::AdvNonconnInd,
+        let kind = match (
+            data.props.connectable_adv(),
+            data.props.scannable_adv(),
+            data.props.high_duty_cycle_directed_connectable_adv(),
+        ) {
+            (true, true, _) => AdvKind::AdvInd,
+            (true, false, true) => AdvKind::AdvDirectIndHigh,
+            (true, false, false) => AdvKind::AdvDirectIndLow,
+            (false, true, _) => AdvKind::AdvScanInd,
+            (false, false, _) => AdvKind::AdvNonconnInd,
         };
         let peer = data.peer.unwrap_or(Address {
             kind: AddrKind::PUBLIC,
