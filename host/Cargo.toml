@@ -19,9 +19,9 @@ target = "thumbv7em-none-eabi"
 
 [dependencies]
 aes = { version = "0.8.2", optional = true }
-bt-hci = { version = "0.6", features = ["uuid"] }
+bt-hci = { version = "0.7", features = ["uuid"] }
 cmac = { version = "0.7.2", optional = true }
-embedded-io = { version = "0.6" }
+embedded-io = { version = "0.7" }
 embassy-sync = "0.7"
 embassy-time = "0.5"
 embassy-futures = "0.1"
@@ -45,8 +45,8 @@ tokio = { version = "1", default-features = false, features = [
   "rt-multi-thread",
   "macros",
 ] }
-embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
-embedded-io = { version = "0.6.1" }
+embedded-io-adapters = { version = "0.7", features = ["tokio-1"] }
+embedded-io = { version = "0.7" }
 tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] }  # needed for CI builds

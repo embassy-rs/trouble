@@ -7,7 +7,7 @@ resolver = "2"
 [dependencies]
 embassy-executor = { version = "0.9", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
 embassy-time = { version = "0.5", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-nrf = { version = "0.8", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
+embassy-nrf = { version = "0.9", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7", features = ["defmt"] }
 trouble-host = { path = "../../host", default-features = false, features = ["defmt", "l2cap-rx-queue-size-4", "l2cap-tx-queue-size-4", "central", "peripheral", "scan", "gatt", "default-packet-pool", "default-packet-pool-mtu-251"] }
@@ -15,7 +15,7 @@ trouble-host = { path = "../../host", default-features = false, features = ["def
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
 nrf-sdc = { version = "0.4", default-features = false, features = ["defmt", "peripheral", "central"] }
 nrf-mpsl = { version = "0.3", default-features = false, features = ["defmt", "critical-section-impl"] }
-bt-hci = { version = "0.6", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.7", default-features = false, features = ["defmt"] }
 
 defmt = "0.3"
 defmt-rtt = "0.4.0"
@@ -40,8 +40,15 @@ debug = 2
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 #bt-hci = { path = "../../../bt-hci" }
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c"}
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c"}
+embassy-executor = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
+embassy-nrf = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
+embassy-sync = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
+embassy-futures = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
+embassy-time = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
+embassy-time-driver = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
+embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "36816b8ca6a30776886fad289921adf49ca54fee"}
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "36816b8ca6a30776886fad289921adf49ca54fee"}
 
 [features]
 nrf52832 = [

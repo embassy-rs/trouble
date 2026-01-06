@@ -12,9 +12,9 @@ documentation = "https://docs.embassy.dev/trouble-host"
 
 [dependencies]
 tokio = { version = "1", features = ["io-util", "net", "rt", "macros", "signal", "sync"] }
-embedded-io = { version = "0.6.1", features = ["std"] }
+embedded-io = { version = "0.7", features = ["std"] }
 libc = "0.2"
-bt-hci = "0.6"
+bt-hci = "0.7"
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 rand = { version = "0.8.5", features = ["getrandom"] }
 env_logger = "0.11"

@@ -61,12 +61,12 @@ name = "ble_bas_peripheral_bonding"
 required-features = ["security"]
 
 # Enable for using latest 'main'
-#[patch.crates-io]
-#esp-alloc =             { git = "https://github.com/esp-rs/esp-hal.git" }
-#esp-backtrace =         { git = "https://github.com/esp-rs/esp-hal.git" }
-#esp-bootloader-esp-idf ={ git = "https://github.com/esp-rs/esp-hal.git" }
-#esp-hal =               { git = "https://github.com/esp-rs/esp-hal.git" }
-#esp-println =           { git = "https://github.com/esp-rs/esp-hal.git" }
-#esp-radio =             { git = "https://github.com/esp-rs/esp-hal.git" }
-#esp-rtos =              { git = "https://github.com/esp-rs/esp-hal.git" }
-#esp-storage =           { git = "https://github.com/esp-rs/esp-hal.git" }
+[patch.crates-io]
+esp-alloc =             { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
+esp-backtrace =         { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
+esp-bootloader-esp-idf ={ git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
+esp-hal =               { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
+esp-println =           { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
+esp-radio =             { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
+esp-rtos =              { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
+esp-storage =           { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
