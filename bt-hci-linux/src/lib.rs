@@ -4,14 +4,14 @@ compile_error!("Only Linux is supported");
 use core::future::Future;
 use core::mem;
 use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use core::task::{Context, Poll, ready};
 use std::io;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 
 use bt_hci::transport::{self, WithIndicator};
 use bt_hci::{ControllerToHostPacket, FromHciBytes as _, HostToControllerPacket, WriteHci as _};
 use tokio::io::unix::AsyncFd;
-use tokio::io::{split, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf, ReadHalf, WriteHalf, split};
 use tokio::sync::Mutex;
 
 const BTPROTO_HCI: libc::c_int = 1;
@@ -29,6 +29,14 @@ struct sockaddr_hci {
 pub enum Error {
     FromHciBytesError(bt_hci::FromHciBytesError),
     Io(io::Error),
+}
+
+impl core::error::Error for Error {}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self)
+    }
 }
 
 impl embedded_io::Error for Error {
