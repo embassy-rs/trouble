@@ -7,6 +7,7 @@ on:
     tags:
       - "v*"
   pull_request:
+  workflow_dispatch:  # needed to be in 'main', for any branch to manually 'Run Workflow' in GitHub UI.
 
 jobs:
   build:
