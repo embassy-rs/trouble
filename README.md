@@ -55,7 +55,7 @@ compile with older versions but that may change in any new patch release.
 Run this command:
 
 ```
-$ git submodule update --init --depth 1 --recursive
+./prep.sh
 ```
 
 The `nrf-sdc` dependency is brought in as a submodule (instead of a git dependency). This allows us to have a shallow clone, saving lots (700MB!) of disk space.

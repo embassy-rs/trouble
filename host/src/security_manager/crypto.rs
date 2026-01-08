@@ -7,6 +7,7 @@ use aes::Aes128;
 use bt_hci::param::BdAddr;
 use cmac::digest;
 use p256::ecdh;
+use p256::elliptic_curve::Generate;
 use rand::rand_core::{CryptoRng, RngCore};
 
 use crate::Address;
@@ -334,13 +335,12 @@ impl SecretKey {
     /// Generates a new random secret key.
     #[allow(clippy::new_without_default)]
     #[inline(always)]
-    pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
+    pub fn new<T: CryptoRng + ?Sized>(rng: &mut T) -> Self {
         // Update note: '::random()' is deprecated in 0.14.0. Can use:
-        //      - '::generate()'; no 'rng' param needed, but that needs "getrandom" feature
-        //      - '::try_from_rng' (which deprecated '::random' falls back to); smaller step.
+        //      - '::generate()'; no 'rng' param needed, but needs "getrandom" feature
+        //      - '::generate_from_rng()'; smaller step.
         //
-        // Just checking, how much not needing to carry the 'rng' would help.
-        Self(p256::NonZeroScalar::try_from_rng(rng).unwrap())
+        Self(p256::NonZeroScalar::generate_from_rng(rng))
     }
 
     /// Computes the associated public key.
