@@ -151,6 +151,13 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].gatt_client.poll_receive(cx))).await
     }
 
+    pub(crate) fn peer_addr_kind(&self, index: u8) -> AddrKind {
+        self.with_mut(|state| {
+            let state = &mut state.connections[index as usize];
+            state.peer_addr_kind.unwrap_or_default()
+        })
+    }
+
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
         self.with_mut(|state| {
             let state = &mut state.connections[index as usize];

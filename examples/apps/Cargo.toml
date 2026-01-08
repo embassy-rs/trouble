@@ -6,13 +6,13 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 trouble-host = { path = "../../host", features = ["derive", "scan"] }
-bt-hci = { version = "0.6" }
+bt-hci = { version = "0.7" }
 embassy-futures = "0.1.1"
-embassy-sync = { version = "0.7" }  # host-macros
+embassy-sync = { version = "0.7" } # host-macros
 embassy-time = "0.5"
 embedded-hal-async = "1.0"
-static_cell = "2"       # host-macros
-heapless = "0.9"             # ble_scanner.rs
+static_cell = "2" # host-macros
+heapless = "0.9" # ble_scanner.rs
 rand_core = { version = "0.10.0-rc-3", default-features = false, optional = true }
 # tbd. (consider) moving to using 'rand' only, to be in-line with use elsewhere in the repo (and to have same version)
 #rand = { version = "0.10.0-rc.6", default-features = false, optional = true }
@@ -24,12 +24,6 @@ sequential-storage = { version = "5.0.0", optional = true }
 defmt = { version = "1.0.1", optional = true }
 log = { version = "0.4", optional = true }
 
-#[patch.crates-io]
-#rand = { git = "https://github.com/rust-random/rand" }
-#    # 0.10.0-rc5+
-
-#chacha20 = { git = "https://github.com/RustCrypto/stream-ciphers/tree/master" }
-#    # embedded (in other libs) 'chacha20' to be latest; eventually, remove
 
 [features]
 defmt = [
