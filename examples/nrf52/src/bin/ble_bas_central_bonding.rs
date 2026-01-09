@@ -9,11 +9,10 @@ use embassy_nrf::qspi;
 use embassy_nrf::{bind_interrupts, rng};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_central_bonding;
 use {defmt_rtt as _, panic_probe as _};
+use trouble_host::TrulyRandomBits;
 
 bind_interrupts!(struct Irqs {
     RNG => rng::InterruptHandler<RNG>;
@@ -74,7 +73,11 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
+    let seed: TrulyRandomBits = {
+        let mut buf: [u8; 32] = [0;_];
+        rng.blocking_fill_bytes(&mut buf);
+        TrulyRandomBits(buf)
+    };
 
     let mut sdc_mem = sdc::Mem::<6544>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
@@ -98,5 +101,5 @@ async fn main(spawner: Spawner) {
         qspi.erase(0).await.unwrap();
     }
 
-    ble_bas_central_bonding::run(sdc, &mut rng_2, &mut qspi).await;
+    ble_bas_central_bonding::run(sdc, seed, &mut qspi).await;
 }

@@ -9,9 +9,8 @@ use embassy_nrf::{bind_interrupts, qspi, rng};
 use nrf_sdc::mpsl::Flash;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use static_cell::StaticCell;
+use trouble_host::TrulyRandomBits;
 use trouble_example_apps::ble_bas_peripheral_bonding;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -80,7 +79,11 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
+    let seed: TrulyRandomBits = {
+        let mut buf: [u8; 32] = [0;_];
+        rng.blocking_fill_bytes(&mut buf);
+        TrulyRandomBits(buf)
+    };
 
     let mut sdc_mem = sdc::Mem::<5000>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
@@ -88,5 +91,5 @@ async fn main(spawner: Spawner) {
     // Use internal Flash as the storage
     let mut flash = Flash::take(mpsl, p.NVMC);
 
-    ble_bas_peripheral_bonding::run(sdc, &mut rng_2, &mut flash).await;
+    ble_bas_peripheral_bonding::run(sdc, seed, &mut flash).await;
 }

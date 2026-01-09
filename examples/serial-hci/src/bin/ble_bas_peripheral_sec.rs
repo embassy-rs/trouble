@@ -1,9 +1,10 @@
 // Use with any serial HCI
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::*;
-use rand::rngs::OsRng;
+use getrandom;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
+use trouble_host::TrulyRandomBits;
 use trouble_example_apps::ble_bas_peripheral_sec;
 use trouble_host::prelude::{ExternalController, SerialTransport};
 
@@ -51,5 +52,11 @@ async fn main() {
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
 
-    ble_bas_peripheral_sec::run(controller, &mut OsRng).await;
+    let seed: TrulyRandomBits = {
+        let mut buf: [u8; 32] = [0;_];
+        getrandom::fill(&mut buf).unwrap();
+        TrulyRandomBits(buf)
+    };
+
+    ble_bas_peripheral_sec::run(controller, seed).await;
 }
