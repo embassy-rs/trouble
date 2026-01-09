@@ -8,9 +8,8 @@ use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, rng};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use static_cell::StaticCell;
+use trouble_host::TrulyRandomBits;
 use trouble_example_apps::ble_bas_central_pass_key;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -72,10 +71,14 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
+    let seed: TrulyRandomBits = {
+        let mut buf: [u8; 32] = [0;_];
+        rng.blocking_fill_bytes(&mut buf);
+        TrulyRandomBits(buf)
+    };
 
     let mut sdc_mem = sdc::Mem::<6544>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    ble_bas_central_pass_key::run(sdc, &mut rng_2).await;
+    ble_bas_central_pass_key::run(sdc, seed).await;
 }

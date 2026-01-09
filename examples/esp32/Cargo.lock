@@ -1868,7 +1868,6 @@ dependencies = [
  "embedded-storage-async",
  "heapless 0.9.1",
  "log",
- "rand_core 0.6.4",
  "sequential-storage",
  "static_cell",
  "trouble-host",

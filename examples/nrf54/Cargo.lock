@@ -1594,7 +1594,6 @@ dependencies = [
  "embedded-hal-async",
  "embedded-storage-async",
  "heapless 0.9.1",
- "rand_core 0.6.4",
  "sequential-storage",
  "static_cell",
  "trouble-host",

@@ -31,7 +31,7 @@ use crate::prelude::ConnectionEvent;
 use crate::security_manager::pairing::{Pairing, PairingOps};
 use crate::security_manager::types::BondingFlag;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
-use crate::{Address, Error, Identity, IoCapabilities, PacketPool};
+use crate::{Address, Error, Identity, IoCapabilities, PacketPool, TrulyRandomBits};
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -196,9 +196,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.io_capabilities.replace(io_capabilities);
     }
 
-    /// Set the current local address
-    pub(crate) fn set_random_generator_seed(&self, random_seed: [u8; 32]) {
-        self.rng.replace(ChaCha12Rng::from_seed(random_seed));
+    /// Seed the random generator with truly random bits
+    pub(crate) fn set_random_generator_seed(&self, seed: TrulyRandomBits) {
+        self.rng.replace(ChaCha12Rng::from_seed(seed.0));
         self.state.borrow_mut().random_generator_seeded = true;
     }
 
