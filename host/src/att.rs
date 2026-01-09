@@ -943,7 +943,7 @@ impl<'d> Att<'d> {
     pub fn decode(data: &'d [u8]) -> Result<Att<'d>, codec::Error> {
         let mut r = ReadCursor::new(data);
         let opcode: u8 = r.read()?;
-        if opcode % 2 == 0 {
+        if opcode.is_multiple_of(2) {
             let client = AttClient::decode_with_opcode(opcode, r)?;
             Ok(Att::Client(client))
         } else {
