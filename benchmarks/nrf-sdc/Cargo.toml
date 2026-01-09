@@ -29,17 +29,6 @@ static_cell = "2"
 debug = 2
 
 [patch.crates-io]
-#embassy-executor = {path = "../../../embassy/embassy-executor"}
-#embassy-nrf = {path = "../../../embassy/embassy-nrf"}
-#embassy-sync = {path = "../../../embassy/embassy-sync"}
-#embassy-futures = {path = "../../../embassy/embassy-futures"}
-#embassy-time = {path = "../../../embassy/embassy-time"}
-#embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
-#embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
-#embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
-#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
-#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-#bt-hci = { path = "../../../bt-hci" }
 embassy-executor = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
 embassy-nrf = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
 embassy-sync = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
@@ -47,8 +36,10 @@ embassy-futures = {git = "https://github.com/embassy-rs/embassy.git", rev="729f9
 embassy-time = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
 embassy-time-driver = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
 embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="729f96b9521d6705c1d664f4e9c636155d440519"}
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "36816b8ca6a30776886fad289921adf49ca54fee"}
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "36816b8ca6a30776886fad289921adf49ca54fee"}
+#nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "36816b8ca6a30776886fad289921adf49ca54fee"}
+#nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "36816b8ca6a30776886fad289921adf49ca54fee"}
+nrf-sdc = { path = "../../sub/nrf-sdc/nrf-sdc" }
+nrf-mpsl = { path = "../../sub/nrf-sdc/nrf-mpsl" }
 
 [features]
 nrf52832 = [

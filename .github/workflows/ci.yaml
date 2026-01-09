@@ -7,12 +7,15 @@ on:
     tags:
       - "v*"
   pull_request:
+  workflow_dispatch:  # needed to be in 'main', for any branch to manually 'Run Workflow' in GitHub UI.
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set up submodules
+        run: git submodule update --init --depth 1 --recursive
       - name: Free disk space
         run: |
           .ci/free_disk_space.sh
@@ -64,6 +67,9 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: '0'
+      - name: Set up submodules
+        run: |
+          git submodule update --init --depth 1 --recursive
       - name: Build new binary
         working-directory: ./examples/nrf52
         run: |
@@ -74,6 +80,9 @@ jobs:
       - name: Save binary
         run: |
           mv ./examples/nrf52/target/thumbv7em-none-eabihf/release/ble_bas_peripheral ./examples/nrf52/target/thumbv7em-none-eabihf/release/original.elf
+      - name: "[PR] transitioning from 'nrf-sdc' to 'nrf52' needs this." #hack
+        if: ${{ github.event.pull_request }}
+        run: git restore examples/nrf52/Cargo.lock
       - name: If it's a PR checkout the base commit
         if: ${{ github.event.pull_request }}
         run: git checkout ${{ github.event.pull_request.base.sha }}

@@ -1,10 +1,11 @@
+#![cfg_attr(rustfmt, rustfmt_skip)]     // REMOVE before 'pr-rand-catchup' is ready!
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
 use bt_hci::param::{AddrKind, BdAddr};
 use embassy_time::Instant;
+use rand::rand_core::{CryptoRng, RngCore};
 use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
@@ -52,8 +53,7 @@ struct NumericCompareConfirmSentTag {}
 impl NumericCompareConfirmSentTag {
     fn new<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
         ops: &mut OPS,
-        pairing_data: &mut PairingData,
-        rng: &mut RNG,
+        pairing_data: &mut PairingData, rng: &mut RNG,
     ) -> Result<Self, Error> {
         pairing_data.local_nonce = Nonce::new(rng);
         pairing_data.confirm = Self::compute_confirm(pairing_data)?;
@@ -247,7 +247,8 @@ impl Pairing {
                 pairing_data.local_secret_rb = input as u128;
                 pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
                 match confirm {
-                    Some(payload) => Self::handle_pass_key_confirm(0, &payload, ops, pairing_data.deref_mut(), rng)?,
+                    Some(payload) =>
+                        Self::handle_pass_key_confirm(0, &payload, ops, pairing_data.deref_mut(), rng)?,
                     None => Step::WaitingPassKeyEntryConfirm(0),
                 }
             }
@@ -328,8 +329,7 @@ impl Pairing {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
                         PairingMethod::PassKeyEntry { peripheral, .. } => {
                             if peripheral == PassKeyEntryAction::Display {
-                                pairing_data.local_secret_rb =
-                                    rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                                pairing_data.local_secret_rb = rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
                                 pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     pairing_data.local_secret_rb as u32,
@@ -722,8 +722,9 @@ mod tests {
     use core::ops::Deref;
 
     use bt_hci::param::{AddrKind, BdAddr};
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
+    use chacha20::ChaCha12Core;
+    use rand::rngs::ChaCha12Rng;
+    use rand::SeedableRng;
 
     use super::{Pairing, Step};
     use crate::prelude::{ConnectionEvent, SecurityLevel};
@@ -734,6 +735,8 @@ mod tests {
     use crate::security_manager::types::{Command, PairingFeatures};
     use crate::{Address, IoCapabilities, LongTermKey};
 
+    // Note: Even with 'secret_key' created from a seeded Rng (with '::new_from()'), the public
+    //      key tested isn't stable. Needs more study... #tbd.
     #[test]
     fn just_works() {
         let mut pairing_ops: TestOps<10> = TestOps::default();
@@ -800,6 +803,7 @@ mod tests {
             let local_public = pairing_data.local_public_key.unwrap();
             assert_eq!(local_public, PublicKey::from_bytes(sent_packets[1].payload()));
             assert_eq!(sent_packets[1].command, Command::PairingPublicKey);
+
             // These magic values depends on the random number generator and the seed.
             assert_eq!(
                 sent_packets[1].payload(),
