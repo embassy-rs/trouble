@@ -10,14 +10,12 @@ use embassy_sync::blocking_mutex::Mutex;
 use heapless::Vec;
 
 use crate::att::{AttErrorCode, AttUns};
-use crate::gatt;
-
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
-use crate::{Error, PacketPool, MAX_INVALID_DATA_LEN};
+use crate::{gatt, Error, PacketPool, MAX_INVALID_DATA_LEN};
 
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
@@ -511,7 +509,7 @@ pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
 }
 
 impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
-    fn add_characteristic_internal<T: AsGatt>(
+    fn add_characteristic_internal<T: AsGatt + ?Sized>(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
@@ -591,7 +589,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 
     /// Add a characteristic to this service with a refererence to an immutable storage buffer.
-    pub fn add_characteristic_ro<T: AsGatt, U: Into<Uuid>>(
+    pub fn add_characteristic_ro<T: AsGatt + ?Sized, U: Into<Uuid>>(
         &mut self,
         uuid: U,
         value: &'d T,
@@ -630,7 +628,7 @@ impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
 /// A characteristic in the attribute table.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Characteristic<T: AsGatt> {
+pub struct Characteristic<T: AsGatt + ?Sized> {
     /// Handle value assigned to the Client Characteristic Configuration Descriptor (if any)
     pub cccd_handle: Option<u16>,
     /// Handle value assigned to this characteristic when it is added to the Gatt Attribute Table
@@ -638,7 +636,7 @@ pub struct Characteristic<T: AsGatt> {
     pub(crate) phantom: PhantomData<T>,
 }
 
-impl<T: FromGatt> Characteristic<T> {
+impl<T: AsGatt + ?Sized> Characteristic<T> {
     /// Write a value to a characteristic, and notify a connection with the new value of the characteristic.
     ///
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
@@ -716,7 +714,10 @@ impl<T: FromGatt> Characteristic<T> {
     pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
         &self,
         server: &AttributeServer<'_, M, P, AT, CT, CN>,
-    ) -> Result<T, Error> {
+    ) -> Result<T, Error>
+    where
+        T: FromGatt,
+    {
         server.table().get(self)
     }
 
@@ -738,12 +739,12 @@ impl AttributeHandle for CharacteristicPropertiesHandle {
 }
 
 /// Builder for characteristics.
-pub struct CharacteristicBuilder<'r, 'd, T: AsGatt, M: RawMutex, const MAX: usize> {
+pub struct CharacteristicBuilder<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> {
     handle: Characteristic<T>,
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'d, T: AsGatt, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
+impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
     fn add_descriptor_internal<DT: AsGatt>(
         &mut self,
         uuid: Uuid,
@@ -883,7 +884,9 @@ impl CharacteristicProps {
 
 impl FixedGattValue for CharacteristicProps {
     const SIZE: usize = 1;
+}
 
+impl FromGatt for CharacteristicProps {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
             return Err(FromGattError::InvalidLength);
@@ -891,9 +894,14 @@ impl FixedGattValue for CharacteristicProps {
 
         Ok(CharacteristicProps(data[0]))
     }
+}
+
+impl AsGatt for CharacteristicProps {
+    const MIN_SIZE: usize = Self::SIZE;
+    const MAX_SIZE: usize = Self::SIZE;
 
     fn as_gatt(&self) -> &[u8] {
-        FixedGattValue::as_gatt(&self.0)
+        AsGatt::as_gatt(&self.0)
     }
 }
 

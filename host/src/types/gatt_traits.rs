@@ -18,18 +18,10 @@ pub enum FromGattError {
 pub trait FixedGattValue: FromGatt {
     /// Size of the type in bytes
     const SIZE: usize;
-
-    /// Converts from gatt bytes.
-    /// Must return FromGattError::InvalidLength if data.len != Self::SIZE
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
-
-    /// Converts to gatt bytes.
-    /// Must return a slice of len Self::SIZE
-    fn as_gatt(&self) -> &[u8];
 }
 
 /// Trait to allow conversion of a type to gatt bytes
-pub trait AsGatt: Sized {
+pub trait AsGatt {
     /// The minimum size the type might be
     const MIN_SIZE: usize;
     /// The maximum size the type might be
@@ -42,66 +34,69 @@ pub trait AsGatt: Sized {
 /// Trait to allow conversion of gatt bytes into a type
 ///
 /// Requires that the type implements AsGatt
-pub trait FromGatt: AsGatt {
+pub trait FromGatt: AsGatt + Sized {
     /// Converts from gatt bytes.
     /// Must return FromGattError::InvalidLength if data.len not in MIN_SIZE..=MAX_SIZE
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError>;
 }
 
-impl<T: FixedGattValue> FromGatt for T {
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        <Self as FixedGattValue>::from_gatt(data)
-    }
+macro_rules! primitive {
+    ($($ty:ty),*) => {
+        $(
+            impl FixedGattValue for $ty {
+                const SIZE: usize = mem::size_of::<Self>();
+            }
+
+            impl FromGatt for $ty {
+                fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+                    if data.len() != Self::SIZE {
+                        Err(FromGattError::InvalidLength)
+                    } else {
+                        // SAFETY
+                        // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+                        // - Pointer was generated from a slice of bytes matching the size of the type, and all primitives are valid for all possible configurations of bits
+                        // - Primitives are copy
+                        unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+                    }
+                }
+            }
+
+            impl AsGatt for $ty {
+                const MIN_SIZE: usize = mem::size_of::<Self>();
+                const MAX_SIZE: usize = mem::size_of::<Self>();
+
+                fn as_gatt(&self) -> &[u8] {
+                    // SAFETY
+                    // - Slice is of type u8 so data is guaranteed valid for reads of any length
+                    // - Data and len are tied to the address and size of the type
+                    unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+                }
+            }
+        )*
+    };
 }
 
-impl<T: FixedGattValue> AsGatt for T {
-    const MIN_SIZE: usize = Self::SIZE;
-    const MAX_SIZE: usize = Self::SIZE;
-
-    fn as_gatt(&self) -> &[u8] {
-        <Self as FixedGattValue>::as_gatt(self)
-    }
-}
-
-trait Primitive: Copy {}
-impl Primitive for u8 {}
-impl Primitive for u16 {}
-impl Primitive for u32 {}
-impl Primitive for u64 {}
-impl Primitive for i8 {}
-impl Primitive for i16 {}
-impl Primitive for i32 {}
-impl Primitive for i64 {}
-impl Primitive for f32 {}
-impl Primitive for f64 {}
-impl Primitive for BluetoothUuid16 {} // ok as this is just a NewType(u16)
-
-impl<T: Primitive> FixedGattValue for T {
-    const SIZE: usize = mem::size_of::<Self>();
-
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        if data.len() != Self::SIZE {
-            Err(FromGattError::InvalidLength)
-        } else {
-            // SAFETY
-            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
-            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive, and all types implementing Primitive are valid for all possible configurations of bits
-            // - Primitive trait is constrained to require Copy
-            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
-        }
-    }
-
-    fn as_gatt(&self) -> &[u8] {
-        // SAFETY
-        // - Slice is of type u8 so data is guaranteed valid for reads of any length
-        // - Data and len are tied to the address and size of the type
-        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
-    }
-}
+primitive!(
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    f32,
+    f64,
+    BluetoothUuid16
+);
 
 impl FixedGattValue for bool {
     const SIZE: usize = 1;
+}
 
+impl FromGatt for bool {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
             Err(FromGattError::InvalidLength)
@@ -109,6 +104,11 @@ impl FixedGattValue for bool {
             Ok(data != [0x00])
         }
     }
+}
+
+impl AsGatt for bool {
+    const MIN_SIZE: usize = Self::SIZE;
+    const MAX_SIZE: usize = Self::SIZE;
 
     fn as_gatt(&self) -> &[u8] {
         match self {
@@ -170,8 +170,9 @@ impl<const N: usize> AsGatt for String<N> {
     }
 }
 
-impl AsGatt for &'static str {
+impl AsGatt for str {
     const MIN_SIZE: usize = 0;
+
     const MAX_SIZE: usize = usize::MAX;
 
     fn as_gatt(&self) -> &[u8] {
@@ -179,8 +180,9 @@ impl AsGatt for &'static str {
     }
 }
 
-impl AsGatt for &'static [u8] {
+impl AsGatt for [u8] {
     const MIN_SIZE: usize = 0;
+
     const MAX_SIZE: usize = usize::MAX;
 
     fn as_gatt(&self) -> &[u8] {
@@ -200,5 +202,15 @@ impl AsGatt for crate::types::uuid::Uuid {
 impl FromGatt for crate::types::uuid::Uuid {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         Self::try_from(data).map_err(|_| FromGattError::InvalidLength)
+    }
+}
+
+impl<T: AsGatt + ?Sized> AsGatt for &T {
+    const MIN_SIZE: usize = T::MIN_SIZE;
+
+    const MAX_SIZE: usize = T::MAX_SIZE;
+
+    fn as_gatt(&self) -> &[u8] {
+        <T as AsGatt>::as_gatt(*self)
     }
 }
