@@ -183,6 +183,31 @@ impl ServiceBuilder {
         ));
     }
 
+    /// Construct instructions for adding a read-only characteristic to the service.
+    fn construct_characteristic_ro(&mut self, characteristic: Characteristic) {
+        let (code_descriptors, named_descriptors) = self.build_descriptors(&characteristic);
+        let char_name = format_ident!("{}", characteristic.name);
+        let ty = characteristic.ty;
+        let uuid = characteristic.args.uuid;
+        let default_value = match characteristic.args.default_value {
+            Some(val) => quote!(#val),                                       // if set by user
+            None => quote_spanned!(characteristic.span => <#ty>::default()), // or default otherwise
+        };
+
+        self.code_build_chars.extend(quote_spanned! {characteristic.span=>
+            let (#char_name, #(#named_descriptors),*) = {
+                let mut builder = service.add_characteristic_ro(#uuid, #default_value);
+                #code_descriptors
+
+                (builder.build(), #(#named_descriptors),*)
+            };
+        });
+
+        self.code_struct_init.extend(quote_spanned!(characteristic.span=>
+            #char_name,
+        ));
+    }
+
     /// Consume the lists of fields and fields marked as characteristics and prepare the code to add them to the service
     /// by generating the macro blueprints for any methods, fields, and static storage required.
     pub fn process_characteristics_and_fields(
@@ -204,7 +229,19 @@ impl ServiceBuilder {
         // Process characteristic fields
         for ch in characteristics {
             let char_name = format_ident!("{}", ch.name);
-            let ty = &ch.ty;
+
+            let mut ty = &ch.ty;
+            let mut ro = false;
+            if let syn::Type::Reference(type_ref) = ty {
+                if ch.args.access.is_read_only()
+                    && type_ref.mutability.is_none()
+                    && type_ref.lifetime.as_ref().is_some_and(|lt| lt.ident == "static")
+                {
+                    ty = &type_ref.elem;
+                    ro = true;
+                }
+            }
+
             // add fields for each characteristic value handle
             fields.push(syn::Field {
                 ident: Some(char_name.clone()),
@@ -218,7 +255,11 @@ impl ServiceBuilder {
 
             self.increment_attributes(&ch.args.access);
 
-            self.construct_characteristic_static(ch);
+            if ro {
+                self.construct_characteristic_ro(ch);
+            } else {
+                self.construct_characteristic_static(ch);
+            }
         }
         assert_eq!(fields.len(), doc_strings.len());
         // Processing common to all fields

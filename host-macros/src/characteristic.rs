@@ -48,6 +48,12 @@ pub struct AccessArgs {
     pub indicate: bool,
 }
 
+impl AccessArgs {
+    pub fn is_read_only(&self) -> bool {
+        self.read && !self.write && !self.write_without_response && !self.notify && !self.indicate
+    }
+}
+
 /// Descriptor attribute arguments.
 ///
 /// Descriptors are optional and can be used to add additional metadata to the characteristic.
