@@ -80,6 +80,13 @@ pub(crate) enum AttributeData<'d> {
         len: u16,
         value: &'d mut [u8],
     },
+    SmallData {
+        props: CharacteristicProps,
+        variable_len: bool,
+        capacity: u8,
+        len: u8,
+        value: [u8; 8],
+    },
     Declaration {
         props: CharacteristicProps,
         handle: u16,
@@ -94,14 +101,14 @@ pub(crate) enum AttributeData<'d> {
 impl AttributeData<'_> {
     pub(crate) fn readable(&self) -> bool {
         match self {
-            Self::Data { props, .. } => props.0 & (CharacteristicProp::Read as u8) != 0,
+            Self::Data { props, .. } | Self::SmallData { props, .. } => props.0 & (CharacteristicProp::Read as u8) != 0,
             _ => true,
         }
     }
 
     pub(crate) fn writable(&self) -> bool {
         match self {
-            Self::Data { props, .. } => {
+            Self::Data { props, .. } | Self::SmallData { props, .. } => {
                 props.0
                     & (CharacteristicProp::Write as u8
                         | CharacteristicProp::WriteWithoutResponse as u8
@@ -121,7 +128,7 @@ impl AttributeData<'_> {
             return Err(AttErrorCode::READ_NOT_PERMITTED);
         }
         match self {
-            Self::ReadOnlyData { props, value } => {
+            Self::ReadOnlyData { value, .. } => {
                 if offset > value.len() {
                     return Ok(0);
                 }
@@ -131,17 +138,20 @@ impl AttributeData<'_> {
                 }
                 Ok(len)
             }
-            Self::Data {
-                props,
-                value,
-                variable_len,
-                len,
-            } => {
+            Self::Data { len, value, .. } => {
                 let value = &value[..*len as usize];
                 if offset > value.len() {
                     return Ok(0);
                 }
                 let len = data.len().min(value.len() - offset);
+                if len > 0 {
+                    data[..len].copy_from_slice(&value[offset..offset + len]);
+                }
+                Ok(len)
+            }
+            Self::SmallData { len, value, .. } => {
+                let value = &value[..*len as usize];
+                let len = data.len().min(value.len().saturating_sub(offset));
                 if len > 0 {
                     data[..len].copy_from_slice(&value[offset..offset + len]);
                 }
@@ -210,9 +220,9 @@ impl AttributeData<'_> {
         match self {
             Self::Data {
                 value,
-                props,
                 variable_len,
                 len,
+                ..
             } => {
                 if !writable {
                     return Err(AttErrorCode::WRITE_NOT_PERMITTED);
@@ -220,7 +230,30 @@ impl AttributeData<'_> {
 
                 if offset + data.len() <= value.len() {
                     value[offset..offset + data.len()].copy_from_slice(data);
-                    *len = (offset + data.len()) as u16;
+                    if *variable_len {
+                        *len = (offset + data.len()) as u16;
+                    }
+                    Ok(())
+                } else {
+                    Err(AttErrorCode::INVALID_OFFSET)
+                }
+            }
+            Self::SmallData {
+                variable_len,
+                capacity,
+                len,
+                value,
+                ..
+            } => {
+                if !writable {
+                    return Err(AttErrorCode::WRITE_NOT_PERMITTED);
+                }
+
+                if offset + data.len() <= *capacity as usize {
+                    value[offset..offset + data.len()].copy_from_slice(data);
+                    if *variable_len {
+                        *len = (offset + data.len()) as u8;
+                    }
                     Ok(())
                 } else {
                     Err(AttErrorCode::INVALID_OFFSET)
@@ -367,29 +400,55 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == attribute {
-                    if let AttributeData::Data {
-                        props: _,
-                        value,
-                        variable_len,
-                        len,
-                    } = &mut att.data
-                    {
-                        let expected_len = value.len();
-                        let actual_len = input.len();
+                    match &mut att.data {
+                        AttributeData::Data {
+                            value,
+                            variable_len,
+                            len,
+                            ..
+                        } => {
+                            let expected_len = value.len();
+                            let actual_len = input.len();
 
-                        if expected_len == actual_len {
-                            value.copy_from_slice(input);
-                            return Ok(());
-                        } else if *variable_len && actual_len <= expected_len {
-                            value[..input.len()].copy_from_slice(input);
-                            *len = input.len() as u16;
-                            return Ok(());
-                        } else {
-                            return Err(Error::UnexpectedDataLength {
-                                expected: expected_len,
-                                actual: actual_len,
-                            });
+                            if expected_len == actual_len {
+                                value.copy_from_slice(input);
+                                return Ok(());
+                            } else if *variable_len && actual_len <= expected_len {
+                                value[..input.len()].copy_from_slice(input);
+                                *len = input.len() as u16;
+                                return Ok(());
+                            } else {
+                                return Err(Error::UnexpectedDataLength {
+                                    expected: expected_len,
+                                    actual: actual_len,
+                                });
+                            }
                         }
+                        AttributeData::SmallData {
+                            variable_len,
+                            capacity,
+                            len,
+                            value,
+                            ..
+                        } => {
+                            let expected_len = usize::from(*capacity);
+                            let actual_len = input.len();
+
+                            if expected_len == actual_len {
+                                value[..expected_len].copy_from_slice(input);
+                                return Ok(());
+                            } else if *variable_len && actual_len <= expected_len {
+                                value[..input.len()].copy_from_slice(input);
+                                *len = input.len() as u8;
+                                return Ok(());
+                            } else {
+                                return Err(Error::UnexpectedDataLength {
+                                    expected: expected_len,
+                                    actual: actual_len,
+                                });
+                            }
+                        }
+                        _ => return Err(Error::NotSupported),
                     }
                 }
             }
@@ -418,24 +477,21 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
                 if att.handle == attribute_handle.handle() {
-                    if let AttributeData::Data {
-                        props,
-                        value,
-                        variable_len,
-                        len,
-                    } = &mut att.data
-                    {
-                        let value_slice = if *variable_len { &value[..*len as usize] } else { value };
+                    let value_slice = match &mut att.data {
+                        AttributeData::Data { value, len, .. } => &value[..*len as usize],
+                        AttributeData::ReadOnlyData { value, .. } => value,
+                        AttributeData::SmallData { len, value, .. } => &value[..usize::from(*len)],
+                        _ => return Err(Error::NotSupported),
+                    };
 
-                        match T::Value::from_gatt(value_slice) {
-                            Ok(v) => return Ok(v),
-                            Err(_) => {
-                                let mut invalid_data = [0u8; MAX_INVALID_DATA_LEN];
-                                let len_to_copy = value_slice.len().min(MAX_INVALID_DATA_LEN);
-                                invalid_data[..len_to_copy].copy_from_slice(&value_slice[..len_to_copy]);
+                    match T::Value::from_gatt(value_slice) {
+                        Ok(v) => return Ok(v),
+                        Err(_) => {
+                            let mut invalid_data = [0u8; MAX_INVALID_DATA_LEN];
+                            let len_to_copy = value_slice.len().min(MAX_INVALID_DATA_LEN);
+                            invalid_data[..len_to_copy].copy_from_slice(&value_slice[..len_to_copy]);
 
-                                return Err(Error::CannotConstructGattValue(invalid_data));
-                            }
+                            return Err(Error::CannotConstructGattValue(invalid_data));
                         }
                     }
                 }
@@ -584,6 +640,35 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                 value: store,
                 variable_len,
                 len,
+            },
+        )
+    }
+
+    /// Add a characteristic to this service using inline storage. The characteristic value must be 8 bytes or less.
+    pub fn add_characteristic_small<T: AsGatt, U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        props: &[CharacteristicProp],
+        value: T,
+    ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
+        assert!(T::MAX_SIZE <= 8);
+
+        let props = props.into();
+        let bytes = value.as_gatt();
+        let mut value = [0; 8];
+        value[..bytes.len()].copy_from_slice(bytes);
+        let variable_len = T::MAX_SIZE != T::MIN_SIZE;
+        let capacity = T::MAX_SIZE as u8;
+        let len = bytes.len() as u8;
+        self.add_characteristic_internal(
+            uuid.into(),
+            props,
+            AttributeData::SmallData {
+                props,
+                variable_len,
+                capacity,
+                len,
+                value,
             },
         )
     }
@@ -745,12 +830,7 @@ pub struct CharacteristicBuilder<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const 
 }
 
 impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-    fn add_descriptor_internal<DT: AsGatt + ?Sized>(
-        &mut self,
-        uuid: Uuid,
-        props: CharacteristicProps,
-        data: AttributeData<'d>,
-    ) -> Descriptor<DT> {
+    fn add_descriptor_internal<DT: AsGatt + ?Sized>(&mut self, uuid: Uuid, data: AttributeData<'d>) -> Descriptor<DT> {
         let handle = self.table.handle;
         self.table.push(Attribute {
             uuid,
@@ -780,7 +860,6 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
         let len = bytes.len() as u16;
         self.add_descriptor_internal(
             uuid.into(),
-            props,
             AttributeData::Data {
                 props,
                 value: store,
@@ -790,12 +869,39 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
         )
     }
 
+    /// Add a characteristic to this service using inline storage. The descriptor value must be 8 bytes or less.
+    pub fn add_descriptor_small<DT: AsGatt, U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        props: &[CharacteristicProp],
+        value: DT,
+    ) -> Descriptor<DT> {
+        assert!(DT::MAX_SIZE <= 8);
+
+        let props = props.into();
+        let bytes = value.as_gatt();
+        let mut value = [0; 8];
+        value[..bytes.len()].copy_from_slice(bytes);
+        let variable_len = T::MAX_SIZE != T::MIN_SIZE;
+        let capacity = T::MAX_SIZE as u8;
+        let len = bytes.len() as u8;
+        self.add_descriptor_internal(
+            uuid.into(),
+            AttributeData::SmallData {
+                props,
+                variable_len,
+                capacity,
+                len,
+                value,
+            },
+        )
+    }
+
     /// Add a read only characteristic descriptor for this characteristic.
     pub fn add_descriptor_ro<DT: AsGatt + ?Sized, U: Into<Uuid>>(&mut self, uuid: U, data: &'d DT) -> Descriptor<DT> {
         let props = [CharacteristicProp::Read].into();
         self.add_descriptor_internal(
             uuid.into(),
-            props,
             AttributeData::ReadOnlyData {
                 props,
                 value: data.as_gatt(),
