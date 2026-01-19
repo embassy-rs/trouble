@@ -745,7 +745,7 @@ pub struct CharacteristicBuilder<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const 
 }
 
 impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-    fn add_descriptor_internal<DT: AsGatt>(
+    fn add_descriptor_internal<DT: AsGatt + ?Sized>(
         &mut self,
         uuid: Uuid,
         props: CharacteristicProps,
@@ -770,26 +770,37 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
         &mut self,
         uuid: U,
         props: &[CharacteristicProp],
-        data: &'d mut [u8],
+        value: DT,
+        store: &'d mut [u8],
     ) -> Descriptor<DT> {
         let props = props.into();
-        let len = data.len() as u16;
+        let bytes = value.as_gatt();
+        store[..bytes.len()].copy_from_slice(bytes);
+        let variable_len = DT::MAX_SIZE != DT::MIN_SIZE;
+        let len = bytes.len() as u16;
         self.add_descriptor_internal(
             uuid.into(),
             props,
             AttributeData::Data {
                 props,
-                value: data,
-                variable_len: false,
+                value: store,
+                variable_len,
                 len,
             },
         )
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<DT: AsGatt, U: Into<Uuid>>(&mut self, uuid: U, data: &'d [u8]) -> Descriptor<DT> {
+    pub fn add_descriptor_ro<DT: AsGatt + ?Sized, U: Into<Uuid>>(&mut self, uuid: U, data: &'d DT) -> Descriptor<DT> {
         let props = [CharacteristicProp::Read].into();
-        self.add_descriptor_internal(uuid.into(), props, AttributeData::ReadOnlyData { props, value: data })
+        self.add_descriptor_internal(
+            uuid.into(),
+            props,
+            AttributeData::ReadOnlyData {
+                props,
+                value: data.as_gatt(),
+            },
+        )
     }
 
     /// Return the built characteristic.
@@ -801,7 +812,7 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
 /// Characteristic descriptor handle.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
-pub struct Descriptor<T: AsGatt> {
+pub struct Descriptor<T: AsGatt + ?Sized> {
     pub(crate) handle: u16,
     phantom: PhantomData<T>,
 }
@@ -811,6 +822,33 @@ impl<T: AsGatt> AttributeHandle for Descriptor<T> {
 
     fn handle(&self) -> u16 {
         self.handle
+    }
+}
+
+impl<T: AsGatt + ?Sized> Descriptor<T> {
+    /// Set the value of the descriptor in the provided attribute server.
+    pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
+        &self,
+        server: &AttributeServer<'_, M, P, AT, CT, CN>,
+        value: &T,
+    ) -> Result<(), Error> {
+        let value = value.as_gatt();
+        server.table().set_raw(self.handle, value)?;
+        Ok(())
+    }
+
+    /// Read the value of the descriptor.
+    ///
+    /// If the descriptor for the handle cannot be found, an error is returned.
+    ///
+    pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
+        &self,
+        server: &AttributeServer<'_, M, P, AT, CT, CN>,
+    ) -> Result<T, Error>
+    where
+        T: FromGatt,
+    {
+        server.table().get(self)
     }
 }
 
