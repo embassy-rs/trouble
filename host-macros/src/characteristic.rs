@@ -6,6 +6,7 @@
 
 use darling::{Error, FromMeta};
 use proc_macro2::{Span, TokenStream};
+use quote::{quote, ToTokens, TokenStreamExt};
 use syn::meta::ParseNestedMeta;
 use syn::parse::Result;
 use syn::spanned::Spanned;
@@ -35,7 +36,7 @@ impl Characteristic {
 }
 
 #[derive(Debug, Default)]
-pub struct AccessArgs {
+pub struct PropertiesArgs {
     /// If true, the characteristic can be written.
     pub read: bool,
     /// If true, the characteristic can be written.
@@ -48,9 +49,159 @@ pub struct AccessArgs {
     pub indicate: bool,
 }
 
-impl AccessArgs {
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PermissionLevel {
+    #[default]
+    Allowed,
+    EncryptionRequired,
+    AuthenticationRequired,
+    NotAllowed,
+}
+
+impl PermissionLevel {
+    fn parse(meta: &ParseNestedMeta) -> Result<Self> {
+        match meta.value() {
+            Ok(value) => {
+                let value: syn::Ident = value.parse()?;
+                if value == "encrypted" {
+                    Ok(PermissionLevel::EncryptionRequired)
+                } else if value == "authenticated" {
+                    Ok(PermissionLevel::AuthenticationRequired)
+                } else {
+                    Err(meta.error(format!(
+                        "Unsupported security property: '{value}'.\nSupported values are: encrypted and authenticated\n"
+                    )))
+                }
+            }
+            Err(_) => Ok(PermissionLevel::Allowed),
+        }
+    }
+}
+
+impl ToTokens for PermissionLevel {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let variant = match self {
+            PermissionLevel::Allowed => {
+                quote! { trouble_host::attribute::PermissionLevel::Allowed }
+            }
+            PermissionLevel::EncryptionRequired => {
+                quote! { trouble_host::attribute::PermissionLevel::EncryptionRequired }
+            }
+            PermissionLevel::AuthenticationRequired => {
+                quote! { trouble_host::attribute::PermissionLevel::AuthenticationRequired }
+            }
+            PermissionLevel::NotAllowed => {
+                quote! { trouble_host::attribute::PermissionLevel::NotAllowed }
+            }
+        };
+        tokens.append_all(variant);
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PermissionArgs {
+    pub read: PermissionLevel,
+    pub write: PermissionLevel,
+    pub cccd: PermissionLevel,
+}
+
+impl PermissionArgs {
+    fn apply_properties(mut self, properties: &PropertiesArgs, attribute: &syn::Attribute) -> Result<Self> {
+        if !properties.read {
+            self.read = PermissionLevel::NotAllowed;
+        } else if self.read == PermissionLevel::NotAllowed {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "Characteristic has the read property but reading is not allowed",
+            ));
+        }
+
+        if !(properties.write || properties.write_without_response) {
+            self.write = PermissionLevel::NotAllowed;
+        } else if self.write == PermissionLevel::NotAllowed {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "Characteristic has the write and/or write_without_response properties but writing is not allowed",
+            ));
+        }
+
+        if !(properties.notify || properties.indicate) {
+            self.cccd = PermissionLevel::NotAllowed;
+        } else if self.cccd == PermissionLevel::NotAllowed {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "Characteristic has the notify and/or indicate properties but writing to the CCCD is not allowed",
+            ));
+        }
+
+        Ok(self)
+    }
+
     pub fn is_read_only(&self) -> bool {
-        self.read && !self.write && !self.write_without_response && !self.notify && !self.indicate
+        self.read != PermissionLevel::NotAllowed
+            && self.write == PermissionLevel::NotAllowed
+            && self.cccd == PermissionLevel::NotAllowed
+    }
+
+    fn parse(meta: &ParseNestedMeta) -> Result<Self> {
+        let mut base = None;
+        let mut read = None;
+        let mut write = None;
+        let mut cccd = None;
+
+        meta.parse_nested_meta(|meta| {
+            match meta.path.get_ident().ok_or(meta.error("no ident"))?.to_string().as_str() {
+                "encrypted" => {
+                    check_multi(&mut base, "encrypted/authenticated", &meta, PermissionLevel::EncryptionRequired)?;
+                }
+                "authenticated" => {
+                    check_multi(&mut base, "encrypted/authenticated", &meta, PermissionLevel::AuthenticationRequired)?;
+                }
+                "read" => {
+                    let level = PermissionLevel::parse(&meta)?;
+                    check_multi(&mut read, "read", &meta, level)?;
+                }
+                "write" => {
+                    let level = PermissionLevel::parse(&meta)?;
+                    check_multi(&mut write, "write", &meta, level)?;
+                }
+                "cccd" => {
+                    let level = PermissionLevel::parse(&meta)?;
+                    check_multi(&mut cccd, "cccd", &meta, level)?;
+                }
+                other => return Err(
+                    meta.error(
+                        format!(
+                            "Unsupported security property: '{other}'.\nSupported properties are:\nread, write, cccd, encrypted, or authenticated\n"
+                        ))),
+            }
+            Ok(())
+        })?;
+
+        let base = base.unwrap_or(PermissionLevel::NotAllowed);
+        Ok(Self {
+            read: read.unwrap_or(base),
+            write: write.unwrap_or(base),
+            cccd: cccd.unwrap_or(base),
+        })
+    }
+}
+
+impl ToTokens for PermissionArgs {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let read = &self.read;
+        let write = &self.write;
+        let cccd = &self.cccd;
+
+        if self.read != PermissionLevel::Allowed && self.read != PermissionLevel::NotAllowed {
+            tokens.append_all(quote! { .read_permission(#read) });
+        }
+        if self.write != PermissionLevel::Allowed && self.write != PermissionLevel::NotAllowed {
+            tokens.append_all(quote! { .write_permission(#write) });
+        }
+        if self.cccd != PermissionLevel::Allowed && self.cccd != PermissionLevel::NotAllowed {
+            tokens.append_all(quote! { .cccd_permission(#cccd) });
+        }
     }
 }
 
@@ -67,7 +218,7 @@ pub struct DescriptorArgs {
     /// This is optional and can be used to set the initial value of the descriptor.
     pub default_value: Option<syn::Expr>,
     pub ty: Option<syn::Type>,
-    pub access: AccessArgs,
+    pub permissions: PermissionArgs,
 }
 
 /// Characteristic attribute arguments
@@ -84,7 +235,8 @@ pub struct CharacteristicArgs {
     /// Any '///' comments on each field, parsed in super::check_for_characteristic.
     pub doc_string: Vec<syn::Attribute>,
     pub cfg: Option<syn::Attribute>,
-    pub access: AccessArgs,
+    pub properties: PropertiesArgs,
+    pub permissions: PermissionArgs,
 }
 
 /// Check if this bool type has been specified more than once.
@@ -129,6 +281,7 @@ impl CharacteristicArgs {
         let mut write: Option<bool> = None;
         let mut notify: Option<bool> = None;
         let mut indicate: Option<bool> = None;
+        let mut permissions: Option<PermissionArgs> = None;
         let mut default_value: Option<syn::Expr> = None;
         let mut write_without_response: Option<bool> = None;
         attribute.parse_nested_meta(|meta| {
@@ -145,29 +298,41 @@ impl CharacteristicArgs {
                         .map_err(|_| meta.error("'value' must be followed by '= [data]'.  i.e. value = \"42\""))?;
                     check_multi(&mut default_value, "value", &meta, value.parse()?)?
                 }
+                "permissions" => {
+                    let value = PermissionArgs::parse(&meta)?;
+                    check_multi(&mut permissions, "permissions", &meta, value)?;
+                }
                 "default_value" => return Err(meta.error("Use 'value' for default value")),
                 "descriptor" => return Err(meta.error("Descriptors are added as separate tags i.e. #[descriptor(uuid = \"1234\", value = 42, read, write, notify, indicate)]")),
                 other => return Err(
                     meta.error(
                         format!(
-                            "Unsupported characteristic property: '{other}'.\nSupported properties are:\nuuid, read, write, write_without_response, notify, indicate, value\n"
+                            "Unsupported characteristic property: '{other}'.\nSupported properties are:\nuuid, read, write, write_without_response, notify, indicate, value, or permissions\n"
                         ))),
             };
             Ok(())
         })?;
+
+        let properties = PropertiesArgs {
+            read: read.unwrap_or_default(),
+            write: write.unwrap_or_default(),
+            write_without_response: write_without_response.unwrap_or_default(),
+            notify: notify.unwrap_or_default(),
+            indicate: indicate.unwrap_or_default(),
+        };
+
+        let permissions = permissions
+            .unwrap_or_default()
+            .apply_properties(&properties, attribute)?;
+
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Characteristic must have a UUID"))?,
             doc_string: Vec::new(),
             cfg: None,
             descriptors: Vec::new(),
             default_value,
-            access: AccessArgs {
-                write_without_response: write_without_response.unwrap_or_default(),
-                indicate: indicate.unwrap_or_default(),
-                notify: notify.unwrap_or_default(),
-                write: write.unwrap_or_default(),
-                read: read.unwrap_or_default(),
-            },
+            properties,
+            permissions,
         })
     }
 }
@@ -176,12 +341,10 @@ impl DescriptorArgs {
     pub fn parse(attribute: &syn::Attribute) -> Result<Self> {
         let mut uuid: Option<_> = None;
         let mut name: Option<LitStr> = None;
-        let mut read: Option<bool> = None;
-        // let mut write: Option<bool> = None;
-        // let mut capacity: Option<syn::Expr> = None;
+        let mut read: Option<PermissionLevel> = None;
+        let mut write: Option<PermissionLevel> = None;
         let mut default_value: Option<syn::Expr> = None;
         let mut ty: Option<syn::Type> = None;
-        // let mut write_without_response: Option<bool> = None;
         attribute.parse_nested_meta(|meta| {
             match meta
                 .path
@@ -197,9 +360,14 @@ impl DescriptorArgs {
                         .map_err(|_| meta.error("'name' must be followed by '= [name]'. i.e. name = \"units\""))?;
                     check_multi(&mut name, "name", &meta, value.parse()?)?
                 }
-                "read" => check_multi(&mut read, "read", &meta, true)?,
-                // "write" => check_multi(&mut write, "write", &meta, true)?,
-                // "write_without_response" => check_multi(&mut write_without_response, "write_without_response", &meta, true)?,
+                "read" => {
+                    let level = PermissionLevel::parse(&meta)?;
+                    check_multi(&mut read, "read", &meta, level)?;
+                }
+                "write" => {
+                    let level = PermissionLevel::parse(&meta)?;
+                    check_multi(&mut write, "write", &meta, level)?;
+                }
                 "value" => {
                     let value = meta.value().map_err(|_| {
                         meta.error("'value' must be followed by '= [data]'.  i.e. value = \"Hello World\"")
@@ -212,14 +380,10 @@ impl DescriptorArgs {
                         .map_err(|_| meta.error("'type' must be followed by '= [type]'. i.e. type = &'static str"))?;
                     check_multi(&mut ty, "type", &meta, value.parse()?)?
                 }
-                // "capacity" => {
-                //     let value = meta.value().map_err(|_| meta.error("'capacity' must be followed by '= [data]'.  i.e. value = 100"))?;
-                //     check_multi(&mut capacity, "capacity", &meta, value.parse()?)?
-                //     }
                 "default_value" => return Err(meta.error("use 'value' for default value")),
                 other => {
                     return Err(meta.error(format!(
-                        "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, name, read, value"
+                        "Unsupported descriptor property: '{other}'.\nSupported properties are: uuid, name, read, write, value, type"
                     )));
                 }
             };
@@ -233,18 +397,24 @@ impl DescriptorArgs {
             ));
         }
 
+        let permissions = PermissionArgs {
+            read: read.unwrap_or(PermissionLevel::NotAllowed),
+            write: write.unwrap_or(PermissionLevel::NotAllowed),
+            cccd: PermissionLevel::NotAllowed,
+        };
+        if permissions.read == PermissionLevel::NotAllowed && permissions.write == PermissionLevel::NotAllowed {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "At least one of read or write is required for descriptor",
+            ));
+        }
+
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Descriptor must have a UUID"))?,
             name,
             default_value,
             ty,
-            access: AccessArgs {
-                indicate: false, // not possible for descriptor
-                notify: false,   // not possible for descriptor
-                read: read.unwrap_or_default(),
-                write_without_response: false,
-                write: false,
-            },
+            permissions,
         })
     }
 }
