@@ -168,10 +168,15 @@ impl ServiceBuilder {
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let (#char_name, #(#named_descriptors),*) = {
-                static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
-                let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
-                let mut builder = service
-                    .add_characteristic(#uuid, &[#(#properties),*], #default_value, store);
+                #[allow(clippy::absurd_extreme_comparisons)]
+                let mut builder = if <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE <= 8 {
+                    service.add_characteristic_small(#uuid, &[#(#properties),*], #default_value)
+                } else {
+                    static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
+                    let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
+                    service
+                        .add_characteristic(#uuid, &[#(#properties),*], #default_value, store)
+                };
                 #code_descriptors
 
                 (builder.build(), #(#named_descriptors),*)
@@ -338,20 +343,31 @@ impl ServiceBuilder {
                     } else {
                         let capacity = match ty {
                             Some(ty) => quote!(<#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE),
-                            None => quote!(#default_value.len() as usize)
+                            None => quote!(#default_value.len() as usize),
                         };
+                        let capacity_screaming =
+                            format_ident!("DESC_{index}_{}_CAPACITY", characteristic.name.as_str().to_case(Case::Constant));
 
                         quote_spanned! {characteristic.span=>
                             #identifier_assignment {
-                                let value = #default_value;
-                                static #name_screaming: static_cell::StaticCell<[u8; #capacity]> = static_cell::StaticCell::new();
-                                let store = #name_screaming.init([0; #capacity]);
-                                builder.add_descriptor(
-                                    #uuid,
-                                    &[#(#properties),*],
-                                    value,
-                                    store,
-                                )
+                                const #capacity_screaming: usize = #capacity;
+                                #[allow(clippy::absurd_extreme_comparisons)]
+                                if #capacity_screaming <= 8 {
+                                    builder.add_descriptor_small(
+                                        #uuid,
+                                        &[#(#properties),*],
+                                        #default_value,
+                                    )
+                                } else {
+                                    static #name_screaming: static_cell::StaticCell<[u8; #capacity_screaming]> = static_cell::StaticCell::new();
+                                    let store = #name_screaming.init([0; #capacity]);
+                                    builder.add_descriptor(
+                                        #uuid,
+                                        &[#(#properties),*],
+                                        #default_value,
+                                        store,
+                                    )
+                                }
                             };
                         }
                     }
