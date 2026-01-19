@@ -12,7 +12,7 @@ use heapless::Vec;
 use crate::att::{AttErrorCode, AttUns};
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
+use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection, SecurityLevel};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
 use crate::{gatt, Error, PacketPool, MAX_INVALID_DATA_LEN};
@@ -62,6 +62,38 @@ pub struct AttPermissions {
     pub read: PermissionLevel,
     /// Security required for write operations
     pub write: PermissionLevel,
+}
+
+impl AttPermissions {
+    pub(crate) fn can_read(&self, level: SecurityLevel) -> Result<(), AttErrorCode> {
+        match self.read {
+            PermissionLevel::NotAllowed => Err(AttErrorCode::READ_NOT_PERMITTED),
+            PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
+                if level < SecurityLevel::Encrypted =>
+            {
+                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+            }
+            PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub(crate) fn can_write(&self, level: SecurityLevel) -> Result<(), AttErrorCode> {
+        match self.write {
+            PermissionLevel::NotAllowed => Err(AttErrorCode::WRITE_NOT_PERMITTED),
+            PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
+                if level < SecurityLevel::Encrypted =>
+            {
+                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+            }
+            PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Attribute metadata.
@@ -427,6 +459,10 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             },
         });
         ServiceBuilder { handle, table: self }
+    }
+
+    pub(crate) fn permissions(&self, attribute: u16) -> Option<AttPermissions> {
+        self.with_attribute(attribute, |att| att.data.permissions())
     }
 
     pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
