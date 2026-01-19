@@ -357,12 +357,37 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         })
     }
 
-    pub(crate) fn iterate<F: FnMut(AttributeIterator<'_, 'd>) -> R, R>(&self, mut f: F) -> R {
+    pub(crate) fn iterate<F: FnOnce(AttributeIterator<'_, 'd>) -> R, R>(&self, f: F) -> R {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
             let it = AttributeIterator {
                 attributes: &mut table.attributes[..],
                 pos: 0,
+            };
+            f(it)
+        })
+    }
+
+    pub(crate) fn with_attribute<F: FnOnce(&mut Attribute<'d>) -> R, R>(&self, handle: u16, f: F) -> Option<R> {
+        self.inner.lock(|inner| {
+            let mut table = inner.borrow_mut();
+            match table.attributes.binary_search_by_key(&handle, |att| att.handle) {
+                Ok(i) => Some(f(&mut table.attributes[i])),
+                Err(_) => None,
+            }
+        })
+    }
+
+    pub(crate) fn iterate_from<F: FnOnce(AttributeIterator<'_, 'd>) -> R, R>(&self, start: u16, f: F) -> R {
+        self.inner.lock(|inner| {
+            let mut table = inner.borrow_mut();
+            let pos = match table.attributes.binary_search_by_key(&start, |att| att.handle) {
+                Ok(i) => i,
+                Err(i) => i,
+            };
+            let it = AttributeIterator {
+                attributes: &mut table.attributes[..],
+                pos,
             };
             f(it)
         })
@@ -397,80 +422,68 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle == attribute {
-                    match &mut att.data {
-                        AttributeData::ReadOnlyData { value, .. } => {
-                            *value = new_value;
-                            return Ok(());
-                        }
-                        _ => return Err(Error::NotSupported),
-                    }
-                }
+        self.with_attribute(attribute, |att| match &mut att.data {
+            AttributeData::ReadOnlyData { value, .. } => {
+                *value = new_value;
+                Ok(())
             }
-            Err(Error::NotFound)
+            _ => Err(Error::NotSupported),
         })
+        .unwrap_or(Err(Error::NotFound))
     }
 
     pub(crate) fn set_raw(&self, attribute: u16, input: &[u8]) -> Result<(), Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle == attribute {
-                    match &mut att.data {
-                        AttributeData::Data {
-                            value,
-                            variable_len,
-                            len,
-                            ..
-                        } => {
-                            let expected_len = value.len();
-                            let actual_len = input.len();
+        self.with_attribute(attribute, |att| match &mut att.data {
+            AttributeData::Data {
+                value,
+                variable_len,
+                len,
+                ..
+            } => {
+                let expected_len = value.len();
+                let actual_len = input.len();
 
-                            if expected_len == actual_len {
-                                value.copy_from_slice(input);
-                                return Ok(());
-                            } else if *variable_len && actual_len <= expected_len {
-                                value[..input.len()].copy_from_slice(input);
-                                *len = input.len() as u16;
-                                return Ok(());
-                            } else {
-                                return Err(Error::UnexpectedDataLength {
-                                    expected: expected_len,
-                                    actual: actual_len,
-                                });
-                            }
-                        }
-                        AttributeData::SmallData {
-                            variable_len,
-                            capacity,
-                            len,
-                            value,
-                            ..
-                        } => {
-                            let expected_len = usize::from(*capacity);
-                            let actual_len = input.len();
-
-                            if expected_len == actual_len {
-                                value[..expected_len].copy_from_slice(input);
-                                return Ok(());
-                            } else if *variable_len && actual_len <= expected_len {
-                                value[..input.len()].copy_from_slice(input);
-                                *len = input.len() as u8;
-                                return Ok(());
-                            } else {
-                                return Err(Error::UnexpectedDataLength {
-                                    expected: expected_len,
-                                    actual: actual_len,
-                                });
-                            }
-                        }
-                        _ => return Err(Error::NotSupported),
-                    }
+                if expected_len == actual_len {
+                    value.copy_from_slice(input);
+                    Ok(())
+                } else if *variable_len && actual_len <= expected_len {
+                    value[..input.len()].copy_from_slice(input);
+                    *len = input.len() as u16;
+                    Ok(())
+                } else {
+                    Err(Error::UnexpectedDataLength {
+                        expected: expected_len,
+                        actual: actual_len,
+                    })
                 }
             }
-            Err(Error::NotFound)
+            AttributeData::SmallData {
+                variable_len,
+                capacity,
+                len,
+                value,
+                ..
+            } => {
+                let expected_len = usize::from(*capacity);
+                let actual_len = input.len();
+
+                if expected_len == actual_len {
+                    value[..expected_len].copy_from_slice(input);
+                    Ok(())
+                } else if *variable_len && actual_len <= expected_len {
+                    value[..input.len()].copy_from_slice(input);
+                    *len = input.len() as u8;
+                    Ok(())
+                } else {
+                    Err(Error::UnexpectedDataLength {
+                        expected: expected_len,
+                        actual: actual_len,
+                    })
+                }
+            }
+            _ => Err(Error::NotSupported),
         })
+        .unwrap_or(Err(Error::NotFound))
     }
 
     /// Set the value of a characteristic
@@ -491,67 +504,49 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
     pub fn get<T: AttributeHandle<Value = V>, V: FromGatt>(&self, attribute_handle: &T) -> Result<T::Value, Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle == attribute_handle.handle() {
-                    let value_slice = match &mut att.data {
-                        AttributeData::Data { value, len, .. } => &value[..*len as usize],
-                        AttributeData::ReadOnlyData { value, .. } => value,
-                        AttributeData::SmallData { len, value, .. } => &value[..usize::from(*len)],
-                        _ => return Err(Error::NotSupported),
-                    };
+        self.with_attribute(attribute_handle.handle(), |att| {
+            let value_slice = match &mut att.data {
+                AttributeData::Data { value, len, .. } => &value[..*len as usize],
+                AttributeData::ReadOnlyData { value, .. } => value,
+                AttributeData::SmallData { len, value, .. } => &value[..usize::from(*len)],
+                _ => return Err(Error::NotSupported),
+            };
 
-                    match T::Value::from_gatt(value_slice) {
-                        Ok(v) => return Ok(v),
-                        Err(_) => {
-                            let mut invalid_data = [0u8; MAX_INVALID_DATA_LEN];
-                            let len_to_copy = value_slice.len().min(MAX_INVALID_DATA_LEN);
-                            invalid_data[..len_to_copy].copy_from_slice(&value_slice[..len_to_copy]);
+            T::Value::from_gatt(value_slice).map_err(|_| {
+                let mut invalid_data = [0u8; MAX_INVALID_DATA_LEN];
+                let len_to_copy = value_slice.len().min(MAX_INVALID_DATA_LEN);
+                invalid_data[..len_to_copy].copy_from_slice(&value_slice[..len_to_copy]);
 
-                            return Err(Error::CannotConstructGattValue(invalid_data));
-                        }
-                    }
-                }
-            }
-            Err(Error::NotFound)
+                Error::CannotConstructGattValue(invalid_data)
+            })
         })
+        .unwrap_or(Err(Error::NotFound))
     }
 
     /// Return the characteristic which corresponds to the supplied value handle
     ///
     /// If no characteristic corresponding to the given value handle was found, returns an error
     pub fn find_characteristic_by_value_handle<T: AsGatt>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
-        self.iterate(|mut it| {
-            while let Some(att) = it.next() {
+        self.iterate_from(handle, |mut it| {
+            if let Some(att) = it.next() {
                 if att.handle == handle {
                     // If next is CCCD
-                    if let Some(next) = it.next() {
-                        if let AttributeData::Cccd {
-                            notifications: _,
-                            indications: _,
-                        } = &next.data
-                        {
-                            return Ok(Characteristic {
-                                handle,
-                                cccd_handle: Some(next.handle),
-                                phantom: PhantomData,
-                            });
+                    let cccd_handle = it.next().and_then(|next| {
+                        if let AttributeData::Cccd { .. } = &next.data {
+                            Some(next.handle)
                         } else {
-                            return Ok(Characteristic {
-                                handle,
-                                cccd_handle: None,
-                                phantom: PhantomData,
-                            });
+                            None
                         }
-                    } else {
-                        return Ok(Characteristic {
-                            handle,
-                            cccd_handle: None,
-                            phantom: PhantomData,
-                        });
-                    }
+                    });
+
+                    return Ok(Characteristic {
+                        handle,
+                        cccd_handle,
+                        phantom: PhantomData,
+                    });
                 }
             }
+
             Err(Error::NotFound)
         })
     }

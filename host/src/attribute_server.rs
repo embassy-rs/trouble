@@ -442,11 +442,11 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let mut data = WriteCursor::new(buf);
 
         let (mut header, mut body) = data.split(2)?;
-        let err = self.att_table.iterate(|mut it| {
+        let err = self.att_table.iterate_from(start, |mut it| {
             let mut ret = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 // trace!("[read_by_type] Check attribute {:?} {}", att.uuid, att.handle);
-                if &att.uuid == attribute_type && att.handle >= start && att.handle <= end {
+                if &att.uuid == attribute_type && att.handle <= end {
                     body.write(att.handle)?;
                     handle = att.handle;
 
@@ -519,12 +519,12 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let mut data = WriteCursor::new(buf);
         let (mut header, mut body) = data.split(2)?;
         // Multiple entries can be returned in the response as long as they are of equal length.
-        let err = self.att_table.iterate(|mut it| {
+        let err = self.att_table.iterate_from(start, |mut it| {
             // ret either holds the length of the attribute, or the error code encountered.
             let mut ret: Result<usize, AttErrorCode> = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
             while let Some(att) = it.next() {
                 // trace!("[read_by_group] Check attribute {:x?} {}", att.uuid, att.handle);
-                if &att.uuid == group_type && att.handle >= start && att.handle <= end {
+                if &att.uuid == group_type && att.handle <= end {
                     // debug!("[read_by_group] found! {:x?} handle: {}", att.uuid, att.handle);
                     handle = att.handle;
 
@@ -597,19 +597,14 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
 
         data.write(att::ATT_READ_RSP)?;
 
-        let err = self.att_table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
-            while let Some(att) = it.next() {
-                if att.handle == handle {
-                    err = self.read_attribute_data(connection, 0, att, data.write_buf());
-                    if let Ok(len) = err {
-                        data.commit(len)?;
-                    }
-                    break;
-                }
-            }
-            err
-        });
+        let err = self
+            .att_table
+            .with_attribute(handle, |att| {
+                let len = self.read_attribute_data(connection, 0, att, data.write_buf())?;
+                data.commit(len)?;
+                Ok(len)
+            })
+            .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND));
 
         match err {
             Ok(_) => Ok(data.len()),
@@ -624,14 +619,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         handle: u16,
         data: &[u8],
     ) -> Result<usize, codec::Error> {
-        self.att_table.iterate(|mut it| {
-            while let Some(att) = it.next() {
-                if att.handle == handle {
-                    // Write commands can't respond with an error.
-                    let _ = self.write_attribute_data(connection, 0, att, data);
-                    break;
-                }
-            }
+        self.att_table.with_attribute(handle, |att| {
+            // Write commands can't respond with an error.
+            let _ = self.write_attribute_data(connection, 0, att, data);
         });
         Ok(0)
     }
@@ -643,16 +633,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         handle: u16,
         data: &[u8],
     ) -> Result<usize, codec::Error> {
-        let err = self.att_table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
-            while let Some(att) = it.next() {
-                if att.handle == handle {
-                    err = self.write_attribute_data(connection, 0, att, data);
-                    break;
-                }
-            }
-            err
-        });
+        let err = self
+            .att_table
+            .with_attribute(handle, |att| self.write_attribute_data(connection, 0, att, data))
+            .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND));
 
         let mut w = WriteCursor::new(buf);
         match err {
@@ -676,9 +660,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let attr_type = Uuid::new_short(attr_type);
 
         w.write(att::ATT_FIND_BY_TYPE_VALUE_RSP)?;
-        self.att_table.iterate(|mut it| {
+        self.att_table.iterate_from(start, |mut it| {
             while let Some(att) = it.next() {
-                if att.handle >= start && att.handle <= end && att.uuid == attr_type {
+                if att.handle <= end && att.uuid == attr_type {
                     if let AttributeData::Service { uuid } = &att.data {
                         if uuid.as_raw() == attr_value {
                             if w.available() < 4 + uuid.as_raw().len() {
@@ -712,9 +696,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         header.write(att::ATT_FIND_INFORMATION_RSP)?;
         let mut t = 0;
 
-        self.att_table.iterate(|mut it| {
+        self.att_table.iterate_from(start, |mut it| {
             while let Some(att) = it.next() {
-                if att.handle >= start && att.handle <= end {
+                if att.handle <= end {
                     if t == 0 {
                         t = att.uuid.get_type();
                     } else if t != att.uuid.get_type() {
@@ -767,17 +751,14 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         w.write(handle)?;
         w.write(offset)?;
 
-        let err = self.att_table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
-            while let Some(att) = it.next() {
-                if att.handle == handle {
-                    err = self.write_attribute_data(connection, offset as usize, att, value);
-                    w.append(value)?;
-                    break;
-                }
-            }
-            err
-        });
+        let err = self
+            .att_table
+            .with_attribute(handle, |att| {
+                let err = self.write_attribute_data(connection, 0, att, value);
+                w.append(value)?;
+                err
+            })
+            .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND));
 
         match err {
             Ok(()) => Ok(w.len()),
@@ -801,19 +782,14 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let mut w = WriteCursor::new(buf);
         w.write(att::ATT_READ_BLOB_RSP)?;
 
-        let err = self.att_table.iterate(|mut it| {
-            let mut err = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
-            while let Some(att) = it.next() {
-                if att.handle == handle {
-                    err = self.read_attribute_data(connection, offset as usize, att, w.write_buf());
-                    if let Ok(n) = err {
-                        w.commit(n)?;
-                    }
-                    break;
-                }
-            }
-            err
-        });
+        let err = self
+            .att_table
+            .with_attribute(handle, |att| {
+                let n = self.read_attribute_data(connection, offset as usize, att, w.write_buf())?;
+                w.commit(n)?;
+                Ok(n)
+            })
+            .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND));
 
         match err {
             Ok(_) => Ok(w.len()),
