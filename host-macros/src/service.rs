@@ -142,6 +142,11 @@ impl ServiceBuilder {
                         #code_struct_init
                     }
                 }
+
+                #visibility fn handle_range(&self) -> core::ops::Range<u16> {
+                    self.handle..(self.handle + Self::ATTRIBUTE_COUNT as u16)
+                }
+
                 #code_impl
             }
         }
