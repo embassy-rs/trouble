@@ -314,6 +314,9 @@ pub(crate) mod sealed {
         fn should_indicate(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool;
         fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
         fn update_identity(&self, identity: Identity) -> Result<(), Error>;
+
+        fn can_read(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode>;
+        fn can_write(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode>;
     }
 }
 
@@ -358,6 +361,28 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
 
     fn update_identity(&self, identity: Identity) -> Result<(), Error> {
         self.cccd_tables.update_identity(identity)
+    }
+
+    fn can_read(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode> {
+        if let Some(permissions) = self.att_table.permissions(handle) {
+            match connection.security_level() {
+                Ok(level) => permissions.can_read(level),
+                Err(_) => Err(AttErrorCode::INVALID_HANDLE),
+            }
+        } else {
+            Err(AttErrorCode::INVALID_HANDLE)
+        }
+    }
+
+    fn can_write(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode> {
+        if let Some(permissions) = self.att_table.permissions(handle) {
+            match connection.security_level() {
+                Ok(level) => permissions.can_write(level),
+                Err(_) => Err(AttErrorCode::INVALID_HANDLE),
+            }
+        } else {
+            Err(AttErrorCode::INVALID_HANDLE)
+        }
     }
 }
 
