@@ -66,8 +66,7 @@ pub struct DescriptorArgs {
     /// The initial value of the descriptor (&str).
     /// This is optional and can be used to set the initial value of the descriptor.
     pub default_value: Option<syn::Expr>,
-    /// Capacity for writing new descriptors (u8)
-    pub capacity: Option<syn::Expr>,
+    pub ty: Option<syn::Type>,
     pub access: AccessArgs,
 }
 
@@ -179,6 +178,7 @@ impl DescriptorArgs {
         // let mut write: Option<bool> = None;
         // let mut capacity: Option<syn::Expr> = None;
         let mut default_value: Option<syn::Expr> = None;
+        let mut ty: Option<syn::Type> = None;
         // let mut write_without_response: Option<bool> = None;
         attribute.parse_nested_meta(|meta| {
             match meta
@@ -204,6 +204,12 @@ impl DescriptorArgs {
                     })?;
                     check_multi(&mut default_value, "value", &meta, value.parse()?)?
                 }
+                "type" => {
+                    let value = meta
+                        .value()
+                        .map_err(|_| meta.error("'type' must be followed by '= [type]'. i.e. type = &'static str"))?;
+                    check_multi(&mut ty, "type", &meta, value.parse()?)?
+                }
                 // "capacity" => {
                 //     let value = meta.value().map_err(|_| meta.error("'capacity' must be followed by '= [data]'.  i.e. value = 100"))?;
                 //     check_multi(&mut capacity, "capacity", &meta, value.parse()?)?
@@ -218,11 +224,18 @@ impl DescriptorArgs {
             Ok(())
         })?;
 
+        if name.is_some() && ty.is_none() {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "Descriptor type is required for named descriptors.",
+            ));
+        }
+
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Descriptor must have a UUID"))?,
             name,
             default_value,
-            capacity: None,
+            ty,
             access: AccessArgs {
                 indicate: false, // not possible for descriptor
                 notify: false,   // not possible for descriptor
