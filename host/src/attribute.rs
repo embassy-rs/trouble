@@ -363,6 +363,23 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         }
     }
 
+    pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
+        self.iterate(|mut it| {
+            while let Some(att) = it.next() {
+                if att.handle == attribute {
+                    match &mut att.data {
+                        AttributeData::ReadOnlyData { value, .. } => {
+                            *value = new_value;
+                            return Ok(());
+                        }
+                        _ => return Err(Error::NotSupported),
+                    }
+                }
+            }
+            Err(Error::NotFound)
+        })
+    }
+
     pub(crate) fn set_raw(&self, attribute: u16, input: &[u8]) -> Result<(), Error> {
         self.iterate(|mut it| {
             while let Some(att) = it.next() {
@@ -704,6 +721,17 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ) -> Result<(), Error> {
         let value = value.as_gatt();
         server.table().set_raw(self.handle, value)?;
+        Ok(())
+    }
+
+    /// Set the value of the characteristic in the provided attribute server.
+    pub fn set_ro<'a, M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
+        &self,
+        server: &AttributeServer<'a, M, P, AT, CT, CN>,
+        value: &'a T,
+    ) -> Result<(), Error> {
+        let value = value.as_gatt();
+        server.table().set_ro(self.handle, value)?;
         Ok(())
     }
 
