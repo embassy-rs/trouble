@@ -6,7 +6,7 @@ use crate::codec::{Decode, Encode, Error, Type};
 
 /// A 16-bit or 128-bit UUID.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Uuid {
     /// 16-bit UUID
     Uuid16([u8; 2]),
