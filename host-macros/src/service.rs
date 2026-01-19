@@ -303,7 +303,7 @@ impl ServiceBuilder {
                         format_ident!("DESC_{index}_{}_STORE", characteristic.name.as_str().to_case(Case::Constant));
                     let identifier = args.name.as_ref().map(|name| format_ident!("{}_{}_descriptor", characteristic.name.as_str(), name.value()));
                     let access = &args.access;
-                    let properties = set_access_properties(access);
+                    let permissions = set_access_permissions(access);
                     let uuid = &args.uuid;
                     let default_value = match &args.default_value {
                         Some(val) => quote!(#val), // if set by user
@@ -343,7 +343,7 @@ impl ServiceBuilder {
 
                     if ro {
                         quote_spanned! {characteristic.span=>
-                            #identifier_assignment builder.add_descriptor_ro(#uuid, #default_value);
+                            #identifier_assignment builder.add_descriptor_ro(#uuid, trouble_host::attribute::PermissionLevel::Allowed, #default_value);
                         }
                     } else {
                         let capacity = match ty {
@@ -360,7 +360,7 @@ impl ServiceBuilder {
                                 if #capacity_screaming <= 8 {
                                     builder.add_descriptor_small(
                                         #uuid,
-                                        &[#(#properties),*],
+                                        #permissions,
                                         #default_value,
                                     )
                                 } else {
@@ -368,7 +368,7 @@ impl ServiceBuilder {
                                     let store = #name_screaming.init([0; #capacity]);
                                     builder.add_descriptor(
                                         #uuid,
-                                        &[#(#properties),*],
+                                        #permissions,
                                         #default_value,
                                         store,
                                     )
@@ -417,4 +417,17 @@ fn set_access_properties(args: &AccessArgs) -> Vec<TokenStream2> {
         &mut properties,
     );
     properties
+}
+
+/// Parse the properties of a descriptor and return an AttPermissions
+fn set_access_permissions(args: &AccessArgs) -> TokenStream2 {
+    if args.read && args.write {
+        quote! {trouble_host::attribute::AttPermissions { read: trouble_host::attribute::PermissionLevel::Allowed, write: trouble_host::attribute::PermissionLevel::Allowed }}
+    } else if args.read {
+        quote! {trouble_host::attribute::AttPermissions { read: trouble_host::attribute::PermissionLevel::Allowed, write: trouble_host::attribute::PermissionLevel::NotAllowed }}
+    } else if args.write {
+        quote! {trouble_host::attribute::AttPermissions { read: trouble_host::attribute::PermissionLevel::NotAllowed, write: trouble_host::attribute::PermissionLevel::Allowed }}
+    } else {
+        quote! {trouble_host::attribute::AttPermissions { read: trouble_host::attribute::PermissionLevel::NotAllowed, write: trouble_host::attribute::PermissionLevel::NotAllowed }}
+    }
 }

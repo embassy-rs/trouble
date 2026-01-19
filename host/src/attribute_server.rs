@@ -421,6 +421,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
             if let AttributeData::Cccd {
                 notifications,
                 indications,
+                ..
             } = att.data
             {
                 self.cccd_tables
