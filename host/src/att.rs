@@ -94,6 +94,16 @@ impl AttErrorCode {
     pub const PROCEDURE_ALREADY_IN_PROGRESS: Self = Self { value: 0xFE };
     /// The attribute value is out of range as defined by a profile or service specification
     pub const OUT_OF_RANGE: Self = Self { value: 0xFF };
+
+    /// Create a new error code from a raw value
+    pub const fn new(value: u8) -> Self {
+        Self { value }
+    }
+
+    /// Get the raw value of this error code
+    pub const fn to_u8(self) -> u8 {
+        self.value
+    }
 }
 
 impl Display for AttErrorCode {
