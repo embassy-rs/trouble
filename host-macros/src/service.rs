@@ -166,7 +166,9 @@ impl ServiceBuilder {
             None => quote_spanned!(characteristic.span => <#ty>::default()), // or default otherwise
         };
 
+        let cfg_attr = characteristic.args.cfg.as_ref().into_iter();
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
+            #(#cfg_attr)*
             let (#char_name, #(#named_descriptors),*) = {
                 #[allow(clippy::absurd_extreme_comparisons)]
                 let mut builder = if <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE <= 8 {
@@ -183,7 +185,9 @@ impl ServiceBuilder {
             };
         });
 
+        let cfg_attr = characteristic.args.cfg.as_ref().into_iter();
         self.code_struct_init.extend(quote_spanned!(characteristic.span=>
+            #(#cfg_attr)*
             #char_name,
         ));
     }
@@ -221,15 +225,16 @@ impl ServiceBuilder {
         characteristics: Vec<Characteristic>,
     ) -> Self {
         // Processing specific to non-characteristic fields
-        let mut doc_strings: Vec<String> = Vec::new();
+        let mut attrs: Vec<Vec<syn::Attribute>> = Vec::new();
         for field in &fields {
             let ident = field.ident.as_ref().expect("All fields should have names");
             let ty = &field.ty;
-            let vis = &field.vis;
+            let cfg_attr = field.attrs.iter().find(|attr| attr.path().is_ident("cfg")).into_iter();
             self.code_struct_init.extend(quote_spanned! {field.span() =>
-                #vis #ident: #ty::default(),
+                #(#cfg_attr)*
+                #ident: #ty::default(),
             });
-            doc_strings.push(String::new()); // not supporting docstrings here yet
+            attrs.push(field.attrs.clone());
         }
         // Process characteristic fields
         for ch in characteristics {
@@ -256,7 +261,12 @@ impl ServiceBuilder {
                 vis: ch.vis.clone(),
                 mutability: syn::FieldMutability::None,
             });
-            doc_strings.push(ch.args.doc_string.to_owned());
+
+            let mut ch_attrs = ch.args.doc_string.clone();
+            if let Some(cfg) = &ch.args.cfg {
+                ch_attrs.push(cfg.clone());
+            }
+            attrs.push(ch_attrs);
 
             self.increment_attributes(&ch.args.access);
 
@@ -266,23 +276,14 @@ impl ServiceBuilder {
                 self.construct_characteristic_static(ch);
             }
         }
-        assert_eq!(fields.len(), doc_strings.len());
+        assert_eq!(fields.len(), attrs.len());
         // Processing common to all fields
-        for (field, doc_string) in fields.iter().zip(doc_strings) {
-            let docs: TokenStream2 = doc_string
-                .lines()
-                .map(|line| {
-                    let span = field.span();
-                    quote_spanned!(span=>
-                        #[doc = #line]
-                    )
-                })
-                .collect();
+        for (field, attrs) in fields.iter().zip(attrs) {
             let ident = field.ident.clone();
             let ty = field.ty.clone();
             let vis = &field.vis;
             self.code_fields.extend(quote_spanned! {field.span()=>
-                #docs
+                #(#attrs)*
                 #vis #ident: #ty,
             })
         }
@@ -324,10 +325,14 @@ impl ServiceBuilder {
                     let mut identifier_assignment = None;
                     if let Some(name) = &identifier {
                         let ty = ty.unwrap(); // The type is required for named descriptors
+                        let cfg_attr = characteristic.args.cfg.as_ref().into_iter();
                         self.code_fields.extend(quote_spanned!{ identifier.span() =>
+                            #(#cfg_attr)*
                             #name: trouble_host::attribute::Descriptor<#ty>,
                         });
+                        let cfg_attr = characteristic.args.cfg.as_ref().into_iter();
                         self.code_struct_init.extend(quote_spanned! { identifier.span() =>
+                            #(#cfg_attr)*
                             #name,
                         });
                         named_descriptors.push(name.to_token_stream());
