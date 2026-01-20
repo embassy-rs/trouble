@@ -523,6 +523,74 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             }
         })
     }
+
+    #[cfg(feature = "security")]
+    /// Calculate the database hash for the attribute table.
+    ///
+    /// See Core Specification Vol 3, Part G, Section 7.3.1
+    pub fn hash(&self) -> u128 {
+        use crate::security_manager::crypto::AesCmac;
+        use bt_hci::uuid::*;
+
+        const PRIMARY_SERVICE: Uuid = Uuid::Uuid16(declarations::PRIMARY_SERVICE.to_le_bytes());
+        const SECONDARY_SERVICE: Uuid = Uuid::Uuid16(declarations::SECONDARY_SERVICE.to_le_bytes());
+        const INCLUDED_SERVICE: Uuid = Uuid::Uuid16(declarations::INCLUDE.to_le_bytes());
+        const CHARACTERISTIC: Uuid = Uuid::Uuid16(declarations::CHARACTERISTIC.to_le_bytes());
+        const CHARACTERISTIC_EXTENDED_PROPERTIES: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_EXTENDED_PROPERTIES.to_le_bytes());
+
+        const CHARACTERISTIC_USER_DESCRIPTION: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_USER_DESCRIPTION.to_le_bytes());
+        const CLIENT_CHARACTERISTIC_CONFIGURATION: Uuid =
+            Uuid::Uuid16(descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.to_le_bytes());
+        const SERVER_CHARACTERISTIC_CONFIGURATION: Uuid =
+            Uuid::Uuid16(descriptors::SERVER_CHARACTERISTIC_CONFIGURATION.to_le_bytes());
+        const CHARACTERISTIC_PRESENTATION_FORMAT: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_PRESENTATION_FORMAT.to_le_bytes());
+        const CHARACTERISTIC_AGGREGATE_FORMAT: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_AGGREGATE_FORMAT.to_le_bytes());
+
+        let mut mac = AesCmac::db_hash();
+
+        self.iterate(|mut it| {
+            while let Some((handle, att)) = it.next() {
+                match att.uuid {
+                    PRIMARY_SERVICE
+                    | SECONDARY_SERVICE
+                    | INCLUDED_SERVICE
+                    | CHARACTERISTIC
+                    | CHARACTERISTIC_EXTENDED_PROPERTIES => {
+                        mac.update(handle.to_le_bytes()).update(att.uuid.as_raw());
+                        match &att.data {
+                            AttributeData::ReadOnlyData { value, .. } => {
+                                mac.update(value);
+                            }
+                            AttributeData::Data { len, value, .. } => {
+                                mac.update(&value[..usize::from(*len)]);
+                            }
+                            AttributeData::Service { uuid, .. } => {
+                                mac.update(uuid.as_raw());
+                            }
+                            AttributeData::Declaration { props, handle, uuid } => {
+                                mac.update([props.0]).update(handle.to_le_bytes()).update(uuid.as_raw());
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    CHARACTERISTIC_USER_DESCRIPTION
+                    | CLIENT_CHARACTERISTIC_CONFIGURATION
+                    | SERVER_CHARACTERISTIC_CONFIGURATION
+                    | CHARACTERISTIC_PRESENTATION_FORMAT
+                    | CHARACTERISTIC_AGGREGATE_FORMAT => {
+                        mac.update(handle.to_le_bytes()).update(att.uuid.as_raw());
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        mac.finalize()
+    }
 }
 
 /// A type which holds a handle to an attribute in the attribute table
