@@ -14,7 +14,10 @@ use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
 use embassy_time::Duration;
 use heapless::Vec;
 
-use crate::att::{self, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
+use crate::att::{
+    self, Att, AttCfm, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_IND,
+    ATT_HANDLE_VALUE_NTF,
+};
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
@@ -1150,6 +1153,12 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         }
     }
 
+    /// Confirm an indication that was received.
+    pub async fn confirm_indication(&self) -> Result<(), BleHostError<C::Error>> {
+        self.send_att_data(Att::Client(AttClient::Confirmation(AttCfm::ConfirmIndication)))
+            .await
+    }
+
     /// Handle a notification that was received.
     async fn handle_notification_packet(&self, data: &[u8]) -> Result<(), BleHostError<C::Error>> {
         let mut r = ReadCursor::new(data);
@@ -1158,7 +1167,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         let handle = value_handle;
 
-        // TODO
+        // TODO: Wait for something like https://github.com/rust-lang/rust/issues/132980 (min_generic_const_args) to allow using P::MTU
         let mut data = [0u8; 512];
         let to_copy = data.len().min(value_attr.len());
         data[..to_copy].copy_from_slice(&value_attr[..to_copy]);
@@ -1178,7 +1187,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             let pdu = self.connection.next_gatt_client().await;
             let data = pdu.as_ref();
             // handle notifications
-            if pdu.as_ref()[0] == ATT_HANDLE_VALUE_NTF {
+            if matches!(pdu.as_ref()[0], ATT_HANDLE_VALUE_IND | ATT_HANDLE_VALUE_NTF) {
                 self.handle_notification_packet(&pdu.as_ref()[1..]).await?;
             } else {
                 self.response_channel.send((handle, pdu)).await;
