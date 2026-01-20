@@ -82,7 +82,8 @@ pub struct CharacteristicArgs {
     /// Parsed in super::check_for_characteristic.
     pub descriptors: Vec<DescriptorArgs>,
     /// Any '///' comments on each field, parsed in super::check_for_characteristic.
-    pub doc_string: String,
+    pub doc_string: Vec<syn::Attribute>,
+    pub cfg: Option<syn::Attribute>,
     pub access: AccessArgs,
 }
 
@@ -156,7 +157,8 @@ impl CharacteristicArgs {
         })?;
         Ok(Self {
             uuid: uuid.ok_or(Error::custom("Characteristic must have a UUID"))?,
-            doc_string: String::new(),
+            doc_string: Vec::new(),
+            cfg: None,
             descriptors: Vec::new(),
             default_value,
             access: AccessArgs {
