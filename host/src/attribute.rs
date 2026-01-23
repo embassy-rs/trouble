@@ -333,6 +333,11 @@ impl<'d, const MAX: usize> InnerTable<'d, MAX> {
     fn push(&mut self, attribute: Attribute<'d>) {
         self.attributes.push(attribute).unwrap();
     }
+
+    #[inline(never)]
+    fn find_handle(&mut self, handle: u16) -> Result<usize, usize> {
+        self.attributes.binary_search_by_key(&handle, |att| att.handle)
+    }
 }
 
 impl<M: RawMutex, const MAX: usize> Default for AttributeTable<'_, M, MAX> {
@@ -358,22 +363,16 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     pub(crate) fn iterate<F: FnOnce(AttributeIterator<'_, 'd>) -> R, R>(&self, f: F) -> R {
-        self.inner.lock(|inner| {
-            let mut table = inner.borrow_mut();
-            let it = AttributeIterator {
-                attributes: &mut table.attributes[..],
-                pos: 0,
-            };
-            f(it)
-        })
+        self.iterate_from(0, f)
     }
 
     pub(crate) fn with_attribute<F: FnOnce(&mut Attribute<'d>) -> R, R>(&self, handle: u16, f: F) -> Option<R> {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
-            match table.attributes.binary_search_by_key(&handle, |att| att.handle) {
-                Ok(i) => Some(f(&mut table.attributes[i])),
-                Err(_) => None,
+            if let Ok(i) = table.find_handle(handle) {
+                Some(f(&mut table.attributes[i]))
+            } else {
+                None
             }
         })
     }
@@ -381,9 +380,8 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     pub(crate) fn iterate_from<F: FnOnce(AttributeIterator<'_, 'd>) -> R, R>(&self, start: u16, f: F) -> R {
         self.inner.lock(|inner| {
             let mut table = inner.borrow_mut();
-            let pos = match table.attributes.binary_search_by_key(&start, |att| att.handle) {
-                Ok(i) => i,
-                Err(i) => i,
+            let pos = match table.find_handle(start) {
+                Ok(i) | Err(i) => i,
             };
             let it = AttributeIterator {
                 attributes: &mut table.attributes[..],
