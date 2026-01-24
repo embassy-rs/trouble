@@ -1,10 +1,13 @@
 //! Functionality for the BLE central role.
-use bt_hci::cmd::le::{LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn};
+use bt_hci::cmd::le::{
+    LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeCreateConn, LeExtCreateConn, LeSetDefaultRateParameters,
+};
 use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
 use embassy_futures::select::{select, Either};
 
 use crate::connection::{ConnectConfig, Connection, PhySet};
+use crate::prelude::ConnectRateParams;
 use crate::{bt_hci_duration, BleHostError, Error, PacketPool, Stack};
 
 /// A type implementing the BLE central role.
@@ -141,6 +144,40 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Set default connection rate parameters for all future ACL connections.
+    pub async fn set_default_connection_rate_parameters(
+        &self,
+        conn_rate_params: &ConnectRateParams,
+    ) -> Result<(), BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<LeSetDefaultRateParameters>,
+    {
+        let min_interval = bt_hci_duration(conn_rate_params.min_connection_interval);
+        let max_interval = bt_hci_duration(conn_rate_params.max_connection_interval);
+        let timeout = bt_hci_duration(conn_rate_params.supervision_timeout);
+        let min_ce = bt_hci_duration(conn_rate_params.min_ce_length);
+        let max_ce = bt_hci_duration(conn_rate_params.max_ce_length);
+        match self
+            .stack
+            .host
+            .command(LeSetDefaultRateParameters::new(
+                min_interval,
+                max_interval,
+                conn_rate_params.subrate_min,
+                conn_rate_params.subrate_max,
+                conn_rate_params.max_latency,
+                conn_rate_params.continuation_number,
+                timeout,
+                min_ce,
+                max_ce,
+            ))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 }
 
