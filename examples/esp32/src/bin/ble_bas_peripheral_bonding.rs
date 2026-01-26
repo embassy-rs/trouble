@@ -9,6 +9,7 @@ use esp_radio::ble::controller::BleConnector;
 use esp_storage::FlashStorage;
 use trouble_example_apps::ble_bas_peripheral_bonding;
 use trouble_host::prelude::ExternalController;
+use trouble_host::TrulyRandomBits;
 use {esp_alloc as _, esp_backtrace as _};
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -28,8 +29,12 @@ async fn main(_s: Spawner) {
         software_interrupt.software_interrupt0,
     );
 
-    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
-    let mut trng = Trng::try_new().unwrap();
+    let seed: TrulyRandomBits = {
+        let mut buf: [u8; 32];
+        let trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
+        Trng::try_new().unwrap().read(&mut buf);
+        TrulyRandomBits(buf)
+    };
 
     let bluetooth = peripherals.BT;
     let connector = BleConnector::new(bluetooth, Default::default()).unwrap();
@@ -38,5 +43,5 @@ async fn main(_s: Spawner) {
     // Initialize the flash
     let mut flash = embassy_embedded_hal::adapter::BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
 
-    ble_bas_peripheral_bonding::run(controller, &mut trng, &mut flash).await;
+    ble_bas_peripheral_bonding::run(controller, seed, &mut flash).await;
 }

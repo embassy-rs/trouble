@@ -2574,7 +2574,6 @@ dependencies = [
  "embassy-time",
  "embedded-hal-async",
  "heapless 0.9.1",
- "rand_core 0.6.4",
  "static_cell",
  "trouble-host",
 ]
