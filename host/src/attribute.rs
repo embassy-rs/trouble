@@ -705,7 +705,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             debug_assert!(h == value_handle);
 
             // Add optional CCCD handle
-            let cccd_handle = if props.any(&[CharacteristicProp::Notify, CharacteristicProp::Indicate]) {
+            let cccd_handle = if props.has_cccd() {
                 let handle = table.push(Attribute {
                     uuid: CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
                     data: AttributeData::Cccd {
@@ -734,10 +734,10 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 
     /// Add a characteristic to this service with a refererence to a mutable storage buffer.
-    pub fn add_characteristic<T: AsGatt, U: Into<Uuid>>(
+    pub fn add_characteristic<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
         &mut self,
         uuid: U,
-        props: &[CharacteristicProp],
+        props: P,
         value: T,
         store: &'d mut [u8],
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
@@ -760,10 +760,10 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 
     /// Add a characteristic to this service using inline storage. The characteristic value must be 8 bytes or less.
-    pub fn add_characteristic_small<T: AsGatt, U: Into<Uuid>>(
+    pub fn add_characteristic_small<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
         &mut self,
         uuid: U,
-        props: &[CharacteristicProp],
+        props: P,
         value: T,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         assert!(T::MAX_SIZE <= 8);
@@ -1189,13 +1189,29 @@ impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
     }
 }
 
-impl<const T: usize> From<[CharacteristicProp; T]> for CharacteristicProps {
-    fn from(props: [CharacteristicProp; T]) -> Self {
+impl<'a, const N: usize> From<&'a [CharacteristicProp; N]> for CharacteristicProps {
+    fn from(props: &'a [CharacteristicProp; N]) -> Self {
+        let mut val: u8 = 0;
+        for prop in props {
+            val |= *prop as u8;
+        }
+        CharacteristicProps(val)
+    }
+}
+
+impl<const N: usize> From<[CharacteristicProp; N]> for CharacteristicProps {
+    fn from(props: [CharacteristicProp; N]) -> Self {
         let mut val: u8 = 0;
         for prop in props {
             val |= prop as u8;
         }
         CharacteristicProps(val)
+    }
+}
+
+impl From<u8> for CharacteristicProps {
+    fn from(value: u8) -> Self {
+        Self(value)
     }
 }
 
@@ -1229,6 +1245,16 @@ impl CharacteristicProps {
         };
 
         AttPermissions { read, write }
+    }
+
+    /// Check if the characteristic will have a Client Characteristic Configuration Descriptor
+    pub fn has_cccd(&self) -> bool {
+        (self.0 & (CharacteristicProp::Indicate as u8 | CharacteristicProp::Notify as u8)) != 0
+    }
+
+    /// Get the raw value of the characteristic props
+    pub fn to_raw(self) -> u8 {
+        self.0
     }
 }
 
