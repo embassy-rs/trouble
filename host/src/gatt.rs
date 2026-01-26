@@ -18,7 +18,7 @@ use crate::att::{
     self, Att, AttCfm, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_IND,
     ATT_HANDLE_VALUE_NTF,
 };
-use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid};
+use crate::attribute::{AttributeData, Characteristic, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 #[cfg(feature = "security")]
@@ -949,7 +949,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             if *uuid == decl_uuid {
                                 // If there are "notify" and "indicate" characteristic properties we need to find the
                                 // next characteristic so we can determine the search space for the CCCD
-                                if !props.any(&[CharacteristicProp::Indicate, CharacteristicProp::Notify]) {
+                                if !props.has_cccd() {
                                     return Ok(Characteristic {
                                         handle,
                                         cccd_handle: None,
