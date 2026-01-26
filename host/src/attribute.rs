@@ -766,15 +766,16 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         props: P,
         value: T,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-        assert!(T::MAX_SIZE <= 8);
+        assert!(T::MIN_SIZE <= 8);
 
         let props: CharacteristicProps = props.into();
         let permissions = props.default_permissions();
         let bytes = value.as_gatt();
+        assert!(bytes.len() <= 8);
         let mut value = [0; 8];
         value[..bytes.len()].copy_from_slice(bytes);
         let variable_len = T::MAX_SIZE != T::MIN_SIZE;
-        let capacity = T::MAX_SIZE as u8;
+        let capacity = T::MAX_SIZE.min(8) as u8;
         let len = bytes.len() as u8;
         self.add_characteristic_internal(
             uuid.into(),
@@ -1001,13 +1002,14 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
         permissions: AttPermissions,
         value: DT,
     ) -> Descriptor<DT> {
-        assert!(DT::MAX_SIZE <= 8);
+        assert!(DT::MIN_SIZE <= 8);
 
         let bytes = value.as_gatt();
+        assert!(bytes.len() <= 8);
         let mut value = [0; 8];
         value[..bytes.len()].copy_from_slice(bytes);
         let variable_len = T::MAX_SIZE != T::MIN_SIZE;
-        let capacity = T::MAX_SIZE as u8;
+        let capacity = T::MAX_SIZE.min(8) as u8;
         let len = bytes.len() as u8;
         self.add_descriptor_internal(
             uuid.into(),
