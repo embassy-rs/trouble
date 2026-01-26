@@ -17,7 +17,7 @@ use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
-use crate::{config, Error, Identity, PacketPool};
+use crate::{config, Address, Error, Identity, PacketPool};
 
 struct State<'d, P> {
     connections: &'d mut [ConnectionStorage<P>],
@@ -233,6 +233,21 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     return Some(Connection::new(index as u8, self));
                 }
                 _ => {}
+            }
+        }
+        None
+    }
+
+    pub(crate) fn get_connection_by_peer_address(&'d self, peer_address: Address) -> Option<Connection<'d, P>> {
+        let mut state = self.state.borrow_mut();
+        for (index, storage) in state.connections.iter().enumerate() {
+            if storage.state == ConnectionState::Connected && storage.peer_addr_kind == Some(peer_address.kind) {
+                if let Some(peer) = &storage.peer_identity {
+                    if peer.match_address(&peer_address.addr) {
+                        state.inc_ref(index as u8);
+                        return Some(Connection::new(index as u8, self));
+                    }
+                }
             }
         }
         None
