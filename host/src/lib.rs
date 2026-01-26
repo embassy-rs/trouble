@@ -624,7 +624,7 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Set the IO capabilities used by the security manager.
     ///
     /// Only relevant if the feature `security` is enabled.
-    pub fn set_io_capabilities(self, io_capabilities: IoCapabilities) -> Self {
+    pub fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
         #[cfg(feature = "security")]
         {
             self.host
@@ -632,7 +632,6 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
                 .security_manager
                 .set_io_capabilities(io_capabilities);
         }
-        self
     }
 
     /// Build the stack.
