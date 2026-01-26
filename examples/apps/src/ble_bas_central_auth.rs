@@ -26,8 +26,9 @@ where
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator)
-        .set_io_capabilities(IoCapabilities::DisplayYesNo);
+        .set_random_generator_seed(random_generator);
+
+    stack.set_io_capabilities(IoCapabilities::DisplayYesNo);
 
     let Host {
         mut central,
@@ -59,28 +60,28 @@ where
                     match conn.next().await {
                         ConnectionEvent::PassKeyDisplay(passkey) => {
                             info!("Pairing with pass key {}", passkey);
-                        },
+                        }
                         ConnectionEvent::PassKeyConfirm(passkey) => {
                             info!("Press the yes or no button to confirm pairing with key = {}", passkey);
                             match select(yes.wait_for_low(), no.wait_for_low()).await {
                                 Either::First(_) => {
                                     info!("[gatt] confirming pairing");
                                     conn.pass_key_confirm().unwrap();
-                                },
+                                }
                                 Either::Second(_) => {
                                     info!("[gatt] denying pairing");
                                     conn.pass_key_cancel().unwrap();
-                                },
+                                }
                             }
                         }
                         ConnectionEvent::PairingComplete { security_level, .. } => {
                             info!("Pairing complete: {:?}", security_level);
                             break;
-                        },
+                        }
                         ConnectionEvent::PairingFailed(err) => {
                             error!("Pairing failed: {:?}", err);
                             break;
-                        },
+                        }
                         ConnectionEvent::Disconnected { reason } => {
                             error!("Disconnected: {:?}", reason);
                             continue 'connect;
@@ -127,10 +128,10 @@ where
                         }
                     },
                 )
-                    .await;
-            })
                 .await;
+            })
+            .await;
         }
     })
-        .await;
+    .await;
 }

@@ -42,8 +42,10 @@ where
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator)
-        .set_io_capabilities(IoCapabilities::KeyboardOnly);
+        .set_random_generator_seed(random_generator);
+
+    stack.set_io_capabilities(IoCapabilities::KeyboardOnly);
+
     let Host {
         mut peripheral, runner, ..
     } = stack.build();
@@ -53,7 +55,7 @@ where
         name: "TrouBLE",
         appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
     }))
-        .unwrap();
+    .unwrap();
 
     let _ = join(ble_task(runner), async {
         loop {
@@ -74,7 +76,7 @@ where
             }
         }
     })
-        .await;
+    .await;
 }
 
 /// This is a background task that is required to run forever alongside any other BLE tasks.
