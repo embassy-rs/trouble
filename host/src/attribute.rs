@@ -530,6 +530,16 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         .unwrap_or(Err(Error::NotFound))
     }
 
+    /// Get the number of attributes in the table
+    pub fn len(&self) -> usize {
+        self.with_inner(|table| table.attributes.len())
+    }
+
+    /// Returns true if the table is empty
+    pub fn is_empty(&self) -> bool {
+        self.with_inner(|table| table.attributes.is_empty())
+    }
+
     /// Set the value of a characteristic
     ///
     /// The provided data must exactly match the size of the storage for the characteristic,
