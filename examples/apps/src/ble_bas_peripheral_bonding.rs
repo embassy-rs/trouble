@@ -3,7 +3,7 @@ use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::Timer;
 use embedded_storage_async::nor_flash::NorFlash;
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, Rng};
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::{Key, SerializationError, Value};
 use trouble_host::prelude::*;
@@ -168,7 +168,7 @@ async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformati
 pub async fn run<C, RNG, S>(controller: C, random_generator: &mut RNG, storage: &mut S)
 where
     C: Controller,
-    RNG: RngCore + CryptoRng,
+    RNG: Rng + CryptoRng,
     S: NorFlash,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
@@ -239,7 +239,7 @@ where
 ///     runner.run().await;
 /// }
 ///
-/// spawner.must_spawn(ble_task(runner));
+/// spawner.spawn(unwrap!(ble_task(runner)));
 /// ```
 async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
     loop {

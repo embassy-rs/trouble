@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 embassy-executor = "0.9.1"
 esp-bootloader-esp-idf = "0.4.0"
 esp-backtrace = { version = "0.18.1", features = [ "panic-handler", "println" ] }
-esp-hal = { version = "1.0.0", features = [ "unstable" ] }
+esp-hal = { version = "1.0.0", features = ["unstable"] }
 esp-alloc = { version = "0.9.0" }
 esp-println = { version = "0.16.0", features = ["log-04"] }
 esp-radio = { version = "0.17.0", features = ["ble", "log-04", "unstable"] }

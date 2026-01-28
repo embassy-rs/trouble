@@ -8,11 +8,12 @@ use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, rng};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
+//use rand::rand_core::SeedableRng;
+//use rand::rngs::ChaCha12Rng;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_peripheral_pass_key;
 use {defmt_rtt as _, panic_probe as _};
+use trouble_nrf52_examples::chacha_from_nrf_rng;
 
 bind_interrupts!(struct Irqs {
     RNG => rng::InterruptHandler<RNG>;
@@ -72,7 +73,10 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
+    #[cfg(false)]
+    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng);  // revert to this when 'embassy-nrf' supports 'rand_core' 0.10
+    #[cfg(true)]
+    let mut rng_2 = chacha_from_nrf_rng(&mut rng);
 
     let mut sdc_mem = sdc::Mem::<3312>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));

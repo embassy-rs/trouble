@@ -1,9 +1,10 @@
+#![cfg_attr(rustfmt, rustfmt_skip)]     // REMOVE before 'pr-rand-catchup' is ready!
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 
 use embassy_time::Instant;
-use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
+use rand::rand_core::{CryptoRng, Rng};
+use rand::RngExt; // brings in 'Rng::sample()'
 
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
@@ -73,7 +74,7 @@ impl PairingRequestSentTag {
 struct PassKeyEntryConfirmSentTag(i32);
 
 impl PassKeyEntryConfirmSentTag {
-    fn new<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn new<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         round: i32,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
@@ -254,7 +255,7 @@ impl Pairing {
         }
     }
 
-    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         command: Command,
         payload: &[u8],
@@ -271,7 +272,7 @@ impl Pairing {
         }
     }
 
-    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         event: Event,
         ops: &mut OPS,
@@ -349,7 +350,7 @@ impl Pairing {
         }
     }
 
-    fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         command: CommandAndPayload,
         ops: &mut OPS,
@@ -387,7 +388,7 @@ impl Pairing {
                         PairingMethod::PassKeyEntry { central, .. } => {
                             if central == PassKeyEntryAction::Display {
                                 pairing_data.local_secret_ra =
-                                    rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                                    rng.sample(rand::distr::Uniform::new_inclusive(0, 999999).unwrap());
                                 pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     pairing_data.local_secret_ra as u32,
@@ -468,7 +469,7 @@ impl Pairing {
         Ok(())
     }
 
-    fn generate_private_public_key_pair<RNG: CryptoRng + RngCore>(
+    fn generate_private_public_key_pair<RNG: CryptoRng + Rng>(
         pairing_data: &mut PairingData,
         rng: &mut RNG,
     ) -> Result<(), Error> {
@@ -508,7 +509,7 @@ impl Pairing {
         Ok(())
     }
 
-    fn handle_numeric_compare_confirm<RNG: CryptoRng + RngCore>(
+    fn handle_numeric_compare_confirm<RNG: CryptoRng + Rng>(
         payload: &[u8],
         pairing_data: &mut PairingData,
         rng: &mut RNG,
