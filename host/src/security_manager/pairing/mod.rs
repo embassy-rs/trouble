@@ -1,6 +1,6 @@
 use bt_hci::param::ConnHandle;
 use embassy_time::Instant;
-use rand::rand_core::{CryptoRng, RngCore};
+use rand::rand_core::{CryptoRng, Rng};
 
 use crate::connection::{ConnectionEvent, SecurityLevel};
 use crate::security_manager::types::{BondingFlag, Command};
@@ -36,7 +36,7 @@ impl Pairing {
     pub(crate) fn is_central(&self) -> bool {
         matches!(self, Pairing::Central(_))
     }
-    pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         command: Command,
         payload: &[u8],
@@ -49,7 +49,7 @@ impl Pairing {
         }
     }
 
-    pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         event: Event,
         ops: &mut OPS,

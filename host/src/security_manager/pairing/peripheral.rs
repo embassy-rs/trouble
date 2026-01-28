@@ -4,8 +4,8 @@ use core::ops::{Deref, DerefMut};
 
 use bt_hci::param::{AddrKind, BdAddr};
 use embassy_time::Instant;
-use rand::rand_core::{CryptoRng, RngCore};
-use rand::Rng;
+use rand::rand_core::{CryptoRng, Rng};
+use rand::RngExt; // brings in 'Rng::sample()'
 
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
@@ -51,7 +51,7 @@ enum Step {
 struct NumericCompareConfirmSentTag {}
 
 impl NumericCompareConfirmSentTag {
-    fn new<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
+    fn new<P: PacketPool, OPS: PairingOps<P>, RNG: Rng>(
         ops: &mut OPS,
         pairing_data: &mut PairingData, rng: &mut RNG,
     ) -> Result<Self, Error> {
@@ -180,7 +180,7 @@ impl Pairing {
         Ok(ret)
     }
 
-    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         command: Command,
         payload: &[u8],
@@ -197,7 +197,7 @@ impl Pairing {
         }
     }
 
-    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         event: Event,
         ops: &mut OPS,
@@ -304,7 +304,7 @@ impl Pairing {
         }
     }
 
-    fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         command: CommandAndPayload,
         ops: &mut OPS,
@@ -512,7 +512,7 @@ impl Pairing {
         pairing_data.peer_public_key = Some(peer_public_key);
     }
 
-    fn generate_private_public_key_pair<RNG: CryptoRng + RngCore>(
+    fn generate_private_public_key_pair<RNG: CryptoRng + Rng>(
         pairing_data: &mut PairingData,
         rng: &mut RNG,
     ) -> Result<(), Error> {
@@ -656,7 +656,7 @@ impl Pairing {
         }
     }
 
-    fn handle_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         round: i32,
         payload: &[u8],
         ops: &mut OPS,

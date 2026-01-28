@@ -16,7 +16,7 @@ use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::Vec;
 #[cfg(feature = "security")]
-use rand::rand_core::{CryptoRng, RngCore};
+use rand::rand_core::{CryptoRng, Rng};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
@@ -610,7 +610,7 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     }
     #[cfg(feature = "security")]
     /// Set the random generator seed for random generator used by security manager
-    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
+    pub fn set_random_generator_seed<RNG: Rng + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
         {
             let mut random_seed = [0u8; 32];
             _random_generator.fill_bytes(&mut random_seed);
