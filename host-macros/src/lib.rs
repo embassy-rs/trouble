@@ -163,25 +163,25 @@ fn check_for_characteristic(
         return RETAIN; // If the field does not have a characteristic attribute, retain it.
     };
     let mut descriptors = Vec::new();
-    let mut doc_string = String::new();
+    let mut doc_string = Vec::new();
+    let mut cfg = None;
     let mut characteristic_checked = false;
     for attr in &field.attrs {
         if let Some(ident) = attr.path().get_ident() {
             match ident.to_string().as_str() {
                 "doc" => {
-                    if let Ok(meta_name_value) = attr.meta.require_name_value() {
-                        if let syn::Expr::Lit(value) = &meta_name_value.value {
-                            if let Some(text) = &value.lit.span().source_text() {
-                                let text: Vec<&str> = text.split("///").collect();
-                                if let Some(text) = text.get(1) {
-                                    if !doc_string.is_empty() {
-                                        doc_string.push('\n');
-                                    }
-                                    doc_string.push_str(text);
-                                }
-                            }
-                        }
+                    doc_string.push(attr.clone());
+                }
+                "cfg" => {
+                    if cfg.is_some() {
+                        *err = Some(Error::new(
+                            attr.path().span(),
+                            "only one cfg attribute should be applied per field",
+                        ));
+                        return REMOVE; // If there was an error parsing the descriptor, remove the field.
                     }
+
+                    cfg = Some(attr.clone());
                 }
                 "descriptor" => match DescriptorArgs::parse(attr) {
                     Ok(args) => descriptors.push(args),
@@ -228,6 +228,7 @@ fn check_for_characteristic(
     };
     args.doc_string = doc_string;
     args.descriptors = descriptors;
+    args.cfg = cfg;
     characteristics.push(Characteristic::new(field, args));
     REMOVE // Successfully parsed, remove the field from the fields vec.
 }

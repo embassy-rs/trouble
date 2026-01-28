@@ -14,6 +14,7 @@ pub mod ble_bas_peripheral;
 #[cfg(feature = "security")]
 pub mod ble_bas_peripheral_sec;
 pub mod ble_beacon;
+pub mod ble_dis_peripheral;
 pub mod ble_l2cap_central;
 pub mod ble_l2cap_peripheral;
 pub mod ble_scanner;

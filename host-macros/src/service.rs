@@ -142,6 +142,11 @@ impl ServiceBuilder {
                         #code_struct_init
                     }
                 }
+
+                #visibility fn handle_range(&self) -> core::ops::Range<u16> {
+                    self.handle..(self.handle + Self::ATTRIBUTE_COUNT as u16)
+                }
+
                 #code_impl
             }
         }
@@ -150,7 +155,7 @@ impl ServiceBuilder {
     /// Construct instructions for adding a characteristic to the service, with static storage.
     fn construct_characteristic_static(&mut self, characteristic: Characteristic) {
         let (code_descriptors, named_descriptors) = self.build_descriptors(&characteristic);
-        let name_screaming = format_ident!("{}", characteristic.name.as_str().to_case(Case::Constant));
+        let name_screaming = format_ident!("{}_STORE", characteristic.name.as_str().to_case(Case::Constant));
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
         let access = &characteristic.args.access;
@@ -161,12 +166,46 @@ impl ServiceBuilder {
             None => quote_spanned!(characteristic.span => <#ty>::default()), // or default otherwise
         };
 
+        let cfg_attr = characteristic.args.cfg.as_ref().into_iter();
+        self.code_build_chars.extend(quote_spanned! {characteristic.span=>
+            #(#cfg_attr)*
+            let (#char_name, #(#named_descriptors),*) = {
+                #[allow(clippy::absurd_extreme_comparisons)]
+                let mut builder = if <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE <= 8 {
+                    service.add_characteristic_small(#uuid, &[#(#properties),*], #default_value)
+                } else {
+                    static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
+                    let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
+                    service
+                        .add_characteristic(#uuid, &[#(#properties),*], #default_value, store)
+                };
+                #code_descriptors
+
+                (builder.build(), #(#named_descriptors),*)
+            };
+        });
+
+        let cfg_attr = characteristic.args.cfg.as_ref().into_iter();
+        self.code_struct_init.extend(quote_spanned!(characteristic.span=>
+            #(#cfg_attr)*
+            #char_name,
+        ));
+    }
+
+    /// Construct instructions for adding a read-only characteristic to the service.
+    fn construct_characteristic_ro(&mut self, characteristic: Characteristic) {
+        let (code_descriptors, named_descriptors) = self.build_descriptors(&characteristic);
+        let char_name = format_ident!("{}", characteristic.name);
+        let ty = characteristic.ty;
+        let uuid = characteristic.args.uuid;
+        let default_value = match characteristic.args.default_value {
+            Some(val) => quote!(#val),                                       // if set by user
+            None => quote_spanned!(characteristic.span => <#ty>::default()), // or default otherwise
+        };
+
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let (#char_name, #(#named_descriptors),*) = {
-                static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
-                let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
-                let mut builder = service
-                    .add_characteristic(#uuid, &[#(#properties),*], #default_value, store);
+                let mut builder = service.add_characteristic_ro(#uuid, #default_value);
                 #code_descriptors
 
                 (builder.build(), #(#named_descriptors),*)
@@ -186,20 +225,33 @@ impl ServiceBuilder {
         characteristics: Vec<Characteristic>,
     ) -> Self {
         // Processing specific to non-characteristic fields
-        let mut doc_strings: Vec<String> = Vec::new();
+        let mut attrs: Vec<Vec<syn::Attribute>> = Vec::new();
         for field in &fields {
             let ident = field.ident.as_ref().expect("All fields should have names");
             let ty = &field.ty;
-            let vis = &field.vis;
+            let cfg_attr = field.attrs.iter().find(|attr| attr.path().is_ident("cfg")).into_iter();
             self.code_struct_init.extend(quote_spanned! {field.span() =>
-                #vis #ident: #ty::default(),
+                #(#cfg_attr)*
+                #ident: #ty::default(),
             });
-            doc_strings.push(String::new()); // not supporting docstrings here yet
+            attrs.push(field.attrs.clone());
         }
         // Process characteristic fields
         for ch in characteristics {
             let char_name = format_ident!("{}", ch.name);
-            let ty = &ch.ty;
+
+            let mut ty = &ch.ty;
+            let mut ro = false;
+            if let syn::Type::Reference(type_ref) = ty {
+                if ch.args.access.is_read_only()
+                    && type_ref.mutability.is_none()
+                    && type_ref.lifetime.as_ref().is_some_and(|lt| lt.ident == "static")
+                {
+                    ty = &type_ref.elem;
+                    ro = true;
+                }
+            }
+
             // add fields for each characteristic value handle
             fields.push(syn::Field {
                 ident: Some(char_name.clone()),
@@ -209,29 +261,29 @@ impl ServiceBuilder {
                 vis: ch.vis.clone(),
                 mutability: syn::FieldMutability::None,
             });
-            doc_strings.push(ch.args.doc_string.to_owned());
+
+            let mut ch_attrs = ch.args.doc_string.clone();
+            if let Some(cfg) = &ch.args.cfg {
+                ch_attrs.push(cfg.clone());
+            }
+            attrs.push(ch_attrs);
 
             self.increment_attributes(&ch.args.access);
 
-            self.construct_characteristic_static(ch);
+            if ro {
+                self.construct_characteristic_ro(ch);
+            } else {
+                self.construct_characteristic_static(ch);
+            }
         }
-        assert_eq!(fields.len(), doc_strings.len());
+        assert_eq!(fields.len(), attrs.len());
         // Processing common to all fields
-        for (field, doc_string) in fields.iter().zip(doc_strings) {
-            let docs: TokenStream2 = doc_string
-                .lines()
-                .map(|line| {
-                    let span = field.span();
-                    quote_spanned!(span=>
-                        #[doc = #line]
-                    )
-                })
-                .collect();
+        for (field, attrs) in fields.iter().zip(attrs) {
             let ident = field.ident.clone();
             let ty = field.ty.clone();
             let vis = &field.vis;
             self.code_fields.extend(quote_spanned! {field.span()=>
-                #docs
+                #(#attrs)*
                 #vis #ident: #ty,
             })
         }
@@ -248,7 +300,7 @@ impl ServiceBuilder {
                 .enumerate()
                 .map(|(index, args)| {
                     let name_screaming =
-                        format_ident!("DESC_{index}_{}", characteristic.name.as_str().to_case(Case::Constant));
+                        format_ident!("DESC_{index}_{}_STORE", characteristic.name.as_str().to_case(Case::Constant));
                     let identifier = args.name.as_ref().map(|name| format_ident!("{}_{}_descriptor", characteristic.name.as_str(), name.value()));
                     let access = &args.access;
                     let properties = set_access_properties(access);
@@ -257,17 +309,30 @@ impl ServiceBuilder {
                         Some(val) => quote!(#val), // if set by user
                         None => quote!(""),
                     };
-                    let capacity = match &args.capacity {
-                        Some(cap) => quote!(#cap),
-                        None => quote!(#default_value.len() as usize)
-                    };
+
+                    let mut ty = args.ty.as_ref();
+                    let mut ro = false;
+                    if let Some(syn::Type::Reference(type_ref)) = args.ty.as_ref() {
+                        if args.access.is_read_only()
+                            && type_ref.mutability.is_none()
+                            && type_ref.lifetime.as_ref().is_some_and(|lt| lt.ident == "static")
+                        {
+                            ty = Some(&type_ref.elem);
+                            ro = true;
+                        }
+                    }
 
                     let mut identifier_assignment = None;
                     if let Some(name) = &identifier {
+                        let ty = ty.unwrap(); // The type is required for named descriptors
+                        let cfg_attr = characteristic.args.cfg.as_ref().into_iter();
                         self.code_fields.extend(quote_spanned!{ identifier.span() =>
-                            #name: trouble_host::attribute::Descriptor<&'static [u8]>,
+                            #(#cfg_attr)*
+                            #name: trouble_host::attribute::Descriptor<#ty>,
                         });
+                        let cfg_attr = characteristic.args.cfg.as_ref().into_iter();
                         self.code_struct_init.extend(quote_spanned! { identifier.span() =>
+                            #(#cfg_attr)*
                             #name,
                         });
                         named_descriptors.push(name.to_token_stream());
@@ -276,19 +341,40 @@ impl ServiceBuilder {
 
                     self.attribute_count += 1; // descriptors should always only be one attribute.
 
-                    quote_spanned! {characteristic.span=>
-                        #identifier_assignment {
-                            let value = #default_value;
-                            static #name_screaming: static_cell::StaticCell<[u8; #capacity]> = static_cell::StaticCell::new();
-                            let store = #name_screaming.init([0; #capacity]);
-                            let value = trouble_host::types::gatt_traits::AsGatt::as_gatt(&value);
-                            store[..value.len()].copy_from_slice(value);
-                            builder.add_descriptor::<&[u8], _>(
-                                #uuid,
-                                &[#(#properties),*],
-                                store,
-                            )
+                    if ro {
+                        quote_spanned! {characteristic.span=>
+                            #identifier_assignment builder.add_descriptor_ro(#uuid, #default_value);
+                        }
+                    } else {
+                        let capacity = match ty {
+                            Some(ty) => quote!(<#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE),
+                            None => quote!(#default_value.len() as usize),
                         };
+                        let capacity_screaming =
+                            format_ident!("DESC_{index}_{}_CAPACITY", characteristic.name.as_str().to_case(Case::Constant));
+
+                        quote_spanned! {characteristic.span=>
+                            #identifier_assignment {
+                                const #capacity_screaming: usize = #capacity;
+                                #[allow(clippy::absurd_extreme_comparisons)]
+                                if #capacity_screaming <= 8 {
+                                    builder.add_descriptor_small(
+                                        #uuid,
+                                        &[#(#properties),*],
+                                        #default_value,
+                                    )
+                                } else {
+                                    static #name_screaming: static_cell::StaticCell<[u8; #capacity_screaming]> = static_cell::StaticCell::new();
+                                    let store = #name_screaming.init([0; #capacity]);
+                                    builder.add_descriptor(
+                                        #uuid,
+                                        &[#(#properties),*],
+                                        #default_value,
+                                        store,
+                                    )
+                                }
+                            };
+                        }
                     }
                 })
                 .collect(),
