@@ -43,7 +43,7 @@ use futures::pin_mut;
 use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
-use crate::connection::ConnectionEvent;
+use crate::connection::{ConnParams, ConnectionEvent};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
@@ -243,10 +243,14 @@ where
         peer_addr_kind: AddrKind,
         peer_addr: BdAddr,
         role: LeConnRole,
+        params: ConnParams,
     ) -> bool {
         match status.to_result() {
             Ok(_) => {
-                if let Err(err) = self.connections.connect(handle, peer_addr_kind, peer_addr, role) {
+                if let Err(err) = self
+                    .connections
+                    .connect(handle, peer_addr_kind, peer_addr, role, params)
+                {
                     warn!("Error establishing connection: {:?}", err);
                     return false;
                 } else {
@@ -852,6 +856,13 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         e.peer_addr_kind,
                                         e.peer_addr,
                                         e.role,
+                                        ConnParams {
+                                            conn_interval: Duration::from_micros(e.conn_interval.as_micros()),
+                                            peripheral_latency: e.peripheral_latency,
+                                            supervision_timeout: Duration::from_micros(
+                                                e.supervision_timeout.as_micros(),
+                                            ),
+                                        },
                                     ) {
                                         let _ = host
                                             .command(Disconnect::new(
@@ -870,6 +881,13 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         e.peer_addr_kind,
                                         e.peer_addr,
                                         e.role,
+                                        ConnParams {
+                                            conn_interval: Duration::from_micros(e.conn_interval.as_micros()),
+                                            peripheral_latency: e.peripheral_latency,
+                                            supervision_timeout: Duration::from_micros(
+                                                e.supervision_timeout.as_micros(),
+                                            ),
+                                        },
                                     ) {
                                         let _ = host
                                             .command(Disconnect::new(
