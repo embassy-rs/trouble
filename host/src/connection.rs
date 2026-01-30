@@ -59,7 +59,7 @@ pub struct ConnectConfig<'d> {
     /// Scan configuration to use while connecting.
     pub scan_config: ScanConfig<'d>,
     /// Parameters to use for the connection.
-    pub connect_params: ConnectParams,
+    pub connect_params: RequestedConnParams,
 }
 
 /// Scan/connect configuration.
@@ -112,10 +112,10 @@ pub enum PhySet {
     M1M2Coded = 7,
 }
 
-/// Connection parameters.
+/// Requested parameters for a connection.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ConnectParams {
+pub struct RequestedConnParams {
     /// Minimum connection interval.
     pub min_connection_interval: Duration,
     /// Maximum connection interval.
@@ -126,6 +126,18 @@ pub struct ConnectParams {
     pub min_event_length: Duration,
     /// Event length.
     pub max_event_length: Duration,
+    /// Supervision timeout.
+    pub supervision_timeout: Duration,
+}
+
+/// Current parameters for a connection.
+#[derive(Default, Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ConnParams {
+    /// Connection interval.
+    pub conn_interval: Duration,
+    /// Peripheral latency.
+    pub peripheral_latency: u16,
     /// Supervision timeout.
     pub supervision_timeout: Duration,
 }
@@ -202,7 +214,7 @@ pub enum ConnectionEvent {
     PairingFailed(Error),
 }
 
-impl Default for ConnectParams {
+impl Default for RequestedConnParams {
     fn default() -> Self {
         Self {
             min_connection_interval: Duration::from_millis(80),
@@ -211,6 +223,16 @@ impl Default for ConnectParams {
             min_event_length: Duration::from_secs(0),
             max_event_length: Duration::from_secs(0),
             supervision_timeout: Duration::from_secs(8),
+        }
+    }
+}
+
+impl ConnParams {
+    pub(crate) const fn new() -> Self {
+        Self {
+            conn_interval: Duration::from_ticks(0),
+            peripheral_latency: 0,
+            supervision_timeout: Duration::from_ticks(0),
         }
     }
 }
@@ -310,6 +332,12 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     pub fn peer_identity(&self) -> Identity {
         self.manager.peer_identity(self.index)
     }
+
+    /// The current connection params
+    pub fn params(&self) -> ConnParams {
+        self.manager.params(self.index)
+    }
+
     /// Request a certain security level
     ///
     /// For a peripheral this may cause the peripheral to send a security request. For a central
@@ -466,7 +494,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     pub async fn update_connection_params<T>(
         &self,
         stack: &Stack<'_, T, P>,
-        params: &ConnectParams,
+        params: &RequestedConnParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdAsync<LeConnUpdate> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
@@ -517,7 +545,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     pub async fn accept_connection_params<T>(
         &self,
         stack: &Stack<'_, T, P>,
-        params: &ConnectParams,
+        params: &RequestedConnParams,
     ) -> Result<(), BleHostError<T::Error>>
     where
         T: ControllerCmdAsync<LeConnUpdate>
@@ -603,7 +631,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 }
 
-fn into_le_conn_update(handle: ConnHandle, params: &ConnectParams) -> LeConnUpdate {
+fn into_le_conn_update(handle: ConnHandle, params: &RequestedConnParams) -> LeConnUpdate {
     LeConnUpdate::new(
         handle,
         bt_hci_duration(params.min_connection_interval),

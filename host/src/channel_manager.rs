@@ -1246,7 +1246,7 @@ mod tests {
 
     use super::*;
     use crate::mock_controller::MockController;
-    use crate::prelude::DefaultPacketPool;
+    use crate::prelude::{ConnParams, DefaultPacketPool};
     use crate::HostResources;
 
     #[test]
@@ -1259,7 +1259,13 @@ mod tests {
 
         let conn = ConnHandle::new(33);
         ble.connections
-            .connect(conn, AddrKind::PUBLIC, BdAddr::new([0; 6]), LeConnRole::Central)
+            .connect(
+                conn,
+                AddrKind::PUBLIC,
+                BdAddr::new([0; 6]),
+                LeConnRole::Central,
+                ConnParams::new(),
+            )
             .unwrap();
         let idx = ble
             .channels

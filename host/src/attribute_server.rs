@@ -1038,7 +1038,8 @@ mod tests {
                 ConnHandle::new(0),
                 AddrKind::RANDOM,
                 BdAddr::new(ADDR_1),
-                LeConnRole::Peripheral
+                LeConnRole::Peripheral,
+                ConnParams::new(),
             ));
 
             if let Poll::Ready(conn_handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) {

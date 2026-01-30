@@ -38,7 +38,7 @@ where
     let target: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
 
     let config = ConnectConfig {
-        connect_params: ConnectParams {
+        connect_params: RequestedConnParams {
             min_connection_interval: Duration::from_millis(80),
             max_connection_interval: Duration::from_millis(80),
             ..Default::default()
