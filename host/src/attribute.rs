@@ -953,6 +953,15 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     pub fn cccd_handle(&self) -> Option<CharacteristicPropertiesHandle> {
         self.cccd_handle.map(CharacteristicPropertiesHandle)
     }
+
+    /// Convert this characteristic's type to raw bytes
+    pub fn to_raw(self) -> Characteristic<[u8]> {
+        Characteristic {
+            cccd_handle: self.cccd_handle,
+            handle: self.handle,
+            phantom: PhantomData,
+        }
+    }
 }
 
 /// Attribute handle for a characteristic's properties
@@ -972,7 +981,7 @@ pub struct CharacteristicBuilder<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const 
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
+impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, T, M, MAX> {
     fn add_descriptor_internal<DT: AsGatt + ?Sized>(&mut self, uuid: Uuid, data: AttributeData<'d>) -> Descriptor<DT> {
         let handle = self.table.push(Attribute { uuid, data });
 
@@ -1105,6 +1114,13 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
         self
     }
 
+    /// Convert this characteristic's type to raw bytes
+    pub fn to_raw(self) -> CharacteristicBuilder<'r, 'd, [u8], M, MAX> {
+        CharacteristicBuilder {
+            handle: self.handle.to_raw(),
+            table: self.table,
+        }
+    }
     /// Return the built characteristic.
     pub fn build(self) -> Characteristic<T> {
         self.handle
