@@ -612,20 +612,28 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If no characteristic corresponding to the given value handle was found, returns an error
     pub fn find_characteristic_by_value_handle<T: AsGatt>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
-        self.iterate_from(handle, |mut it| {
-            if let Some(att) = it.next() {
-                let cccd_handle = it
-                    .next()
-                    .and_then(|(handle, att)| matches!(att.data, AttributeData::Cccd { .. }).then_some(handle));
+        if handle == 0 {
+            return Err(Error::NotFound);
+        }
 
-                Ok(Characteristic {
-                    handle,
-                    cccd_handle,
-                    phantom: PhantomData,
-                })
-            } else {
-                Err(Error::NotFound)
+        self.iterate_from(handle - 1, |mut it| {
+            if let Some((_, att)) = it.next() {
+                if let AttributeData::Declaration { props, .. } = att.data {
+                    if it.next().is_some() {
+                        let cccd_handle = it
+                            .next()
+                            .and_then(|(handle, att)| matches!(att.data, AttributeData::Cccd { .. }).then_some(handle));
+
+                        return Ok(Characteristic {
+                            handle,
+                            cccd_handle,
+                            props,
+                            phantom: PhantomData,
+                        });
+                    }
+                }
             }
+            Err(Error::NotFound)
         })
     }
 
@@ -768,6 +776,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             handle: Characteristic {
                 handle,
                 cccd_handle,
+                props,
                 phantom: PhantomData,
             },
             table: self.table,
@@ -881,6 +890,8 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
     pub cccd_handle: Option<u16>,
     /// Handle value assigned to this characteristic when it is added to the Gatt Attribute Table
     pub handle: u16,
+    /// Properties of this characteristic
+    pub props: CharacteristicProps,
     pub(crate) phantom: PhantomData<T>,
 }
 
@@ -980,7 +991,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         server.table().get(self)
     }
 
-    /// Returns the attribute handle for the characteristic's properties (if available)
+    /// Returns the attribute handle for the characteristic's client characteristic configuration descriptor (if available)
     pub fn cccd_handle(&self) -> Option<CharacteristicPropertiesHandle> {
         self.cccd_handle.map(CharacteristicPropertiesHandle)
     }
@@ -990,6 +1001,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         Characteristic {
             cccd_handle: self.cccd_handle,
             handle: self.handle,
+            props: self.props,
             phantom: PhantomData,
         }
     }

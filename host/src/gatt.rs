@@ -938,10 +938,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             uuid: decl_uuid,
                         } = AttributeData::decode_declaration(item)?
                         {
-                            if let Some(start_handle) = found_indicate_or_notify_uuid {
+                            if let Some((start_handle, _)) = found_indicate_or_notify_uuid {
                                 return Ok(Characteristic {
                                     handle: start_handle,
                                     cccd_handle: Some(self.get_characteristic_cccd(start_handle, handle).await?),
+                                    props,
                                     phantom: PhantomData,
                                 });
                             }
@@ -953,10 +954,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                                     return Ok(Characteristic {
                                         handle,
                                         cccd_handle: None,
+                                        props,
                                         phantom: PhantomData,
                                     });
                                 }
-                                found_indicate_or_notify_uuid = Some(handle);
+                                found_indicate_or_notify_uuid = Some((handle, props));
                             }
 
                             if handle == 0xFFFF {
@@ -970,10 +972,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 }
                 AttRsp::Error { request, handle, code } => match code {
                     att::AttErrorCode::ATTRIBUTE_NOT_FOUND => match found_indicate_or_notify_uuid {
-                        Some(handle) => {
+                        Some((handle, props)) => {
                             return Ok(Characteristic {
                                 handle,
                                 cccd_handle: Some(self.get_characteristic_cccd(handle, service.end).await?),
+                                props,
                                 phantom: PhantomData,
                             });
                         }
