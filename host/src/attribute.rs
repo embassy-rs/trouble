@@ -461,8 +461,18 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         ServiceBuilder { handle, table: self }
     }
 
-    pub(crate) fn permissions(&self, attribute: u16) -> Option<AttPermissions> {
+    /// Get the permissions for the attribute
+    ///
+    /// Returns `None` if the attribute handle is invalid.
+    pub fn permissions(&self, attribute: u16) -> Option<AttPermissions> {
         self.with_attribute(attribute, |att| att.data.permissions())
+    }
+
+    /// Get the UUID of the attribute type
+    ///
+    /// Returns `None` if the attribute handle is invalid.
+    pub fn uuid(&self, attribute: u16) -> Option<Uuid> {
+        self.with_attribute(attribute, |att| att.uuid.clone())
     }
 
     pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
@@ -474,6 +484,27 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             _ => Err(Error::NotSupported),
         })
         .unwrap_or(Err(Error::NotFound))
+    }
+
+    /// Read the raw value of the attribute
+    ///
+    /// If the attribute value is larger than the data buffer, data will be filled with
+    /// as many bytes as fit. Use additional reads with an offset to read the remaining data.
+    ///
+    /// The value of the attribute is undefined for connection-specific attributes (like CCCD).
+    pub fn read(&self, attribute: u16, offset: usize, data: &mut [u8]) -> Result<usize, Error> {
+        self.with_attribute(attribute, |att| att.read(offset, data).map_err(Into::into))
+            .unwrap_or(Err(Error::NotFound))
+    }
+
+    /// Write the raw value of the attribute
+    ///
+    /// If the attribute is variable length, its length will be set to `offset + data.len()`.
+    /// If the attribute is fixed length, the range `offset..(offset + data.len())` will be
+    /// overwritten.
+    pub fn write(&self, attribute: u16, offset: usize, data: &[u8]) -> Result<(), Error> {
+        self.with_attribute(attribute, |att| att.write(offset, data).map_err(Into::into))
+            .unwrap_or(Err(Error::NotFound))
     }
 
     pub(crate) fn set_raw(&self, attribute: u16, input: &[u8]) -> Result<(), Error> {
