@@ -903,7 +903,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Discover characteristics in a given service using a UUID.
-    pub async fn characteristic_by_uuid<T: AsGatt>(
+    pub async fn characteristic_by_uuid<T: AsGatt + ?Sized>(
         &self,
         service: &ServiceHandle,
         uuid: &Uuid,
@@ -1023,7 +1023,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Read a characteristic described by a handle.
     ///
     /// The number of bytes copied into the provided buffer is returned.
-    pub async fn read_characteristic<T: AsGatt>(
+    pub async fn read_characteristic<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
         dest: &mut [u8],
@@ -1049,7 +1049,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     ///
     /// This method automatically handles characteristics longer than ATT MTU
     /// by using Read Blob requests to fetch the complete value.
-    pub async fn read_characteristic_long<T: AsGatt>(
+    pub async fn read_characteristic_long<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
         dest: &mut [u8],
@@ -1145,7 +1145,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Write to a characteristic described by a handle.
-    pub async fn write_characteristic<T: FromGatt>(
+    pub async fn write_characteristic<T: AsGatt + ?Sized>(
         &self,
         handle: &Characteristic<T>,
         buf: &[u8],
@@ -1164,7 +1164,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Write without waiting for a response to a characteristic described by a handle.
-    pub async fn write_characteristic_without_response<T: FromGatt>(
+    pub async fn write_characteristic_without_response<T: AsGatt + ?Sized>(
         &self,
         handle: &Characteristic<T>,
         buf: &[u8],
@@ -1182,7 +1182,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     /// Subscribe to indication/notification of a given Characteristic
     ///
     /// A listener is returned, which has a `next()` method
-    pub async fn subscribe<T: AsGatt>(
+    pub async fn subscribe<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
         indication: bool,
@@ -1214,7 +1214,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Unsubscribe from a given Characteristic
-    pub async fn unsubscribe<T: AsGatt>(
+    pub async fn unsubscribe<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
     ) -> Result<(), BleHostError<C::Error>> {
