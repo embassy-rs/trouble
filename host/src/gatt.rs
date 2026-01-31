@@ -766,6 +766,18 @@ pub struct ServiceHandle {
     uuid: Uuid,
 }
 
+impl ServiceHandle {
+    /// Get the attribute handles that belong to this service
+    pub fn handle_range(&self) -> core::ops::RangeInclusive<u16> {
+        self.start..=self.end
+    }
+
+    /// Get the UUID of this service
+    pub fn uuid(&self) -> Uuid {
+        self.uuid.clone()
+    }
+}
+
 pub(crate) struct Response<P> {
     pdu: Pdu<P>,
     handle: ConnHandle,
