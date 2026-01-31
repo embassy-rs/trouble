@@ -3,7 +3,7 @@ use core::cell::RefCell;
 use core::fmt;
 use core::marker::PhantomData;
 
-use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
+use bt_hci::uuid::declarations::{CHARACTERISTIC, INCLUDE, PRIMARY_SERVICE, SECONDARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
@@ -11,7 +11,7 @@ use heapless::Vec;
 
 use crate::att::{AttErrorCode, AttUns};
 use crate::attribute_server::AttributeServer;
-use crate::cursor::{ReadCursor, WriteCursor};
+use crate::cursor::ReadCursor;
 use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection, SecurityLevel};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
@@ -106,17 +106,10 @@ impl<'a> Attribute<'a> {
     const EMPTY: Option<Attribute<'a>> = None;
 
     pub(crate) fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if !self.data.readable() {
-            return Err(AttErrorCode::READ_NOT_PERMITTED);
-        }
         self.data.read(offset, data)
     }
 
     pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        if !self.data.writable() {
-            return Err(AttErrorCode::WRITE_NOT_PERMITTED);
-        }
-
         self.data.write(offset, data)
     }
 }
@@ -126,6 +119,11 @@ pub(crate) enum AttributeData<'d> {
     Service {
         uuid: Uuid,
         last_handle_in_group: u16,
+    },
+    IncludedService {
+        handle: u16,
+        last_handle_in_group: u16,
+        uuid: Option<[u8; 2]>,
     },
     ReadOnlyData {
         permissions: AttPermissions,
@@ -159,7 +157,9 @@ pub(crate) enum AttributeData<'d> {
 impl AttributeData<'_> {
     pub(crate) fn permissions(&self) -> AttPermissions {
         match self {
-            AttributeData::Service { .. } | AttributeData::Declaration { .. } => AttPermissions {
+            AttributeData::Service { .. }
+            | AttributeData::IncludedService { .. }
+            | AttributeData::Declaration { .. } => AttPermissions {
                 read: PermissionLevel::Allowed,
                 write: PermissionLevel::NotAllowed,
             },
@@ -181,63 +181,58 @@ impl AttributeData<'_> {
         self.permissions().write != PermissionLevel::NotAllowed
     }
 
-    fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
+    fn read(&self, mut offset: usize, mut data: &mut [u8]) -> Result<usize, AttErrorCode> {
         if !self.readable() {
             return Err(AttErrorCode::READ_NOT_PERMITTED);
         }
-        match self {
-            Self::ReadOnlyData { value, .. } => {
-                if offset > value.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(value.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
+
+        fn append(src: &[u8], offset: &mut usize, dest: &mut &mut [u8]) -> usize {
+            if *offset >= src.len() {
+                *offset -= src.len();
+                0
+            } else {
+                let d = core::mem::take(dest);
+                let n = d.len().min(src.len() - *offset);
+                d[..n].copy_from_slice(&src[*offset..][..n]);
+                *dest = &mut d[n..];
+                *offset = 0;
+                n
             }
+        }
+
+        let written = match self {
+            Self::ReadOnlyData { value, .. } => append(value, &mut offset, &mut data),
             Self::Data { len, value, .. } => {
                 let value = &value[..*len as usize];
-                if offset > value.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(value.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
+                append(value, &mut offset, &mut data)
             }
             Self::SmallData { len, value, .. } => {
                 let value = &value[..*len as usize];
-                let len = data.len().min(value.len().saturating_sub(offset));
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
+                append(value, &mut offset, &mut data)
             }
             Self::Service { uuid, .. } => {
                 let val = uuid.as_raw();
-                if offset > val.len() {
-                    return Ok(0);
+                append(val, &mut offset, &mut data)
+            }
+            Self::IncludedService {
+                handle,
+                last_handle_in_group,
+                uuid,
+            } => {
+                let written = append(&handle.to_le_bytes(), &mut offset, &mut data)
+                    + append(&last_handle_in_group.to_le_bytes(), &mut offset, &mut data);
+                if let Some(uuid) = uuid {
+                    written + append(uuid, &mut offset, &mut data)
+                } else {
+                    written
                 }
-                let len = data.len().min(val.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&val[offset..offset + len]);
-                }
-                Ok(len)
             }
             Self::Cccd {
                 notifications,
                 indications,
                 ..
             } => {
-                if offset > 0 {
-                    return Err(AttErrorCode::INVALID_OFFSET);
-                }
-                if data.len() < 2 {
-                    return Err(AttErrorCode::UNLIKELY_ERROR);
-                }
-                let mut v = 0;
+                let mut v = 0u16;
                 if *notifications {
                     v |= 0x01;
                 }
@@ -245,35 +240,28 @@ impl AttributeData<'_> {
                 if *indications {
                     v |= 0x02;
                 }
-                data[0] = v;
-                Ok(2)
+                append(&v.to_le_bytes(), &mut offset, &mut data)
             }
             Self::Declaration { props, handle, uuid } => {
                 let val = uuid.as_raw();
-                if offset > val.len() + 3 {
-                    return Ok(0);
-                }
-                let mut w = WriteCursor::new(data);
-                if offset == 0 {
-                    w.write(props.0)?;
-                    w.write(*handle)?;
-                } else if offset == 1 {
-                    w.write(*handle)?;
-                } else if offset == 2 {
-                    w.write(handle.to_le_bytes()[1])?;
-                }
-
-                let to_write = w.available().min(val.len());
-
-                if to_write > 0 {
-                    w.append(&val[..to_write])?;
-                }
-                Ok(w.len())
+                append(&[props.0], &mut offset, &mut data)
+                    + append(&handle.to_le_bytes(), &mut offset, &mut data)
+                    + append(val, &mut offset, &mut data)
             }
+        };
+
+        if offset > 0 {
+            Err(AttErrorCode::INVALID_OFFSET)
+        } else {
+            Ok(written)
         }
     }
 
     fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+        if !self.writable() {
+            return Err(AttErrorCode::WRITE_NOT_PERMITTED);
+        }
+
         let writable = self.writable();
 
         match self {
@@ -453,6 +441,18 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
         let handle = self.push(Attribute {
             uuid: PRIMARY_SERVICE.into(),
+            data: AttributeData::Service {
+                uuid: service.uuid,
+                last_handle_in_group: 0,
+            },
+        });
+        ServiceBuilder { handle, table: self }
+    }
+
+    /// Add a service to the attribute table (group of characteristics)
+    pub fn add_secondary_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
+        let handle = self.push(Attribute {
+            uuid: SECONDARY_SERVICE.into(),
             data: AttributeData::Service {
                 uuid: service.uuid,
                 last_handle_in_group: 0,
@@ -724,6 +724,25 @@ impl<T: AsGatt> AttributeHandle for Characteristic<T> {
     }
 }
 
+/// Invalid handle value
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct InvalidHandle;
+
+impl core::fmt::Display for InvalidHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        core::fmt::Debug::fmt(self, f)
+    }
+}
+
+impl core::error::Error for InvalidHandle {}
+
+impl From<InvalidHandle> for Error {
+    fn from(value: InvalidHandle) -> Self {
+        Error::InvalidValue
+    }
+}
+
 /// Builder for constructing GATT service definitions.
 pub struct ServiceBuilder<'r, 'd, M: RawMutex, const MAX: usize> {
     handle: u16,
@@ -856,6 +875,38 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                 value: value.as_gatt(),
             },
         )
+    }
+
+    /// Add an included service to this service
+    pub fn add_included_service(&mut self, handle: u16) -> Result<u16, InvalidHandle> {
+        self.table.with_inner(|table| {
+            if handle > 0 && table.attributes.len() >= usize::from(handle) {
+                if let AttributeData::Service {
+                    uuid,
+                    last_handle_in_group,
+                } = &table.attributes[usize::from(handle) - 1].data
+                {
+                    // Included service values only include 16-bit UUIDs per the Bluetooth spec
+                    let uuid = match uuid {
+                        Uuid::Uuid16(uuid) => Some(*uuid),
+                        Uuid::Uuid128(_) => None,
+                    };
+
+                    Ok(table.push(Attribute {
+                        uuid: INCLUDE.into(),
+                        data: AttributeData::IncludedService {
+                            handle,
+                            last_handle_in_group: *last_handle_in_group,
+                            uuid,
+                        },
+                    }))
+                } else {
+                    Err(InvalidHandle)
+                }
+            } else {
+                Err(InvalidHandle)
+            }
+        })
     }
 
     /// Finish construction of the service and return a handle.
