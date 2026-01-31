@@ -1236,6 +1236,7 @@ impl Service {
 
 /// Properties of a characteristic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CharacteristicProps(u8);
 
 impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
