@@ -523,6 +523,75 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             }
         })
     }
+
+    #[cfg(feature = "security")]
+    /// Calculate the database hash for the attribute table.
+    ///
+    /// See Core Specification Vol 3, Part G, Section 7.3.1
+    pub fn hash(&self) -> u128 {
+        use bt_hci::uuid::*;
+
+        use crate::security_manager::crypto::AesCmac;
+
+        const PRIMARY_SERVICE: Uuid = Uuid::Uuid16(declarations::PRIMARY_SERVICE.to_le_bytes());
+        const SECONDARY_SERVICE: Uuid = Uuid::Uuid16(declarations::SECONDARY_SERVICE.to_le_bytes());
+        const INCLUDED_SERVICE: Uuid = Uuid::Uuid16(declarations::INCLUDE.to_le_bytes());
+        const CHARACTERISTIC: Uuid = Uuid::Uuid16(declarations::CHARACTERISTIC.to_le_bytes());
+        const CHARACTERISTIC_EXTENDED_PROPERTIES: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_EXTENDED_PROPERTIES.to_le_bytes());
+
+        const CHARACTERISTIC_USER_DESCRIPTION: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_USER_DESCRIPTION.to_le_bytes());
+        const CLIENT_CHARACTERISTIC_CONFIGURATION: Uuid =
+            Uuid::Uuid16(descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.to_le_bytes());
+        const SERVER_CHARACTERISTIC_CONFIGURATION: Uuid =
+            Uuid::Uuid16(descriptors::SERVER_CHARACTERISTIC_CONFIGURATION.to_le_bytes());
+        const CHARACTERISTIC_PRESENTATION_FORMAT: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_PRESENTATION_FORMAT.to_le_bytes());
+        const CHARACTERISTIC_AGGREGATE_FORMAT: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_AGGREGATE_FORMAT.to_le_bytes());
+
+        let mut mac = AesCmac::db_hash();
+
+        self.iterate(|mut it| {
+            while let Some((handle, att)) = it.next() {
+                match att.uuid {
+                    PRIMARY_SERVICE
+                    | SECONDARY_SERVICE
+                    | INCLUDED_SERVICE
+                    | CHARACTERISTIC
+                    | CHARACTERISTIC_EXTENDED_PROPERTIES => {
+                        mac.update(handle.to_le_bytes()).update(att.uuid.as_raw());
+                        match &att.data {
+                            AttributeData::ReadOnlyData { value, .. } => {
+                                mac.update(value);
+                            }
+                            AttributeData::Data { len, value, .. } => {
+                                mac.update(&value[..usize::from(*len)]);
+                            }
+                            AttributeData::Service { uuid, .. } => {
+                                mac.update(uuid.as_raw());
+                            }
+                            AttributeData::Declaration { props, handle, uuid } => {
+                                mac.update([props.0]).update(handle.to_le_bytes()).update(uuid.as_raw());
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    CHARACTERISTIC_USER_DESCRIPTION
+                    | CLIENT_CHARACTERISTIC_CONFIGURATION
+                    | SERVER_CHARACTERISTIC_CONFIGURATION
+                    | CHARACTERISTIC_PRESENTATION_FORMAT
+                    | CHARACTERISTIC_AGGREGATE_FORMAT => {
+                        mac.update(handle.to_le_bytes()).update(att.uuid.as_raw());
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        mac.finalize()
+    }
 }
 
 /// A type which holds a handle to an attribute in the attribute table
@@ -1117,5 +1186,245 @@ impl CCCD {
     /// Check if indications are enabled
     pub fn should_indicate(&self) -> bool {
         (self.0 & (CCCDFlag::Indicate as u16)) != 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    #[cfg(feature = "security")]
+    #[test]
+    fn database_hash() {
+        use bt_hci::uuid::characteristic::{
+            APPEARANCE, CLIENT_SUPPORTED_FEATURES, DATABASE_HASH, DEVICE_NAME, SERVICE_CHANGED,
+        };
+        use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
+        use bt_hci::uuid::descriptors::{
+            CHARACTERISTIC_PRESENTATION_FORMAT, CHARACTERISTIC_USER_DESCRIPTION, CLIENT_CHARACTERISTIC_CONFIGURATION,
+        };
+        use bt_hci::uuid::service::{GAP, GATT};
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+        use super::*;
+
+        // The raw message data that should be hashed for this attribute table is:
+        //
+        // 0100 0028 0018
+        // 0200 0328 020300002a
+        // 0400 0328 020500012a
+        //
+        // 0600 0028 0118
+        // 0700 0328 200800052a
+        // 0900 0229
+        // 0a00 0328 0a0b00292b
+        // 0c00 0328 020d002a2b
+        //
+        // 0e00 0028 f0debc9a785634127856341278563412
+        // 0f00 0328 121000f1debc9a785634127856341278563412
+        // 1100 0229
+        // 1200 0129
+        // 1300 0429
+        //
+        // The message hash can be calculated on the command line with:
+        // > xxd -plain -revert message.txt message.bin
+        // > openssl mac -cipher AES-128-CBC -macopt hexkey:00000000000000000000000000000000 -in message.bin CMAC
+
+        let mut table: AttributeTable<'static, NoopRawMutex, 20> = AttributeTable::new();
+
+        // GAP service (handles 0x001 - 0x005)
+        table.push(Attribute::new(
+            PRIMARY_SERVICE.into(),
+            AttributeData::Service { uuid: GAP.into() },
+        ));
+
+        let expected = 0xd4cdec10804db3f147b4d7d10baa0120;
+        let actual = table.hash();
+        assert_eq!(
+            actual, expected,
+            "\nexpected: {:#032x}\nactual: {:#032x}",
+            expected, actual
+        );
+
+        // Device name characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                handle: 0x0003,
+                uuid: DEVICE_NAME.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            DEVICE_NAME.into(),
+            AttributeData::ReadOnlyData {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                value: b"",
+            },
+        ));
+
+        // Appearance characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                handle: 0x0005,
+                uuid: APPEARANCE.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            APPEARANCE.into(),
+            AttributeData::ReadOnlyData {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                value: b"",
+            },
+        ));
+
+        let expected = 0x6c329e3f1d52c03f174980f6b4704875;
+        let actual = table.hash();
+        assert_eq!(
+            actual, expected,
+            "\nexpected: {:#032x}\n  actual: {:#032x}",
+            expected, actual
+        );
+
+        // GATT service (handles 0x006 - 0x000d)
+        table.push(Attribute::new(
+            PRIMARY_SERVICE.into(),
+            AttributeData::Service { uuid: GATT.into() },
+        ));
+
+        // Service changed characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Indicate].as_slice().into(),
+                handle: 0x0008,
+                uuid: SERVICE_CHANGED.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            SERVICE_CHANGED.into(),
+            AttributeData::ReadOnlyData {
+                props: [CharacteristicProp::Indicate].as_slice().into(),
+                value: b"",
+            },
+        ));
+
+        table.push(Attribute::new(
+            CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
+            AttributeData::Cccd {
+                notifications: false,
+                indications: false,
+            },
+        ));
+
+        // Client supported features characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Read, CharacteristicProp::Write].as_slice().into(),
+                handle: 0x000b,
+                uuid: CLIENT_SUPPORTED_FEATURES.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            CLIENT_SUPPORTED_FEATURES.into(),
+            AttributeData::ReadOnlyData {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                value: b"",
+            },
+        ));
+
+        // Database hash characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                handle: 0x000d,
+                uuid: DATABASE_HASH.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            DATABASE_HASH.into(),
+            AttributeData::ReadOnlyData {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                value: b"",
+            },
+        ));
+
+        let expected = 0x16ce756326c5062bf74022f845c2b21f;
+        let actual = table.hash();
+        assert_eq!(
+            actual, expected,
+            "\nexpected: {:#032x}\n  actual: {:#032x}",
+            expected, actual
+        );
+
+        const CUSTOM_SERVICE: u128 = 0x12345678_12345678_12345678_9abcdef0;
+        const CUSTOM_CHARACTERISTIC: u128 = 0x12345678_12345678_12345678_9abcdef1;
+
+        // Custom service (handles 0x00e - 0x0013)
+        table.push(Attribute::new(
+            PRIMARY_SERVICE.into(),
+            AttributeData::Service {
+                uuid: CUSTOM_SERVICE.into(),
+            },
+        ));
+
+        // Custom characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Notify, CharacteristicProp::Read].as_slice().into(),
+                handle: 0x0010,
+                uuid: CUSTOM_CHARACTERISTIC.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            CUSTOM_CHARACTERISTIC.into(),
+            AttributeData::ReadOnlyData {
+                props: [CharacteristicProp::Notify, CharacteristicProp::Read].as_slice().into(),
+                value: b"",
+            },
+        ));
+
+        table.push(Attribute::new(
+            CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
+            AttributeData::Cccd {
+                notifications: false,
+                indications: false,
+            },
+        ));
+
+        table.push(Attribute::new(
+            CHARACTERISTIC_USER_DESCRIPTION.into(),
+            AttributeData::ReadOnlyData {
+                props: CharacteristicProps(0),
+                value: b"Custom Characteristic",
+            },
+        ));
+
+        table.push(Attribute::new(
+            CHARACTERISTIC_PRESENTATION_FORMAT.into(),
+            AttributeData::ReadOnlyData {
+                props: CharacteristicProps(0),
+                value: &[4, 0, 0, 0x27, 1, 0, 0],
+            },
+        ));
+
+        let expected = 0xc7352cced28d6608d4b057d247d8be76;
+        let actual = table.hash();
+        assert_eq!(
+            actual, expected,
+            "\nexpected: {:#032x}\n  actual: {:#032x}",
+            expected, actual
+        );
     }
 }

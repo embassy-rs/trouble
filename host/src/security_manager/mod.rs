@@ -3,7 +3,7 @@
 // ([Vol 3] Part H, Section 3.5.5)
 
 mod constants;
-mod crypto;
+pub(crate) mod crypto;
 mod pairing;
 mod types;
 use core::cell::RefCell;
