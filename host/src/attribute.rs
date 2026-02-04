@@ -529,8 +529,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// See Core Specification Vol 3, Part G, Section 7.3.1
     pub fn hash(&self) -> u128 {
-        use crate::security_manager::crypto::AesCmac;
         use bt_hci::uuid::*;
+
+        use crate::security_manager::crypto::AesCmac;
 
         const PRIMARY_SERVICE: Uuid = Uuid::Uuid16(declarations::PRIMARY_SERVICE.to_le_bytes());
         const SECONDARY_SERVICE: Uuid = Uuid::Uuid16(declarations::SECONDARY_SERVICE.to_le_bytes());
