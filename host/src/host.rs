@@ -292,7 +292,15 @@ where
                     && !(&[L2CAP_CID_LE_U_SIGNAL, L2CAP_CID_ATT, L2CAP_CID_LE_U_SECURITY_MANAGER]
                         .contains(&header.channel))
                 {
-                    warn!("[host] unsupported l2cap channel id {}", header.channel);
+                    // Apple devices probe this channel id even if it's outside the dynamic range.
+                    if header.channel == 0x3a {
+                        info!(
+                            "[host] unsupported l2cap channel id {} (Apple devices which always probe this channel, so this is safe to ignore).",
+                            header.channel
+                        );
+                    } else {
+                        warn!("[host] unsupported l2cap channel id {}", header.channel);
+                    }
                     return Err(Error::NotSupported);
                 }
 
