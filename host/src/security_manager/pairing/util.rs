@@ -25,6 +25,21 @@ pub enum PairingMethod {
 }
 
 impl PairingMethod {
+    const CENTRAL_DISPLAYS: Self = Self::PassKeyEntry {
+        central: PassKeyEntryAction::Display,
+        peripheral: PassKeyEntryAction::Input,
+    };
+
+    const PERIPHERAL_DISPLAYS: Self = Self::PassKeyEntry {
+        central: PassKeyEntryAction::Input,
+        peripheral: PassKeyEntryAction::Display,
+    };
+
+    const BOTH_INPUT: Self = Self::PassKeyEntry {
+        central: PassKeyEntryAction::Input,
+        peripheral: PassKeyEntryAction::Input,
+    };
+
     pub fn security_level(&self) -> SecurityLevel {
         match self {
             PairingMethod::JustWorks => SecurityLevel::Encrypted,
@@ -34,54 +49,29 @@ impl PairingMethod {
 }
 
 pub fn choose_pairing_method(central: PairingFeatures, peripheral: PairingFeatures) -> PairingMethod {
-    if !central.security_properties.man_in_the_middle() && !peripheral.security_properties.man_in_the_middle() {
-        PairingMethod::JustWorks
-    } else if matches!(central.use_oob, UseOutOfBand::Present) || matches!(peripheral.use_oob, UseOutOfBand::Present) {
+    if matches!(central.use_oob, UseOutOfBand::Present) || matches!(peripheral.use_oob, UseOutOfBand::Present) {
         PairingMethod::OutOfBand
-    } else if peripheral.io_capabilities == IoCapabilities::DisplayOnly {
-        match central.io_capabilities {
-            IoCapabilities::KeyboardOnly | IoCapabilities::KeyboardDisplay => PairingMethod::PassKeyEntry {
-                central: PassKeyEntryAction::Input,
-                peripheral: PassKeyEntryAction::Display,
-            },
-            _ => PairingMethod::JustWorks,
-        }
-    } else if peripheral.io_capabilities == IoCapabilities::DisplayYesNo {
-        match central.io_capabilities {
-            IoCapabilities::DisplayYesNo | IoCapabilities::KeyboardDisplay => PairingMethod::NumericComparison,
-            IoCapabilities::KeyboardOnly => PairingMethod::PassKeyEntry {
-                central: PassKeyEntryAction::Input,
-                peripheral: PassKeyEntryAction::Display,
-            },
-            _ => PairingMethod::JustWorks,
-        }
-    } else if peripheral.io_capabilities == IoCapabilities::KeyboardOnly {
-        match central.io_capabilities {
-            IoCapabilities::NoInputNoOutput => PairingMethod::JustWorks,
-            IoCapabilities::KeyboardOnly => PairingMethod::PassKeyEntry {
-                central: PassKeyEntryAction::Input,
-                peripheral: PassKeyEntryAction::Input,
-            },
-            _ => PairingMethod::PassKeyEntry {
-                central: PassKeyEntryAction::Display,
-                peripheral: PassKeyEntryAction::Input,
-            },
-        }
-    } else if peripheral.io_capabilities == IoCapabilities::NoInputNoOutput {
+    } else if !central.security_properties.man_in_the_middle() && !peripheral.security_properties.man_in_the_middle() {
         PairingMethod::JustWorks
     } else {
-        // Local io == keyboard display
-        match central.io_capabilities {
-            IoCapabilities::DisplayOnly => PairingMethod::PassKeyEntry {
-                central: PassKeyEntryAction::Display,
-                peripheral: PassKeyEntryAction::Input,
-            },
-            IoCapabilities::KeyboardDisplay => PairingMethod::PassKeyEntry {
-                central: PassKeyEntryAction::Input,
-                peripheral: PassKeyEntryAction::Display,
-            },
-            IoCapabilities::NoInputNoOutput => PairingMethod::JustWorks,
-            _ => PairingMethod::NumericComparison,
+        match (central.io_capabilities, peripheral.io_capabilities) {
+            (IoCapabilities::NoInputNoOutput, _) | (_, IoCapabilities::NoInputNoOutput) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayOnly, IoCapabilities::DisplayOnly) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayOnly, IoCapabilities::DisplayYesNo) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayOnly, IoCapabilities::KeyboardOnly) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::DisplayOnly, IoCapabilities::KeyboardDisplay) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::DisplayYesNo, IoCapabilities::DisplayOnly) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayYesNo, IoCapabilities::DisplayYesNo) => PairingMethod::NumericComparison,
+            (IoCapabilities::DisplayYesNo, IoCapabilities::KeyboardOnly) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::DisplayYesNo, IoCapabilities::KeyboardDisplay) => PairingMethod::NumericComparison,
+            (IoCapabilities::KeyboardOnly, IoCapabilities::DisplayOnly) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardOnly, IoCapabilities::DisplayYesNo) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardOnly, IoCapabilities::KeyboardOnly) => PairingMethod::BOTH_INPUT,
+            (IoCapabilities::KeyboardOnly, IoCapabilities::KeyboardDisplay) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardDisplay, IoCapabilities::DisplayOnly) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardDisplay, IoCapabilities::DisplayYesNo) => PairingMethod::NumericComparison,
+            (IoCapabilities::KeyboardDisplay, IoCapabilities::KeyboardOnly) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::KeyboardDisplay, IoCapabilities::KeyboardDisplay) => PairingMethod::NumericComparison,
         }
     }
 }
