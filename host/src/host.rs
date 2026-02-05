@@ -47,6 +47,7 @@ use crate::connection::{ConnParams, ConnectionEvent};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
+use crate::prelude::{ConnectionParamsRequest, RequestedConnParams};
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
@@ -972,9 +973,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     let event = unwrap!(LeRemoteConnectionParameterRequest::from_hci_bytes_complete(
                                         event.data
                                     ));
-                                    let _ = host.connections.post_handle_event(
-                                        event.handle,
-                                        ConnectionEvent::RequestConnectionParams {
+                                    let req = ConnectionParamsRequest::new(
+                                        RequestedConnParams {
                                             min_connection_interval: Duration::from_micros(
                                                 event.interval_min.as_micros(),
                                             ),
@@ -983,8 +983,15 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             ),
                                             max_latency: event.max_latency,
                                             supervision_timeout: Duration::from_micros(event.timeout.as_micros()),
+                                            ..Default::default()
                                         },
+                                        event.handle,
+                                        #[cfg(feature = "connection-params-update")]
+                                        false,
                                     );
+                                    let _ = host
+                                        .connections
+                                        .post_handle_event(event.handle, ConnectionEvent::RequestConnectionParams(req));
                                 }
                                 _ => {
                                     warn!("Unknown LE event!");

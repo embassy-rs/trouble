@@ -73,6 +73,7 @@ where
                         // Normally fetched from user
                         conn.pass_key_input(1234).unwrap();
                     }
+                    ConnectionEvent::RequestConnectionParams(req) => req.accept(None, &stack).await.unwrap(),
                     _ => {}
                 }
             }

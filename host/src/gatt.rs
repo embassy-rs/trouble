@@ -25,7 +25,7 @@ use crate::connection::Connection;
 use crate::connection::SecurityLevel;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
-use crate::prelude::ConnectionEvent;
+use crate::prelude::{ConnectionEvent, ConnectionParamsRequest};
 #[cfg(feature = "security")]
 use crate::security_manager::PassKey;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
@@ -58,16 +58,10 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         supervision_timeout: Duration,
     },
     /// A request to change the connection parameters.
-    RequestConnectionParams {
-        /// Minimum connection interval.
-        min_connection_interval: Duration,
-        /// Maximum connection interval.
-        max_connection_interval: Duration,
-        /// Maximum slave latency.
-        max_latency: u16,
-        /// Supervision timeout.
-        supervision_timeout: Duration,
-    },
+    ///
+    /// [`ConnectionParamsRequest::accept()`] or [`ConnectionParamsRequest::reject()`]
+    /// must be called to respond to the request.
+    RequestConnectionParams(ConnectionParamsRequest),
     /// The data length was changed for this connection.
     DataLengthUpdated {
         /// Max TX octets.
@@ -163,17 +157,7 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                     peripheral_latency,
                     supervision_timeout,
                 },
-                ConnectionEvent::RequestConnectionParams {
-                    min_connection_interval,
-                    max_connection_interval,
-                    max_latency,
-                    supervision_timeout,
-                } => GattConnectionEvent::RequestConnectionParams {
-                    min_connection_interval,
-                    max_connection_interval,
-                    max_latency,
-                    supervision_timeout,
-                },
+                ConnectionEvent::RequestConnectionParams(req) => GattConnectionEvent::RequestConnectionParams(req),
                 ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => GattConnectionEvent::PhyUpdated { tx_phy, rx_phy },
                 ConnectionEvent::DataLengthUpdated {
                     max_tx_octets,

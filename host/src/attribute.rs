@@ -258,10 +258,6 @@ impl AttributeData<'_> {
     }
 
     fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        if !self.writable() {
-            return Err(AttErrorCode::WRITE_NOT_PERMITTED);
-        }
-
         let writable = self.writable();
 
         match self {
