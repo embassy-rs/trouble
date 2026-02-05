@@ -29,7 +29,7 @@ enum Step {
     WaitingNumericComparisonRandom,
     WaitingNumericComparisonResult,
     // Pass key entry
-    WaitingPassKeyInput,
+    WaitingPassKeyInput(Option<[u8; size_of::<u128>()]>),
     WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag),
     WaitingPassKeyEntryRandom(i32),
     // TODO add OOB
@@ -304,16 +304,19 @@ impl Pairing {
             (Step::WaitingNumericComparisonResult, Event::PassKeyCancel) => {
                 Step::Error(Error::Security(Reason::NumericComparisonFailed))
             }
-            (Step::WaitingPassKeyInput, Event::PassKeyInput(input)) => {
+            (Step::WaitingPassKeyInput(confirm), Event::PassKeyInput(input)) => {
                 let mut pairing_data = self.pairing_data.borrow_mut();
                 pairing_data.local_secret_ra = input as u128;
                 pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
-                Step::WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag::new(
-                    0,
-                    pairing_data.deref_mut(),
-                    ops,
-                    rng,
-                )?)
+                let round = PassKeyEntryConfirmSentTag::new(0, pairing_data.deref_mut(), ops, rng)?;
+                match confirm {
+                    Some(payload) => {
+                        Self::handle_pass_key_confirm(&payload, pairing_data.deref_mut())?;
+                        Self::send_nonce(ops, &pairing_data.local_nonce)?;
+                        Step::WaitingPassKeyEntryRandom(round.0)
+                    }
+                    None => Step::WaitingPassKeyEntryConfirm(round),
+                }
             }
             (x, Event::PassKeyConfirm | Event::PassKeyCancel) => x,
             _ => Step::Error(Error::InvalidState),
@@ -400,7 +403,7 @@ impl Pairing {
                                 )?)
                             } else {
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyInput)?;
-                                Step::WaitingPassKeyInput
+                                Step::WaitingPassKeyInput(None)
                             }
                         }
                         _ => Step::WaitingNumericComparisonConfirm,
@@ -413,6 +416,11 @@ impl Pairing {
                 }
                 (Step::WaitingNumericComparisonRandom, Command::PairingRandom) => {
                     Self::handle_numeric_compare_random(command.payload, pairing_data, ops)?
+                }
+                (Step::WaitingPassKeyInput(_), Command::PairingConfirm) => {
+                    let confirm: [u8; size_of::<u128>()] =
+                        command.payload.try_into().map_err(|_| Error::InvalidValue)?;
+                    Step::WaitingPassKeyInput(Some(confirm))
                 }
                 (Step::WaitingPassKeyEntryConfirm(round), Command::PairingConfirm) => {
                     Self::handle_pass_key_confirm(command.payload, pairing_data)?;
