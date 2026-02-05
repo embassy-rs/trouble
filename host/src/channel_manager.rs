@@ -16,7 +16,7 @@ use crate::host::BleHost;
 use crate::l2cap::sar::PacketReassembly;
 use crate::l2cap::L2capChannel;
 use crate::pdu::{Pdu, Sdu};
-use crate::prelude::{ConnectionEvent, L2capChannelConfig};
+use crate::prelude::{ConnectionEvent, ConnectionParamsRequest, L2capChannelConfig};
 use crate::types::l2cap::{
     CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capSignalCode,
     L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
@@ -474,18 +474,24 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
                 debug!("[l2cap][conn = {:?}] connection param update request: {:?}", conn, req);
                 let interval_min: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_min);
-                let interva_max: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_max);
+                let interval_max: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_max);
                 let timeout: bt_hci::param::Duration<10_000> = bt_hci::param::Duration::from_u16(req.timeout);
+
                 use embassy_time::Duration;
-                let _ = manager.post_handle_event(
-                    conn,
-                    ConnectionEvent::RequestConnectionParams {
+                let req = ConnectionParamsRequest::new(
+                    crate::prelude::RequestedConnParams {
                         min_connection_interval: Duration::from_micros(interval_min.as_micros()),
-                        max_connection_interval: Duration::from_micros(interval_min.as_micros()),
+                        max_connection_interval: Duration::from_micros(interval_max.as_micros()),
                         max_latency: req.latency,
                         supervision_timeout: Duration::from_micros(timeout.as_micros()),
+                        ..Default::default()
                     },
+                    conn,
+                    #[cfg(feature = "connection-params-update")]
+                    true,
                 );
+
+                let _ = manager.post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req));
             }
             L2capSignalCode::ConnParamUpdateRes => {
                 let res = ConnParamUpdateRes::from_hci_bytes_complete(data)?;

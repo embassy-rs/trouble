@@ -86,6 +86,7 @@ where
                             error!("Disconnected: {:?}", reason);
                             continue 'connect;
                         }
+                        ConnectionEvent::RequestConnectionParams(req) => req.accept(None, &stack).await.unwrap(),
                         x => {
                             warn!("Unhandled event: {:?}", x);
                         }
