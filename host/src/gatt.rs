@@ -4,7 +4,7 @@ use core::future::Future;
 use core::marker::PhantomData;
 
 use bt_hci::controller::Controller;
-use bt_hci::param::{ConnHandle, PhyKind, Status};
+use bt_hci::param::{ConnHandle, FrameSpaceInitiator, PhyKind, PhyMask, SpacingTypes, Status};
 use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_futures::select::{select, Either};
@@ -78,6 +78,30 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         max_rx_octets: u16,
         /// Max RX time.
         max_rx_time: u16,
+    },
+    /// The frame space was updated for this connection.
+    FrameSpaceUpdated {
+        /// The negotiated frame space value.
+        frame_space: Duration,
+        /// Who initiated the frame space update.
+        initiator: FrameSpaceInitiator,
+        /// PHYs affected.
+        phys: PhyMask,
+        /// Spacing types affected.
+        spacing_types: SpacingTypes,
+    },
+    /// Connection rate has been changed.
+    ConnectionRateChanged {
+        /// Connection interval.
+        conn_interval: Duration,
+        /// Subrate factor.
+        subrate_factor: u16,
+        /// Peripheral latency.
+        peripheral_latency: u16,
+        /// Continuation number.
+        continuation_number: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
     },
     /// GATT event.
     Gatt {
@@ -185,6 +209,30 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                     max_tx_time,
                     max_rx_octets,
                     max_rx_time,
+                },
+                ConnectionEvent::FrameSpaceUpdated {
+                    frame_space,
+                    initiator,
+                    phys,
+                    spacing_types,
+                } => GattConnectionEvent::FrameSpaceUpdated {
+                    frame_space,
+                    initiator,
+                    phys,
+                    spacing_types,
+                },
+                ConnectionEvent::ConnectionRateChanged {
+                    conn_interval,
+                    subrate_factor,
+                    peripheral_latency,
+                    continuation_number,
+                    supervision_timeout,
+                } => GattConnectionEvent::ConnectionRateChanged {
+                    conn_interval,
+                    subrate_factor,
+                    peripheral_latency,
+                    continuation_number,
+                    supervision_timeout,
                 },
 
                 #[cfg(feature = "security")]
