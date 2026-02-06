@@ -30,19 +30,19 @@ static DESC: [u8; 67] = [
 
 #[gatt_service(uuid = service::HUMAN_INTERFACE_DEVICE)]
 pub(crate) struct HidService {
-    #[characteristic(uuid = "2a4a", read, value = [0x01, 0x01, 0x00, 0x03])]
+    #[characteristic(uuid = "2a4a", read, value = [0x01, 0x01, 0x00, 0x03], permissions(encrypted))]
     pub(crate) hid_info: [u8; 4],
-    #[characteristic(uuid = "2a4b", read, value = DESC)]
+    #[characteristic(uuid = "2a4b", read, value = DESC, permissions(encrypted))]
     pub(crate) report_map: [u8; 67],
-    #[characteristic(uuid = "2a4c", write_without_response)]
+    #[characteristic(uuid = "2a4c", write_without_response, permissions(encrypted))]
     pub(crate) hid_control_point: u8,
-    #[characteristic(uuid = "2a4e", read, write_without_response, value = 1)]
+    #[characteristic(uuid = "2a4e", read, write_without_response, value = 1, permissions(encrypted))]
     pub(crate) protocol_mode: u8,
-    #[descriptor(uuid = "2908", read, value = [0u8, 1u8])]
-    #[characteristic(uuid = "2a4d", read, notify)]
+    #[descriptor(uuid = "2908", read = encrypted, value = [0u8, 1u8])]
+    #[characteristic(uuid = "2a4d", read, notify, permissions(encrypted))]
     pub(crate) input_keyboard: [u8; 8],
-    #[descriptor(uuid = "2908", read, value = [0u8, 2u8])]
-    #[characteristic(uuid = "2a4d", read, write, write_without_response)]
+    #[descriptor(uuid = "2908", read = encrypted, value = [0u8, 2u8])]
+    #[characteristic(uuid = "2a4d", read, write, write_without_response, permissions(encrypted))]
     pub(crate) output_keyboard: [u8; 1],
 }
 
@@ -52,7 +52,7 @@ struct BatteryService {
     /// Battery Level
     #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]
     #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, name = "hello", read, value = "Battery Level", type = &'static str)]
-    #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
+    #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10, permissions(encrypted))]
     level: u8,
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", write, read, notify)]
     status: bool,
@@ -279,43 +279,25 @@ async fn gatt_events_task<S: NorFlash>(
                 error!("[gatt] pairing error: {:?}", err);
             }
             GattConnectionEvent::Gatt { event } => {
-                let result = match &event {
+                match &event {
                     GattEvent::Read(event) => {
                         if event.handle() == level.handle {
                             let value = server.get(&level);
                             info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                         }
-                        #[cfg(feature = "security")]
-                        if conn.raw().security_level()?.encrypted() {
-                            None
-                        } else {
-                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
-                        }
-                        #[cfg(not(feature = "security"))]
-                        None
                     }
                     GattEvent::Write(event) => {
                         if event.handle() == level.handle {
                             info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                         }
-                        #[cfg(feature = "security")]
-                        if conn.raw().security_level()?.encrypted() {
-                            None
-                        } else {
-                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
-                        }
-                        #[cfg(not(feature = "security"))]
-                        None
                     }
-                    _ => None,
-                };
+                    GattEvent::NotAllowed(event) => {
+                        info!("[gatt] Disallowed GATT request to handle: {:?}", event.handle());
+                    }
+                    _ => (),
+                }
 
-                let reply_result = if let Some(code) = result {
-                    event.reject(code)
-                } else {
-                    event.accept()
-                };
-                match reply_result {
+                match event.accept() {
                     Ok(reply) => reply.send().await,
                     Err(e) => warn!("[gatt] error sending response: {:?}", e),
                 }

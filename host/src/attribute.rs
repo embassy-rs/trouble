@@ -12,7 +12,7 @@ use heapless::Vec;
 use crate::att::{AttErrorCode, AttUns};
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
+use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection, SecurityLevel};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
 use crate::{gatt, Error, PacketPool, MAX_INVALID_DATA_LEN};
@@ -37,6 +37,63 @@ pub enum CharacteristicProp {
     AuthenticatedWrite = 0x40,
     /// Extended properties
     Extended = 0x80,
+}
+
+/// Attribute permissions
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PermissionLevel {
+    #[default]
+    /// Operation is allowed with no encryption or authentication
+    Allowed,
+    /// Encryption is required
+    EncryptionRequired,
+    /// Encryption and authentication are required
+    AuthenticationRequired,
+    /// Operation is not allowed
+    NotAllowed,
+}
+
+/// Attribute permissions
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AttPermissions {
+    /// Security required for read operations
+    pub read: PermissionLevel,
+    /// Security required for write operations
+    pub write: PermissionLevel,
+}
+
+impl AttPermissions {
+    pub(crate) fn can_read(&self, level: SecurityLevel) -> Result<(), AttErrorCode> {
+        match self.read {
+            PermissionLevel::NotAllowed => Err(AttErrorCode::READ_NOT_PERMITTED),
+            PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
+                if level < SecurityLevel::Encrypted =>
+            {
+                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+            }
+            PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub(crate) fn can_write(&self, level: SecurityLevel) -> Result<(), AttErrorCode> {
+        match self.write {
+            PermissionLevel::NotAllowed => Err(AttErrorCode::WRITE_NOT_PERMITTED),
+            PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
+                if level < SecurityLevel::Encrypted =>
+            {
+                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+            }
+            PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Attribute metadata.
@@ -71,17 +128,17 @@ pub(crate) enum AttributeData<'d> {
         last_handle_in_group: u16,
     },
     ReadOnlyData {
-        props: CharacteristicProps,
+        permissions: AttPermissions,
         value: &'d [u8],
     },
     Data {
-        props: CharacteristicProps,
+        permissions: AttPermissions,
         variable_len: bool,
         len: u16,
         value: &'d mut [u8],
     },
     SmallData {
-        props: CharacteristicProps,
+        permissions: AttPermissions,
         variable_len: bool,
         capacity: u8,
         len: u8,
@@ -95,32 +152,33 @@ pub(crate) enum AttributeData<'d> {
     Cccd {
         notifications: bool,
         indications: bool,
+        write_permission: PermissionLevel,
     },
 }
 
 impl AttributeData<'_> {
-    pub(crate) fn readable(&self) -> bool {
+    pub(crate) fn permissions(&self) -> AttPermissions {
         match self {
-            Self::Data { props, .. } | Self::SmallData { props, .. } => props.0 & (CharacteristicProp::Read as u8) != 0,
-            _ => true,
+            AttributeData::Service { .. } | AttributeData::Declaration { .. } => AttPermissions {
+                read: PermissionLevel::Allowed,
+                write: PermissionLevel::NotAllowed,
+            },
+            AttributeData::ReadOnlyData { permissions, .. }
+            | AttributeData::Data { permissions, .. }
+            | AttributeData::SmallData { permissions, .. } => *permissions,
+            AttributeData::Cccd { write_permission, .. } => AttPermissions {
+                read: PermissionLevel::Allowed,
+                write: *write_permission,
+            },
         }
     }
 
+    pub(crate) fn readable(&self) -> bool {
+        self.permissions().read != PermissionLevel::NotAllowed
+    }
+
     pub(crate) fn writable(&self) -> bool {
-        match self {
-            Self::Data { props, .. } | Self::SmallData { props, .. } => {
-                props.0
-                    & (CharacteristicProp::Write as u8
-                        | CharacteristicProp::WriteWithoutResponse as u8
-                        | CharacteristicProp::AuthenticatedWrite as u8)
-                    != 0
-            }
-            Self::Cccd {
-                notifications,
-                indications,
-            } => true,
-            _ => false,
-        }
+        self.permissions().write != PermissionLevel::NotAllowed
     }
 
     fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
@@ -171,6 +229,7 @@ impl AttributeData<'_> {
             Self::Cccd {
                 notifications,
                 indications,
+                ..
             } => {
                 if offset > 0 {
                     return Err(AttErrorCode::INVALID_OFFSET);
@@ -262,6 +321,7 @@ impl AttributeData<'_> {
             Self::Cccd {
                 notifications,
                 indications,
+                ..
             } => {
                 if offset > 0 {
                     return Err(AttErrorCode::INVALID_OFFSET);
@@ -399,6 +459,10 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             },
         });
         ServiceBuilder { handle, table: self }
+    }
+
+    pub(crate) fn permissions(&self, attribute: u16) -> Option<AttPermissions> {
+        self.with_attribute(attribute, |att| att.data.permissions())
     }
 
     pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
@@ -647,6 +711,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                     data: AttributeData::Cccd {
                         notifications: false,
                         indications: false,
+                        write_permission: PermissionLevel::Allowed,
                     },
                 });
 
@@ -676,7 +741,8 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         value: T,
         store: &'d mut [u8],
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-        let props = props.into();
+        let props: CharacteristicProps = props.into();
+        let permissions = props.default_permissions();
         let bytes = value.as_gatt();
         store[..bytes.len()].copy_from_slice(bytes);
         let variable_len = T::MAX_SIZE != T::MIN_SIZE;
@@ -685,7 +751,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             uuid.into(),
             props,
             AttributeData::Data {
-                props,
+                permissions,
                 value: store,
                 variable_len,
                 len,
@@ -702,7 +768,8 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
         assert!(T::MAX_SIZE <= 8);
 
-        let props = props.into();
+        let props: CharacteristicProps = props.into();
+        let permissions = props.default_permissions();
         let bytes = value.as_gatt();
         let mut value = [0; 8];
         value[..bytes.len()].copy_from_slice(bytes);
@@ -713,7 +780,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             uuid.into(),
             props,
             AttributeData::SmallData {
-                props,
+                permissions,
                 variable_len,
                 capacity,
                 len,
@@ -728,12 +795,13 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         uuid: U,
         value: &'d T,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-        let props = [CharacteristicProp::Read].into();
+        let props: CharacteristicProps = [CharacteristicProp::Read].into();
+        let permissions = props.default_permissions();
         self.add_characteristic_internal(
             uuid.into(),
             props,
             AttributeData::ReadOnlyData {
-                props,
+                permissions,
                 value: value.as_gatt(),
             },
         )
@@ -907,11 +975,10 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
     pub fn add_descriptor<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
-        props: &[CharacteristicProp],
+        permissions: AttPermissions,
         value: DT,
         store: &'d mut [u8],
     ) -> Descriptor<DT> {
-        let props = props.into();
         let bytes = value.as_gatt();
         store[..bytes.len()].copy_from_slice(bytes);
         let variable_len = DT::MAX_SIZE != DT::MIN_SIZE;
@@ -919,7 +986,7 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
         self.add_descriptor_internal(
             uuid.into(),
             AttributeData::Data {
-                props,
+                permissions,
                 value: store,
                 variable_len,
                 len,
@@ -931,12 +998,11 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
     pub fn add_descriptor_small<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
-        props: &[CharacteristicProp],
+        permissions: AttPermissions,
         value: DT,
     ) -> Descriptor<DT> {
         assert!(DT::MAX_SIZE <= 8);
 
-        let props = props.into();
         let bytes = value.as_gatt();
         let mut value = [0; 8];
         value[..bytes.len()].copy_from_slice(bytes);
@@ -946,7 +1012,7 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
         self.add_descriptor_internal(
             uuid.into(),
             AttributeData::SmallData {
-                props,
+                permissions,
                 variable_len,
                 capacity,
                 len,
@@ -956,15 +1022,75 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<DT: AsGatt + ?Sized, U: Into<Uuid>>(&mut self, uuid: U, data: &'d DT) -> Descriptor<DT> {
-        let props = [CharacteristicProp::Read].into();
+    pub fn add_descriptor_ro<DT: AsGatt + ?Sized, U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        read_permission: PermissionLevel,
+        data: &'d DT,
+    ) -> Descriptor<DT> {
+        let permissions = AttPermissions {
+            write: PermissionLevel::NotAllowed,
+            read: read_permission,
+        };
         self.add_descriptor_internal(
             uuid.into(),
             AttributeData::ReadOnlyData {
-                props,
+                permissions,
                 value: data.as_gatt(),
             },
         )
+    }
+
+    /// Set the read permission for this characteristic
+    pub fn read_permission(self, read: PermissionLevel) -> Self {
+        self.table.with_attribute(self.handle.handle, |att| {
+            let permissions = match &mut att.data {
+                AttributeData::Data { permissions, .. }
+                | AttributeData::SmallData { permissions, .. }
+                | AttributeData::ReadOnlyData { permissions, .. } => permissions,
+                _ => unreachable!(),
+            };
+
+            permissions.read = read;
+        });
+
+        self
+    }
+
+    /// Set the write permission for this characteristic
+    pub fn write_permission(self, write: PermissionLevel) -> Self {
+        self.table.with_attribute(self.handle.handle, |att| {
+            let permissions = match &mut att.data {
+                AttributeData::Data { permissions, .. }
+                | AttributeData::SmallData { permissions, .. }
+                | AttributeData::ReadOnlyData { permissions, .. } => permissions,
+                _ => unreachable!(),
+            };
+
+            permissions.write = write;
+        });
+
+        self
+    }
+
+    /// Set the write permission for the Client Characteristic Configuration Descriptor for this characteristic
+    ///
+    /// Panics if this characteristic does not have a Client Characteristic Configuration Descriptor.
+    pub fn cccd_permission(self, write: PermissionLevel) -> Self {
+        let Some(handle) = self.handle.cccd_handle else {
+            panic!("Can't set CCCD permission on characteristics without notify or indicate properties.");
+        };
+
+        self.table.with_attribute(handle, |att| {
+            let permission = match &mut att.data {
+                AttributeData::Cccd { write_permission, .. } => write_permission,
+                _ => unreachable!(),
+            };
+
+            *permission = write;
+        });
+
+        self
     }
 
     /// Return the built characteristic.
@@ -1082,6 +1208,27 @@ impl CharacteristicProps {
             }
         }
         false
+    }
+
+    pub(crate) fn default_permissions(&self) -> AttPermissions {
+        let read = if (self.0 & CharacteristicProp::Read as u8) != 0 {
+            PermissionLevel::Allowed
+        } else {
+            PermissionLevel::NotAllowed
+        };
+
+        let write = if (self.0
+            & (CharacteristicProp::Write as u8
+                | CharacteristicProp::WriteWithoutResponse as u8
+                | CharacteristicProp::AuthenticatedWrite as u8))
+            != 0
+        {
+            PermissionLevel::Allowed
+        } else {
+            PermissionLevel::NotAllowed
+        };
+
+        AttPermissions { read, write }
     }
 }
 
@@ -1262,7 +1409,10 @@ mod tests {
         table.push(Attribute::new(
             DEVICE_NAME.into(),
             AttributeData::ReadOnlyData {
-                props: [CharacteristicProp::Read].as_slice().into(),
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
                 value: b"",
             },
         ));
@@ -1280,7 +1430,10 @@ mod tests {
         table.push(Attribute::new(
             APPEARANCE.into(),
             AttributeData::ReadOnlyData {
-                props: [CharacteristicProp::Read].as_slice().into(),
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
                 value: b"",
             },
         ));
@@ -1315,7 +1468,10 @@ mod tests {
         table.push(Attribute::new(
             SERVICE_CHANGED.into(),
             AttributeData::ReadOnlyData {
-                props: [CharacteristicProp::Indicate].as_slice().into(),
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
                 value: b"",
             },
         ));
@@ -1325,6 +1481,7 @@ mod tests {
             AttributeData::Cccd {
                 notifications: false,
                 indications: false,
+                write_permission: PermissionLevel::Allowed,
             },
         ));
 
@@ -1341,7 +1498,10 @@ mod tests {
         table.push(Attribute::new(
             CLIENT_SUPPORTED_FEATURES.into(),
             AttributeData::ReadOnlyData {
-                props: [CharacteristicProp::Read].as_slice().into(),
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
                 value: b"",
             },
         ));
@@ -1359,7 +1519,10 @@ mod tests {
         table.push(Attribute::new(
             DATABASE_HASH.into(),
             AttributeData::ReadOnlyData {
-                props: [CharacteristicProp::Read].as_slice().into(),
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
                 value: b"",
             },
         ));
@@ -1397,7 +1560,10 @@ mod tests {
         table.push(Attribute::new(
             CUSTOM_CHARACTERISTIC.into(),
             AttributeData::ReadOnlyData {
-                props: [CharacteristicProp::Notify, CharacteristicProp::Read].as_slice().into(),
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
                 value: b"",
             },
         ));
@@ -1407,13 +1573,17 @@ mod tests {
             AttributeData::Cccd {
                 notifications: false,
                 indications: false,
+                write_permission: PermissionLevel::Allowed,
             },
         ));
 
         table.push(Attribute::new(
             CHARACTERISTIC_USER_DESCRIPTION.into(),
             AttributeData::ReadOnlyData {
-                props: CharacteristicProps(0),
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
                 value: b"Custom Characteristic",
             },
         ));
@@ -1421,7 +1591,10 @@ mod tests {
         table.push(Attribute::new(
             CHARACTERISTIC_PRESENTATION_FORMAT.into(),
             AttributeData::ReadOnlyData {
-                props: CharacteristicProps(0),
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
                 value: &[4, 0, 0, 0x27, 1, 0, 0],
             },
         ));

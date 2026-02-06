@@ -12,7 +12,7 @@ use syn::parse::Result;
 use syn::spanned::Spanned;
 use syn::{Meta, Token};
 
-use crate::characteristic::{AccessArgs, Characteristic};
+use crate::characteristic::{Characteristic, PermissionArgs, PropertiesArgs};
 use crate::uuid::parse_arg_uuid;
 
 #[derive(Debug)]
@@ -98,8 +98,8 @@ impl ServiceBuilder {
     ///
     /// If the characteristic has either the notify or indicate property,
     /// a Client Characteristic Configuration Descriptor (CCCD) declaration will also be added.
-    fn increment_attributes(&mut self, access: &AccessArgs) -> usize {
-        if access.notify || access.indicate {
+    fn increment_attributes(&mut self, properties: &PropertiesArgs) -> usize {
+        if properties.notify || properties.indicate {
             self.cccd_count += 1;
             self.attribute_count += 3;
         } else {
@@ -158,8 +158,9 @@ impl ServiceBuilder {
         let name_screaming = format_ident!("{}_STORE", characteristic.name.as_str().to_case(Case::Constant));
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
-        let access = &characteristic.args.access;
-        let properties = set_access_properties(access);
+        let properties = &characteristic.args.properties;
+        let permissions = &characteristic.args.permissions;
+        let properties = set_properties(properties);
         let uuid = characteristic.args.uuid;
         let default_value = match characteristic.args.default_value {
             Some(val) => quote!(#val),                                       // if set by user
@@ -178,7 +179,8 @@ impl ServiceBuilder {
                     let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
                     service
                         .add_characteristic(#uuid, &[#(#properties),*], #default_value, store)
-                };
+                }
+                #permissions;
                 #code_descriptors
 
                 (builder.build(), #(#named_descriptors),*)
@@ -197,6 +199,7 @@ impl ServiceBuilder {
         let (code_descriptors, named_descriptors) = self.build_descriptors(&characteristic);
         let char_name = format_ident!("{}", characteristic.name);
         let ty = characteristic.ty;
+        let permissions = &characteristic.args.permissions;
         let uuid = characteristic.args.uuid;
         let default_value = match characteristic.args.default_value {
             Some(val) => quote!(#val),                                       // if set by user
@@ -205,7 +208,8 @@ impl ServiceBuilder {
 
         self.code_build_chars.extend(quote_spanned! {characteristic.span=>
             let (#char_name, #(#named_descriptors),*) = {
-                let mut builder = service.add_characteristic_ro(#uuid, #default_value);
+                let mut builder = service.add_characteristic_ro(#uuid, #default_value)
+                    #permissions;
                 #code_descriptors
 
                 (builder.build(), #(#named_descriptors),*)
@@ -243,7 +247,7 @@ impl ServiceBuilder {
             let mut ty = &ch.ty;
             let mut ro = false;
             if let syn::Type::Reference(type_ref) = ty {
-                if ch.args.access.is_read_only()
+                if ch.args.permissions.is_read_only()
                     && type_ref.mutability.is_none()
                     && type_ref.lifetime.as_ref().is_some_and(|lt| lt.ident == "static")
                 {
@@ -268,7 +272,7 @@ impl ServiceBuilder {
             }
             attrs.push(ch_attrs);
 
-            self.increment_attributes(&ch.args.access);
+            self.increment_attributes(&ch.args.properties);
 
             if ro {
                 self.construct_characteristic_ro(ch);
@@ -302,8 +306,7 @@ impl ServiceBuilder {
                     let name_screaming =
                         format_ident!("DESC_{index}_{}_STORE", characteristic.name.as_str().to_case(Case::Constant));
                     let identifier = args.name.as_ref().map(|name| format_ident!("{}_{}_descriptor", characteristic.name.as_str(), name.value()));
-                    let access = &args.access;
-                    let properties = set_access_properties(access);
+                    let permissions = set_permissions(&args.permissions);
                     let uuid = &args.uuid;
                     let default_value = match &args.default_value {
                         Some(val) => quote!(#val), // if set by user
@@ -313,7 +316,7 @@ impl ServiceBuilder {
                     let mut ty = args.ty.as_ref();
                     let mut ro = false;
                     if let Some(syn::Type::Reference(type_ref)) = args.ty.as_ref() {
-                        if args.access.is_read_only()
+                        if args.permissions.is_read_only()
                             && type_ref.mutability.is_none()
                             && type_ref.lifetime.as_ref().is_some_and(|lt| lt.ident == "static")
                         {
@@ -342,8 +345,9 @@ impl ServiceBuilder {
                     self.attribute_count += 1; // descriptors should always only be one attribute.
 
                     if ro {
+                        let read = args.permissions.read;
                         quote_spanned! {characteristic.span=>
-                            #identifier_assignment builder.add_descriptor_ro(#uuid, #default_value);
+                            #identifier_assignment builder.add_descriptor_ro(#uuid, #read, #default_value);
                         }
                     } else {
                         let capacity = match ty {
@@ -360,7 +364,7 @@ impl ServiceBuilder {
                                 if #capacity_screaming <= 8 {
                                     builder.add_descriptor_small(
                                         #uuid,
-                                        &[#(#properties),*],
+                                        #permissions,
                                         #default_value,
                                     )
                                 } else {
@@ -368,7 +372,7 @@ impl ServiceBuilder {
                                     let store = #name_screaming.init([0; #capacity]);
                                     builder.add_descriptor(
                                         #uuid,
-                                        &[#(#properties),*],
+                                        #permissions,
                                         #default_value,
                                         store,
                                     )
@@ -389,7 +393,7 @@ fn parse_property_into_list(property: bool, variant: TokenStream2, properties: &
 }
 
 /// Parse the properties of a characteristic and return a list of properties
-fn set_access_properties(args: &AccessArgs) -> Vec<TokenStream2> {
+fn set_properties(args: &PropertiesArgs) -> Vec<TokenStream2> {
     let mut properties = Vec::new();
     parse_property_into_list(
         args.read,
@@ -417,4 +421,11 @@ fn set_access_properties(args: &AccessArgs) -> Vec<TokenStream2> {
         &mut properties,
     );
     properties
+}
+
+/// Parse the permissions of a descriptor and return an AttPermissions
+fn set_permissions(args: &PermissionArgs) -> TokenStream2 {
+    let read = args.read;
+    let write = args.write;
+    quote! {trouble_host::attribute::AttPermissions { read: #read, write: #write }}
 }

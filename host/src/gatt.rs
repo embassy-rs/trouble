@@ -279,12 +279,34 @@ pub enum GattEvent<'stack, 'server, P: PacketPool> {
     Write(WriteEvent<'stack, 'server, P>),
     /// Other event.
     Other(OtherEvent<'stack, 'server, P>),
+    /// A request was made that was not allowed by the permissions of the attribute.
+    NotAllowed(NotAllowedEvent<'stack, 'server, P>),
 }
 
 impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
     /// Create a new GATT event from the provided `GattData` and `DynamicAttributeServer`.
     pub fn new(data: GattData<'stack, P>, server: &'server dyn DynamicAttributeServer<P>) -> Self {
         let att = data.incoming();
+
+        let allowed = match &att {
+            AttClient::Command(AttCmd::Write { handle, .. }) => server.can_write(&data.connection, *handle),
+            AttClient::Request(req) => match req {
+                AttReq::Write { handle, .. } | AttReq::PrepareWrite { handle, .. } => {
+                    server.can_write(&data.connection, *handle)
+                }
+                AttReq::Read { handle } | AttReq::ReadBlob { handle, .. } => server.can_read(&data.connection, *handle),
+                AttReq::ReadMultiple { handles } => handles.chunks_exact(2).try_for_each(|handle| {
+                    server.can_read(&data.connection, u16::from_le_bytes(handle.try_into().unwrap()))
+                }),
+                _ => Ok(()),
+            },
+            _ => Ok(()),
+        };
+
+        if let Err(err) = allowed {
+            return GattEvent::NotAllowed(NotAllowedEvent { data, err, server });
+        }
+
         match att {
             AttClient::Request(AttReq::Write { .. }) | AttClient::Command(AttCmd::Write { .. }) => {
                 GattEvent::Write(WriteEvent { data, server })
@@ -302,6 +324,7 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
             Self::Read(e) => e.accept(),
             Self::Write(e) => e.accept(),
             Self::Other(e) => e.accept(),
+            Self::NotAllowed(e) => e.accept(),
         }
     }
 
@@ -311,6 +334,7 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
             Self::Read(e) => e.reject(err),
             Self::Write(e) => e.reject(err),
             Self::Other(e) => e.reject(err),
+            Self::NotAllowed(e) => e.reject(err),
         }
     }
 
@@ -320,6 +344,7 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
             Self::Read(e) => e.payload(),
             Self::Write(e) => e.payload(),
             Self::Other(e) => e.payload(),
+            Self::NotAllowed(e) => e.payload(),
         }
     }
 
@@ -334,6 +359,7 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
             Self::Read(e) => e.into_payload(),
             Self::Write(e) => e.into_payload(),
             Self::Other(e) => e.into_payload(),
+            Self::NotAllowed(e) => e.into_payload(),
         }
     }
 }
@@ -492,6 +518,58 @@ impl<'stack, P: PacketPool> OtherEvent<'stack, '_, P> {
 impl<P: PacketPool> Drop for OtherEvent<'_, '_, P> {
     fn drop(&mut self) {
         let _ = process(&mut self.data, self.server, Ok(()));
+    }
+}
+
+/// Other event returned while processing GATT requests (neither read, nor write).
+pub struct NotAllowedEvent<'stack, 'server, P: PacketPool> {
+    data: GattData<'stack, P>,
+    err: AttErrorCode,
+    server: &'server dyn DynamicAttributeServer<P>,
+}
+
+impl<'stack, P: PacketPool> NotAllowedEvent<'stack, '_, P> {
+    /// Characteristic handle that was requested
+    pub fn handle(&self) -> u16 {
+        // We know that the unwrap cannot fail, because `NotAllowedEvent` wraps
+        // ATT payloads that always do have a handle
+        unwrap!(self.data.handle())
+    }
+
+    /// Accept the event, making it processed by the server.
+    ///
+    /// Automatically called if drop() is invoked.
+    pub fn accept(mut self) -> Result<Reply<'stack, P>, Error> {
+        process(&mut self.data, self.server, Err(self.err))
+    }
+
+    /// Reject the event with the provided error code, it will not be processed by the attribute server.
+    pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack, P>, Error> {
+        process(&mut self.data, self.server, Err(err))
+    }
+
+    /// Get a reference to the underlying `GattData` payload that this event is enclosing
+    pub fn payload(&self) -> &GattData<'stack, P> {
+        &self.data
+    }
+
+    /// Convert the event back into the `GattData` payload it is enclosing
+    ///
+    /// Allows for custom processing of the enclosed data, as in handling payloads
+    /// which are not supported yet by the enclosed attribute server.
+    /// Note that this will consume the event, so it would be up to the caller to respond
+    /// to the incoming payload if needed and however they see fit.
+    pub fn into_payload(mut self) -> GattData<'stack, P> {
+        GattData {
+            pdu: self.data.pdu.take(),
+            connection: self.data.connection.clone(),
+        }
+    }
+}
+
+impl<P: PacketPool> Drop for NotAllowedEvent<'_, '_, P> {
+    fn drop(&mut self) {
+        let _ = process(&mut self.data, self.server, Err(self.err));
     }
 }
 
