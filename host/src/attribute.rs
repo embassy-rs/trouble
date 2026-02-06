@@ -112,6 +112,10 @@ impl<'a> Attribute<'a> {
     pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         self.data.write(offset, data)
     }
+
+    pub(crate) fn permissions(&self) -> AttPermissions {
+        self.data.permissions()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -182,10 +186,6 @@ impl AttributeData<'_> {
     }
 
     fn read(&self, mut offset: usize, mut data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if !self.readable() {
-            return Err(AttErrorCode::READ_NOT_PERMITTED);
-        }
-
         fn append(src: &[u8], offset: &mut usize, dest: &mut &mut [u8]) -> usize {
             if *offset >= src.len() {
                 *offset -= src.len();
@@ -258,8 +258,6 @@ impl AttributeData<'_> {
     }
 
     fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        let writable = self.writable();
-
         match self {
             Self::Data {
                 value,
@@ -267,10 +265,6 @@ impl AttributeData<'_> {
                 len,
                 ..
             } => {
-                if !writable {
-                    return Err(AttErrorCode::WRITE_NOT_PERMITTED);
-                }
-
                 if offset + data.len() <= value.len() {
                     value[offset..offset + data.len()].copy_from_slice(data);
                     if *variable_len {
@@ -288,10 +282,6 @@ impl AttributeData<'_> {
                 value,
                 ..
             } => {
-                if !writable {
-                    return Err(AttErrorCode::WRITE_NOT_PERMITTED);
-                }
-
                 if offset + data.len() <= *capacity as usize {
                     value[offset..offset + data.len()].copy_from_slice(data);
                     if *variable_len {
