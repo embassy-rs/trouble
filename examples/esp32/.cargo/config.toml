@@ -9,6 +9,11 @@ esp32s3 = "run --release --no-default-features --features=esp32s3 --target=xtens
 [target.'cfg(all(any(target_arch = "riscv32", target_arch = "xtensa"), target_os = "none"))']
 runner = "espflash flash --monitor"
 
+# Features are not available within '.cargo/config.toml'. Defining the 'getrandom' backend unconditionally is ok.
+#[target.'cfg(feature="security")']
+[target.'cfg(true)']
+rustflags = ["--cfg", 'getrandom_backend="custom"']
+
 [build]
 rustflags = [
   # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)

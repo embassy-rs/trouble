@@ -3,6 +3,11 @@
 #runner = "probe-rs run --chip nRF52833_xxAA"
 runner = "probe-rs run --chip nRF52840_xxAA"
 
+# Features are not available within '.cargo/config.toml'. Defining the 'getrandom' backend unconditionally is ok.
+#[target.'cfg(feature="security")']
+[target.'cfg(true)']
+rustflags = ["--cfg", 'getrandom_backend="custom"']
+
 [build]
 # Pick ONE of these compilation targets
 # target = "thumbv6m-none-eabi"    # Cortex-M0 and Cortex-M0+

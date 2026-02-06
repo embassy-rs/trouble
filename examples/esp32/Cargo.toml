@@ -13,6 +13,7 @@ esp-alloc = { version = "0.9.0" }
 esp-println = { version = "0.16.0", features = ["log-04"] }
 esp-radio = { version = "0.17.0", features = ["ble", "log-04", "unstable"] }
 esp-rtos = { version = "0.2.0", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
+getrandom = { version = "0.4.1", default-features = false, optional = true }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
 trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
 
@@ -32,7 +33,11 @@ esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-println/esp32s3", "e
 
 security = [
     "trouble-example-apps/security",
+    "dep:getrandom",
 ]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(getrandom_backend, values("custom"))'] }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -60,7 +65,8 @@ required-features = ["security"]
 name = "ble_bas_peripheral_bonding"
 required-features = ["security"]
 
-# Enable for using latest 'main'
+# ~~Enable for using latest 'main'~~
+# Use 'bt-hci' 0.7 until 'esp-hal' itself does. #todo A PR towards esp-hal to not need lulf's repo.
 [patch.crates-io]
 esp-alloc =             { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
 esp-backtrace =         { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }

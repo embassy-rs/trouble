@@ -1,0 +1,28 @@
+// Custom 'getrandom' backend for 'esp-hal'
+// Reference: https://github.com/rust-random/getrandom/tree/master/custom_impl_test
+
+use getrandom::Error as _RandError;
+
+pub fn getrandom_esp32(ptr: *mut u8, len: usize) -> Result<(), _RandError> {
+    let rng = esp_hal::rng::Rng::new();
+
+    let dst: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(ptr.cast(), len) };
+
+    for chunk in dst.chunks_mut(4) {
+        let x = rng.random();
+        chunk.copy_from_slice(&x.to_ne_bytes()[..chunk.len()]);
+    }
+    Ok(())
+}
+
+// Helps catch build misconfiguration.
+// Note: Cannot have this in 'build.rs' because project features cannot be evaluated there (and this
+//      would be conditional on 'security' feature).
+#[cfg(not(getrandom_backend = "custom"))]
+compile_error!("'getrandom' custom backend not properly configured");
+
+// Note: Name of the function _is_ '__getrandom_v03_custom' also with getrandom 0.4. Because ABI.
+#[unsafe(no_mangle)]
+unsafe extern "Rust" fn __getrandom_v03_custom(ptr: *mut u8, len: usize) -> Result<(), _RandError> {
+    getrandom_esp32(ptr, len)
+}
