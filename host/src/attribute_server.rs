@@ -475,6 +475,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let mut handle = start;
         let mut data = WriteCursor::new(buf);
 
+        if start > end || start == 0 {
+            return Self::error_response(data, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+        }
+
         let (mut header, mut body) = data.split(2)?;
         let err = self.att_table.iterate_from(start, |mut it| {
             let mut ret = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
@@ -551,6 +555,11 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     ) -> Result<usize, codec::Error> {
         let mut handle = start;
         let mut data = WriteCursor::new(buf);
+
+        if start > end || start == 0 {
+            return Self::error_response(data, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+        }
+
         let (mut header, mut body) = data.split(2)?;
         // Multiple entries can be returned in the response as long as they are of equal length.
         let err = self.att_table.iterate_from(start, |mut it| {
@@ -703,6 +712,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let mut w = WriteCursor::new(buf);
         let attr_type = Uuid::new_short(attr_type);
 
+        if start > end || start == 0 {
+            return Self::error_response(w, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+        }
+
         w.write(att::ATT_FIND_BY_TYPE_VALUE_RSP)?;
         self.att_table.iterate_from(start, |mut it| {
             while let Some((handle, att)) = it.next() {
@@ -738,6 +751,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
 
     fn handle_find_information(&self, buf: &mut [u8], start: u16, end: u16) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(buf);
+
+        if start > end || start == 0 {
+            return Self::error_response(w, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+        }
 
         let (mut header, mut body) = w.split(2)?;
 
