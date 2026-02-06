@@ -9,8 +9,6 @@ use embassy_nrf::{bind_interrupts, rng};
 use embassy_nrf::gpio::{Input, Pull};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_peripheral_auth;
 use {defmt_rtt as _, panic_probe as _};
@@ -23,6 +21,8 @@ bind_interrupts!(struct Irqs {
     TIMER0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
     RTC0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
 });
+
+include!("./getrandom.in");
 
 #[embassy_executor::task]
 async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
@@ -73,7 +73,7 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
+    preset_random_with(&mut rng);
 
     let mut sdc_mem = sdc::Mem::<3312>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
@@ -81,5 +81,5 @@ async fn main(spawner: Spawner) {
     let yes = Input::new(p.P0_11, Pull::Up);
     let no = Input::new(p.P0_12, Pull::Up);
 
-    ble_bas_peripheral_auth::run(sdc, &mut rng_2, yes, no).await;
+    ble_bas_peripheral_auth::run(sdc, yes, no).await;
 }

@@ -2,7 +2,6 @@ use embassy_futures::join::join;
 use embassy_futures::select::{select, Either};
 use embassy_time::Timer;
 use embedded_hal_async::digital::Wait;
-use rand_core::{CryptoRng, RngCore};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -30,10 +29,9 @@ struct BatteryService {
 }
 
 /// Run the BLE stack.
-pub async fn run<C, RNG, YES, NO>(controller: C, random_generator: &mut RNG, mut yes: YES, mut no: NO)
+pub async fn run<C, YES, NO>(controller: C, mut yes: YES, mut no: NO)
 where
     C: Controller,
-    RNG: RngCore + CryptoRng,
     YES: embedded_hal_async::digital::Wait,
     NO: embedded_hal_async::digital::Wait
 {
@@ -45,7 +43,6 @@ where
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator)
         .set_io_capabilities(IoCapabilities::DisplayYesNo);
     let Host {
         mut peripheral, runner, ..

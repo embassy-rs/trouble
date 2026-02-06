@@ -79,7 +79,6 @@ The `MyController` is the type for your particular hardware, for instance `Softd
 The `Stack` is a builder allowing you to set some properties of the host before creating it:
 
 * `set_random_address` for specifying a BLE random address (see xref:_random_address).
-* `set_random_generator_seed` for specifying the random seed used by the security manager (if enabled).
 
 
 Once properties are set, you can build the host:
