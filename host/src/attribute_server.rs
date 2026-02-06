@@ -364,25 +364,15 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
     }
 
     fn can_read(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode> {
-        if let Some(permissions) = self.att_table.permissions(handle) {
-            match connection.security_level() {
-                Ok(level) => permissions.can_read(level),
-                Err(_) => Err(AttErrorCode::INVALID_HANDLE),
-            }
-        } else {
-            Err(AttErrorCode::INVALID_HANDLE)
-        }
+        self.att_table
+            .with_attribute(handle, |att| self.can_read(connection, att))
+            .unwrap_or(Err(AttErrorCode::INVALID_HANDLE))
     }
 
     fn can_write(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode> {
-        if let Some(permissions) = self.att_table.permissions(handle) {
-            match connection.security_level() {
-                Ok(level) => permissions.can_write(level),
-                Err(_) => Err(AttErrorCode::INVALID_HANDLE),
-            }
-        } else {
-            Err(AttErrorCode::INVALID_HANDLE)
-        }
+        self.att_table
+            .with_attribute(handle, |att| self.can_write(connection, att))
+            .unwrap_or(Err(AttErrorCode::INVALID_HANDLE))
     }
 }
 
@@ -414,6 +404,20 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
             .should_indicate(&connection.peer_identity(), cccd_handle)
     }
 
+    fn can_read(&self, connection: &Connection<'_, P>, att: &Attribute<'_>) -> Result<(), AttErrorCode> {
+        match connection.security_level() {
+            Ok(level) => att.permissions().can_read(level),
+            Err(_) => Err(AttErrorCode::INVALID_HANDLE),
+        }
+    }
+
+    fn can_write(&self, connection: &Connection<'_, P>, att: &Attribute<'_>) -> Result<(), AttErrorCode> {
+        match connection.security_level() {
+            Ok(level) => att.permissions().can_write(level),
+            Err(_) => Err(AttErrorCode::INVALID_HANDLE),
+        }
+    }
+
     fn read_attribute_data(
         &self,
         connection: &Connection<'_, P>,
@@ -422,6 +426,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         att: &mut Attribute<'values>,
         data: &mut [u8],
     ) -> Result<usize, AttErrorCode> {
+        self.can_read(connection, att)?;
         if let AttributeData::Cccd { .. } = att.data {
             // CCCD values for each connected client are held in the CCCD tables:
             // the value is written back into att.data so att.read() has the final
@@ -441,6 +446,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         att: &mut Attribute<'values>,
         data: &[u8],
     ) -> Result<(), AttErrorCode> {
+        self.can_write(connection, att)?;
         let err = att.write(offset, data);
         if err.is_ok() {
             if let AttributeData::Cccd {
