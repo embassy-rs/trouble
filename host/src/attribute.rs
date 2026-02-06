@@ -1235,7 +1235,10 @@ mod tests {
         // GAP service (handles 0x001 - 0x005)
         table.push(Attribute::new(
             PRIMARY_SERVICE.into(),
-            AttributeData::Service { uuid: GAP.into() },
+            AttributeData::Service {
+                uuid: GAP.into(),
+                last_handle_in_group: 0x05,
+            },
         ));
 
         let expected = 0xd4cdec10804db3f147b4d7d10baa0120;
@@ -1293,7 +1296,10 @@ mod tests {
         // GATT service (handles 0x006 - 0x000d)
         table.push(Attribute::new(
             PRIMARY_SERVICE.into(),
-            AttributeData::Service { uuid: GATT.into() },
+            AttributeData::Service {
+                uuid: GATT.into(),
+                last_handle_in_group: 0x0d,
+            },
         ));
 
         // Service changed characteristic
@@ -1374,6 +1380,7 @@ mod tests {
             PRIMARY_SERVICE.into(),
             AttributeData::Service {
                 uuid: CUSTOM_SERVICE.into(),
+                last_handle_in_group: 0x13,
             },
         ));
 
