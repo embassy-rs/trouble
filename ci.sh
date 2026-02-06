@@ -44,10 +44,25 @@ cargo batch \
     --- build --release --manifest-path examples/rp-pico-2-w/Cargo.toml --target thumbv8m.main-none-eabihf --features skip-cyw43-firmware
 #    --- build --release --manifest-path examples/apache-nimble/Cargo.toml --target thumbv7em-none-eabihf
 
+# Note: Must manually maintain the lists of 'bin' targets that require feature 'security'. These are the same as in the
+#     particular example's Cargo.toml, having a '[[bin]]' entry with 'required_features = ["security"]'.
+#
 RUSTFLAGS="--cfg getrandom_backend=\"custom\"" \
-  cargo build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840,security
+  cargo build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840,security \
+    --bin ble_bas_central_sec \
+    --bin ble_bas_peripheral_sec \
+    --bin ble_bas_peripheral_auth \
+    --bin ble_bas_central_auth \
+    --bin ble_bas_peripheral_pass_key \
+    --bin ble_bas_central_pass_key \
+    --bin ble_bas_central_bonding \
+    --bin ble_bas_peripheral_bonding
+
 RUSTFLAGS="--cfg getrandom_backend=\"custom\"" \
-  cargo build --release --manifest-path examples/esp32/Cargo.toml --features esp32c3,security --target riscv32imc-unknown-none-elf
+  cargo build --release --manifest-path examples/esp32/Cargo.toml --features esp32c3,security --target riscv32imc-unknown-none-elf \
+    --bin ble_bas_peripheral_sec \
+    --bin ble_bas_central_sec \
+    --bin ble_bas_peripheral_bonding
 
 cargo fmt --check --manifest-path ./host/Cargo.toml
 cargo clippy --manifest-path ./host/Cargo.toml --features gatt,peripheral,central
