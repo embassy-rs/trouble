@@ -1,4 +1,3 @@
-#![cfg_attr(rustfmt, rustfmt_skip)]     // REMOVE before 'pr-rand-catchup' is ready!
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 

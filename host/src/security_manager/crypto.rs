@@ -1,7 +1,6 @@
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
-#![cfg_attr(rustfmt, rustfmt_skip)]     // REMOVE before 'pr-rand-catchup' is ready!
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use aes::Aes128;
 use bt_hci::param::BdAddr;
@@ -346,8 +345,8 @@ impl SecretKey {
     /// Computes the associated public key.
     pub fn public_key(&self) -> PublicKey {
         use p256::elliptic_curve::sec1::Coordinates::Uncompressed;
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
-        let p = p256::PublicKey::from_secret_scalar(&self.0).to_encoded_point(false);
+        use p256::elliptic_curve::sec1::ToSec1Point;
+        let p = p256::PublicKey::from_secret_scalar(&self.0).to_sec1_point(false);
         match p.coordinates() {
             Uncompressed { x, y } => PublicKey {
                 x: PublicKeyX(Coord(*x.as_ref())),
@@ -362,17 +361,17 @@ impl SecretKey {
     /// from the same secret key ([Vol 3] Part H, Section 2.3.5.6.1).
     #[must_use]
     pub fn dh_key(&self, pk: PublicKey) -> Option<DHKey> {
-        use p256::elliptic_curve::sec1::FromEncodedPoint;
+        use p256::elliptic_curve::sec1::FromSec1Point;
         if pk.is_debug() {
             return None; // TODO: Compile-time option for debug-only mode
         }
 
         let (x, y) = (&pk.x.0 .0.into(), &pk.y.0.into());
-        let rep = p256::EncodedPoint::from_affine_coordinates(x, y, false);
+        let rep = p256::Sec1Point::from_affine_coordinates(x, y, false);
         let lpk = p256::PublicKey::from_secret_scalar(&self.0);
-        // Constant-time ops not required:
+        // Constant-time ops not required:  // <-- tbd. is this comment still relevant?
         // https://github.com/RustCrypto/traits/issues/1227
-        let rpk = Option::from(p256::PublicKey::from_encoded_point(&rep)).unwrap_or(lpk);
+        let rpk = Option::from(p256::PublicKey::from_sec1_point(&rep)).unwrap_or(lpk);
         (rpk != lpk).then(|| DHKey(ecdh::diffie_hellman(&self.0, rpk.as_affine())))
     }
 }
@@ -498,8 +497,8 @@ pub(super) fn u256<T: From<[u8; 32]>>(hi: u128, lo: u128) -> T {
 #[allow(clippy::unusual_byte_groupings)]
 #[cfg(test)]
 mod tests {
-    use rand::rngs::SysRng;
     use rand::rand_core::UnwrapErr;
+    use rand::rngs::SysRng;
 
     use super::*;
     extern crate std;

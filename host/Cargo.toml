@@ -18,9 +18,9 @@ features = ["defmt", "peripheral", "central", "gatt", "scan", "derive"]
 target = "thumbv7em-none-eabi"
 
 [dependencies]
-aes = { version = "0.9.0-rc.2", optional = true }
+aes = { version = "0.9.0-rc.4", optional = true }
 bt-hci = { version = "0.7", features = ["uuid"] }
-cmac = { version = "0.8.0-rc.3", optional = true }
+cmac = { version = "0.8.0-rc.4", optional = true }
 embedded-io = { version = "0.7" }
 embassy-sync = "0.7"
 embassy-time = "0.5"
@@ -28,8 +28,8 @@ embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.9"
 trouble-host-macros = { path = "../host-macros", version = "0.3.0", optional = true }
-p256 = { version = "0.14.0-rc.6", default-features = false, features = ["ecdh","arithmetic"], optional = true } # "getrandom"
-rand = { version="0.10.0-rc.8", default-features = false, features = ["chacha"], optional = true }
+p256 = { version = "0.14.0-rc.7", default-features = false, features = ["ecdh","arithmetic"], optional = true } # "getrandom"
+rand = { version="0.10.0-rc.9", default-features = false, features = ["chacha"], optional = true }
 static_cell = "2.1.0"
 zerocopy = "0.8.21"
 
@@ -38,7 +38,6 @@ log = { version = "0.4.16", optional = true }
 defmt = { version = "1.0.1", optional = true }
 
 [dev-dependencies]
-chacha20 = { version = "0.10.0-rc.9", default-features = false }
 tokio = { version = "1", default-features = false, features = [
   "time",
   "rt-multi-thread",
@@ -49,7 +48,7 @@ embedded-io = { version = "0.7" }
 tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] } # needed
-rand = { version = "0.10.0-rc.8", default-features = false, features = ["chacha", "sys_rng", "thread_rng"] } # tests
+rand = { version = "0.10.0-rc.9", default-features = false, features = ["chacha", "sys_rng", "thread_rng"] } # tests
 heapless = "0.9"
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 

@@ -13,7 +13,7 @@ embassy-time = "0.5"
 embedded-hal-async = "1.0"
 static_cell = "2" # host-macros
 heapless = "0.9" # ble_scanner.rs
-rand_core = { version = "0.10.0-rc-6", default-features = false, optional = true }
+rand_core = { version = "0.10.0", default-features = false, optional = true }
     # tbd. Have the PR #521 remove need for 'rand[_core]' from the 'examples/' side. 'examples/**/Cargo.toml'
 
 # Used by 'security' feature
