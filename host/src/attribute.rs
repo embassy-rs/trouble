@@ -429,11 +429,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
     /// Add a service to the attribute table (group of characteristics)
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
+        self.close_last_service_group();
         let handle = self.push(Attribute {
             uuid: PRIMARY_SERVICE.into(),
             data: AttributeData::Service {
                 uuid: service.uuid,
-                last_handle_in_group: 0,
+                last_handle_in_group: u16::MAX,
             },
         });
         ServiceBuilder { handle, table: self }
@@ -441,14 +442,31 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
     /// Add a service to the attribute table (group of characteristics)
     pub fn add_secondary_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
+        self.close_last_service_group();
         let handle = self.push(Attribute {
             uuid: SECONDARY_SERVICE.into(),
             data: AttributeData::Service {
                 uuid: service.uuid,
-                last_handle_in_group: 0,
+                last_handle_in_group: u16::MAX,
             },
         });
         ServiceBuilder { handle, table: self }
+    }
+
+    /// Update the last service's `last_handle_in_group` to the current last handle in the table.
+    fn close_last_service_group(&mut self) {
+        self.with_inner(|inner| {
+            let last_handle = inner.next_handle() - 1;
+            for attr in inner.attributes.iter_mut().rev() {
+                if let AttributeData::Service {
+                    last_handle_in_group, ..
+                } = &mut attr.data
+                {
+                    *last_handle_in_group = last_handle;
+                    break;
+                }
+            }
+        });
     }
 
     /// Get the permissions for the attribute
@@ -902,24 +920,6 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     /// Finish construction of the service and return a handle.
     pub fn build(self) -> u16 {
         self.handle
-    }
-}
-
-impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
-    fn drop(&mut self) {
-        self.table.with_inner(|inner| {
-            let last_handle = inner.next_handle() - 1;
-
-            let i = usize::from(self.handle - 1);
-            let AttributeData::Service {
-                last_handle_in_group, ..
-            } = &mut inner.attributes[i].data
-            else {
-                unreachable!()
-            };
-
-            *last_handle_in_group = last_handle;
-        });
     }
 }
 
