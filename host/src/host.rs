@@ -470,6 +470,8 @@ where
                 } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
                     info!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
+                    #[cfg(feature = "gatt")]
+                    self.connections.post_gatt_client(acl.handle(), pdu)?;
                 } else {
                     #[cfg(feature = "gatt")]
                     match a {
