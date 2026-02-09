@@ -20,7 +20,7 @@ panic-probe = { version = "1.0", features = ["print-defmt"] }
 
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
-rand = { version = "0.10.0-rc.8", default-features = false, features = ["chacha"], optional = true }
+rand = { version = "0.10.0", default-features = false, features = ["chacha"], optional = true }
 static_cell = "2"
 
 [profile.release]

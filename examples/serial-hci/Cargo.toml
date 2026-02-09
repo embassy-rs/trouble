@@ -10,7 +10,7 @@ embedded-io-adapters = { version = "0.7", features = ["tokio-1"] }
 embassy-sync = { version = "0.7", features = ["log"] }
 embassy-time = { version = "0.5", features = ["log", "std", "generic-queue-8"] } # needed
 critical-section = { version = "1.1", features = ["std"] } # needed
-rand = { version = "0.10.0-rc.8", default-features = false, features = ["sys_rng"], optional = true }
+rand = { version = "0.10.0", default-features = false, features = ["sys_rng"], optional = true }
 tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "std"] }
