@@ -831,6 +831,18 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         let len = w.len();
         connection.send(Pdu::new(buf, len)).await;
+
+        // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
+        loop {
+            let pdu = connection.next_gatt_client().await;
+            match pdu.as_ref()[0] {
+                att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => break,
+                _ => {
+                    warn!("[gatt] unexpected PDU during MTU exchange, discarding");
+                }
+            }
+        }
+
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),
             stack,
