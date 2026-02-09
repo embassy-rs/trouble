@@ -1069,7 +1069,7 @@ mod tests {
                 // We now have a connection, we can send the mocked requests to our attribute server.
                 let mut buffer = [0u8; 64];
 
-                let mut start = 0;
+                let mut start = 1;
                 let end = u16::MAX;
                 // There are always three services that we should be able to discover.
                 for _ in 0..3 {
@@ -1091,7 +1091,7 @@ mod tests {
                     // next cycle. We only check the first response here, and ignore any others that may be in the
                     // response.
                     let last_handle = u16::from_le_bytes([response[4], response[5]]);
-                    start = last_handle + 1;
+                    start = last_handle.saturating_add(1);
                 }
             } else {
                 panic!("expected connection to be accepted");

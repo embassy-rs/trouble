@@ -743,7 +743,7 @@ impl<const MTU: usize> AsRef<[u8]> for Notification<MTU> {
 
 /// Handle for a GATT service.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ServiceHandle {
     start: u16,
     end: u16,
@@ -843,6 +843,63 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     }
 
     /// Discover primary services associated with a UUID.
+    pub async fn services(&self) -> Result<Vec<ServiceHandle, MAX_SERVICES>, BleHostError<C::Error>> {
+        let mut start: u16 = 0x0001;
+        let mut result = Vec::new();
+
+        loop {
+            let data = att::AttReq::ReadByGroupType {
+                start,
+                end: u16::MAX,
+                group_type: PRIMARY_SERVICE.into(),
+            };
+
+            let response = self.request(data).await?;
+            let res = Self::response(response.pdu.as_ref())?;
+            match res {
+                AttRsp::Error { request, handle, code } => {
+                    if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND {
+                        break;
+                    }
+                    return Err(Error::Att(code).into());
+                }
+                AttRsp::ReadByGroupType { mut it } => {
+                    let mut end: u16 = 0;
+                    while let Some(res) = it.next() {
+                        let (handle, data) = res?;
+
+                        let mut r = ReadCursor::new(data);
+                        end = r.read()?;
+                        let uuid = Uuid::try_from(r.remaining())?;
+
+                        let svc = ServiceHandle {
+                            start: handle,
+                            end,
+                            uuid,
+                        };
+
+                        result.push(svc.clone()).map_err(|_| Error::InsufficientSpace)?;
+                        let mut known = self.known_services.borrow_mut();
+                        if !known.contains(&svc) {
+                            known.push(svc).map_err(|_| Error::InsufficientSpace)?;
+                        }
+                    }
+                    if end == 0xFFFF {
+                        break;
+                    }
+                    start = end + 1;
+                }
+                res => {
+                    trace!("[gatt client] response: {:?}", res);
+                    return Err(Error::UnexpectedGattResponse.into());
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Discover primary services associated with a UUID.
     pub async fn services_by_uuid(
         &self,
         uuid: &Uuid,
@@ -878,10 +935,10 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             uuid: uuid.clone(),
                         };
                         result.push(svc.clone()).map_err(|_| Error::InsufficientSpace)?;
-                        self.known_services
-                            .borrow_mut()
-                            .push(svc)
-                            .map_err(|_| Error::InsufficientSpace)?;
+                        let mut known = self.known_services.borrow_mut();
+                        if !known.contains(&svc) {
+                            known.push(svc).map_err(|_| Error::InsufficientSpace)?;
+                        }
                     }
                     if end == 0xFFFF {
                         break;
@@ -896,6 +953,85 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         }
 
         Ok(result)
+    }
+
+    /// Discover all characteristics in a given service
+    pub async fn characteristics<const N: usize>(
+        &self,
+        service: &ServiceHandle,
+    ) -> Result<Vec<Characteristic<[u8]>, N>, BleHostError<C::Error>> {
+        let mut start: u16 = service.start;
+        let mut characteristics = Vec::new();
+
+        loop {
+            let data = att::AttReq::ReadByType {
+                start,
+                end: service.end,
+                attribute_type: CHARACTERISTIC.into(),
+            };
+            let response = self.request(data).await?;
+
+            match Self::response(response.pdu.as_ref())? {
+                AttRsp::ReadByType { mut it } => {
+                    while let Some(res) = it.next() {
+                        let (declaration_handle, item) = res?;
+                        if declaration_handle == 0xffff {
+                            return Err(Error::Att(AttErrorCode::INVALID_HANDLE).into());
+                        }
+
+                        let expected_items_len = 5;
+                        let item_len = item.len();
+
+                        if item_len < expected_items_len {
+                            return Err(Error::MalformedCharacteristicDeclaration {
+                                expected: expected_items_len,
+                                actual: item_len,
+                            }
+                            .into());
+                        }
+
+                        let AttributeData::Declaration {
+                            props,
+                            handle,
+                            uuid: decl_uuid,
+                        } = AttributeData::decode_declaration(item)?
+                        else {
+                            unreachable!()
+                        };
+
+                        characteristics
+                            .push(Characteristic {
+                                handle,
+                                props,
+                                cccd_handle: None,
+                                phantom: PhantomData,
+                            })
+                            .map_err(|_| Error::InsufficientSpace)?;
+
+                        start = declaration_handle + 1;
+                    }
+                }
+                AttRsp::Error { request, handle, code } => match code {
+                    att::AttErrorCode::ATTRIBUTE_NOT_FOUND => break,
+                    _ => return Err(Error::Att(code).into()),
+                },
+                _ => return Err(Error::UnexpectedGattResponse.into()),
+            }
+        }
+
+        let mut iter = characteristics.iter_mut().peekable();
+        while let Some(characteristic) = iter.next() {
+            if characteristic.props.has_cccd() {
+                let end = iter.peek().map(|x| x.handle - 2).unwrap_or(service.end);
+                characteristic.cccd_handle = match self.get_characteristic_cccd(characteristic.handle + 1, end).await {
+                    Ok(handle) => Some(handle),
+                    Err(BleHostError::BleHost(Error::NotFound)) => None,
+                    Err(err) => return Err(err),
+                };
+            }
+        }
+
+        Ok(characteristics)
     }
 
     /// Discover characteristics in a given service using a UUID.
@@ -917,7 +1053,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
             match Self::response(response.pdu.as_ref())? {
                 AttRsp::ReadByType { mut it } => {
-                    while let Some(Ok((handle, item))) = it.next() {
+                    while let Some(res) = it.next() {
+                        let (handle, item) = res?;
                         let expected_items_len = 5;
                         let item_len = item.len();
 

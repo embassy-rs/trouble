@@ -11,11 +11,11 @@ use crate::btp::protocol::gatt;
 use crate::command_channel::{self, CommandReceiver, HasResponse};
 
 /// Maximum number of discovered services cached per connection.
-const MAX_SERVICES: usize = 16;
+const MAX_SERVICES: usize = 32;
 /// Maximum number of discovered characteristics cached per connection.
 const MAX_CHARACTERISTICS: usize = 64;
 /// Maximum number of concurrent notification/indication listeners.
-const MAX_LISTENERS: usize = 16;
+const MAX_LISTENERS: usize = trouble_host::config::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
 
 /// Commands forwarded from btp::run to the gatt_client task.
 ///
@@ -324,18 +324,81 @@ impl DiscoveryCache {
     }
 
     /// Find a cached service by its handle range.
-    fn find_service(&self, start: u16, end: u16) -> Option<&ServiceHandle> {
-        self.services.iter().find(|s| s.handle_range() == (start..=end))
+    async fn find_service<C: crate::Controller, P: PacketPool>(
+        &mut self,
+        start: u16,
+        end: u16,
+        client: &GattClient<'_, C, P, MAX_SERVICES>,
+    ) -> Option<&ServiceHandle> {
+        let service = self.find_service_containing(start, client).await?;
+        (service.handle_range() == (start..=end)).then_some(service)
     }
 
     /// Find a cached characteristic by its handle.
-    fn find_characteristic(&self, handle: u16) -> Option<&Characteristic<[u8]>> {
-        self.characteristics.iter().find(|c| c.handle == handle)
+    async fn find_characteristic<C: crate::Controller, P: PacketPool>(
+        &mut self,
+        handle: u16,
+        client: &GattClient<'_, C, P, MAX_SERVICES>,
+    ) -> Option<&Characteristic<[u8]>> {
+        self.find_characteristic_by(handle, |c| c.handle == handle, client)
+            .await
     }
 
     /// Find a cached characteristic by its CCCD handle.
-    fn find_characteristic_by_cccd(&self, cccd_handle: u16) -> Option<&Characteristic<[u8]>> {
-        self.characteristics.iter().find(|c| c.cccd_handle == Some(cccd_handle))
+    async fn find_characteristic_by_cccd<C: crate::Controller, P: PacketPool>(
+        &mut self,
+        cccd_handle: u16,
+        client: &GattClient<'_, C, P, MAX_SERVICES>,
+    ) -> Option<&Characteristic<[u8]>> {
+        self.find_characteristic_by(cccd_handle, |c| c.cccd_handle == Some(cccd_handle), client)
+            .await
+    }
+
+    async fn find_characteristic_by<C: crate::Controller, P: PacketPool, F: FnMut(&Characteristic<[u8]>) -> bool>(
+        &mut self,
+        handle: u16,
+        mut predicate: F,
+        client: &GattClient<'_, C, P, MAX_SERVICES>,
+    ) -> Option<&Characteristic<[u8]>> {
+        if let Some(i) = self.characteristics.iter().position(&mut predicate) {
+            return Some(&self.characteristics[i]);
+        }
+
+        let service = self.find_service_containing(handle, client).await?;
+        match client.characteristics::<MAX_CHARACTERISTICS>(service).await {
+            Ok(chars) => {
+                self.characteristics.extend(chars.into_iter());
+                self.characteristics.iter().find(|c| predicate(c))
+            }
+            Err(e) => {
+                error!("Auto-discover characteristics failed: {:?}", e);
+                None
+            }
+        }
+    }
+
+    /// Find the cached service whose handle range contains the given handle.
+    async fn find_service_containing<C: crate::Controller, P: PacketPool>(
+        &mut self,
+        handle: u16,
+        client: &GattClient<'_, C, P, MAX_SERVICES>,
+    ) -> Option<&ServiceHandle> {
+        if let Some(i) = self.services.iter().position(|s| s.handle_range().contains(&handle)) {
+            return Some(&self.services[i]);
+        }
+
+        debug!("Cached service not found, starting discovery");
+        match client.services().await {
+            Ok(services) => {
+                debug!("Found {} services", services.len());
+                self.services = services;
+                self.services.iter().find(|s| s.handle_range().contains(&handle))
+            }
+            Err(e) => {
+                error!("Auto-discover services failed: {:?}", e);
+                None
+            }
+        }
     }
 }
 
@@ -392,7 +455,7 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
             uuid,
             ..
         } => {
-            let Some(service) = cache.find_service(*start_handle, *end_handle) else {
+            let Some(service) = cache.find_service(*start_handle, *end_handle, client).await else {
                 error!("No cached service for handle range {}..={}", start_handle, end_handle);
                 return Response::Fail;
             };
@@ -419,7 +482,7 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
             }
         }
         Command::Read { handle, .. } => {
-            let Some(chrc) = cache.find_characteristic(*handle) else {
+            let Some(chrc) = cache.find_characteristic(*handle, client).await else {
                 error!("No cached characteristic for handle {}", handle);
                 return Response::Fail;
             };
@@ -439,7 +502,7 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
             }
         }
         Command::ReadLong { handle, offset, .. } => {
-            let Some(chrc) = cache.find_characteristic(*handle) else {
+            let Some(chrc) = cache.find_characteristic(*handle, client).await else {
                 error!("No cached characteristic for handle {}", handle);
                 return Response::Fail;
             };
@@ -468,7 +531,7 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
             uuid,
             ..
         } => {
-            let Some(service) = cache.find_service(*start_handle, *end_handle) else {
+            let Some(service) = cache.find_service(*start_handle, *end_handle, client).await else {
                 error!("No cached service for handle range {}..={}", start_handle, end_handle);
                 return Response::Fail;
             };
@@ -493,7 +556,7 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
             }
         }
         Command::Write { handle, data, .. } => {
-            let Some(chrc) = cache.find_characteristic(*handle) else {
+            let Some(chrc) = cache.find_characteristic(*handle, client).await else {
                 error!("No cached characteristic for handle {}", handle);
                 return Response::Fail;
             };
@@ -506,7 +569,7 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
             }
         }
         Command::WriteWithoutRsp { handle, data, .. } => {
-            let Some(chrc) = cache.find_characteristic(*handle) else {
+            let Some(chrc) = cache.find_characteristic(*handle, client).await else {
                 error!("No cached characteristic for handle {}", handle);
                 return Response::Fail;
             };
@@ -528,9 +591,12 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
 }
 
 /// Handle CfgNotify/CfgIndicate: subscribe or unsubscribe, managing the listener list.
+///
+/// If the characteristic owning `ccc_handle` is not yet cached, this will
+/// auto-discover services and characteristics to find it.
 async fn subscribe_cfg<'client, C: crate::Controller, P: PacketPool>(
     client: &'client GattClient<'_, C, P, MAX_SERVICES>,
-    cache: &DiscoveryCache,
+    cache: &mut DiscoveryCache,
     listeners: &mut heapless::Vec<ActiveListener<'client>, MAX_LISTENERS>,
     ccc_handle: u16,
     enable: bool,
@@ -540,7 +606,8 @@ async fn subscribe_cfg<'client, C: crate::Controller, P: PacketPool>(
         "subscribe_cfg: ccc_handle={} enable={} indication={}",
         ccc_handle, enable, is_indication
     );
-    let Some(chrc) = cache.find_characteristic_by_cccd(ccc_handle) else {
+
+    let Some(chrc) = cache.find_characteristic_by_cccd(ccc_handle, client).await else {
         error!("No cached characteristic for CCCD handle {}", ccc_handle);
         return Response::Fail;
     };
