@@ -1114,7 +1114,6 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         host.connections
             .set_link_credits(ret.total_num_le_acl_data_packets as usize);
 
-        #[cfg(feature = "controller-host-flow-control")]
         {
             const ACL_LEN: u16 = 255;
             const ACL_N: u16 = 1;
@@ -1122,7 +1121,9 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 "[host] configuring host buffers ({} packets of size {})",
                 ACL_N, ACL_LEN,
             );
-            HostBufferSize::new(ACL_LEN, 0, ACL_N, 0).exec(&host.controller).await?;
+            if let Err(_e) = HostBufferSize::new(ACL_LEN, 0, ACL_N, 0).exec(&host.controller).await {
+                warn!("[host] error configuring host buffers (continuing)");
+            }
         }
 
         /*
