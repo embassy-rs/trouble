@@ -609,10 +609,19 @@ where
     let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
     let mut w = WriteCursor::new(tx.as_mut());
     let (mut header, mut data) = w.split(4)?;
-    if let Some(written) = server.process(connection, &att, data.write_buf())? {
-        let mtu = connection.get_att_mtu();
+    // Limit the buffer given to process() so that multi-entry ATT responses
+    // (ReadByType, ReadByGroupType, FindInformation) are bounded by the
+    // negotiated ATT MTU. Without this, entries are written into the full
+    // packet-pool buffer and then post-hoc truncated, which can split an
+    // entry in half and produce a malformed PDU.
+    let mtu = connection.get_att_mtu() as usize;
+    let written = {
+        let buf = data.write_buf();
+        let limit = buf.len().min(mtu);
+        server.process(connection, &att, &mut buf[..limit])?
+    };
+    if let Some(written) = written {
         data.commit(written)?;
-        data.truncate(mtu as usize);
         header.write(data.len() as u16)?;
         header.write(4_u16)?;
         let len = header.len() + data.len();
@@ -695,6 +704,15 @@ impl<'stack, P: PacketPool> Reply<'stack, P> {
         if let Some(pdu) = self.pdu.take() {
             self.connection.send(pdu).await
         }
+    }
+}
+
+#[cfg(test)]
+impl<'stack, P: PacketPool> Reply<'stack, P> {
+    /// Extract the ATT payload from the response PDU (skipping 4-byte L2CAP header).
+    /// Returns None if the reply carried no PDU.
+    fn att_payload(&self) -> Option<&[u8]> {
+        self.pdu.as_ref().map(|pdu| &pdu.as_ref()[4..])
     }
 }
 
@@ -1279,5 +1297,155 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             Att::Server(AttServer::Response(rsp)) => Ok(rsp),
             _ => Err(Error::UnexpectedGattResponse.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use core::task::Poll;
+
+    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    use super::*;
+    use crate::att::{self, Att, AttClient, AttReq};
+    use crate::attribute::Service;
+    use crate::attribute_server::AttributeServer;
+    use crate::connection_manager::tests::{setup, ADDR_1};
+    use crate::cursor::WriteCursor;
+    use crate::pdu::Pdu;
+    use crate::prelude::*;
+
+    /// Build a ReadByType ATT request PDU (ATT payload only, no L2CAP header).
+    fn build_read_by_type_pdu(start: u16, end: u16, uuid: &Uuid) -> (<DefaultPacketPool as PacketPool>::Packet, usize) {
+        let att = Att::Client(AttClient::Request(AttReq::ReadByType {
+            start,
+            end,
+            attribute_type: uuid.clone(),
+        }));
+
+        let mut packet = DefaultPacketPool::allocate().unwrap();
+        let mut w = WriteCursor::new(packet.as_mut());
+        w.write(att).unwrap();
+        let len = w.len();
+        (packet, len)
+    }
+
+    /// Regression test: process_accept must not produce ReadByType responses
+    /// with partial entries when the ATT MTU is smaller than the packet pool
+    /// buffer.
+    ///
+    /// Before the fix, process_accept wrote ATT responses into the full
+    /// packet-pool buffer (P::MTU - 4 = 247 bytes) and then post-hoc
+    /// truncated to the negotiated ATT MTU. For 128-bit UUID characteristic
+    /// declarations, each ReadByType entry is 21 bytes. When the ATT MTU
+    /// doesn't align to entry boundaries, truncation splits an entry in half,
+    /// producing a malformed PDU.
+    ///
+    /// 9 characteristics is the minimum to trigger at ATT MTU 185:
+    ///   floor((185 - 2) / 21) = 8 entries fit, so 9 overflows.
+    #[test]
+    fn test_process_accept_read_by_type_no_partial_entries() {
+        let _ = env_logger::try_init();
+
+        const MAX_ATTRIBUTES: usize = 64;
+        const CONNECTIONS_MAX: usize = 3;
+        const CCCD_MAX: usize = 64;
+        const NUM_CHARACTERISTICS: u8 = 9;
+        const ATT_MTU: u16 = 185;
+
+        // Each ReadByType entry for a 128-bit UUID declaration:
+        //   2 (handle) + 1 (props) + 2 (value handle) + 16 (UUID) = 21 bytes
+        const ENTRY_SIZE: usize = 21;
+        const RESPONSE_HEADER_SIZE: usize = 2;
+
+        // Characteristic declaration UUID (0x2803)
+        let char_decl_uuid = Uuid::new_short(0x2803);
+
+        // Create attribute table with 9 characteristics (128-bit UUIDs)
+        let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
+        {
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_long([0x32; 16]),
+            });
+            for i in 0..NUM_CHARACTERISTICS {
+                let mut uuid_bytes = [0x32u8; 16];
+                uuid_bytes[0] = i;
+                let _char = svc
+                    .add_characteristic_ro::<[u8; 2], _>(Uuid::new_long(uuid_bytes), &[0, 0])
+                    .build();
+            }
+        }
+
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CCCD_MAX, CONNECTIONS_MAX>::new(table);
+
+        // Set up a connection with ATT MTU = 185 (typical iOS value)
+        let mgr = setup();
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Peripheral,
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        conn.set_att_mtu(ATT_MTU);
+
+        // Walk through characteristic discovery via process_accept, just as a
+        // real BLE client would.
+        let mut start: u16 = 1;
+        let mut total_chars_found: usize = 0;
+
+        loop {
+            let (packet, len) = build_read_by_type_pdu(start, u16::MAX, &char_decl_uuid);
+            let pdu = Pdu::new(packet, len);
+            let reply = process_accept::<DefaultPacketPool>(&pdu, &conn, &server).unwrap();
+
+            let att_bytes = reply
+                .att_payload()
+                .expect("process_accept should produce a response PDU");
+
+            if att_bytes[0] == att::ATT_ERROR_RSP {
+                break;
+            }
+
+            assert_eq!(att_bytes[0], att::ATT_READ_BY_TYPE_RSP);
+            let entry_len = att_bytes[1] as usize;
+            assert_eq!(entry_len, ENTRY_SIZE);
+
+            let payload = &att_bytes[RESPONSE_HEADER_SIZE..];
+
+            // The payload must be an exact multiple of the entry size.
+            // Before the fix, this assertion failed: 183 % 21 = 15.
+            assert_eq!(
+                payload.len() % entry_len,
+                0,
+                "ReadByType payload length {} is not a multiple of entry size {} — \
+                 partial entry detected (ATT MTU truncation bug)",
+                payload.len(),
+                entry_len,
+            );
+
+            let num_entries = payload.len() / entry_len;
+            assert!(num_entries > 0);
+            total_chars_found += num_entries;
+
+            let last_entry = &payload[(num_entries - 1) * entry_len..];
+            let last_handle = u16::from_le_bytes([last_entry[0], last_entry[1]]);
+            start = last_handle + 1;
+
+            // Forget the reply without trying to send (no outbound queue in test)
+            core::mem::forget(reply);
+        }
+
+        assert_eq!(
+            total_chars_found, NUM_CHARACTERISTICS as usize,
+            "should discover all {} characteristics",
+            NUM_CHARACTERISTICS,
+        );
     }
 }
