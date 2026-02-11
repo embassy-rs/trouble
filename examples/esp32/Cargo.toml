@@ -62,11 +62,11 @@ required-features = ["security"]
 
 # Enable for using latest 'main'
 [patch.crates-io]
-esp-alloc =             { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
-esp-backtrace =         { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
-esp-bootloader-esp-idf ={ git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
-esp-hal =               { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
-esp-println =           { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
-esp-radio =             { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
-esp-rtos =              { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
-esp-storage =           { git = "https://github.com/lulf/esp-hal.git", rev="de53699d67cb097002f6c48089930a9b1638b7d6" }
+esp-alloc =             { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+esp-backtrace =         { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+esp-bootloader-esp-idf ={ git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+esp-hal =               { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+esp-println =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+esp-radio =             { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+esp-rtos =              { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+esp-storage =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }

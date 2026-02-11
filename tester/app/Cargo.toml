@@ -11,7 +11,7 @@ log = ["dep:log", "bt-hci/log", "trouble-host/log"]
 
 [dependencies]
 bitflags = "2"
-bt-hci = { version = "0.7", default-features = false, features = ["uuid"] }
+bt-hci = { version = "0.8", default-features = false, features = ["uuid"] }
 defmt = { version = "1.0.1", optional = true, features = ["alloc"] }
 embassy-futures = "0.1"
 embassy-sync = "0.7"

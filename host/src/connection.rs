@@ -602,23 +602,23 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
             .set_has_no_rx_phy_preference(false)
             .set_has_no_tx_phy_preference(false);
         let mut mask = PhyMask::new()
-            .set_le_coded_preferred(false)
-            .set_le_1m_preferred(false)
-            .set_le_2m_preferred(false);
+            .set_le_coded_phy(false)
+            .set_le_1m_phy(false)
+            .set_le_2m_phy(false);
         let mut options = PhyOptions::default();
         match phy {
             PhyKind::Le2M => {
-                mask = mask.set_le_2m_preferred(true);
+                mask = mask.set_le_2m_phy(true);
             }
             PhyKind::Le1M => {
-                mask = mask.set_le_1m_preferred(true);
+                mask = mask.set_le_1m_phy(true);
             }
             PhyKind::LeCoded => {
-                mask = mask.set_le_coded_preferred(true);
+                mask = mask.set_le_coded_phy(true);
                 options = PhyOptions::S8CodingPreferred;
             }
             PhyKind::LeCodedS2 => {
-                mask = mask.set_le_coded_preferred(true);
+                mask = mask.set_le_coded_phy(true);
                 options = PhyOptions::S2CodingPreferred;
             }
         }

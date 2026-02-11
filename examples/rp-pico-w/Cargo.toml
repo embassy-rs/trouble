@@ -46,14 +46,14 @@ debug = 2
 #embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
 #cyw43 = {path = "../../../embassy/cyw43"}
 #cyw43-pio = {path = "../../../embassy/cyw43-pio"}
-cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "729f96b9521d6705c1d664f4e9c636155d440519" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "729f96b9521d6705c1d664f4e9c636155d440519" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "729f96b9521d6705c1d664f4e9c636155d440519" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "729f96b9521d6705c1d664f4e9c636155d440519" }
-embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "729f96b9521d6705c1d664f4e9c636155d440519" }
-cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "729f96b9521d6705c1d664f4e9c636155d440519" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "729f96b9521d6705c1d664f4e9c636155d440519" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "729f96b9521d6705c1d664f4e9c636155d440519" }
+cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
+cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 #bt-hci = { path = "../../../bt-hci" }
