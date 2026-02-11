@@ -26,6 +26,7 @@ embassy-sync = "0.7"
 embassy-time = "0.5"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
+getrandom = { version = "0.4.1", default-features = false, optional = true }
 heapless = "0.9"
 trouble-host-macros = { path = "../host-macros", version = "0.3.0", optional = true }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arithmetic"], optional = true }
@@ -76,7 +77,7 @@ controller-host-flow-control = []
 connection-metrics = []
 # Enable additional channel metrics
 channel-metrics = []
-security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:rand_chacha", "gatt", "dep:rand" ]
+security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:getrandom", "dep:rand_chacha", "gatt", "dep:rand" ]
 # For development. Disable security manager cryptographically secure pseudorandom number
 # generator (CSPRNG) to require a cryptographically secure seed
 dev-disable-csprng-seed-requirement = []

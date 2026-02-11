@@ -1,7 +1,6 @@
 // Use with any serial HCI
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::*;
-use rand::rngs::OsRng;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_example_apps::ble_bas_central_sec;
@@ -51,5 +50,5 @@ async fn main() {
     let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller: ExternalController<_, 10> = ExternalController::new(driver);
 
-    ble_bas_central_sec::run(controller, &mut OsRng).await;
+    ble_bas_central_sec::run(controller).await;
 }

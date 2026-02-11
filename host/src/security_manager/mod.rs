@@ -89,8 +89,6 @@ struct SecurityManagerData<const BOND_COUNT: usize> {
     local_address: Option<Address>,
     /// Current bonds with other devices
     bond: Vec<BondInformation, BOND_COUNT>,
-    /// Random generator seeded
-    random_generator_seeded: bool,
 }
 
 impl<const BOND_COUNT: usize> SecurityManagerData<BOND_COUNT> {
@@ -99,7 +97,6 @@ impl<const BOND_COUNT: usize> SecurityManagerData<BOND_COUNT> {
         Self {
             local_address: None,
             bond: Vec::new(),
-            random_generator_seeded: false,
         }
     }
 }
@@ -196,10 +193,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.io_capabilities.replace(io_capabilities);
     }
 
-    /// Set the current local address
-    pub(crate) fn set_random_generator_seed(&self, random_seed: [u8; 32]) {
-        self.rng.replace(ChaCha12Rng::from_seed(random_seed));
-        self.state.borrow_mut().random_generator_seeded = true;
+    /// Seed the random generator with truly random bits
+    pub(crate) fn set_random_generator_seed(&self, seed: [u8; 32]) {
+        self.rng.replace(ChaCha12Rng::from_seed(seed));
     }
 
     /// Set the current local address
@@ -228,11 +224,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 None
             }
         })
-    }
-
-    /// Has the random generator been seeded?
-    pub(crate) fn get_random_generator_seeded(&self) -> bool {
-        self.state.borrow().random_generator_seeded
     }
 
     /// Add a bonded device

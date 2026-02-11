@@ -14,8 +14,9 @@ use bt_hci::param::{AddrKind, BdAddr};
 use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
+use getrandom;
+#[cfg(feature = "security")]
 use heapless::Vec;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
@@ -607,42 +608,28 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         self.host.connections.security_manager.set_local_address(address);
         self
     }
-    /// Set the random generator seed for random generator used by security manager
-    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
-        #[cfg(feature = "security")]
-        {
-            let mut random_seed = [0u8; 32];
-            _random_generator.fill_bytes(&mut random_seed);
-            self.host
-                .connections
-                .security_manager
-                .set_random_generator_seed(random_seed);
-        }
-        self
-    }
+    #[cfg(feature = "security")]
     /// Set the IO capabilities used by the security manager.
-    ///
-    /// Only relevant if the feature `security` is enabled.
     pub fn set_io_capabilities(self, io_capabilities: IoCapabilities) -> Self {
-        #[cfg(feature = "security")]
-        {
-            self.host
-                .connections
-                .security_manager
-                .set_io_capabilities(io_capabilities);
-        }
+        self.host
+            .connections
+            .security_manager
+            .set_io_capabilities(io_capabilities);
         self
     }
 
     /// Build the stack.
     pub fn build(&'stack self) -> Host<'stack, C, P> {
+        // Seed the security manager via a seed from 'getrandom()'.
+        //
+        // tbd. Kept the 'dev-disable-csprng-seed-requirement' feature. What's the actual use case of it?
         #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
         {
-            if !self.host.connections.security_manager.get_random_generator_seeded() {
-                panic!(
-                    "The security manager random number generator has not been seeded from a cryptographically secure random number generator"
-                )
-            }
+            let un = MaybeUninit::uninit();
+            let mut buf: [u8; 32] = unsafe { un.assume_init() };
+            getrandom::fill(&mut buf).expect("getrandom() failed");
+
+            self.host.connections.security_manager.set_random_generator_seed(buf);
         }
         Host {
             #[cfg(feature = "central")]
