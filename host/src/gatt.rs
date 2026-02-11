@@ -1461,6 +1461,7 @@ mod tests {
     use crate::att::{self, Att, AttClient, AttReq};
     use crate::attribute::Service;
     use crate::attribute_server::AttributeServer;
+    use crate::connection::ConnParams;
     use crate::connection_manager::tests::{setup, ADDR_1};
     use crate::cursor::WriteCursor;
     use crate::pdu::Pdu;
@@ -1537,6 +1538,7 @@ mod tests {
             AddrKind::RANDOM,
             BdAddr::new(ADDR_1),
             LeConnRole::Peripheral,
+            ConnParams::new(),
         ));
         let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
             panic!("expected connection to be accepted");
