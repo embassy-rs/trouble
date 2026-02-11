@@ -150,33 +150,15 @@ impl From<trouble_host::attribute::AttPermissions> for AttPermission {
     fn from(value: trouble_host::attribute::AttPermissions) -> Self {
         let mut result = AttPermission::empty();
         match value.read {
-            PermissionLevel::Allowed => {
-                result |= AttPermission::READ
-                    | AttPermission::READ_ENC
-                    | AttPermission::READ_AUTHEN
-                    | AttPermission::READ_AUTHOR
-            }
-            PermissionLevel::EncryptionRequired => {
-                result |= AttPermission::READ_ENC | AttPermission::READ_AUTHEN | AttPermission::READ_AUTHOR
-            }
-            PermissionLevel::AuthenticationRequired => {
-                result |= AttPermission::READ_AUTHEN | AttPermission::READ_AUTHOR
-            }
+            PermissionLevel::Allowed => result |= AttPermission::READ,
+            PermissionLevel::EncryptionRequired => result |= AttPermission::READ_ENC,
+            PermissionLevel::AuthenticationRequired => result |= AttPermission::READ_AUTHEN,
             PermissionLevel::NotAllowed => (),
         }
         match value.write {
-            PermissionLevel::Allowed => {
-                result |= AttPermission::WRITE
-                    | AttPermission::WRITE_ENC
-                    | AttPermission::WRITE_AUTHEN
-                    | AttPermission::WRITE_AUTHOR
-            }
-            PermissionLevel::EncryptionRequired => {
-                result |= AttPermission::WRITE_ENC | AttPermission::WRITE_AUTHEN | AttPermission::WRITE_AUTHOR
-            }
-            PermissionLevel::AuthenticationRequired => {
-                result |= AttPermission::WRITE_AUTHEN | AttPermission::WRITE_AUTHOR
-            }
+            PermissionLevel::Allowed => result |= AttPermission::WRITE,
+            PermissionLevel::EncryptionRequired => result |= AttPermission::WRITE_ENC,
+            PermissionLevel::AuthenticationRequired => result |= AttPermission::WRITE_AUTHEN,
             PermissionLevel::NotAllowed => (),
         }
         result
