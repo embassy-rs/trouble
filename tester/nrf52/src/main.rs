@@ -3,14 +3,23 @@
 
 extern crate alloc;
 
+#[cfg(all(feature = "defmt-usb", feature = "defmt-rtt"))]
+compile_error!("Features `defmt-usb` and `defmt-rtt` are mutually exclusive");
+
 use defmt::{info, unwrap};
+#[cfg(feature = "defmt-rtt")]
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_nrf::buffered_uarte::{self, BufferedUarte};
 use embassy_nrf::mode::Async;
-use embassy_nrf::peripherals::{self, RNG};
+#[cfg(feature = "defmt-usb")]
+use embassy_nrf::peripherals;
+use embassy_nrf::peripherals::RNG;
+#[cfg(feature = "defmt-usb")]
+use embassy_nrf::usb;
+#[cfg(feature = "defmt-usb")]
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
-use embassy_nrf::{bind_interrupts, rng, usb};
-use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+use embassy_nrf::{bind_interrupts, rng};
 use embedded_alloc::LlffHeap as Heap;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
@@ -21,16 +30,18 @@ use static_cell::StaticCell;
 use trouble_host::prelude::*;
 use trouble_tester_app::BtpConfig;
 
-mod defmt_usb;
-
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
 bind_interrupts!(struct Irqs {
     RNG => rng::InterruptHandler<RNG>;
     UARTE0 => embassy_nrf::buffered_uarte::InterruptHandler<embassy_nrf::peripherals::UARTE0>;
+    #[cfg(feature = "defmt-usb")]
     USBD => usb::InterruptHandler<peripherals::USBD>;
+    #[cfg(feature = "defmt-usb")]
     CLOCK_POWER => nrf_sdc::mpsl::ClockInterruptHandler, usb::vbus_detect::InterruptHandler;
+    #[cfg(not(feature = "defmt-usb"))]
+    CLOCK_POWER => nrf_sdc::mpsl::ClockInterruptHandler;
     EGU0_SWI0 => nrf_sdc::mpsl::LowPrioInterruptHandler;
     RADIO => nrf_sdc::mpsl::HighPrioInterruptHandler;
     TIMER0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
@@ -42,73 +53,19 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-type UsbDriver = usb::Driver<'static, HardwareVbusDetect>;
-
+#[cfg(feature = "defmt-usb")]
 #[embassy_executor::task]
-async fn usb_task(driver: UsbDriver) -> ! {
-    static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static MSOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-    static STATE: StaticCell<State> = StaticCell::new();
-
+async fn usb_task(driver: usb::Driver<'static, HardwareVbusDetect>) -> ! {
     let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
     config.manufacturer = Some("Tactile Engineering");
     config.product = Some("TrouBLE-Tester defmt");
     config.serial_number = Some("1");
     config.max_power = 100;
     config.max_packet_size_0 = 64;
-
-    let mut builder = embassy_usb::Builder::new(
-        driver,
-        config,
-        CONFIG_DESCRIPTOR.init([0; 256]),
-        BOS_DESCRIPTOR.init([0; 256]),
-        MSOS_DESCRIPTOR.init([0; 256]),
-        CONTROL_BUF.init([0; 64]),
-    );
-
-    let class = CdcAcmClass::new(&mut builder, STATE.init(State::new()), 64);
-    let mut usb = builder.build();
-
-    let (mut sender, _receiver, control) = class.split_with_control();
-
-    let usb_fut = usb.run();
-    let drain_fut = async {
-        let mut buf = [0u8; 64];
-        loop {
-            // Wait for USB endpoint to be enabled (device configured)
-            sender.wait_connection().await;
-
-            // Wait for host to open the port (DTR set)
-            while !control.dtr() {
-                control.control_changed().await;
-            }
-
-            // Race data pipeline against DTR drop
-            embassy_futures::select::select(
-                async {
-                    loop {
-                        let n = defmt_usb::read(&mut buf).await;
-                        if sender.write_packet(&buf[..n]).await.is_err() {
-                            return;
-                        }
-                    }
-                },
-                async {
-                    loop {
-                        control.control_changed().await;
-                        if !control.dtr() {
-                            return;
-                        }
-                    }
-                },
-            )
-            .await;
-        }
-    };
-
-    embassy_futures::join::join(usb_fut, drain_fut).await;
+    config.device_class = 0xEF;
+    config.device_sub_class = 0x02;
+    config.device_protocol = 0x01;
+    defmt_embassy_usbserial::run(driver, config).await;
     unreachable!()
 }
 
@@ -159,8 +116,11 @@ async fn main(spawner: Spawner) -> ! {
 
     let p = embassy_nrf::init(cfg);
 
-    let usb_driver = usb::Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-    spawner.spawn(unwrap!(usb_task(usb_driver)));
+    #[cfg(feature = "defmt-usb")]
+    {
+        let usb_driver = usb::Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
+        spawner.spawn(unwrap!(usb_task(usb_driver)));
+    }
 
     let mpsl_p = mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
