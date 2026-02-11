@@ -1,6 +1,6 @@
 [package]
 name = "trouble-host"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 description = "An async Rust BLE host"
 license = "Apache-2.0 OR MIT"
@@ -19,7 +19,7 @@ target = "thumbv7em-none-eabi"
 
 [dependencies]
 aes = { version = "0.8.2", optional = true }
-bt-hci = { git = "https://github.com/embassy-rs/bt-hci", features = ["uuid"] }
+bt-hci = { version = "0.8", features = ["uuid"] }
 cmac = { version = "0.7.2", optional = true }
 embedded-io = { version = "0.7" }
 embassy-sync = "0.7"
@@ -27,7 +27,7 @@ embassy-time = "0.5"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.9"
-trouble-host-macros = { path = "../host-macros", version = "0.3.0", optional = true }
+trouble-host-macros = { path = "../host-macros", version = "0.4.0", optional = true }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arithmetic"], optional = true }
 rand_core = "0.6"
 rand_chacha = { version = "0.3", default-features = false, optional = true }

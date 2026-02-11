@@ -22,8 +22,9 @@ where
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator)
-        .set_io_capabilities(IoCapabilities::KeyboardOnly);
+        .set_random_generator_seed(random_generator);
+
+    stack.set_io_capabilities(IoCapabilities::KeyboardOnly);
 
     let Host {
         mut central,
@@ -55,23 +56,24 @@ where
             conn.request_security().unwrap();
             loop {
                 match conn.next().await {
-                    ConnectionEvent::PairingComplete { security_level, ..} => {
+                    ConnectionEvent::PairingComplete { security_level, .. } => {
                         info!("Pairing complete: {:?}", security_level);
                         break;
-                    },
+                    }
                     ConnectionEvent::PairingFailed(err) => {
                         error!("Pairing failed: {:?}", err);
                         break;
-                    },
+                    }
                     ConnectionEvent::Disconnected { reason } => {
                         error!("Disconnected: {:?}", reason);
                         break;
-                    },
+                    }
                     ConnectionEvent::PassKeyInput => {
                         info!("Inputting pass key.");
                         // Normally fetched from user
                         conn.pass_key_input(1234).unwrap();
                     }
+                    ConnectionEvent::RequestConnectionParams(req) => req.accept(None, &stack).await.unwrap(),
                     _ => {}
                 }
             }
@@ -111,9 +113,9 @@ where
                     }
                 },
             )
-                .await;
-        })
             .await;
-    })
+        })
         .await;
+    })
+    .await;
 }

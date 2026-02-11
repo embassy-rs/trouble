@@ -214,6 +214,19 @@ pub enum Advertisement<'d> {
     },
 }
 
+impl<'d> Advertisement<'d> {
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Advertisement::ConnectableScannableUndirected { adv_data, .. }
+            | Advertisement::ExtConnectableNonscannableUndirected { adv_data }
+            | Advertisement::ExtConnectableNonscannableDirected { adv_data, .. } => {
+                // Connectable advertisements must have flags as the first advertisement data with the LE Only flag set
+                adv_data.len() >= 3 && adv_data[0] == 2 && adv_data[1] == 1 && (adv_data[2] & BR_EDR_NOT_SUPPORTED) != 0
+            }
+            _ => true,
+        }
+    }
+}
 impl<'d> From<Advertisement<'d>> for RawAdvertisement<'d> {
     fn from(val: Advertisement<'d>) -> RawAdvertisement<'d> {
         match val {

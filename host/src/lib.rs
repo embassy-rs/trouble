@@ -20,6 +20,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
+use crate::connection::Connection;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
 pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
@@ -624,7 +625,7 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Set the IO capabilities used by the security manager.
     ///
     /// Only relevant if the feature `security` is enabled.
-    pub fn set_io_capabilities(self, io_capabilities: IoCapabilities) -> Self {
+    pub fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
         #[cfg(feature = "security")]
         {
             self.host
@@ -632,7 +633,6 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
                 .security_manager
                 .set_io_capabilities(io_capabilities);
         }
-        self
     }
 
     /// Build the stack.
@@ -711,6 +711,11 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Get bonded devices
     pub fn get_bond_information(&self) -> Vec<BondInformation, BI_COUNT> {
         self.host.connections.security_manager.get_bond_information()
+    }
+
+    /// Get a connection by its peer address
+    pub fn get_connection_by_peer_address(&'stack self, peer_address: Address) -> Option<Connection<'stack, P>> {
+        self.host.connections.get_connection_by_peer_address(peer_address)
     }
 }
 

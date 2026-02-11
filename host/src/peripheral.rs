@@ -38,6 +38,10 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     {
         let host = &self.stack.host;
 
+        if !data.is_valid() {
+            return Err(BleHostError::BleHost(Error::InvalidValue));
+        }
+
         // Ensure no other advertise ongoing.
         let drop = crate::host::OnDrop::new(|| {
             host.advertise_command_state.cancel(false);
@@ -121,6 +125,11 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         C: for<'t> ControllerCmdSync<LeSetAdvData> + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
         let host = &self.stack.host;
+
+        if !data.is_valid() {
+            return Err(BleHostError::BleHost(Error::InvalidValue));
+        }
+
         let data: RawAdvertisement = data.into();
         if !data.props.legacy_adv() {
             return Err(Error::ExtendedAdvertisingNotSupported.into());
@@ -165,6 +174,14 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     {
         assert_eq!(sets.len(), handles.len());
         let host = &self.stack.host;
+
+        // Check all sets are valid
+        for set in sets.iter() {
+            if !set.data.is_valid() {
+                return Err(BleHostError::BleHost(Error::InvalidValue));
+            }
+        }
+
         // Check host supports the required advertisement sets
         {
             let result = host.command(LeReadNumberOfSupportedAdvSets::new()).await?;
@@ -264,6 +281,10 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         assert_eq!(sets.len(), handles.len());
         let host = &self.stack.host;
         for (i, set) in sets.iter().enumerate() {
+            if !set.data.is_valid() {
+                return Err(BleHostError::BleHost(Error::InvalidValue));
+            }
+
             let handle = handles[i].adv_handle;
             let data: RawAdvertisement<'k> = set.data.into();
             if !data.adv_data.is_empty() {

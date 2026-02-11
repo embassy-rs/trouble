@@ -314,6 +314,9 @@ pub(crate) mod sealed {
         fn should_indicate(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool;
         fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
         fn update_identity(&self, identity: Identity) -> Result<(), Error>;
+
+        fn can_read(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode>;
+        fn can_write(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode>;
     }
 }
 
@@ -359,6 +362,18 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
     fn update_identity(&self, identity: Identity) -> Result<(), Error> {
         self.cccd_tables.update_identity(identity)
     }
+
+    fn can_read(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode> {
+        self.att_table
+            .with_attribute(handle, |att| self.can_read(connection, att))
+            .unwrap_or(Err(AttErrorCode::INVALID_HANDLE))
+    }
+
+    fn can_write(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode> {
+        self.att_table
+            .with_attribute(handle, |att| self.can_write(connection, att))
+            .unwrap_or(Err(AttErrorCode::INVALID_HANDLE))
+    }
 }
 
 impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
@@ -389,6 +404,20 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
             .should_indicate(&connection.peer_identity(), cccd_handle)
     }
 
+    fn can_read(&self, connection: &Connection<'_, P>, att: &Attribute<'_>) -> Result<(), AttErrorCode> {
+        match connection.security_level() {
+            Ok(level) => att.permissions().can_read(level),
+            Err(_) => Err(AttErrorCode::INVALID_HANDLE),
+        }
+    }
+
+    fn can_write(&self, connection: &Connection<'_, P>, att: &Attribute<'_>) -> Result<(), AttErrorCode> {
+        match connection.security_level() {
+            Ok(level) => att.permissions().can_write(level),
+            Err(_) => Err(AttErrorCode::INVALID_HANDLE),
+        }
+    }
+
     fn read_attribute_data(
         &self,
         connection: &Connection<'_, P>,
@@ -397,6 +426,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         att: &mut Attribute<'values>,
         data: &mut [u8],
     ) -> Result<usize, AttErrorCode> {
+        self.can_read(connection, att)?;
         if let AttributeData::Cccd { .. } = att.data {
             // CCCD values for each connected client are held in the CCCD tables:
             // the value is written back into att.data so att.read() has the final
@@ -416,11 +446,13 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         att: &mut Attribute<'values>,
         data: &[u8],
     ) -> Result<(), AttErrorCode> {
+        self.can_write(connection, att)?;
         let err = att.write(offset, data);
         if err.is_ok() {
             if let AttributeData::Cccd {
                 notifications,
                 indications,
+                ..
             } = att.data
             {
                 self.cccd_tables
@@ -442,6 +474,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     ) -> Result<usize, codec::Error> {
         let mut handle = start;
         let mut data = WriteCursor::new(buf);
+
+        if start > end || start == 0 {
+            return Self::error_response(data, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+        }
 
         let (mut header, mut body) = data.split(2)?;
         let err = self.att_table.iterate_from(start, |mut it| {
@@ -519,6 +555,11 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     ) -> Result<usize, codec::Error> {
         let mut handle = start;
         let mut data = WriteCursor::new(buf);
+
+        if start > end || start == 0 {
+            return Self::error_response(data, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+        }
+
         let (mut header, mut body) = data.split(2)?;
         // Multiple entries can be returned in the response as long as they are of equal length.
         let err = self.att_table.iterate_from(start, |mut it| {
@@ -671,6 +712,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         let mut w = WriteCursor::new(buf);
         let attr_type = Uuid::new_short(attr_type);
 
+        if start > end || start == 0 {
+            return Self::error_response(w, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+        }
+
         w.write(att::ATT_FIND_BY_TYPE_VALUE_RSP)?;
         self.att_table.iterate_from(start, |mut it| {
             while let Some((handle, att)) = it.next() {
@@ -706,6 +751,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
 
     fn handle_find_information(&self, buf: &mut [u8], start: u16, end: u16) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(buf);
+
+        if start > end || start == 0 {
+            return Self::error_response(w, att::ATT_READ_BY_TYPE_REQ, start, AttErrorCode::INVALID_HANDLE);
+        }
 
         let (mut header, mut body) = w.split(2)?;
 
@@ -1012,14 +1061,15 @@ mod tests {
                 ConnHandle::new(0),
                 AddrKind::RANDOM,
                 BdAddr::new(ADDR_1),
-                LeConnRole::Peripheral
+                LeConnRole::Peripheral,
+                ConnParams::new(),
             ));
 
             if let Poll::Ready(conn_handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) {
                 // We now have a connection, we can send the mocked requests to our attribute server.
                 let mut buffer = [0u8; 64];
 
-                let mut start = 0;
+                let mut start = 1;
                 let end = u16::MAX;
                 // There are always three services that we should be able to discover.
                 for _ in 0..3 {
@@ -1041,7 +1091,7 @@ mod tests {
                     // next cycle. We only check the first response here, and ignore any others that may be in the
                     // response.
                     let last_handle = u16::from_le_bytes([response[4], response[5]]);
-                    start = last_handle + 1;
+                    start = last_handle.saturating_add(1);
                 }
             } else {
                 panic!("expected connection to be accepted");

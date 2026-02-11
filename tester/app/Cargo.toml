@@ -1,0 +1,32 @@
+[package]
+name = "trouble-tester-app"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+std = ["embedded-io/std", "embedded-io-async/std"]
+defmt = ["dep:defmt", "bt-hci/defmt", "embassy-sync/defmt", "embassy-time/defmt", "embedded-io/defmt", "embedded-io-async/defmt", "heapless/defmt", "trouble-host/defmt"]
+log = ["dep:log", "bt-hci/log", "trouble-host/log"]
+
+[dependencies]
+bitflags = "2"
+bt-hci = { version = "0.8", default-features = false, features = ["uuid"] }
+defmt = { version = "1.0.1", optional = true, features = ["alloc"] }
+embassy-futures = "0.1"
+embassy-sync = "0.7"
+embassy-time = "0.5"
+embedded-io = "0.7.1"
+embedded-io-async = "0.7.0"
+heapless = "0.9"
+log = { version = "0.4.29", optional = true }
+rand_core = { version = "0.6", default-features = false }
+static_cell = "2.1.1"
+trouble-host = { path = "../../host", features = ["scan", "security", "gatt-client-notification-max-subscribers-16"] }
+
+[dev-dependencies]
+futures-executor = "0.3.31"
+tokio = { version = "1", features = ["full"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }

@@ -3,7 +3,7 @@ use core::cell::RefCell;
 use core::fmt;
 use core::marker::PhantomData;
 
-use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
+use bt_hci::uuid::declarations::{CHARACTERISTIC, INCLUDE, PRIMARY_SERVICE, SECONDARY_SERVICE};
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
@@ -11,8 +11,8 @@ use heapless::Vec;
 
 use crate::att::{AttErrorCode, AttUns};
 use crate::attribute_server::AttributeServer;
-use crate::cursor::{ReadCursor, WriteCursor};
-use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection};
+use crate::cursor::ReadCursor;
+use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection, SecurityLevel};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
 use crate::{gatt, Error, PacketPool, MAX_INVALID_DATA_LEN};
@@ -39,6 +39,63 @@ pub enum CharacteristicProp {
     Extended = 0x80,
 }
 
+/// Attribute permissions
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PermissionLevel {
+    #[default]
+    /// Operation is allowed with no encryption or authentication
+    Allowed,
+    /// Encryption is required
+    EncryptionRequired,
+    /// Encryption and authentication are required
+    AuthenticationRequired,
+    /// Operation is not allowed
+    NotAllowed,
+}
+
+/// Attribute permissions
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AttPermissions {
+    /// Security required for read operations
+    pub read: PermissionLevel,
+    /// Security required for write operations
+    pub write: PermissionLevel,
+}
+
+impl AttPermissions {
+    pub(crate) fn can_read(&self, level: SecurityLevel) -> Result<(), AttErrorCode> {
+        match self.read {
+            PermissionLevel::NotAllowed => Err(AttErrorCode::READ_NOT_PERMITTED),
+            PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
+                if level < SecurityLevel::Encrypted =>
+            {
+                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+            }
+            PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub(crate) fn can_write(&self, level: SecurityLevel) -> Result<(), AttErrorCode> {
+        match self.write {
+            PermissionLevel::NotAllowed => Err(AttErrorCode::WRITE_NOT_PERMITTED),
+            PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
+                if level < SecurityLevel::Encrypted =>
+            {
+                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+            }
+            PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Attribute metadata.
 pub struct Attribute<'a> {
     pub(crate) uuid: Uuid,
@@ -49,18 +106,15 @@ impl<'a> Attribute<'a> {
     const EMPTY: Option<Attribute<'a>> = None;
 
     pub(crate) fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if !self.data.readable() {
-            return Err(AttErrorCode::READ_NOT_PERMITTED);
-        }
         self.data.read(offset, data)
     }
 
     pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        if !self.data.writable() {
-            return Err(AttErrorCode::WRITE_NOT_PERMITTED);
-        }
-
         self.data.write(offset, data)
+    }
+
+    pub(crate) fn permissions(&self) -> AttPermissions {
+        self.data.permissions()
     }
 }
 
@@ -70,18 +124,23 @@ pub(crate) enum AttributeData<'d> {
         uuid: Uuid,
         last_handle_in_group: u16,
     },
+    IncludedService {
+        handle: u16,
+        last_handle_in_group: u16,
+        uuid: Option<[u8; 2]>,
+    },
     ReadOnlyData {
-        props: CharacteristicProps,
+        permissions: AttPermissions,
         value: &'d [u8],
     },
     Data {
-        props: CharacteristicProps,
+        permissions: AttPermissions,
         variable_len: bool,
         len: u16,
         value: &'d mut [u8],
     },
     SmallData {
-        props: CharacteristicProps,
+        permissions: AttPermissions,
         variable_len: bool,
         capacity: u8,
         len: u8,
@@ -95,90 +154,85 @@ pub(crate) enum AttributeData<'d> {
     Cccd {
         notifications: bool,
         indications: bool,
+        write_permission: PermissionLevel,
     },
 }
 
 impl AttributeData<'_> {
-    pub(crate) fn readable(&self) -> bool {
+    pub(crate) fn permissions(&self) -> AttPermissions {
         match self {
-            Self::Data { props, .. } | Self::SmallData { props, .. } => props.0 & (CharacteristicProp::Read as u8) != 0,
-            _ => true,
+            AttributeData::Service { .. }
+            | AttributeData::IncludedService { .. }
+            | AttributeData::Declaration { .. } => AttPermissions {
+                read: PermissionLevel::Allowed,
+                write: PermissionLevel::NotAllowed,
+            },
+            AttributeData::ReadOnlyData { permissions, .. }
+            | AttributeData::Data { permissions, .. }
+            | AttributeData::SmallData { permissions, .. } => *permissions,
+            AttributeData::Cccd { write_permission, .. } => AttPermissions {
+                read: PermissionLevel::Allowed,
+                write: *write_permission,
+            },
         }
+    }
+
+    pub(crate) fn readable(&self) -> bool {
+        self.permissions().read != PermissionLevel::NotAllowed
     }
 
     pub(crate) fn writable(&self) -> bool {
-        match self {
-            Self::Data { props, .. } | Self::SmallData { props, .. } => {
-                props.0
-                    & (CharacteristicProp::Write as u8
-                        | CharacteristicProp::WriteWithoutResponse as u8
-                        | CharacteristicProp::AuthenticatedWrite as u8)
-                    != 0
-            }
-            Self::Cccd {
-                notifications,
-                indications,
-            } => true,
-            _ => false,
-        }
+        self.permissions().write != PermissionLevel::NotAllowed
     }
 
-    fn read(&self, offset: usize, data: &mut [u8]) -> Result<usize, AttErrorCode> {
-        if !self.readable() {
-            return Err(AttErrorCode::READ_NOT_PERMITTED);
-        }
-        match self {
-            Self::ReadOnlyData { value, .. } => {
-                if offset > value.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(value.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
+    fn read(&self, mut offset: usize, mut data: &mut [u8]) -> Result<usize, AttErrorCode> {
+        fn append(src: &[u8], offset: &mut usize, dest: &mut &mut [u8]) -> usize {
+            if *offset >= src.len() {
+                *offset -= src.len();
+                0
+            } else {
+                let d = core::mem::take(dest);
+                let n = d.len().min(src.len() - *offset);
+                d[..n].copy_from_slice(&src[*offset..][..n]);
+                *dest = &mut d[n..];
+                *offset = 0;
+                n
             }
+        }
+
+        let written = match self {
+            Self::ReadOnlyData { value, .. } => append(value, &mut offset, &mut data),
             Self::Data { len, value, .. } => {
                 let value = &value[..*len as usize];
-                if offset > value.len() {
-                    return Ok(0);
-                }
-                let len = data.len().min(value.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
+                append(value, &mut offset, &mut data)
             }
             Self::SmallData { len, value, .. } => {
                 let value = &value[..*len as usize];
-                let len = data.len().min(value.len().saturating_sub(offset));
-                if len > 0 {
-                    data[..len].copy_from_slice(&value[offset..offset + len]);
-                }
-                Ok(len)
+                append(value, &mut offset, &mut data)
             }
             Self::Service { uuid, .. } => {
                 let val = uuid.as_raw();
-                if offset > val.len() {
-                    return Ok(0);
+                append(val, &mut offset, &mut data)
+            }
+            Self::IncludedService {
+                handle,
+                last_handle_in_group,
+                uuid,
+            } => {
+                let written = append(&handle.to_le_bytes(), &mut offset, &mut data)
+                    + append(&last_handle_in_group.to_le_bytes(), &mut offset, &mut data);
+                if let Some(uuid) = uuid {
+                    written + append(uuid, &mut offset, &mut data)
+                } else {
+                    written
                 }
-                let len = data.len().min(val.len() - offset);
-                if len > 0 {
-                    data[..len].copy_from_slice(&val[offset..offset + len]);
-                }
-                Ok(len)
             }
             Self::Cccd {
                 notifications,
                 indications,
+                ..
             } => {
-                if offset > 0 {
-                    return Err(AttErrorCode::INVALID_OFFSET);
-                }
-                if data.len() < 2 {
-                    return Err(AttErrorCode::UNLIKELY_ERROR);
-                }
-                let mut v = 0;
+                let mut v = 0u16;
                 if *notifications {
                     v |= 0x01;
                 }
@@ -186,37 +240,24 @@ impl AttributeData<'_> {
                 if *indications {
                     v |= 0x02;
                 }
-                data[0] = v;
-                Ok(2)
+                append(&v.to_le_bytes(), &mut offset, &mut data)
             }
             Self::Declaration { props, handle, uuid } => {
                 let val = uuid.as_raw();
-                if offset > val.len() + 3 {
-                    return Ok(0);
-                }
-                let mut w = WriteCursor::new(data);
-                if offset == 0 {
-                    w.write(props.0)?;
-                    w.write(*handle)?;
-                } else if offset == 1 {
-                    w.write(*handle)?;
-                } else if offset == 2 {
-                    w.write(handle.to_le_bytes()[1])?;
-                }
-
-                let to_write = w.available().min(val.len());
-
-                if to_write > 0 {
-                    w.append(&val[..to_write])?;
-                }
-                Ok(w.len())
+                append(&[props.0], &mut offset, &mut data)
+                    + append(&handle.to_le_bytes(), &mut offset, &mut data)
+                    + append(val, &mut offset, &mut data)
             }
+        };
+
+        if offset > 0 {
+            Err(AttErrorCode::INVALID_OFFSET)
+        } else {
+            Ok(written)
         }
     }
 
     fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        let writable = self.writable();
-
         match self {
             Self::Data {
                 value,
@@ -224,10 +265,6 @@ impl AttributeData<'_> {
                 len,
                 ..
             } => {
-                if !writable {
-                    return Err(AttErrorCode::WRITE_NOT_PERMITTED);
-                }
-
                 if offset + data.len() <= value.len() {
                     value[offset..offset + data.len()].copy_from_slice(data);
                     if *variable_len {
@@ -245,10 +282,6 @@ impl AttributeData<'_> {
                 value,
                 ..
             } => {
-                if !writable {
-                    return Err(AttErrorCode::WRITE_NOT_PERMITTED);
-                }
-
                 if offset + data.len() <= *capacity as usize {
                     value[offset..offset + data.len()].copy_from_slice(data);
                     if *variable_len {
@@ -262,6 +295,7 @@ impl AttributeData<'_> {
             Self::Cccd {
                 notifications,
                 indications,
+                ..
             } => {
                 if offset > 0 {
                     return Err(AttErrorCode::INVALID_OFFSET);
@@ -401,6 +435,32 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         ServiceBuilder { handle, table: self }
     }
 
+    /// Add a service to the attribute table (group of characteristics)
+    pub fn add_secondary_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
+        let handle = self.push(Attribute {
+            uuid: SECONDARY_SERVICE.into(),
+            data: AttributeData::Service {
+                uuid: service.uuid,
+                last_handle_in_group: 0,
+            },
+        });
+        ServiceBuilder { handle, table: self }
+    }
+
+    /// Get the permissions for the attribute
+    ///
+    /// Returns `None` if the attribute handle is invalid.
+    pub fn permissions(&self, attribute: u16) -> Option<AttPermissions> {
+        self.with_attribute(attribute, |att| att.data.permissions())
+    }
+
+    /// Get the UUID of the attribute type
+    ///
+    /// Returns `None` if the attribute handle is invalid.
+    pub fn uuid(&self, attribute: u16) -> Option<Uuid> {
+        self.with_attribute(attribute, |att| att.uuid.clone())
+    }
+
     pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
         self.with_attribute(attribute, |att| match &mut att.data {
             AttributeData::ReadOnlyData { value, .. } => {
@@ -410,6 +470,27 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
             _ => Err(Error::NotSupported),
         })
         .unwrap_or(Err(Error::NotFound))
+    }
+
+    /// Read the raw value of the attribute
+    ///
+    /// If the attribute value is larger than the data buffer, data will be filled with
+    /// as many bytes as fit. Use additional reads with an offset to read the remaining data.
+    ///
+    /// The value of the attribute is undefined for connection-specific attributes (like CCCD).
+    pub fn read(&self, attribute: u16, offset: usize, data: &mut [u8]) -> Result<usize, Error> {
+        self.with_attribute(attribute, |att| att.read(offset, data).map_err(Into::into))
+            .unwrap_or(Err(Error::NotFound))
+    }
+
+    /// Write the raw value of the attribute
+    ///
+    /// If the attribute is variable length, its length will be set to `offset + data.len()`.
+    /// If the attribute is fixed length, the range `offset..(offset + data.len())` will be
+    /// overwritten.
+    pub fn write(&self, attribute: u16, offset: usize, data: &[u8]) -> Result<(), Error> {
+        self.with_attribute(attribute, |att| att.write(offset, data).map_err(Into::into))
+            .unwrap_or(Err(Error::NotFound))
     }
 
     pub(crate) fn set_raw(&self, attribute: u16, input: &[u8]) -> Result<(), Error> {
@@ -466,6 +547,16 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
         .unwrap_or(Err(Error::NotFound))
     }
 
+    /// Get the number of attributes in the table
+    pub fn len(&self) -> usize {
+        self.with_inner(|table| table.attributes.len())
+    }
+
+    /// Returns true if the table is empty
+    pub fn is_empty(&self) -> bool {
+        self.with_inner(|table| table.attributes.is_empty())
+    }
+
     /// Set the value of a characteristic
     ///
     /// The provided data must exactly match the size of the storage for the characteristic,
@@ -507,21 +598,98 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// If no characteristic corresponding to the given value handle was found, returns an error
     pub fn find_characteristic_by_value_handle<T: AsGatt>(&self, handle: u16) -> Result<Characteristic<T>, Error> {
-        self.iterate_from(handle, |mut it| {
-            if let Some(att) = it.next() {
-                let cccd_handle = it
-                    .next()
-                    .and_then(|(handle, att)| matches!(att.data, AttributeData::Cccd { .. }).then_some(handle));
+        if handle == 0 {
+            return Err(Error::NotFound);
+        }
 
-                Ok(Characteristic {
-                    handle,
-                    cccd_handle,
-                    phantom: PhantomData,
-                })
-            } else {
-                Err(Error::NotFound)
+        self.iterate_from(handle - 1, |mut it| {
+            if let Some((_, att)) = it.next() {
+                if let AttributeData::Declaration { props, .. } = att.data {
+                    if it.next().is_some() {
+                        let cccd_handle = it
+                            .next()
+                            .and_then(|(handle, att)| matches!(att.data, AttributeData::Cccd { .. }).then_some(handle));
+
+                        return Ok(Characteristic {
+                            handle,
+                            cccd_handle,
+                            props,
+                            phantom: PhantomData,
+                        });
+                    }
+                }
             }
+            Err(Error::NotFound)
         })
+    }
+
+    #[cfg(feature = "security")]
+    /// Calculate the database hash for the attribute table.
+    ///
+    /// See Core Specification Vol 3, Part G, Section 7.3.1
+    pub fn hash(&self) -> u128 {
+        use bt_hci::uuid::*;
+
+        use crate::security_manager::crypto::AesCmac;
+
+        const PRIMARY_SERVICE: Uuid = Uuid::Uuid16(declarations::PRIMARY_SERVICE.to_le_bytes());
+        const SECONDARY_SERVICE: Uuid = Uuid::Uuid16(declarations::SECONDARY_SERVICE.to_le_bytes());
+        const INCLUDED_SERVICE: Uuid = Uuid::Uuid16(declarations::INCLUDE.to_le_bytes());
+        const CHARACTERISTIC: Uuid = Uuid::Uuid16(declarations::CHARACTERISTIC.to_le_bytes());
+        const CHARACTERISTIC_EXTENDED_PROPERTIES: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_EXTENDED_PROPERTIES.to_le_bytes());
+
+        const CHARACTERISTIC_USER_DESCRIPTION: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_USER_DESCRIPTION.to_le_bytes());
+        const CLIENT_CHARACTERISTIC_CONFIGURATION: Uuid =
+            Uuid::Uuid16(descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.to_le_bytes());
+        const SERVER_CHARACTERISTIC_CONFIGURATION: Uuid =
+            Uuid::Uuid16(descriptors::SERVER_CHARACTERISTIC_CONFIGURATION.to_le_bytes());
+        const CHARACTERISTIC_PRESENTATION_FORMAT: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_PRESENTATION_FORMAT.to_le_bytes());
+        const CHARACTERISTIC_AGGREGATE_FORMAT: Uuid =
+            Uuid::Uuid16(descriptors::CHARACTERISTIC_AGGREGATE_FORMAT.to_le_bytes());
+
+        let mut mac = AesCmac::db_hash();
+
+        self.iterate(|mut it| {
+            while let Some((handle, att)) = it.next() {
+                match att.uuid {
+                    PRIMARY_SERVICE
+                    | SECONDARY_SERVICE
+                    | INCLUDED_SERVICE
+                    | CHARACTERISTIC
+                    | CHARACTERISTIC_EXTENDED_PROPERTIES => {
+                        mac.update(handle.to_le_bytes()).update(att.uuid.as_raw());
+                        match &att.data {
+                            AttributeData::ReadOnlyData { value, .. } => {
+                                mac.update(value);
+                            }
+                            AttributeData::Data { len, value, .. } => {
+                                mac.update(&value[..usize::from(*len)]);
+                            }
+                            AttributeData::Service { uuid, .. } => {
+                                mac.update(uuid.as_raw());
+                            }
+                            AttributeData::Declaration { props, handle, uuid } => {
+                                mac.update([props.0]).update(handle.to_le_bytes()).update(uuid.as_raw());
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    CHARACTERISTIC_USER_DESCRIPTION
+                    | CLIENT_CHARACTERISTIC_CONFIGURATION
+                    | SERVER_CHARACTERISTIC_CONFIGURATION
+                    | CHARACTERISTIC_PRESENTATION_FORMAT
+                    | CHARACTERISTIC_AGGREGATE_FORMAT => {
+                        mac.update(handle.to_le_bytes()).update(att.uuid.as_raw());
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        mac.finalize()
     }
 }
 
@@ -539,6 +707,25 @@ impl<T: AsGatt> AttributeHandle for Characteristic<T> {
 
     fn handle(&self) -> u16 {
         self.handle
+    }
+}
+
+/// Invalid handle value
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct InvalidHandle;
+
+impl core::fmt::Display for InvalidHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        core::fmt::Debug::fmt(self, f)
+    }
+}
+
+impl core::error::Error for InvalidHandle {}
+
+impl From<InvalidHandle> for Error {
+    fn from(value: InvalidHandle) -> Self {
+        Error::InvalidValue
     }
 }
 
@@ -572,12 +759,13 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             debug_assert!(h == value_handle);
 
             // Add optional CCCD handle
-            let cccd_handle = if props.any(&[CharacteristicProp::Notify, CharacteristicProp::Indicate]) {
+            let cccd_handle = if props.has_cccd() {
                 let handle = table.push(Attribute {
                     uuid: CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
                     data: AttributeData::Cccd {
                         notifications: false,
                         indications: false,
+                        write_permission: PermissionLevel::Allowed,
                     },
                 });
 
@@ -593,6 +781,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             handle: Characteristic {
                 handle,
                 cccd_handle,
+                props,
                 phantom: PhantomData,
             },
             table: self.table,
@@ -600,14 +789,15 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 
     /// Add a characteristic to this service with a refererence to a mutable storage buffer.
-    pub fn add_characteristic<T: AsGatt, U: Into<Uuid>>(
+    pub fn add_characteristic<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
         &mut self,
         uuid: U,
-        props: &[CharacteristicProp],
+        props: P,
         value: T,
         store: &'d mut [u8],
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-        let props = props.into();
+        let props: CharacteristicProps = props.into();
+        let permissions = props.default_permissions();
         let bytes = value.as_gatt();
         store[..bytes.len()].copy_from_slice(bytes);
         let variable_len = T::MAX_SIZE != T::MIN_SIZE;
@@ -616,7 +806,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             uuid.into(),
             props,
             AttributeData::Data {
-                props,
+                permissions,
                 value: store,
                 variable_len,
                 len,
@@ -625,26 +815,28 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 
     /// Add a characteristic to this service using inline storage. The characteristic value must be 8 bytes or less.
-    pub fn add_characteristic_small<T: AsGatt, U: Into<Uuid>>(
+    pub fn add_characteristic_small<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
         &mut self,
         uuid: U,
-        props: &[CharacteristicProp],
+        props: P,
         value: T,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-        assert!(T::MAX_SIZE <= 8);
+        assert!(T::MIN_SIZE <= 8);
 
-        let props = props.into();
+        let props: CharacteristicProps = props.into();
+        let permissions = props.default_permissions();
         let bytes = value.as_gatt();
+        assert!(bytes.len() <= 8);
         let mut value = [0; 8];
         value[..bytes.len()].copy_from_slice(bytes);
         let variable_len = T::MAX_SIZE != T::MIN_SIZE;
-        let capacity = T::MAX_SIZE as u8;
+        let capacity = T::MAX_SIZE.min(8) as u8;
         let len = bytes.len() as u8;
         self.add_characteristic_internal(
             uuid.into(),
             props,
             AttributeData::SmallData {
-                props,
+                permissions,
                 variable_len,
                 capacity,
                 len,
@@ -659,15 +851,48 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         uuid: U,
         value: &'d T,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-        let props = [CharacteristicProp::Read].into();
+        let props: CharacteristicProps = [CharacteristicProp::Read].into();
+        let permissions = props.default_permissions();
         self.add_characteristic_internal(
             uuid.into(),
             props,
             AttributeData::ReadOnlyData {
-                props,
+                permissions,
                 value: value.as_gatt(),
             },
         )
+    }
+
+    /// Add an included service to this service
+    pub fn add_included_service(&mut self, handle: u16) -> Result<u16, InvalidHandle> {
+        self.table.with_inner(|table| {
+            if handle > 0 && table.attributes.len() >= usize::from(handle) {
+                if let AttributeData::Service {
+                    uuid,
+                    last_handle_in_group,
+                } = &table.attributes[usize::from(handle) - 1].data
+                {
+                    // Included service values only include 16-bit UUIDs per the Bluetooth spec
+                    let uuid = match uuid {
+                        Uuid::Uuid16(uuid) => Some(*uuid),
+                        Uuid::Uuid128(_) => None,
+                    };
+
+                    Ok(table.push(Attribute {
+                        uuid: INCLUDE.into(),
+                        data: AttributeData::IncludedService {
+                            handle,
+                            last_handle_in_group: *last_handle_in_group,
+                            uuid,
+                        },
+                    }))
+                } else {
+                    Err(InvalidHandle)
+                }
+            } else {
+                Err(InvalidHandle)
+            }
+        })
     }
 
     /// Finish construction of the service and return a handle.
@@ -702,6 +927,8 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
     pub cccd_handle: Option<u16>,
     /// Handle value assigned to this characteristic when it is added to the Gatt Attribute Table
     pub handle: u16,
+    /// Properties of this characteristic
+    pub props: CharacteristicProps,
     pub(crate) phantom: PhantomData<T>,
 }
 
@@ -801,9 +1028,19 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         server.table().get(self)
     }
 
-    /// Returns the attribute handle for the characteristic's properties (if available)
+    /// Returns the attribute handle for the characteristic's client characteristic configuration descriptor (if available)
     pub fn cccd_handle(&self) -> Option<CharacteristicPropertiesHandle> {
         self.cccd_handle.map(CharacteristicPropertiesHandle)
+    }
+
+    /// Convert this characteristic's type to raw bytes
+    pub fn to_raw(self) -> Characteristic<[u8]> {
+        Characteristic {
+            cccd_handle: self.cccd_handle,
+            handle: self.handle,
+            props: self.props,
+            phantom: PhantomData,
+        }
     }
 }
 
@@ -824,7 +1061,7 @@ pub struct CharacteristicBuilder<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const 
     table: &'r mut AttributeTable<'d, M, MAX>,
 }
 
-impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilder<'_, 'd, T, M, MAX> {
+impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilder<'r, 'd, T, M, MAX> {
     fn add_descriptor_internal<DT: AsGatt + ?Sized>(&mut self, uuid: Uuid, data: AttributeData<'d>) -> Descriptor<DT> {
         let handle = self.table.push(Attribute { uuid, data });
 
@@ -838,11 +1075,10 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
     pub fn add_descriptor<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
-        props: &[CharacteristicProp],
+        permissions: AttPermissions,
         value: DT,
         store: &'d mut [u8],
     ) -> Descriptor<DT> {
-        let props = props.into();
         let bytes = value.as_gatt();
         store[..bytes.len()].copy_from_slice(bytes);
         let variable_len = DT::MAX_SIZE != DT::MIN_SIZE;
@@ -850,7 +1086,7 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
         self.add_descriptor_internal(
             uuid.into(),
             AttributeData::Data {
-                props,
+                permissions,
                 value: store,
                 variable_len,
                 len,
@@ -862,22 +1098,22 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
     pub fn add_descriptor_small<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
-        props: &[CharacteristicProp],
+        permissions: AttPermissions,
         value: DT,
     ) -> Descriptor<DT> {
-        assert!(DT::MAX_SIZE <= 8);
+        assert!(DT::MIN_SIZE <= 8);
 
-        let props = props.into();
         let bytes = value.as_gatt();
+        assert!(bytes.len() <= 8);
         let mut value = [0; 8];
         value[..bytes.len()].copy_from_slice(bytes);
         let variable_len = T::MAX_SIZE != T::MIN_SIZE;
-        let capacity = T::MAX_SIZE as u8;
+        let capacity = T::MAX_SIZE.min(8) as u8;
         let len = bytes.len() as u8;
         self.add_descriptor_internal(
             uuid.into(),
             AttributeData::SmallData {
-                props,
+                permissions,
                 variable_len,
                 capacity,
                 len,
@@ -887,17 +1123,84 @@ impl<'d, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBuilde
     }
 
     /// Add a read only characteristic descriptor for this characteristic.
-    pub fn add_descriptor_ro<DT: AsGatt + ?Sized, U: Into<Uuid>>(&mut self, uuid: U, data: &'d DT) -> Descriptor<DT> {
-        let props = [CharacteristicProp::Read].into();
+    pub fn add_descriptor_ro<DT: AsGatt + ?Sized, U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        read_permission: PermissionLevel,
+        data: &'d DT,
+    ) -> Descriptor<DT> {
+        let permissions = AttPermissions {
+            write: PermissionLevel::NotAllowed,
+            read: read_permission,
+        };
         self.add_descriptor_internal(
             uuid.into(),
             AttributeData::ReadOnlyData {
-                props,
+                permissions,
                 value: data.as_gatt(),
             },
         )
     }
 
+    /// Set the read permission for this characteristic
+    pub fn read_permission(self, read: PermissionLevel) -> Self {
+        self.table.with_attribute(self.handle.handle, |att| {
+            let permissions = match &mut att.data {
+                AttributeData::Data { permissions, .. }
+                | AttributeData::SmallData { permissions, .. }
+                | AttributeData::ReadOnlyData { permissions, .. } => permissions,
+                _ => unreachable!(),
+            };
+
+            permissions.read = read;
+        });
+
+        self
+    }
+
+    /// Set the write permission for this characteristic
+    pub fn write_permission(self, write: PermissionLevel) -> Self {
+        self.table.with_attribute(self.handle.handle, |att| {
+            let permissions = match &mut att.data {
+                AttributeData::Data { permissions, .. }
+                | AttributeData::SmallData { permissions, .. }
+                | AttributeData::ReadOnlyData { permissions, .. } => permissions,
+                _ => unreachable!(),
+            };
+
+            permissions.write = write;
+        });
+
+        self
+    }
+
+    /// Set the write permission for the Client Characteristic Configuration Descriptor for this characteristic
+    ///
+    /// Panics if this characteristic does not have a Client Characteristic Configuration Descriptor.
+    pub fn cccd_permission(self, write: PermissionLevel) -> Self {
+        let Some(handle) = self.handle.cccd_handle else {
+            panic!("Can't set CCCD permission on characteristics without notify or indicate properties.");
+        };
+
+        self.table.with_attribute(handle, |att| {
+            let permission = match &mut att.data {
+                AttributeData::Cccd { write_permission, .. } => write_permission,
+                _ => unreachable!(),
+            };
+
+            *permission = write;
+        });
+
+        self
+    }
+
+    /// Convert this characteristic's type to raw bytes
+    pub fn to_raw(self) -> CharacteristicBuilder<'r, 'd, [u8], M, MAX> {
+        CharacteristicBuilder {
+            handle: self.handle.to_raw(),
+            table: self.table,
+        }
+    }
     /// Return the built characteristic.
     pub fn build(self) -> Characteristic<T> {
         self.handle
@@ -982,6 +1285,7 @@ impl Service {
 
 /// Properties of a characteristic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CharacteristicProps(u8);
 
 impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
@@ -994,13 +1298,29 @@ impl<'a> From<&'a [CharacteristicProp]> for CharacteristicProps {
     }
 }
 
-impl<const T: usize> From<[CharacteristicProp; T]> for CharacteristicProps {
-    fn from(props: [CharacteristicProp; T]) -> Self {
+impl<'a, const N: usize> From<&'a [CharacteristicProp; N]> for CharacteristicProps {
+    fn from(props: &'a [CharacteristicProp; N]) -> Self {
+        let mut val: u8 = 0;
+        for prop in props {
+            val |= *prop as u8;
+        }
+        CharacteristicProps(val)
+    }
+}
+
+impl<const N: usize> From<[CharacteristicProp; N]> for CharacteristicProps {
+    fn from(props: [CharacteristicProp; N]) -> Self {
         let mut val: u8 = 0;
         for prop in props {
             val |= prop as u8;
         }
         CharacteristicProps(val)
+    }
+}
+
+impl From<u8> for CharacteristicProps {
+    fn from(value: u8) -> Self {
+        Self(value)
     }
 }
 
@@ -1013,6 +1333,37 @@ impl CharacteristicProps {
             }
         }
         false
+    }
+
+    pub(crate) fn default_permissions(&self) -> AttPermissions {
+        let read = if (self.0 & CharacteristicProp::Read as u8) != 0 {
+            PermissionLevel::Allowed
+        } else {
+            PermissionLevel::NotAllowed
+        };
+
+        let write = if (self.0
+            & (CharacteristicProp::Write as u8
+                | CharacteristicProp::WriteWithoutResponse as u8
+                | CharacteristicProp::AuthenticatedWrite as u8))
+            != 0
+        {
+            PermissionLevel::Allowed
+        } else {
+            PermissionLevel::NotAllowed
+        };
+
+        AttPermissions { read, write }
+    }
+
+    /// Check if the characteristic will have a Client Characteristic Configuration Descriptor
+    pub fn has_cccd(&self) -> bool {
+        (self.0 & (CharacteristicProp::Indicate as u8 | CharacteristicProp::Notify as u8)) != 0
+    }
+
+    /// Get the raw value of the characteristic props
+    pub fn to_raw(self) -> u8 {
+        self.0
     }
 }
 
@@ -1117,5 +1468,278 @@ impl CCCD {
     /// Check if indications are enabled
     pub fn should_indicate(&self) -> bool {
         (self.0 & (CCCDFlag::Indicate as u16)) != 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    #[cfg(feature = "security")]
+    #[test]
+    fn database_hash() {
+        use bt_hci::uuid::characteristic::{
+            APPEARANCE, CLIENT_SUPPORTED_FEATURES, DATABASE_HASH, DEVICE_NAME, SERVICE_CHANGED,
+        };
+        use bt_hci::uuid::declarations::{CHARACTERISTIC, PRIMARY_SERVICE};
+        use bt_hci::uuid::descriptors::{
+            CHARACTERISTIC_PRESENTATION_FORMAT, CHARACTERISTIC_USER_DESCRIPTION, CLIENT_CHARACTERISTIC_CONFIGURATION,
+        };
+        use bt_hci::uuid::service::{GAP, GATT};
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+        use super::*;
+
+        // The raw message data that should be hashed for this attribute table is:
+        //
+        // 0100 0028 0018
+        // 0200 0328 020300002a
+        // 0400 0328 020500012a
+        //
+        // 0600 0028 0118
+        // 0700 0328 200800052a
+        // 0900 0229
+        // 0a00 0328 0a0b00292b
+        // 0c00 0328 020d002a2b
+        //
+        // 0e00 0028 f0debc9a785634127856341278563412
+        // 0f00 0328 121000f1debc9a785634127856341278563412
+        // 1100 0229
+        // 1200 0129
+        // 1300 0429
+        //
+        // The message hash can be calculated on the command line with:
+        // > xxd -plain -revert message.txt message.bin
+        // > openssl mac -cipher AES-128-CBC -macopt hexkey:00000000000000000000000000000000 -in message.bin CMAC
+
+        let mut table: AttributeTable<'static, NoopRawMutex, 20> = AttributeTable::new();
+
+        // GAP service (handles 0x001 - 0x005)
+        table.push(Attribute::new(
+            PRIMARY_SERVICE.into(),
+            AttributeData::Service {
+                uuid: GAP.into(),
+                last_handle_in_group: 0x05,
+            },
+        ));
+
+        let expected = 0xd4cdec10804db3f147b4d7d10baa0120;
+        let actual = table.hash();
+        assert_eq!(
+            actual, expected,
+            "\nexpected: {:#032x}\nactual: {:#032x}",
+            expected, actual
+        );
+
+        // Device name characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                handle: 0x0003,
+                uuid: DEVICE_NAME.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            DEVICE_NAME.into(),
+            AttributeData::ReadOnlyData {
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
+                value: b"",
+            },
+        ));
+
+        // Appearance characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                handle: 0x0005,
+                uuid: APPEARANCE.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            APPEARANCE.into(),
+            AttributeData::ReadOnlyData {
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
+                value: b"",
+            },
+        ));
+
+        let expected = 0x6c329e3f1d52c03f174980f6b4704875;
+        let actual = table.hash();
+        assert_eq!(
+            actual, expected,
+            "\nexpected: {:#032x}\n  actual: {:#032x}",
+            expected, actual
+        );
+
+        // GATT service (handles 0x006 - 0x000d)
+        table.push(Attribute::new(
+            PRIMARY_SERVICE.into(),
+            AttributeData::Service {
+                uuid: GATT.into(),
+                last_handle_in_group: 0x0d,
+            },
+        ));
+
+        // Service changed characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Indicate].as_slice().into(),
+                handle: 0x0008,
+                uuid: SERVICE_CHANGED.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            SERVICE_CHANGED.into(),
+            AttributeData::ReadOnlyData {
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
+                value: b"",
+            },
+        ));
+
+        table.push(Attribute::new(
+            CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
+            AttributeData::Cccd {
+                notifications: false,
+                indications: false,
+                write_permission: PermissionLevel::Allowed,
+            },
+        ));
+
+        // Client supported features characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Read, CharacteristicProp::Write].as_slice().into(),
+                handle: 0x000b,
+                uuid: CLIENT_SUPPORTED_FEATURES.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            CLIENT_SUPPORTED_FEATURES.into(),
+            AttributeData::ReadOnlyData {
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
+                value: b"",
+            },
+        ));
+
+        // Database hash characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Read].as_slice().into(),
+                handle: 0x000d,
+                uuid: DATABASE_HASH.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            DATABASE_HASH.into(),
+            AttributeData::ReadOnlyData {
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
+                value: b"",
+            },
+        ));
+
+        let expected = 0x16ce756326c5062bf74022f845c2b21f;
+        let actual = table.hash();
+        assert_eq!(
+            actual, expected,
+            "\nexpected: {:#032x}\n  actual: {:#032x}",
+            expected, actual
+        );
+
+        const CUSTOM_SERVICE: u128 = 0x12345678_12345678_12345678_9abcdef0;
+        const CUSTOM_CHARACTERISTIC: u128 = 0x12345678_12345678_12345678_9abcdef1;
+
+        // Custom service (handles 0x00e - 0x0013)
+        table.push(Attribute::new(
+            PRIMARY_SERVICE.into(),
+            AttributeData::Service {
+                uuid: CUSTOM_SERVICE.into(),
+                last_handle_in_group: 0x13,
+            },
+        ));
+
+        // Custom characteristic
+        table.push(Attribute::new(
+            CHARACTERISTIC.into(),
+            AttributeData::Declaration {
+                props: [CharacteristicProp::Notify, CharacteristicProp::Read].as_slice().into(),
+                handle: 0x0010,
+                uuid: CUSTOM_CHARACTERISTIC.into(),
+            },
+        ));
+
+        table.push(Attribute::new(
+            CUSTOM_CHARACTERISTIC.into(),
+            AttributeData::ReadOnlyData {
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
+                value: b"",
+            },
+        ));
+
+        table.push(Attribute::new(
+            CLIENT_CHARACTERISTIC_CONFIGURATION.into(),
+            AttributeData::Cccd {
+                notifications: false,
+                indications: false,
+                write_permission: PermissionLevel::Allowed,
+            },
+        ));
+
+        table.push(Attribute::new(
+            CHARACTERISTIC_USER_DESCRIPTION.into(),
+            AttributeData::ReadOnlyData {
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
+                value: b"Custom Characteristic",
+            },
+        ));
+
+        table.push(Attribute::new(
+            CHARACTERISTIC_PRESENTATION_FORMAT.into(),
+            AttributeData::ReadOnlyData {
+                permissions: AttPermissions {
+                    read: PermissionLevel::Allowed,
+                    write: PermissionLevel::NotAllowed,
+                },
+                value: &[4, 0, 0, 0x27, 1, 0, 0],
+            },
+        ));
+
+        let expected = 0xc7352cced28d6608d4b057d247d8be76;
+        let actual = table.hash();
+        assert_eq!(
+            actual, expected,
+            "\nexpected: {:#032x}\n  actual: {:#032x}",
+            expected, actual
+        );
     }
 }
