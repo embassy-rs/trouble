@@ -265,14 +265,16 @@ impl AttributeData<'_> {
                 len,
                 ..
             } => {
-                if offset + data.len() <= value.len() {
+                if offset > value.len() {
+                    Err(AttErrorCode::INVALID_OFFSET)
+                } else if offset + data.len() > value.len() {
+                    Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
+                } else {
                     value[offset..offset + data.len()].copy_from_slice(data);
                     if *variable_len {
                         *len = (offset + data.len()) as u16;
                     }
                     Ok(())
-                } else {
-                    Err(AttErrorCode::INVALID_OFFSET)
                 }
             }
             Self::SmallData {
@@ -282,14 +284,16 @@ impl AttributeData<'_> {
                 value,
                 ..
             } => {
-                if offset + data.len() <= *capacity as usize {
+                if offset > usize::from(*capacity) {
+                    Err(AttErrorCode::INVALID_OFFSET)
+                } else if offset + data.len() > usize::from(*capacity) {
+                    Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
+                } else {
                     value[offset..offset + data.len()].copy_from_slice(data);
                     if *variable_len {
                         *len = (offset + data.len()) as u8;
                     }
                     Ok(())
-                } else {
-                    Err(AttErrorCode::INVALID_OFFSET)
                 }
             }
             Self::Cccd {

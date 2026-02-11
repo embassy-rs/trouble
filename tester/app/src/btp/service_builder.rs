@@ -77,6 +77,33 @@ pub struct ServiceBuilder {
     service_id: u16,
 }
 
+/// Try to convert a small value to a fixed-size array (1-8 bytes) and call the given expression
+/// with that array, falling back to a slice for empty or unexpected sizes.
+macro_rules! with_small_value {
+    ($value:expr, |$v:ident| $body:expr) => {
+        if let Ok($v) = <[u8; 1]>::try_from($value.as_slice()) {
+            $body
+        } else if let Ok($v) = <[u8; 2]>::try_from($value.as_slice()) {
+            $body
+        } else if let Ok($v) = <[u8; 3]>::try_from($value.as_slice()) {
+            $body
+        } else if let Ok($v) = <[u8; 4]>::try_from($value.as_slice()) {
+            $body
+        } else if let Ok($v) = <[u8; 5]>::try_from($value.as_slice()) {
+            $body
+        } else if let Ok($v) = <[u8; 6]>::try_from($value.as_slice()) {
+            $body
+        } else if let Ok($v) = <[u8; 7]>::try_from($value.as_slice()) {
+            $body
+        } else if let Ok($v) = <[u8; 8]>::try_from($value.as_slice()) {
+            $body
+        } else {
+            let $v = $value.as_slice();
+            $body
+        }
+    };
+}
+
 impl ServiceBuilder {
     /// Create a new empty service builder.
     pub fn new() -> Self {
@@ -222,9 +249,11 @@ impl ServiceBuilder {
                                     .add_characteristic(uuid, properties, &*init, Box::leak(store))
                                     .to_raw()
                             }
-                            Some(AttValue::Small(value)) => service
-                                .add_characteristic_small(uuid, properties, value.as_slice())
-                                .to_raw(),
+                            Some(AttValue::Small(value)) => {
+                                with_small_value!(value, |v| service
+                                    .add_characteristic_small(uuid, properties, v)
+                                    .to_raw())
+                            }
                             None => service
                                 .add_characteristic_small(uuid, properties, [].as_slice())
                                 .to_raw(),
@@ -258,8 +287,10 @@ impl ServiceBuilder {
                                     // Box::leak above.
                                     characteristic_builder.add_descriptor(uuid, permissions, &*init, Box::leak(store));
                                 }
-                                Some(AttValue::Small(store)) => {
-                                    characteristic_builder.add_descriptor_small(uuid, permissions, store.as_slice());
+                                Some(AttValue::Small(value)) => {
+                                    with_small_value!(value, |v| {
+                                        characteristic_builder.add_descriptor_small(uuid, permissions, v);
+                                    });
                                 }
                                 None => {
                                     characteristic_builder.add_descriptor_small(uuid, permissions, [].as_slice());
