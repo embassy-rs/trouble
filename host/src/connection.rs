@@ -133,6 +133,33 @@ pub struct RequestedConnParams {
     pub supervision_timeout: Duration,
 }
 
+impl RequestedConnParams {
+    /// Check if the connection parameters are valid
+    pub fn is_valid(&self) -> bool {
+        self.min_connection_interval <= self.max_connection_interval
+            && self.min_connection_interval >= Duration::from_micros(7_500)
+            && self.max_connection_interval <= Duration::from_secs(4)
+            && self.max_latency < 500
+            && self.min_event_length <= self.max_event_length
+            && self.supervision_timeout >= Duration::from_millis(100)
+            && self.supervision_timeout <= Duration::from_millis(32_000)
+            && self.supervision_timeout.as_micros()
+                > 2 * u64::from(self.max_latency + 1) * self.max_connection_interval.as_micros()
+    }
+}
+
+/// Current parameters for a connection.
+#[derive(Default, Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ConnParams {
+    /// Connection interval.
+    pub conn_interval: Duration,
+    /// Peripheral latency.
+    pub peripheral_latency: u16,
+    /// Supervision timeout.
+    pub supervision_timeout: Duration,
+}
+
 /// Connection rate parameters.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -807,82 +834,6 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                 Err(crate::Error::Disconnected.into())
             }
             Err(e) => Err(e),
-        }
-    }
-
-    #[cfg(feature = "connection-params-update")]
-    /// Respond to updated parameters.
-    ///
-    /// This should only be called if a request to update the connection parameters was received.
-    pub async fn accept_connection_params<T>(
-        &self,
-        stack: &Stack<'_, T, P>,
-        params: &ConnectParams,
-    ) -> Result<(), BleHostError<T::Error>>
-    where
-        T: ControllerCmdAsync<LeConnUpdate>
-            + ControllerCmdSync<LeReadLocalSupportedFeatures>
-            + ControllerCmdAsync<LeRemoteConnectionParameterRequestReply>
-            + ControllerCmdAsync<LeRemoteConnectionParameterRequestNegativeReply>,
-    {
-        let handle = self.handle();
-        if self.role() == LeConnRole::Central {
-            let features = stack.host.command(LeReadLocalSupportedFeatures::new()).await?;
-            match stack.host.async_command(into_le_conn_update(handle, params)).await {
-                Ok(_) => {
-                    if features.supports_conn_parameters_request_procedure() {
-                        let interval_min: bt_hci::param::Duration<1_250> =
-                            bt_hci_duration(params.min_connection_interval);
-                        let interval_max: bt_hci::param::Duration<1_250> =
-                            bt_hci_duration(params.max_connection_interval);
-                        let timeout: bt_hci::param::Duration<10_000> = bt_hci_duration(params.supervision_timeout);
-                        if let Err(e) = stack
-                            .host
-                            .async_command(LeRemoteConnectionParameterRequestReply::new(
-                                handle,
-                                interval_min,
-                                interval_max,
-                                params.max_latency,
-                                timeout,
-                                bt_hci_duration(params.min_event_length),
-                                bt_hci_duration(params.max_event_length),
-                            ))
-                            .await
-                        {
-                            return Err(e);
-                        }
-                    } else {
-                        // Use L2CAP signaling to update connection parameters
-                        info!(
-                            "Connection parameters request procedure not supported, using l2cap connection parameter update res instead"
-                        );
-                        let param = ConnParamUpdateRes { result: 0 };
-                        stack.host.send_conn_param_update_res(handle, &param).await?;
-                    }
-                    Ok(())
-                }
-                Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
-                    Err(crate::Error::Disconnected.into())
-                }
-                Err(e) => {
-                    info!("Connection parameters request procedure failed");
-                    if features.supports_conn_parameters_request_procedure() {
-                        stack
-                            .host
-                            .async_command(LeRemoteConnectionParameterRequestNegativeReply::new(
-                                handle,
-                                RemoteConnectionParamsRejectReason::UnacceptableConnParameters,
-                            ))
-                            .await?;
-                    } else {
-                        let param = ConnParamUpdateRes { result: 1 };
-                        stack.host.send_conn_param_update_res(handle, &param).await?;
-                    }
-                    Err(e)
-                }
-            }
-        } else {
-            Err(crate::Error::NotSupported.into())
         }
     }
 

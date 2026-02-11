@@ -92,7 +92,7 @@ pub mod prelude {
     pub use crate::attribute_server::*;
     #[cfg(feature = "central")]
     pub use crate::central::*;
-    pub use crate::connection::*;
+    pub use crate::connection::{ConnectRateParams, *};
     #[cfg(feature = "gatt")]
     pub use crate::gap::*;
     #[cfg(feature = "gatt")]
@@ -675,11 +675,11 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Read the minimum supported connection interval from the controller.
     pub async fn read_minimum_supported_connection_interval(
         &self,
-    ) -> Result<LeReadMinimumSupportedConnectionIntervalReturn, BleHostError<C::Error>>
+    ) -> Result<<LeReadMinimumSupportedConnectionInterval as SyncCmd>::Return, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeReadMinimumSupportedConnectionInterval>,
     {
-        self.command(LeReadMinimumSupportedConnectionInterval::new()).await
+        self.host.command(LeReadMinimumSupportedConnectionInterval::new()).await
     }
 
     /// Read current host metrics

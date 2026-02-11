@@ -6,8 +6,7 @@ use bt_hci::controller::{Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
 use embassy_futures::select::{select, Either};
 
-use crate::connection::{ConnectConfig, Connection, PhySet};
-use crate::prelude::ConnectRateParams;
+use crate::connection::{ConnectConfig, ConnectRateParams, Connection, PhySet};
 use crate::{bt_hci_duration, BleHostError, Error, PacketPool, Stack};
 
 /// A type implementing the BLE central role.
