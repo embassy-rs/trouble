@@ -182,7 +182,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut rng = rng::Rng::new(p.RNG, Irqs);
     let chacha_rng = ChaCha12Rng::from_rng(&mut rng).unwrap();
 
-    let mut sdc_mem = sdc::Mem::<5872>::new();
+    let mut sdc_mem = sdc::Mem::<5888>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     let mut uart_config = embassy_nrf::uarte::Config::default();
