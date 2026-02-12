@@ -8,6 +8,7 @@
 use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
+use bt_hci::cmd::le::LeReadMinimumSupportedConnectionInterval;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
@@ -91,7 +92,7 @@ pub mod prelude {
     pub use crate::attribute_server::*;
     #[cfg(feature = "central")]
     pub use crate::central::*;
-    pub use crate::connection::*;
+    pub use crate::connection::{ConnectRateParams, *};
     #[cfg(feature = "gatt")]
     pub use crate::gap::*;
     #[cfg(feature = "gatt")]
@@ -669,6 +670,16 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         C: ControllerCmdAsync<T>,
     {
         self.host.async_command(cmd).await
+    }
+
+    /// Read the minimum supported connection interval from the controller.
+    pub async fn read_minimum_supported_connection_interval(
+        &self,
+    ) -> Result<<LeReadMinimumSupportedConnectionInterval as SyncCmd>::Return, BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<LeReadMinimumSupportedConnectionInterval>,
+    {
+        self.host.command(LeReadMinimumSupportedConnectionInterval::new()).await
     }
 
     /// Read current host metrics

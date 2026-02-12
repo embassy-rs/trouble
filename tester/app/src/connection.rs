@@ -115,6 +115,8 @@ pub async fn run<C: crate::Controller, P: PacketPool>(
                     }
                 }
                 GattConnectionEvent::DataLengthUpdated { .. } => warn!("Ignored DLU event"),
+                GattConnectionEvent::FrameSpaceUpdated { .. } => warn!("Ignored frame space update event"),
+                GattConnectionEvent::ConnectionRateChanged { .. } => warn!("Ignored connection rate changed event"),
             },
             Either::Second(()) => {}
         }
