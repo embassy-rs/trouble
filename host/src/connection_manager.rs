@@ -725,7 +725,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         use bt_hci::cmd::link_control::Disconnect;
 
         match _event {
-            crate::security_manager::SecurityEventData::SendLongTermKey(handle) => {
+            crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
                 let conn_info = self.state.borrow().connections.iter().find_map(|connection| {
                     match (connection.handle, connection.peer_identity) {
                         (Some(connection_handle), Some(identity)) => {
@@ -740,7 +740,20 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 });
 
                 if let Some((conn, identity)) = conn_info {
-                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(&identity) {
+                    // Match EDIV/Rand against stored bonds to find the correct LTK.
+                    // During active legacy pairing (STK phase), the STK is stored with EDIV=0, Rand=0.
+                    let bond = self.security_manager.get_peer_bond_information(&identity);
+                    #[cfg(not(feature = "legacy-pairing"))]
+                    let ltk = bond.map(|b| b.ltk);
+                    #[cfg(feature = "legacy-pairing")]
+                    let ltk = bond.and_then(|b| {
+                        if b.ediv == ediv && b.rand == rand {
+                            Some(b.ltk)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(ltk) = ltk {
                         let _ = host
                             .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
                             .await?;
@@ -756,32 +769,20 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 }
             }
             crate::security_manager::SecurityEventData::EnableEncryption(handle, bond_info) => {
-                let connection_data =
-                    self.state
-                        .borrow()
-                        .connections
-                        .iter()
-                        .enumerate()
-                        .find_map(
-                            |(index, connection)| match (connection.handle, connection.peer_identity) {
-                                (Some(connection_handle), Some(identity)) => {
-                                    if handle == connection_handle {
-                                        Some((index, connection.role, identity))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                (_, _) => None,
-                            },
-                        );
-                if let Some((index, role, identity)) = connection_data {
-                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(&identity) {
-                        if let Some(LeConnRole::Central) = role {
-                            host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
-                                .await?;
-                        }
-                    } else {
-                        warn!("[host] Enable encryption failed, no long term key")
+                let connection_data = self
+                    .state
+                    .borrow()
+                    .connections
+                    .iter()
+                    .find_map(|connection| (connection.handle == Some(handle)).then_some(connection.role));
+                if let Some(role) = connection_data {
+                    if let Some(LeConnRole::Central) = role {
+                        #[cfg(feature = "legacy-pairing")]
+                        let (ediv, rand) = (bond_info.ediv, bond_info.rand);
+                        #[cfg(not(feature = "legacy-pairing"))]
+                        let (ediv, rand) = (0, [0; 8]);
+                        host.async_command(LeEnableEncryption::new(handle, rand, ediv, bond_info.ltk.to_le_bytes()))
+                            .await?;
                     }
                 } else {
                     warn!("[host] Enable encryption failed, unknown peer")

@@ -1079,7 +1079,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             let vendor = unwrap!(Vendor::from_hci_bytes_complete(event.data));
                             event_handler.on_vendor(&vendor);
                         }
-                        EventKind::EncryptionChangeV1 => {
+                        EventKind::EncryptionChangeV1 | EventKind::EncryptionKeyRefreshComplete => {
                             host.connections.handle_security_hci_event(event)?;
                         }
                         // Ignore
@@ -1135,7 +1135,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 .enable_conn_complete(true)
                 .enable_hardware_error(true)
                 .enable_disconnection_complete(true)
-                .enable_encryption_change_v1(true),
+                .enable_encryption_change_v1(true)
+                .enable_encryption_key_refresh_complete(true),
         )
         .exec(&host.controller)
         .await?;

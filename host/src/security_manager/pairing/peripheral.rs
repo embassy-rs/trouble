@@ -9,7 +9,6 @@ use rand_core::{CryptoRng, RngCore};
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
 use crate::prelude::ConnectionEvent;
-use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use crate::security_manager::pairing::util::{
     choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet,
@@ -162,6 +161,17 @@ impl Pairing {
                 bond_information: None,
             }),
         }
+    }
+
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn into_legacy(self) -> super::legacy_peripheral::Pairing {
+        let PairingData {
+            local_address,
+            peer_address,
+            local_features,
+            ..
+        } = self.pairing_data.into_inner();
+        super::legacy_peripheral::Pairing::new(local_address, peer_address, local_features.io_capabilities)
     }
 
     pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
@@ -425,11 +435,15 @@ impl Pairing {
         pairing_data: &mut PairingData,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
-        if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
-            return Err(Error::Security(Reason::EncryptionKeySize));
-        }
+
+        #[cfg(not(feature = "legacy-pairing"))]
         if !peer_features.security_properties.secure_connection() {
-            return Err(Error::Security(Reason::UnspecifiedReason));
+            return Err(Error::Security(Reason::AuthenticationRequirements));
+        }
+
+        if peer_features.maximum_encryption_key_size < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS
+        {
+            return Err(Error::Security(Reason::EncryptionKeySize));
         }
 
         if peer_features.initiator_key_distribution.identity_key() {
@@ -612,6 +626,10 @@ impl Pairing {
                 &pairing_data.long_term_key,
                 pairing_data.pairing_method.security_level(),
                 pairing_data.want_bonding(),
+                #[cfg(feature = "legacy-pairing")]
+                0,
+                #[cfg(feature = "legacy-pairing")]
+                [0; 8],
             )?;
             pairing_data.bond_information = Some(bond);
             Ok(Step::WaitingLinkEncrypted)

@@ -422,6 +422,10 @@ impl AuthReq {
     pub fn new(bonding: BondingFlag) -> Self {
         AuthReq((bonding as u8) | AUTH_REQ_MITM | AUTH_REQ_SECURE_CONNECTION)
     }
+    /// Build a AuthReq octet for LE Legacy Pairing
+    pub fn new_legacy(bonding: BondingFlag) -> Self {
+        AuthReq((bonding as u8) | AUTH_REQ_MITM)
+    }
     /// Bond requested
     pub fn bond(&self) -> BondingFlag {
         if let Ok(v) = BondingFlag::try_from(self.0) {

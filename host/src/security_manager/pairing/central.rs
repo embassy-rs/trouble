@@ -7,7 +7,6 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
-use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use crate::security_manager::pairing::util::{
     choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet,
@@ -223,7 +222,18 @@ impl Pairing {
         let ret = Self::new_idle(local_address, peer_address, local_io);
         {
             let mut pairing_data = ret.pairing_data.borrow_mut();
-            pairing_data.local_features.security_properties = AuthReq::new(ops.bonding_flag());
+            let auth_req = AuthReq::new(ops.bonding_flag());
+            pairing_data.local_features.security_properties = auth_req;
+            if matches!(ops.bonding_flag(), BondingFlag::Bonding) {
+                pairing_data
+                    .local_features
+                    .initiator_key_distribution
+                    .set_encryption_key();
+                pairing_data
+                    .local_features
+                    .responder_key_distribution
+                    .set_encryption_key();
+            }
             let next_step = if let Some(bond) = ops.try_enable_bonded_encryption()? {
                 pairing_data.bond_information = Some(bond);
                 Step::WaitingBondedLinkEncryption
@@ -238,6 +248,22 @@ impl Pairing {
 
     pub fn peer_address(&self) -> Address {
         self.pairing_data.borrow().peer_address
+    }
+
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn into_legacy(self) -> super::legacy_central::Pairing {
+        let PairingData {
+            local_address,
+            local_features,
+            peer_address,
+            ..
+        } = self.pairing_data.into_inner();
+
+        let mut preq = [0u8; 7];
+        preq[0] = u8::from(Command::PairingRequest);
+        local_features.encode(&mut preq[1..]).unwrap();
+
+        super::legacy_central::Pairing::from_lesc_switch(local_address, peer_address, local_features, preq)
     }
 
     pub fn security_level(&self) -> SecurityLevel {
@@ -335,6 +361,7 @@ impl Pairing {
                     let pairing_data = self.pairing_data.borrow();
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
                         let pairing_bond = if pairing_data.want_bonding() {
+                            ops.try_update_bond_information(bond)?;
                             Some(bond.clone())
                         } else {
                             None
@@ -462,11 +489,15 @@ impl Pairing {
         pairing_data: &mut PairingData,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
-        if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
-            return Err(Error::Security(Reason::EncryptionKeySize));
-        }
+
+        #[cfg(not(feature = "legacy-pairing"))]
         if !peer_features.security_properties.secure_connection() {
-            return Err(Error::Security(Reason::UnspecifiedReason));
+            return Err(Error::Security(Reason::AuthenticationRequirements));
+        }
+
+        if peer_features.maximum_encryption_key_size < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS
+        {
+            return Err(Error::Security(Reason::EncryptionKeySize));
         }
 
         pairing_data.peer_features = peer_features;
@@ -602,6 +633,10 @@ impl Pairing {
             &pairing_data.ltk.ok_or(Error::InvalidValue)?,
             pairing_data.pairing_method.security_level(),
             pairing_data.want_bonding(),
+            #[cfg(feature = "legacy-pairing")]
+            0,
+            #[cfg(feature = "legacy-pairing")]
+            [0; 8],
         )?;
         pairing_data.bond_information = Some(bond);
         Ok(())

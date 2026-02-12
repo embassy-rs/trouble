@@ -76,6 +76,37 @@ pub fn choose_pairing_method(central: PairingFeatures, peripheral: PairingFeatur
     }
 }
 
+#[cfg(feature = "legacy-pairing")]
+/// LE Legacy Pairing method selection.
+/// Key difference from LESC: no Numeric Comparison. DisplayYesNo/DisplayYesNo maps to JustWorks.
+pub fn choose_legacy_pairing_method(central: PairingFeatures, peripheral: PairingFeatures) -> PairingMethod {
+    if matches!(central.use_oob, UseOutOfBand::Present) && matches!(peripheral.use_oob, UseOutOfBand::Present) {
+        PairingMethod::OutOfBand
+    } else if !central.security_properties.man_in_the_middle() && !peripheral.security_properties.man_in_the_middle() {
+        PairingMethod::JustWorks
+    } else {
+        match (central.io_capabilities, peripheral.io_capabilities) {
+            (IoCapabilities::NoInputNoOutput, _) | (_, IoCapabilities::NoInputNoOutput) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayOnly, IoCapabilities::DisplayOnly) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayOnly, IoCapabilities::DisplayYesNo) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayOnly, IoCapabilities::KeyboardOnly) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::DisplayOnly, IoCapabilities::KeyboardDisplay) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::DisplayYesNo, IoCapabilities::DisplayOnly) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayYesNo, IoCapabilities::DisplayYesNo) => PairingMethod::JustWorks,
+            (IoCapabilities::DisplayYesNo, IoCapabilities::KeyboardOnly) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::DisplayYesNo, IoCapabilities::KeyboardDisplay) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::KeyboardOnly, IoCapabilities::DisplayOnly) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardOnly, IoCapabilities::DisplayYesNo) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardOnly, IoCapabilities::KeyboardOnly) => PairingMethod::BOTH_INPUT,
+            (IoCapabilities::KeyboardOnly, IoCapabilities::KeyboardDisplay) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardDisplay, IoCapabilities::DisplayOnly) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardDisplay, IoCapabilities::DisplayYesNo) => PairingMethod::PERIPHERAL_DISPLAYS,
+            (IoCapabilities::KeyboardDisplay, IoCapabilities::KeyboardOnly) => PairingMethod::CENTRAL_DISPLAYS,
+            (IoCapabilities::KeyboardDisplay, IoCapabilities::KeyboardDisplay) => PairingMethod::CENTRAL_DISPLAYS,
+        }
+    }
+}
+
 pub fn prepare_packet<P: PacketPool>(command: Command) -> Result<TxPacket<P>, Error> {
     let packet = P::allocate().ok_or(Error::OutOfMemory)?;
     TxPacket::new(packet, command)
@@ -129,6 +160,47 @@ pub fn make_confirm_packet<P: PacketPool>(confirm: &Confirm) -> Result<TxPacket<
     Ok(packet)
 }
 
+#[cfg(feature = "legacy-pairing")]
+pub fn make_encryption_information_packet<P: PacketPool>(ltk: &LongTermKey) -> Result<TxPacket<P>, Error> {
+    let mut packet = prepare_packet::<P>(Command::EncryptionInformation)?;
+    let payload = packet.payload_mut();
+    payload.copy_from_slice(&ltk.to_le_bytes());
+    Ok(packet)
+}
+
+#[cfg(feature = "legacy-pairing")]
+pub fn make_central_identification_packet<P: PacketPool>(ediv: u16, rand: &[u8; 8]) -> Result<TxPacket<P>, Error> {
+    let mut packet = prepare_packet::<P>(Command::CentralIdentification)?;
+    let payload = packet.payload_mut();
+    payload[0..2].copy_from_slice(&ediv.to_le_bytes());
+    payload[2..10].copy_from_slice(rand);
+    Ok(packet)
+}
+
+#[cfg(feature = "legacy-pairing")]
+pub fn make_identity_information_packet<P: PacketPool>(
+    irk: &crate::IdentityResolvingKey,
+) -> Result<TxPacket<P>, Error> {
+    let mut packet = prepare_packet::<P>(Command::IdentityInformation)?;
+    let payload = packet.payload_mut();
+    payload.copy_from_slice(&irk.to_le_bytes());
+    Ok(packet)
+}
+
+#[cfg(feature = "legacy-pairing")]
+pub fn make_identity_address_information_packet<P: PacketPool>(addr: &Address) -> Result<TxPacket<P>, Error> {
+    let mut packet = prepare_packet::<P>(Command::IdentityAddressInformation)?;
+    let payload = packet.payload_mut();
+    let addr_type = if addr.kind == bt_hci::param::AddrKind::PUBLIC {
+        0u8
+    } else {
+        1u8
+    };
+    payload[0] = addr_type;
+    payload[1..7].copy_from_slice(addr.addr.raw());
+    Ok(packet)
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandAndPayload<'a> {
     pub command: Command,
@@ -168,6 +240,66 @@ impl<'a> CommandAndPayload<'a> {
 mod tests {
     use super::*;
     use crate::security_manager::types::{AuthReq, BondingFlag};
+
+    #[cfg(feature = "legacy-pairing")]
+    #[test]
+    fn legacy_no_numeric_comparison() {
+        // In legacy pairing, DisplayYesNo + DisplayYesNo should be JustWorks (not NumericComparison)
+        let central = PairingFeatures {
+            io_capabilities: IoCapabilities::DisplayYesNo,
+            use_oob: UseOutOfBand::NotPresent,
+            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding),
+            initiator_key_distribution: 0.into(),
+            responder_key_distribution: 0.into(),
+            maximum_encryption_key_size: 16,
+        };
+        let peripheral = PairingFeatures {
+            io_capabilities: IoCapabilities::DisplayYesNo,
+            use_oob: UseOutOfBand::NotPresent,
+            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding),
+            initiator_key_distribution: 0.into(),
+            responder_key_distribution: 0.into(),
+            maximum_encryption_key_size: 16,
+        };
+        assert_eq!(
+            choose_legacy_pairing_method(central, peripheral),
+            PairingMethod::JustWorks
+        );
+        // LESC would produce NumericComparison
+        assert_eq!(
+            choose_pairing_method(central, peripheral),
+            PairingMethod::NumericComparison
+        );
+    }
+
+    #[cfg(feature = "legacy-pairing")]
+    #[test]
+    fn legacy_keyboard_display_combos() {
+        let make = |io: IoCapabilities| PairingFeatures {
+            io_capabilities: io,
+            use_oob: UseOutOfBand::NotPresent,
+            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding),
+            initiator_key_distribution: 0.into(),
+            responder_key_distribution: 0.into(),
+            maximum_encryption_key_size: 16,
+        };
+        // KeyboardDisplay + DisplayYesNo -> PERIPHERAL_DISPLAYS in legacy (NumericComparison in LESC)
+        assert_eq!(
+            choose_legacy_pairing_method(
+                make(IoCapabilities::KeyboardDisplay),
+                make(IoCapabilities::DisplayYesNo)
+            ),
+            PairingMethod::PERIPHERAL_DISPLAYS
+        );
+        // KeyboardDisplay + KeyboardDisplay -> CENTRAL_DISPLAYS in legacy (NumericComparison in LESC)
+        assert_eq!(
+            choose_legacy_pairing_method(
+                make(IoCapabilities::KeyboardDisplay),
+                make(IoCapabilities::KeyboardDisplay)
+            ),
+            PairingMethod::CENTRAL_DISPLAYS
+        );
+    }
 
     #[test]
     fn oob_used() {
