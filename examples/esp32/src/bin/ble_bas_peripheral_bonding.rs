@@ -38,5 +38,7 @@ async fn main(_s: Spawner) {
     // Initialize the flash
     let mut flash = embassy_embedded_hal::adapter::BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
 
+    unimplemented!();   // problem dissolves when 'getrandom()' would be used (#521)
+    #[cfg(false)]
     ble_bas_peripheral_bonding::run(controller, &mut trng, &mut flash).await;
 }

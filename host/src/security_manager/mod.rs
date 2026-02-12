@@ -19,8 +19,8 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
+use rand::rngs::ChaCha12Rng;
+use rand::SeedableRng;
 use types::Command;
 pub use types::{PassKey, Reason};
 
