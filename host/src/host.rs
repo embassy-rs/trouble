@@ -486,6 +486,25 @@ where
                         }
                         Err(e) => {
                             warn!("Error decoding attribute payload: {:?}", e);
+                            let opcode = pdu.as_ref()[0];
+                            // Bit 6 = Command Flag. Only send error responses for requests (flag=0)
+                            if opcode & 0x40 == 0 {
+                                let rsp = att::Att::Server(AttServer::Response(att::AttRsp::Error {
+                                    request: opcode,
+                                    handle: 0,
+                                    code: att::AttErrorCode::REQUEST_NOT_SUPPORTED,
+                                }));
+                                let l2cap = L2capHeader {
+                                    channel: L2CAP_CID_ATT,
+                                    length: rsp.size() as u16,
+                                };
+                                let mut packet = pdu.into_inner();
+                                let mut w = WriteCursor::new(packet.as_mut());
+                                w.write_hci(&l2cap)?;
+                                w.write(rsp)?;
+                                let len = w.len();
+                                self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
+                            }
                         }
                     }
                     #[cfg(not(feature = "gatt"))]
