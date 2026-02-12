@@ -1,7 +1,7 @@
 use core::ops::Range;
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
-use embedded_storage_async::nor_flash::{NorFlash};
+use embedded_storage_async::nor_flash::NorFlash;
 use rand_core::{CryptoRng, Rng};
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::{Key, SerializationError, Value};
@@ -28,8 +28,7 @@ impl Key for StoredAddr {
     fn deserialize_from(buffer: &[u8]) -> Result<(Self, usize), SerializationError> {
         if buffer.len() < 6 {
             Err(SerializationError::BufferTooSmall)
-        }
-        else {
+        } else {
             Ok((StoredAddr(BdAddr::new(buffer[0..6].try_into().unwrap())), 6))
         }
     }
@@ -56,18 +55,17 @@ impl<'a> Value<'a> for StoredBondInformation {
 
     fn deserialize_from(buffer: &'a [u8]) -> Result<Self, SerializationError>
     where
-        Self: Sized
+        Self: Sized,
     {
         if buffer.len() < 17 {
             Err(SerializationError::BufferTooSmall)
-        }
-        else {
+        } else {
             let ltk = LongTermKey::from_le_bytes(buffer[0..16].try_into().unwrap());
             let security_level = match buffer[16] {
                 0 => SecurityLevel::NoEncryption,
                 1 => SecurityLevel::Encrypted,
                 2 => SecurityLevel::EncryptedAuthenticated,
-                _ => return Err(SerializationError::InvalidData)
+                _ => return Err(SerializationError::InvalidData),
             };
             Ok(StoredBondInformation { ltk, security_level })
         }
@@ -75,24 +73,44 @@ impl<'a> Value<'a> for StoredBondInformation {
 }
 
 fn flash_range<S: NorFlash>() -> Range<u32> {
-    0..2*S::ERASE_SIZE as u32
+    0..2 * S::ERASE_SIZE as u32
 }
 
-async fn store_bonding_info<S: NorFlash>(storage: &mut S, info: &BondInformation) -> Result<(), sequential_storage::Error<S::Error>> {
+async fn store_bonding_info<S: NorFlash>(
+    storage: &mut S,
+    info: &BondInformation,
+) -> Result<(), sequential_storage::Error<S::Error>> {
     // Assumes that S::ERASE_SIZE is large enough
     sequential_storage::erase_all(storage, 0..S::ERASE_SIZE as u32).await?;
-    let mut buffer = [0;32];
+    let mut buffer = [0; 32];
     let key = StoredAddr(info.identity.bd_addr);
-    let value = StoredBondInformation { ltk: info.ltk, security_level: info.security_level };
-    sequential_storage::map::store_item(storage, flash_range::<S>(), &mut NoCache::new(), &mut buffer, &key, &value).await?;
+    let value = StoredBondInformation {
+        ltk: info.ltk,
+        security_level: info.security_level,
+    };
+    sequential_storage::map::store_item(
+        storage,
+        flash_range::<S>(),
+        &mut NoCache::new(),
+        &mut buffer,
+        &key,
+        &value,
+    )
+    .await?;
     Ok(())
 }
 
-async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformation>
-{
-    let mut buffer = [0;32];
+async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformation> {
+    let mut buffer = [0; 32];
     let mut cache = NoCache::new();
-    let mut iter = sequential_storage::map::fetch_all_items::<StoredAddr, _, _>(storage, flash_range::<S>(), &mut cache, &mut buffer).await.ok()?;
+    let mut iter = sequential_storage::map::fetch_all_items::<StoredAddr, _, _>(
+        storage,
+        flash_range::<S>(),
+        &mut cache,
+        &mut buffer,
+    )
+    .await
+    .ok()?;
     while let Some((key, value)) = iter.next::<StoredBondInformation>(&mut buffer).await.ok()? {
         return Some(BondInformation {
             identity: Identity {
@@ -101,7 +119,7 @@ async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformati
             },
             security_level: value.security_level,
             is_bonded: true,
-            ltk: value.ltk
+            ltk: value.ltk,
         });
     }
     None
@@ -111,7 +129,7 @@ pub async fn run<C, RNG, S>(controller: C, random_generator: &mut RNG, storage: 
 where
     C: Controller,
     RNG: Rng + CryptoRng,
-    S: NorFlash
+    S: NorFlash,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
@@ -123,13 +141,11 @@ where
         .set_random_address(address)
         .set_random_generator_seed(random_generator);
 
-    let mut has_bond_info =
-    if let Some(bond_info) = load_bonding_info(storage).await {
+    let mut has_bond_info = if let Some(bond_info) = load_bonding_info(storage).await {
         info!("Bond stored. Adding to stack.");
         stack.add_bond_information(bond_info).unwrap();
         true
-    }
-    else {
+    } else {
         info!("No bond stored.");
         false
     };
@@ -173,15 +189,16 @@ where
                             has_bond_info = true;
                         }
                         break;
-                    },
+                    }
                     ConnectionEvent::PairingFailed(err) => {
                         error!("Pairing failed: {:?}", err);
                         break;
-                    },
+                    }
                     ConnectionEvent::Disconnected { reason } => {
                         error!("Disconnected: {:?}", reason);
                         break;
                     }
+                    ConnectionEvent::RequestConnectionParams(req) => req.accept(None, &stack).await.unwrap(),
                     _ => {}
                 }
             }
@@ -221,9 +238,9 @@ where
                     }
                 },
             )
-                .await;
-        })
             .await;
-    })
+        })
         .await;
+    })
+    .await;
 }

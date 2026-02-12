@@ -34,10 +34,10 @@ fn build_sdc<'d, const N: usize>(
     mem: &'d mut sdc::Mem<N>,
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
     sdc::Builder::new()?
-        .support_scan()?
-        .support_ext_scan()?
-        .support_central()?
-        .support_ext_central()?
+        .support_scan()
+        .support_ext_scan()
+        .support_central()
+        .support_ext_central()
         .central_count(1)?
         .build(p, rng, mpsl, mem)
 }

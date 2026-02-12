@@ -11,13 +11,13 @@ use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "security")]
 use embassy_time::TimeoutError;
 
-use crate::connection::{Connection, ConnectionEvent, SecurityLevel};
+use crate::connection::{ConnParams, Connection, ConnectionEvent, SecurityLevel};
 use crate::host::EventHandler;
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
-use crate::{config, Error, Identity, PacketPool};
+use crate::{config, Address, Error, Identity, PacketPool};
 
 struct State<'d, P> {
     connections: &'d mut [ConnectionStorage<P>],
@@ -110,8 +110,21 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEvent) -> Result<(), Error> {
         self.with_mut(|state| {
-            for entry in state.connections.iter() {
+            for entry in state.connections.iter_mut() {
                 if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+                    if let ConnectionEvent::ConnectionParamsUpdated {
+                        conn_interval,
+                        peripheral_latency,
+                        supervision_timeout,
+                    } = event
+                    {
+                        entry.params = ConnParams {
+                            conn_interval,
+                            peripheral_latency,
+                            supervision_timeout,
+                        }
+                    }
+
                     entry.events.try_send(event).map_err(|_| Error::OutOfMemory)?;
                     return Ok(());
                 }
@@ -175,6 +188,13 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         })
     }
 
+    pub(crate) fn params(&self, index: u8) -> ConnParams {
+        self.with_mut(|state| {
+            let state = &mut state.connections[index as usize];
+            state.params
+        })
+    }
+
     pub(crate) fn set_att_mtu(&self, index: u8, mtu: u16) {
         self.with_mut(|state| {
             state.connections[index as usize].att_mtu = mtu;
@@ -233,6 +253,21 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     return Some(Connection::new(index as u8, self));
                 }
                 _ => {}
+            }
+        }
+        None
+    }
+
+    pub(crate) fn get_connection_by_peer_address(&'d self, peer_address: Address) -> Option<Connection<'d, P>> {
+        let mut state = self.state.borrow_mut();
+        for (index, storage) in state.connections.iter().enumerate() {
+            if storage.state == ConnectionState::Connected && storage.peer_addr_kind == Some(peer_address.kind) {
+                if let Some(peer) = &storage.peer_identity {
+                    if peer.match_address(&peer_address.addr) {
+                        state.inc_ref(index as u8);
+                        return Some(Connection::new(index as u8, self));
+                    }
+                }
             }
         }
         None
@@ -308,6 +343,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         peer_addr_kind: AddrKind,
         peer_addr: BdAddr,
         role: LeConnRole,
+        params: ConnParams,
     ) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         let default_credits = state.default_link_credits;
@@ -328,6 +364,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     irk: None,
                 });
                 storage.role.replace(role);
+                storage.params = params;
 
                 match role {
                     LeConnRole::Central => {
@@ -802,6 +839,7 @@ pub struct ConnectionStorage<P> {
     pub role: Option<LeConnRole>,
     pub peer_addr_kind: Option<AddrKind>,
     pub peer_identity: Option<Identity>,
+    pub params: ConnParams,
     pub att_mtu: u16,
     pub link_credits: usize,
     pub link_credit_waker: WakerRegistration,
@@ -890,6 +928,7 @@ impl<P> ConnectionStorage<P> {
             role: None,
             peer_addr_kind: None,
             peer_identity: None,
+            params: ConnParams::new(),
             att_mtu: 23,
             link_credits: 0,
             link_credit_waker: WakerRegistration::new(),
@@ -1038,7 +1077,8 @@ pub(crate) mod tests {
             ConnHandle::new(0),
             AddrKind::RANDOM,
             BdAddr::new(ADDR_1),
-            LeConnRole::Peripheral
+            LeConnRole::Peripheral,
+            ConnParams::new(),
         ));
 
         let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
@@ -1060,7 +1100,8 @@ pub(crate) mod tests {
             ConnHandle::new(0),
             AddrKind::RANDOM,
             BdAddr::new(ADDR_2),
-            LeConnRole::Central
+            LeConnRole::Central,
+            ConnParams::new(),
         ));
 
         let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Central, &[], None) else {
@@ -1078,14 +1119,16 @@ pub(crate) mod tests {
             ConnHandle::new(3),
             AddrKind::RANDOM,
             BdAddr::new(ADDR_1),
-            LeConnRole::Central
+            LeConnRole::Central,
+            ConnParams::new(),
         ));
 
         unwrap!(mgr.connect(
             ConnHandle::new(2),
             AddrKind::RANDOM,
             BdAddr::new(ADDR_2),
-            LeConnRole::Peripheral
+            LeConnRole::Peripheral,
+            ConnParams::new(),
         ));
 
         let Poll::Ready(central) = mgr.poll_accept(LeConnRole::Central, &[], None) else {
@@ -1130,14 +1173,16 @@ pub(crate) mod tests {
             ConnHandle::new(3),
             AddrKind::RANDOM,
             BdAddr::new(ADDR_1),
-            LeConnRole::Central
+            LeConnRole::Central,
+            ConnParams::new(),
         ));
 
         unwrap!(mgr.connect(
             ConnHandle::new(2),
             AddrKind::RANDOM,
             BdAddr::new(ADDR_2),
-            LeConnRole::Peripheral
+            LeConnRole::Peripheral,
+            ConnParams::new(),
         ));
 
         let Poll::Ready(central) = mgr.poll_accept(LeConnRole::Central, &[], None) else {
@@ -1188,7 +1233,13 @@ pub(crate) mod tests {
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
 
         let handle = ConnHandle::new(42);
-        unwrap!(mgr.connect(handle, AddrKind::RANDOM, BdAddr::new(ADDR_1), LeConnRole::Peripheral));
+        unwrap!(mgr.connect(
+            handle,
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Peripheral,
+            ConnParams::new()
+        ));
 
         let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
             panic!("expected connection to be accepted");
@@ -1200,7 +1251,13 @@ pub(crate) mod tests {
 
         // New incoming connection reusing handle
         let handle = ConnHandle::new(42);
-        unwrap!(mgr.connect(handle, AddrKind::RANDOM, BdAddr::new(ADDR_2), LeConnRole::Peripheral));
+        unwrap!(mgr.connect(
+            handle,
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_2),
+            LeConnRole::Peripheral,
+            ConnParams::new()
+        ));
 
         let Poll::Ready(conn2) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
             panic!("expected connection to be accepted");
@@ -1225,7 +1282,13 @@ pub(crate) mod tests {
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
 
         let handle = ConnHandle::new(42);
-        unwrap!(mgr.connect(handle, AddrKind::RANDOM, BdAddr::new(ADDR_1), LeConnRole::Peripheral));
+        unwrap!(mgr.connect(
+            handle,
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_1),
+            LeConnRole::Peripheral,
+            ConnParams::new()
+        ));
 
         let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
             panic!("expected connection to be accepted");
@@ -1237,7 +1300,13 @@ pub(crate) mod tests {
 
         // New incoming connection reusing handle
         let handle = ConnHandle::new(42);
-        unwrap!(mgr.connect(handle, AddrKind::RANDOM, BdAddr::new(ADDR_2), LeConnRole::Peripheral));
+        unwrap!(mgr.connect(
+            handle,
+            AddrKind::RANDOM,
+            BdAddr::new(ADDR_2),
+            LeConnRole::Peripheral,
+            ConnParams::new()
+        ));
 
         let Poll::Ready(conn2) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
             panic!("expected connection to be accepted");
@@ -1263,7 +1332,8 @@ pub(crate) mod tests {
             ConnHandle::new(3),
             AddrKind::RANDOM,
             BdAddr::new(ADDR_1),
-            LeConnRole::Peripheral
+            LeConnRole::Peripheral,
+            ConnParams::new()
         ));
 
         let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
@@ -1299,7 +1369,8 @@ pub(crate) mod tests {
             ConnHandle::new(3),
             AddrKind::RANDOM,
             BdAddr::new(ADDR_1),
-            LeConnRole::Peripheral
+            LeConnRole::Peripheral,
+            ConnParams::new()
         ));
 
         assert!(mgr.is_handle_connected(ConnHandle::new(3)));

@@ -46,8 +46,8 @@ fn build_sdc<'d, const N: usize>(
     mem: &'d mut sdc::Mem<N>,
 ) -> Result<nrf_sdc::SoftdeviceController<'d>, nrf_sdc::Error> {
     sdc::Builder::new()?
-        .support_adv()?
-        .support_peripheral()?
+        .support_adv()
+        .support_peripheral()
         .peripheral_count(1)?
         .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
         .build(p, rng, mpsl, mem)

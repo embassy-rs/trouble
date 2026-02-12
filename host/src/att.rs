@@ -326,8 +326,13 @@ pub enum AttRsp<'d> {
         /// Error code
         code: AttErrorCode,
     },
-    /// Read Response
+    /// Read by Type Response
     ReadByType {
+        /// Iterator over the found handles
+        it: ReadByTypeIter<'d>,
+    },
+    /// Read by Group Type Response
+    ReadByGroupType {
         /// Iterator over the found handles
         it: ReadByTypeIter<'d>,
     },
@@ -514,6 +519,7 @@ impl<'d> AttRsp<'d> {
             Self::Read { data } => data.len(),
             Self::ReadBlob { data } => data.len(),
             Self::ReadByType { it } => it.cursor.len(),
+            Self::ReadByGroupType { it } => it.cursor.len(),
             Self::Write => 0,
         }
     }
@@ -550,6 +556,15 @@ impl<'d> AttRsp<'d> {
             }
             Self::ReadByType { it } => {
                 w.write(ATT_READ_BY_TYPE_RSP)?;
+                w.write(it.item_len as u8)?;
+                let mut it = it.clone();
+                while let Some(Ok((handle, item))) = it.next() {
+                    w.write(handle)?;
+                    w.append(item)?;
+                }
+            }
+            Self::ReadByGroupType { it } => {
+                w.write(ATT_READ_BY_GROUP_TYPE_RSP)?;
                 w.write(it.item_len as u8)?;
                 let mut it = it.clone();
                 while let Some(Ok((handle, item))) = it.next() {
@@ -598,6 +613,15 @@ impl<'d> AttRsp<'d> {
             ATT_READ_BY_TYPE_RSP => {
                 let item_len: u8 = r.read()?;
                 Ok(Self::ReadByType {
+                    it: ReadByTypeIter {
+                        item_len: item_len as usize,
+                        cursor: r,
+                    },
+                })
+            }
+            ATT_READ_BY_GROUP_TYPE_RSP => {
+                let item_len: u8 = r.read()?;
+                Ok(Self::ReadByGroupType {
                     it: ReadByTypeIter {
                         item_len: item_len as usize,
                         cursor: r,
@@ -702,6 +726,7 @@ impl<'d> AttReq<'d> {
                 end,
                 attribute_type,
             } => 4 + attribute_type.as_raw().len(),
+            Self::ReadByGroupType { group_type, .. } => 4 + group_type.as_raw().len(),
             Self::Read { .. } => 2,
             Self::ReadBlob { .. } => 4, // handle (2 bytes) + offset (2 bytes)
             Self::Write { handle, data } => 2 + data.len(),
@@ -744,6 +769,12 @@ impl<'d> AttReq<'d> {
                 w.write(*start)?;
                 w.write(*end)?;
                 w.write_ref(attribute_type)?;
+            }
+            Self::ReadByGroupType { start, end, group_type } => {
+                w.write(ATT_READ_BY_GROUP_TYPE_REQ)?;
+                w.write(*start)?;
+                w.write(*end)?;
+                w.write_ref(group_type)?;
             }
             Self::Read { handle } => {
                 w.write(ATT_READ_REQ)?;

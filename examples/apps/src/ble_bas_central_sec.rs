@@ -54,18 +54,19 @@ where
             conn.request_security().unwrap();
             loop {
                 match conn.next().await {
-                    ConnectionEvent::PairingComplete { security_level, ..} => {
+                    ConnectionEvent::PairingComplete { security_level, .. } => {
                         info!("Pairing complete: {:?}", security_level);
                         break;
-                    },
+                    }
                     ConnectionEvent::PairingFailed(err) => {
                         error!("Pairing failed: {:?}", err);
                         break;
-                    },
+                    }
                     ConnectionEvent::Disconnected { reason } => {
                         error!("Disconnected: {:?}", reason);
                         break;
                     }
+                    ConnectionEvent::RequestConnectionParams(req) => req.accept(None, &stack).await.unwrap(),
                     _ => {}
                 }
             }

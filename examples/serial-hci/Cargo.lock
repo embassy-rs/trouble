@@ -63,9 +63,9 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38e6cb8de3a32f45e3c9736dc2b81f12fc386bf2690aec0855adca414cae3258"
+checksum = "40f2166cc54c410ddc0d0dafb3cf8dd536bcbae6bddfcc12c020c5ee4de518de"
 dependencies = [
  "btuuid",
  "embassy-sync",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "aes",
  "bt-hci",
@@ -1414,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "convert_case",
  "darling",

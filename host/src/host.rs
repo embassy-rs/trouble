@@ -43,10 +43,11 @@ use futures::pin_mut;
 use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
-use crate::connection::ConnectionEvent;
+use crate::connection::{ConnParams, ConnectionEvent};
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
+use crate::prelude::{ConnectionParamsRequest, RequestedConnParams};
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
@@ -243,10 +244,14 @@ where
         peer_addr_kind: AddrKind,
         peer_addr: BdAddr,
         role: LeConnRole,
+        params: ConnParams,
     ) -> bool {
         match status.to_result() {
             Ok(_) => {
-                if let Err(err) = self.connections.connect(handle, peer_addr_kind, peer_addr, role) {
+                if let Err(err) = self
+                    .connections
+                    .connect(handle, peer_addr_kind, peer_addr, role, params)
+                {
                     warn!("Error establishing connection: {:?}", err);
                     return false;
                 } else {
@@ -465,6 +470,8 @@ where
                 } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
                     info!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
+                    #[cfg(feature = "gatt")]
+                    self.connections.post_gatt_client(acl.handle(), pdu)?;
                 } else {
                     #[cfg(feature = "gatt")]
                     match a {
@@ -852,6 +859,13 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         e.peer_addr_kind,
                                         e.peer_addr,
                                         e.role,
+                                        ConnParams {
+                                            conn_interval: Duration::from_micros(e.conn_interval.as_micros()),
+                                            peripheral_latency: e.peripheral_latency,
+                                            supervision_timeout: Duration::from_micros(
+                                                e.supervision_timeout.as_micros(),
+                                            ),
+                                        },
                                     ) {
                                         let _ = host
                                             .command(Disconnect::new(
@@ -870,6 +884,13 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         e.peer_addr_kind,
                                         e.peer_addr,
                                         e.role,
+                                        ConnParams {
+                                            conn_interval: Duration::from_micros(e.conn_interval.as_micros()),
+                                            peripheral_latency: e.peripheral_latency,
+                                            supervision_timeout: Duration::from_micros(
+                                                e.supervision_timeout.as_micros(),
+                                            ),
+                                        },
                                     ) {
                                         let _ = host
                                             .command(Disconnect::new(
@@ -954,9 +975,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     let event = unwrap!(LeRemoteConnectionParameterRequest::from_hci_bytes_complete(
                                         event.data
                                     ));
-                                    let _ = host.connections.post_handle_event(
-                                        event.handle,
-                                        ConnectionEvent::RequestConnectionParams {
+                                    let req = ConnectionParamsRequest::new(
+                                        RequestedConnParams {
                                             min_connection_interval: Duration::from_micros(
                                                 event.interval_min.as_micros(),
                                             ),
@@ -965,8 +985,15 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             ),
                                             max_latency: event.max_latency,
                                             supervision_timeout: Duration::from_micros(event.timeout.as_micros()),
+                                            ..Default::default()
                                         },
+                                        event.handle,
+                                        #[cfg(feature = "connection-params-update")]
+                                        false,
                                     );
+                                    let _ = host
+                                        .connections
+                                        .post_handle_event(event.handle, ConnectionEvent::RequestConnectionParams(req));
                                 }
                                 _ => {
                                     warn!("Unknown LE event!");
@@ -1114,13 +1141,17 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         host.connections
             .set_link_credits(ret.total_num_le_acl_data_packets as usize);
 
-        const ACL_LEN: u16 = 255;
-        const ACL_N: u16 = 1;
-        info!(
-            "[host] configuring host buffers ({} packets of size {})",
-            ACL_N, ACL_LEN,
-        );
-        HostBufferSize::new(ACL_LEN, 0, ACL_N, 0).exec(&host.controller).await?;
+        {
+            const ACL_LEN: u16 = 255;
+            const ACL_N: u16 = 1;
+            info!(
+                "[host] configuring host buffers ({} packets of size {})",
+                ACL_N, ACL_LEN,
+            );
+            if let Err(_e) = HostBufferSize::new(ACL_LEN, 0, ACL_N, 0).exec(&host.controller).await {
+                warn!("[host] error configuring host buffers (continuing)");
+            }
+        }
 
         /*
                 #[cfg(feature = "controller-host-flow-control")]
