@@ -22,7 +22,7 @@ heapless = "0.9"
 log = { version = "0.4.29", optional = true }
 rand_core = { version = "0.6", default-features = false }
 static_cell = "2.1.1"
-trouble-host = { path = "../../host", features = ["scan", "security", "gatt-client-notification-max-subscribers-16"] }
+trouble-host = { path = "../../host", features = ["scan", "security", "gatt-client-notification-max-subscribers-16", "att-queued-writes"] }
 
 [dev-dependencies]
 futures-executor = "0.3.31"

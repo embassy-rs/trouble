@@ -71,3 +71,8 @@ pub const GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS: usize = raw::GATT_CLIENT_NOT
 ///
 /// Default: 1.
 pub const GATT_CLIENT_NOTIFICATION_QUEUE_SIZE: usize = raw::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
+
+/// Maximum buffer size per connection for ATT Prepare Write queuing.
+///
+/// Default: 512.
+pub const PREPARE_WRITE_BUFFER_SIZE: usize = raw::PREPARE_WRITE_BUFFER_SIZE;

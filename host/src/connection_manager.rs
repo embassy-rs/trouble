@@ -19,6 +19,52 @@ use crate::prelude::sar::PacketReassembly;
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::{config, Address, Error, Identity, PacketPool};
 
+#[cfg(feature = "att-queued-writes")]
+pub(crate) struct PrepareWriteState {
+    pub(crate) handle: u16,
+    pub(crate) offset: u16,
+    pub(crate) len: u16,
+    pub(crate) buf: [u8; config::PREPARE_WRITE_BUFFER_SIZE],
+}
+
+#[cfg(feature = "att-queued-writes")]
+impl PrepareWriteState {
+    const fn new() -> Self {
+        Self {
+            handle: 0,
+            offset: 0,
+            len: 0,
+            buf: [0; config::PREPARE_WRITE_BUFFER_SIZE],
+        }
+    }
+
+    fn queue(&mut self, handle: u16, offset: u16, value: &[u8]) -> Result<(), crate::att::AttErrorCode> {
+        if self.handle == 0 {
+            // Empty: start a new queued write
+            self.handle = handle;
+            self.offset = offset;
+            self.len = 0;
+        } else if self.handle != handle || self.offset + self.len != offset {
+            return Err(crate::att::AttErrorCode::PREPARE_QUEUE_FULL);
+        }
+
+        let buf_offset = (offset - self.offset) as usize;
+        let end = buf_offset + value.len();
+        if end > self.buf.len() {
+            return Err(crate::att::AttErrorCode::PREPARE_QUEUE_FULL);
+        }
+
+        self.buf[buf_offset..end].copy_from_slice(value);
+        self.len = end as u16;
+        Ok(())
+    }
+
+    fn clear(&mut self) {
+        self.handle = 0;
+        self.len = 0;
+    }
+}
+
 struct State<'d, P> {
     connections: &'d mut [ConnectionStorage<P>],
     central_waker: WakerRegistration,
@@ -330,6 +376,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     storage.bondable = false;
                     let _ = self.security_manager.disconnect(h, storage.peer_identity);
                 }
+                #[cfg(feature = "att-queued-writes")]
+                storage.prepare_write.clear();
                 return Ok(());
             }
         }
@@ -810,6 +858,34 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             f(&state.metrics)
         })
     }
+
+    #[cfg(feature = "att-queued-writes")]
+    pub(crate) fn prepare_write(
+        &self,
+        index: u8,
+        handle: u16,
+        offset: u16,
+        value: &[u8],
+    ) -> Result<(), crate::att::AttErrorCode> {
+        self.with_mut(|state| {
+            state.connections[index as usize]
+                .prepare_write
+                .queue(handle, offset, value)
+        })
+    }
+
+    #[cfg(feature = "att-queued-writes")]
+    pub(crate) fn with_prepare_write<F, R>(&self, index: u8, f: F) -> R
+    where
+        F: FnOnce(&PrepareWriteState) -> R,
+    {
+        self.with_mut(|state| f(&state.connections[index as usize].prepare_write))
+    }
+
+    #[cfg(feature = "att-queued-writes")]
+    pub(crate) fn clear_prepare_write(&self, index: u8) {
+        self.with_mut(|state| state.connections[index as usize].prepare_write.clear())
+    }
 }
 
 pub struct DisconnectRequest<'a, 'd, P> {
@@ -856,6 +932,8 @@ pub struct ConnectionStorage<P> {
     pub gatt: GattChannel<P>,
     #[cfg(feature = "gatt")]
     pub(crate) gatt_client: GattChannel<P>,
+    #[cfg(feature = "att-queued-writes")]
+    pub(crate) prepare_write: PrepareWriteState,
 }
 
 /// Connection metrics
@@ -945,6 +1023,8 @@ impl<P> ConnectionStorage<P> {
             reassembly: PacketReassembly::new(),
             #[cfg(feature = "security")]
             bondable: false,
+            #[cfg(feature = "att-queued-writes")]
+            prepare_write: PrepareWriteState::new(),
         }
     }
 }
