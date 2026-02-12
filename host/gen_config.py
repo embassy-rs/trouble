@@ -58,6 +58,9 @@ feature("gatt_client_notification_max_subscribers",
 feature("gatt_client_notification_queue_size",
         "When using the GATT client, this controls how many notifications can be queued for each subscriber.",
         default=1, min=1, max=512, pow2=True)
+feature("prepare_write_buffer_size",
+        "Maximum buffer size per connection for ATT queued writes.",
+        default=512, vals=[64, 128, 256, 512, 1024])
 
 # ========= Update Cargo.toml
 
