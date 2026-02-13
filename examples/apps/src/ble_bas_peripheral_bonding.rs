@@ -319,7 +319,7 @@ async fn advertise<'values, 'server, C: Controller>(
     let len = AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[
+            AdStructure::IncompleteServiceUuids16(&[
                 service::BATTERY.to_le_bytes(),
                 service::HUMAN_INTERFACE_DEVICE.to_le_bytes(),
             ]),
