@@ -214,14 +214,17 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         let index = ChannelIndex(idx as u8);
 
                         state.inc_ref(index);
-                        return Poll::Ready((L2capChannel::new(index, self), req_id, mps, mtu, cid, available));
+                        return Poll::Ready(Ok((L2capChannel::new(index, self), req_id, mps, mtu, cid, available)));
+                    }
+                    ChannelState::Disconnected => {
+                        return Poll::Ready(Err(Error::Disconnected))
                     }
                     _ => {}
                 }
             }
             Poll::Pending
         })
-        .await;
+        .await?;
 
         let mut tx = [0; 18];
         // Respond that we accept the channel.
