@@ -36,6 +36,7 @@ mod types;
 /// Initial GAP current_settings at startup (powered, connectable, bondable, LE).
 const DEFAULT_SETTINGS: GapSettings = GapSettings::POWERED
     .union(GapSettings::CONNECTABLE)
+    .union(GapSettings::BONDABLE)
     .union(GapSettings::LE)
     .union(GapSettings::STATIC_ADDRESS)
     .union(GapSettings::SECURE_CONNECTIONS);
