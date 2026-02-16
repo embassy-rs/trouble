@@ -665,9 +665,16 @@ where
     match cmd {
         StartAdvertising(..) | StartDirectedAdvertising(..) => {
             if let Some(ad) = cmd.ad(gap.current_settings) {
+                // TGAP(lim_adv_timeout): auto-stop when in Limited Discoverable mode.
+                // TSPX_lim_adv_timeout = 30720 milliseconds (~30 seconds).
+                let timeout = if gap.current_settings.contains(LIMITED_DISCOVERABLE) {
+                    Some(Duration::from_secs(30))
+                } else {
+                    None
+                };
                 channels
                     .peripheral
-                    .send(peripheral::Command::StartAdvertising(ad))
+                    .send(peripheral::Command::StartAdvertising(ad, timeout))
                     .await;
                 Forwarded
             } else {

@@ -52,8 +52,9 @@ extern crate alloc;
 use core::cell::Cell;
 
 use bt_hci::cmd::le::{
-    LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn, LeReadLocalSupportedFeatures,
-    LeSetScanParams,
+    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn,
+    LeReadLocalSupportedFeatures, LeReadNumberOfSupportedAdvSets, LeSetAdvSetRandomAddr, LeSetExtAdvData,
+    LeSetExtAdvParams, LeSetExtScanResponseData, LeSetScanParams,
 };
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::LeAdvEventKind;
@@ -100,6 +101,12 @@ pub trait Controller:
     + ControllerCmdSync<LeSetScanParams>
     + ControllerCmdSync<LeClearFilterAcceptList>
     + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
+    + for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
+    + ControllerCmdSync<LeClearAdvSets>
+    + ControllerCmdSync<LeSetExtAdvParams>
+    + ControllerCmdSync<LeSetAdvSetRandomAddr>
+    + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
+    + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>
     + ControllerCmdAsync<LeCreateConn>
     + ControllerCmdAsync<LeConnUpdate>
     + embedded_io::ErrorType<Error: ErrorFormat>
@@ -112,6 +119,12 @@ impl<T> Controller for T where
         + ControllerCmdSync<LeSetScanParams>
         + ControllerCmdSync<LeClearFilterAcceptList>
         + ControllerCmdSync<LeAddDeviceToFilterAcceptList>
+        + for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
+        + ControllerCmdSync<LeClearAdvSets>
+        + ControllerCmdSync<LeSetExtAdvParams>
+        + ControllerCmdSync<LeSetAdvSetRandomAddr>
+        + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
+        + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>
         + ControllerCmdAsync<LeCreateConn>
         + ControllerCmdAsync<LeConnUpdate>
         + embedded_io::ErrorType<Error: ErrorFormat>

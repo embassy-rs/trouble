@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 
 use embassy_futures::select::{Either, select};
 use embassy_sync::channel::DynamicSender;
+use embassy_time::Duration;
 use trouble_host::prelude::*;
 
 use crate::command_channel::{self, CommandReceiver, HasResponse};
@@ -100,14 +101,14 @@ impl AdvertisementParams {
 
 /// Commands sent to the peripheral task from the BTP dispatcher.
 pub enum Command {
-    StartAdvertising(AdvertisementParams),
+    StartAdvertising(AdvertisementParams, Option<Duration>),
     StopAdvertising,
 }
 
 impl core::fmt::Debug for Command {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::StartAdvertising(_) => write!(f, "StartAdvertising"),
+            Self::StartAdvertising(_, timeout) => write!(f, "StartAdvertising(timeout={:?})", timeout),
             Self::StopAdvertising => write!(f, "StopAdvertising"),
         }
     }
@@ -117,7 +118,7 @@ impl core::fmt::Debug for Command {
 impl defmt::Format for Command {
     fn format(&self, fmt: defmt::Formatter<'_>) {
         match self {
-            Self::StartAdvertising(_) => defmt::write!(fmt, "StartAdvertising"),
+            Self::StartAdvertising(_, timeout) => defmt::write!(fmt, "StartAdvertising(timeout={:?})", timeout),
             Self::StopAdvertising => defmt::write!(fmt, "StopAdvertising"),
         }
     }
@@ -161,12 +162,18 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
         info!("peripheral command: {:?}", *cmd);
         match &*cmd {
             Command::StopAdvertising => cmd.reply(Response::StoppedAdvertising).await,
-            Command::StartAdvertising(params) => {
+            Command::StartAdvertising(params, timeout) => {
                 let bondable = params.is_bondable();
-                let advertiser = match peripheral
-                    .advertise(&AdvertisementParameters::default(), params.as_advertisement())
-                    .await
-                {
+                let adv_params = AdvertisementParameters {
+                    timeout: *timeout,
+                    ..Default::default()
+                };
+                let sets = [AdvertisementSet {
+                    params: adv_params,
+                    data: params.as_advertisement(),
+                }];
+                let mut handles = AdvertisementSet::handles(&sets);
+                let advertiser = match peripheral.advertise_ext(&sets, &mut handles).await {
                     Ok(advertiser) => {
                         info!("Advertising started");
                         cmd.reply(Response::StartedAdvertising).await;
@@ -184,7 +191,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     loop {
                         let cmd = commands.receive().await;
                         match &*cmd {
-                            Command::StartAdvertising(_) => {
+                            Command::StartAdvertising(..) => {
                                 warn!("StartAdvertising during active advertising");
                                 cmd.reply(Response::Fail).await;
                             }
@@ -199,6 +206,13 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 .await
                 {
                     Either::First(Ok(conn)) => conn,
+                    Either::First(Err(Error::Timeout)) => {
+                        // Limited discoverable timeout expired — controller stopped advertising
+                        info!("Limited discoverable timeout expired, stopping advertising");
+                        events.send(Event::AdvertisingStopped).await;
+                        cmd = commands.receive().await;
+                        continue;
+                    }
                     Either::First(Err(e)) => {
                         error!("Failed to accept connection: {:?}", e);
                         cmd = commands.receive().await;
@@ -231,7 +245,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                         let res = crate::connection::run(stack, &gatt_conn, address, &events, async || {
                             let cmd = commands.receive().await;
                             match &*cmd {
-                                Command::StartAdvertising(_) => cmd.reply(Response::Fail).await,
+                                Command::StartAdvertising(..) => cmd.reply(Response::Fail).await,
                                 Command::StopAdvertising => {
                                     cmd.reply(Response::StoppedAdvertising).await;
                                 }
