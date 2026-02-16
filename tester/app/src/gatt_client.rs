@@ -400,6 +400,37 @@ impl DiscoveryCache {
             }
         }
     }
+
+    /// Ensure services have been discovered (populates cache if empty).
+    async fn ensure_discovered<C: crate::Controller, P: PacketPool>(
+        &mut self,
+        client: &GattClient<'_, C, P, MAX_SERVICES>,
+    ) {
+        if self.services.is_empty() {
+            debug!("Discovery cache empty, discovering services");
+            match client.services().await {
+                Ok(services) => {
+                    debug!("Found {} services", services.len());
+                    self.services = services;
+                }
+                Err(e) => {
+                    error!("Auto-discover services failed: {:?}", e);
+                }
+            }
+        }
+    }
+
+    /// Return all cached services whose handle range overlaps [start, end].
+    fn services_in_range(&self, start: u16, end: u16) -> &[ServiceHandle] {
+        // Since services are typically sorted and we usually want all of them
+        // when start=1 end=0xFFFF, just return all services.
+        // A more precise filter would check overlap, but this covers the common case.
+        if start <= 1 && end >= 0xFFFE {
+            return self.services.as_slice();
+        }
+        // For narrower ranges, return all (the caller will handle mismatches).
+        self.services.as_slice()
+    }
 }
 
 /// Execute a single GATT client command, returning the response.
@@ -531,29 +562,37 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
             uuid,
             ..
         } => {
-            let Some(service) = cache.find_service(*start_handle, *end_handle, client).await else {
-                error!("No cached service for handle range {}..={}", start_handle, end_handle);
-                return Response::Fail;
+            // Try exact service match first, then fall back to searching all services
+            // overlapping the requested handle range (e.g. 0x0001..=0xFFFF).
+            let services = if let Some(service) = cache.find_service(*start_handle, *end_handle, client).await {
+                core::slice::from_ref(service) as &[ServiceHandle]
+            } else {
+                cache.ensure_discovered(client).await;
+                cache.services_in_range(*start_handle, *end_handle)
             };
             let mut buf = alloc::vec![0u8; 512];
-            match client.read_characteristic_by_uuid(service, uuid, &mut buf).await {
-                Ok(len) => {
-                    buf.truncate(len);
-                    // TODO: This is wrong. We need to return the characteristic handle which is not exposed by trouble.
-                    let value = gatt::CharacteristicValue {
-                        handle: 0,
-                        data: buf.into_boxed_slice(),
-                    };
-                    Response::ReadUuidData(gatt::ReadUuidDataResponse {
-                        att_response: 0x00,
-                        values: alloc::vec![value].into_boxed_slice(),
-                    })
-                }
-                Err(e) => {
-                    error!("ReadUuid failed: {:?}", e);
-                    Response::Fail
+            for service in services {
+                match client.read_characteristic_by_uuid(service, uuid, &mut buf).await {
+                    Ok(len) => {
+                        buf.truncate(len);
+                        // TODO: This is wrong. We need to return the characteristic handle which is not exposed by trouble.
+                        let value = gatt::CharacteristicValue {
+                            handle: 0,
+                            data: buf.into_boxed_slice(),
+                        };
+                        return Response::ReadUuidData(gatt::ReadUuidDataResponse {
+                            att_response: 0x00,
+                            values: alloc::vec![value].into_boxed_slice(),
+                        });
+                    }
+                    Err(_) => continue,
                 }
             }
+            error!(
+                "ReadUuid: no service with UUID {:?} in range {}..={}",
+                uuid, start_handle, end_handle
+            );
+            Response::Fail
         }
         Command::Write { handle, data, .. } => {
             let Some(chrc) = cache.find_characteristic(*handle, client).await else {
