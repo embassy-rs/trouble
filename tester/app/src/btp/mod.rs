@@ -727,11 +727,10 @@ where
         Disconnect(address) => {
             if let Some(conn) = gap.stack.get_connection_by_peer_address(*address) {
                 conn.disconnect();
-                Ready(GapResponse::Success)
             } else {
-                warn!("Disconnect: no connection for {:?}", address);
-                Error(BtpStatus::Fail)
+                warn!("Disconnect: no connection for {:?} (already disconnected)", address);
             }
+            Ready(GapResponse::Success)
         }
         Pair(address) => {
             if let Some(conn) = gap.stack.get_connection_by_peer_address(*address) {
