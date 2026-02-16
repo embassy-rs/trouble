@@ -673,7 +673,7 @@ impl Pairing {
             rai,
         );
         if cbi != pairing_data.confirm {
-            return Err(Error::Security(Reason::NumericComparisonFailed));
+            return Err(Error::Security(Reason::ConfirmValueFailed));
         }
         pairing_data.peer_nonce = peer_nonce;
         Ok(())

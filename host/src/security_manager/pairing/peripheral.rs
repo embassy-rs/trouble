@@ -730,7 +730,7 @@ impl Pairing {
                 "Confirm and computed confirm mismatch: {:?} != {:?}",
                 pairing_data.confirm.0, expected_confirm.0
             );
-            Err(Error::Security(Reason::PasskeyEntryFailed))
+            Err(Error::Security(Reason::ConfirmValueFailed))
         } else {
             let nonce_packet = make_pairing_random(&pairing_data.local_nonce)?;
             ops.try_send_packet(nonce_packet)?;
