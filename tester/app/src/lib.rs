@@ -49,6 +49,8 @@
 
 extern crate alloc;
 
+use core::cell::Cell;
+
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn, LeReadLocalSupportedFeatures,
     LeSetScanParams,
@@ -289,6 +291,8 @@ where
         ..
     } = stack.build();
 
+    let scan_mode = Cell::new(ScanMode::default());
+
     let mut table = AttributeTable::<NoopRawMutex, ATTRIBUTE_TABLE_SIZE>::new();
     init_table(&mut table, &config);
 
@@ -296,7 +300,7 @@ where
     let transport = btp::BtpTransport { reader, writer };
     let mut packet = btp::protocol::BtpPacket::new();
     info!("Entering pre-server phase");
-    let Some(pre) = btp::run_pre_server(transport, &config, &stack, &mut table, &mut packet).await? else {
+    let Some(pre) = btp::run_pre_server(transport, &config, &stack, &scan_mode, &mut table, &mut packet).await? else {
         info!("Clean shutdown from pre-server phase");
         return Ok(());
     };
@@ -323,7 +327,7 @@ where
     };
 
     match select5(
-        ble_task(runner, events.dyn_sender()),
+        ble_task(runner, events.dyn_sender(), &scan_mode),
         peripheral::run(
             &stack,
             peripheral,
@@ -402,9 +406,49 @@ fn init_table<'d>(table: &mut AttributeTable<'d, NoopRawMutex, ATTRIBUTE_TABLE_S
     assert_eq!(table.len(), GAP_ATTRIBUTE_COUNT + GATT_ATTRIBUTE_COUNT);
 }
 
+/// Scan filter mode set by the BTP layer and read by the HCI event handler to decide
+/// which advertising reports to forward as `DeviceFound` events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ScanMode {
+    /// Not scanning — drop all advertising reports.
+    #[default]
+    Disabled,
+    /// Limited discovery — forward only reports with LE Limited Discoverable flag.
+    LimitedDiscovery,
+    /// General discovery — forward only reports with LE General or Limited Discoverable flags.
+    GeneralDiscovery,
+    /// Observation — forward all advertising reports.
+    Observer,
+}
+
 /// HCI event handler that forwards advertising reports to the event channel.
 struct BleEventHandler<'a> {
     events: DynamicSender<'a, Event>,
+    scan_mode: &'a Cell<ScanMode>,
+}
+
+impl BleEventHandler<'_> {
+    /// Check whether an advertising report passes the current scan filter.
+    fn passes_filter(&self, data: &[u8]) -> bool {
+        match self.scan_mode.get() {
+            ScanMode::Disabled => false,
+            ScanMode::Observer => true,
+            mode @ (ScanMode::GeneralDiscovery | ScanMode::LimitedDiscovery) => {
+                // Extract discoverable flags from the first AD structure if it's a Flags type.
+                let disc_flags = if data.len() >= 3 && data[0] == 2 && data[1] == 0x01 {
+                    data[2]
+                } else {
+                    0
+                };
+                let required = if mode == ScanMode::LimitedDiscovery {
+                    0x01 // LE Limited Discoverable only
+                } else {
+                    0x03 // LE Limited or General Discoverable
+                };
+                (disc_flags & required) != 0
+            }
+        }
+    }
 }
 
 impl EventHandler for BleEventHandler<'_> {
@@ -412,10 +456,7 @@ impl EventHandler for BleEventHandler<'_> {
         for report in reports {
             let Ok(report) = report else { continue };
             trace!("adv report: addr={:?}", report.addr);
-            if report.data.len() >= 3
-                && report.data[0] == 2
-                && report.data[1] == 1
-                && (report.data[2] & 0x03) != 0
+            if self.passes_filter(report.data)
                 && let Err(e) = self.events.try_send(Event::DeviceFound {
                     address: Address {
                         kind: report.addr_kind,
@@ -426,8 +467,6 @@ impl EventHandler for BleEventHandler<'_> {
                     adv_data: alloc::boxed::Box::from(report.data),
                 })
             {
-                // If reports are received faster than they can be sent via BTP
-                // we drop the excess reports.
                 error!("Failed to send DeviceFound event: {:?}", e);
             }
         }
@@ -437,10 +476,7 @@ impl EventHandler for BleEventHandler<'_> {
         for report in reports {
             let Ok(report) = report else { continue };
             trace!("ext adv report: addr={:?}", report.addr);
-            if report.data.len() >= 3
-                && report.data[0] == 2
-                && report.data[1] == 1
-                && (report.data[2] & 0x03) != 0
+            if self.passes_filter(report.data)
                 && let Err(e) = self.events.try_send(Event::DeviceFound {
                     address: Address {
                         kind: report.addr_kind,
@@ -451,8 +487,6 @@ impl EventHandler for BleEventHandler<'_> {
                     adv_data: alloc::boxed::Box::from(report.data),
                 })
             {
-                // If reports are received faster than they can be sent via BTP
-                // we drop the excess reports.
                 error!("Failed to send DeviceFound event: {:?}", e);
             }
         }
@@ -463,9 +497,10 @@ impl EventHandler for BleEventHandler<'_> {
 async fn ble_task<C: Controller, P: PacketPool>(
     mut runner: Runner<'_, C, P>,
     events: DynamicSender<'_, Event>,
+    scan_mode: &Cell<ScanMode>,
 ) -> Result<(), BleHostError<C::Error>> {
     trace!("ble_task");
-    let handler = BleEventHandler { events };
+    let handler = BleEventHandler { events, scan_mode };
     loop {
         runner.run_with_handler(&handler).await?;
     }

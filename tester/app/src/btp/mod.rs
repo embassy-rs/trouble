@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::pin::pin;
 
 use embassy_futures::select::{Either, select};
@@ -23,8 +24,8 @@ use self::protocol::{BtpCommand, BtpEvent, BtpHeader, BtpPacket, BtpResponse, Bt
 use self::service_builder::{AttValue, ServiceBuilder};
 use crate::command_channel::CommandChannels;
 use crate::{
-    ATTRIBUTE_TABLE_SIZE, BtpConfig, Event, GAP_ATTRIBUTE_COUNT, GATT_ATTRIBUTE_COUNT, central, command_channel,
-    gatt_client, peripheral,
+    ATTRIBUTE_TABLE_SIZE, BtpConfig, Event, GAP_ATTRIBUTE_COUNT, GATT_ATTRIBUTE_COUNT, ScanMode, central,
+    command_channel, gatt_client, peripheral,
 };
 
 pub(crate) mod error;
@@ -50,6 +51,7 @@ struct GapState<'stack, C, P: PacketPool> {
     current_settings: GapSettings,
     filter_accept_list: heapless::Vec<Address, 1>,
     stack: &'stack Stack<'stack, C, P>,
+    scan_mode: &'stack Cell<ScanMode>,
 }
 
 /// Result of a BTP command handler, supporting immediate, error, and forwarded outcomes.
@@ -96,6 +98,7 @@ pub(crate) async fn run_pre_server<'stack, R: Read, W: Write, C, P: PacketPool>(
     transport: BtpTransport<R, W>,
     config: &BtpConfig<'_>,
     stack: &'stack Stack<'stack, C, P>,
+    scan_mode: &'stack Cell<ScanMode>,
     table: &mut AttributeTable<'stack, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
     packet: &mut BtpPacket,
 ) -> Result<Option<PreServerResult<'stack, R, W, C, P>>, Error>
@@ -111,6 +114,7 @@ where
         current_settings: DEFAULT_SETTINGS,
         filter_accept_list: heapless::Vec::new(),
         stack,
+        scan_mode,
     };
 
     // Send IUT Ready event before entering the main loop
@@ -256,7 +260,6 @@ where
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run<'stack, R: Read, W: Write, C, P: PacketPool>(
     pre_server_result: PreServerResult<'stack, R, W, C, P>,
     config: &BtpConfig<'_>,
@@ -681,6 +684,14 @@ where
             } else {
                 heapless::Vec::new()
             };
+            let mode = if flags.contains(protocol::gap::DiscoveryFlags::OBSERVATION) {
+                ScanMode::Observer
+            } else if flags.contains(protocol::gap::DiscoveryFlags::LIMITED) {
+                ScanMode::LimitedDiscovery
+            } else {
+                ScanMode::GeneralDiscovery
+            };
+            gap.scan_mode.set(mode);
             channels
                 .central
                 .send(central::Command::StartDiscovery {
@@ -691,6 +702,7 @@ where
             Forwarded
         }
         StopDiscovery => {
+            gap.scan_mode.set(ScanMode::Disabled);
             channels.central.send(central::Command::StopDiscovery).await;
             Forwarded
         }
