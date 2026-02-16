@@ -469,7 +469,11 @@ impl Pairing {
         }
 
         pairing_data.peer_features = peer_features;
-        pairing_data.local_features.security_properties = AuthReq::new_legacy(ops.bonding_flag());
+        let mut auth_req = AuthReq::new_legacy(ops.bonding_flag());
+        if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
+            auth_req = auth_req.with_mitm();
+        }
+        pairing_data.local_features.security_properties = auth_req;
         pairing_data.pairing_method =
             choose_legacy_pairing_method(pairing_data.peer_features, pairing_data.local_features);
         info!("[smp legacy] Pairing method {:?}", pairing_data.pairing_method);

@@ -222,7 +222,10 @@ impl Pairing {
         let ret = Self::new_idle(local_address, peer_address, local_io);
         {
             let mut pairing_data = ret.pairing_data.borrow_mut();
-            let auth_req = AuthReq::new(ops.bonding_flag());
+            let mut auth_req = AuthReq::new(ops.bonding_flag());
+            if local_io != IoCapabilities::NoInputNoOutput {
+                auth_req = auth_req.with_mitm();
+            }
             pairing_data.local_features.security_properties = auth_req;
             if matches!(ops.bonding_flag(), BondingFlag::Bonding) {
                 pairing_data
@@ -392,7 +395,11 @@ impl Pairing {
             trace!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
                 (Step::Idle, Command::SecurityRequest) => {
-                    pairing_data.local_features.security_properties = AuthReq::new(ops.bonding_flag());
+                    let mut auth_req = AuthReq::new(ops.bonding_flag());
+                    if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
+                        auth_req = auth_req.with_mitm();
+                    }
+                    pairing_data.local_features.security_properties = auth_req;
                     if let Some(bond) = ops.try_enable_bonded_encryption()? {
                         pairing_data.bond_information = Some(bond);
                         Step::WaitingBondedLinkEncryption

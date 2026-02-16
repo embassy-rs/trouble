@@ -420,11 +420,16 @@ const AUTH_REQ_CT2: u8 = 0b0010_0000;
 impl AuthReq {
     /// Build a AuthReq octet
     pub fn new(bonding: BondingFlag) -> Self {
-        AuthReq((bonding as u8) | AUTH_REQ_MITM | AUTH_REQ_SECURE_CONNECTION)
+        AuthReq((bonding as u8) | AUTH_REQ_SECURE_CONNECTION)
     }
     /// Build a AuthReq octet for LE Legacy Pairing
     pub fn new_legacy(bonding: BondingFlag) -> Self {
-        AuthReq((bonding as u8) | AUTH_REQ_MITM)
+        AuthReq(bonding as u8)
+    }
+    /// Set the MITM flag
+    pub fn with_mitm(mut self) -> Self {
+        self.0 |= AUTH_REQ_MITM;
+        self
     }
     /// Bond requested
     pub fn bond(&self) -> BondingFlag {

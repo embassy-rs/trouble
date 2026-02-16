@@ -184,7 +184,11 @@ impl Pairing {
         {
             let mut security_request = prepare_packet(Command::SecurityRequest)?;
             let payload = security_request.payload_mut();
-            payload[0] = AuthReq::new(ops.bonding_flag()).into();
+            let mut auth_req = AuthReq::new(ops.bonding_flag());
+            if local_io != IoCapabilities::NoInputNoOutput {
+                auth_req = auth_req.with_mitm();
+            }
+            payload[0] = auth_req.into();
             ops.try_send_packet(security_request)?;
         }
         Ok(ret)
@@ -454,7 +458,11 @@ impl Pairing {
         }
 
         pairing_data.peer_features = peer_features;
-        pairing_data.local_features.security_properties = AuthReq::new(ops.bonding_flag());
+        let mut auth_req = AuthReq::new(ops.bonding_flag());
+        if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
+            auth_req = auth_req.with_mitm();
+        }
+        pairing_data.local_features.security_properties = auth_req;
         pairing_data.pairing_method = choose_pairing_method(pairing_data.peer_features, pairing_data.local_features);
         info!("[smp] Pairing method {:?}", pairing_data.pairing_method);
         Ok(())
@@ -784,12 +792,12 @@ mod tests {
             assert_eq!(sent_packets.len(), 1);
             let pairing_response = &sent_packets[0];
             assert_eq!(pairing_response.command, Command::PairingResponse);
-            assert_eq!(pairing_response.payload(), &[0x03, 0, 12, 16, 0, 0]);
+            assert_eq!(pairing_response.payload(), &[0x03, 0, 8, 16, 0, 0]);
             assert_eq!(
                 pairing_data.local_features,
                 PairingFeatures {
                     io_capabilities: IoCapabilities::NoInputNoOutput,
-                    security_properties: 12.into(),
+                    security_properties: 8.into(),
                     ..Default::default()
                 }
             );
@@ -883,7 +891,7 @@ mod tests {
             assert_eq!(sent_packets[4].command, Command::PairingDhKeyCheck);
             assert_eq!(
                 sent_packets[4].payload(),
-                [22, 123, 0, 74, 239, 81, 163, 188, 71, 111, 251, 117, 54, 186, 205, 3]
+                [161, 50, 135, 68, 154, 19, 105, 76, 55, 97, 207, 61, 193, 29, 234, 92]
             );
             assert_eq!(pairing_ops.encryptions.len(), 1);
             assert!(matches!(pairing_ops.encryptions[0], LongTermKey(_)));

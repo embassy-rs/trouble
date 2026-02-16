@@ -248,7 +248,7 @@ mod tests {
         let central = PairingFeatures {
             io_capabilities: IoCapabilities::DisplayYesNo,
             use_oob: UseOutOfBand::NotPresent,
-            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding),
+            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding).with_mitm(),
             initiator_key_distribution: 0.into(),
             responder_key_distribution: 0.into(),
             maximum_encryption_key_size: 16,
@@ -256,7 +256,7 @@ mod tests {
         let peripheral = PairingFeatures {
             io_capabilities: IoCapabilities::DisplayYesNo,
             use_oob: UseOutOfBand::NotPresent,
-            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding),
+            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding).with_mitm(),
             initiator_key_distribution: 0.into(),
             responder_key_distribution: 0.into(),
             maximum_encryption_key_size: 16,
@@ -278,7 +278,7 @@ mod tests {
         let make = |io: IoCapabilities| PairingFeatures {
             io_capabilities: io,
             use_oob: UseOutOfBand::NotPresent,
-            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding),
+            security_properties: AuthReq::new_legacy(BondingFlag::NoBonding).with_mitm(),
             initiator_key_distribution: 0.into(),
             responder_key_distribution: 0.into(),
             maximum_encryption_key_size: 16,
