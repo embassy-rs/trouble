@@ -194,9 +194,9 @@ pub(crate) enum Event {
 }
 
 /// Maximum number of concurrent BLE connections.
-const CONNECTIONS_MAX: usize = 1;
+const CONNECTIONS_MAX: usize = 3;
 /// Maximum number of L2CAP channels (Signal + ATT + SMP).
-const L2CAP_CHANNELS_MAX: usize = 3;
+const L2CAP_CHANNELS_MAX: usize = 9;
 /// Maximum number of attributes in the GATT attribute table.
 const ATTRIBUTE_TABLE_SIZE: usize = 64;
 /// Maximum number of CCCD (Client Characteristic Configuration Descriptor) entries.

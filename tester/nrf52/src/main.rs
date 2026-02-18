@@ -86,8 +86,8 @@ fn build_sdc<'d, const N: usize>(
         .support_scan()
         .support_peripheral()
         .support_central()
-        .peripheral_count(1)?
-        .central_count(1)?
+        .peripheral_count(2)?
+        .central_count(2)?
         .buffer_cfg(
             DefaultPacketPool::MTU as u16,
             DefaultPacketPool::MTU as u16,
@@ -142,7 +142,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut rng = rng::Rng::new(p.RNG, Irqs);
     let chacha_rng = ChaCha12Rng::from_rng(&mut rng).unwrap();
 
-    let mut sdc_mem = sdc::Mem::<5888>::new();
+    let mut sdc_mem = sdc::Mem::<10504>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     let mut uart_config = embassy_nrf::uarte::Config::default();
