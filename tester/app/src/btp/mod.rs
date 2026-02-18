@@ -770,10 +770,9 @@ where
                     irk: None,
                 }
             };
-            match gap.stack.remove_bond_information(identity) {
-                Ok(()) => Ready(GapResponse::Success),
-                Err(_) => Error(BtpStatus::Fail),
-            }
+            // Treat "not found" as success — the intent is to ensure no bond exists.
+            let _ = gap.stack.remove_bond_information(identity);
+            Ready(GapResponse::Success)
         }
         PasskeyEntry(cmd) => {
             if let Some(conn) = gap.stack.get_connection_by_peer_address(cmd.address) {
