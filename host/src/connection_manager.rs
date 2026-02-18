@@ -328,7 +328,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 {
                     storage.security_level = SecurityLevel::NoEncryption;
                     storage.bondable = false;
-                    let _ = self.security_manager.disconnect(h, storage.peer_identity);
+                    if let Some(identity) = storage.peer_identity.as_ref() {
+                        self.security_manager.disconnect(identity);
+                    }
                 }
                 return Ok(());
             }
@@ -638,7 +640,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     #[cfg(feature = "security")]
     pub(crate) async fn try_enable_encryption(&self, index: u8) -> Result<(), Error> {
-        let is_pairing = {
+        let address = {
             let state = self.state.borrow();
             let storage = &state.connections[index as usize];
             if storage.state != ConnectionState::Connected {
@@ -647,18 +649,29 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 return Ok(());
             }
             match (storage.peer_addr_kind, storage.peer_identity.as_ref()) {
-                (Some(kind), Some(identity)) => self.security_manager.is_pairing_in_progress(Address {
+                (Some(kind), Some(identity)) => Address {
                     kind,
                     addr: identity.bd_addr,
-                }),
-                _ => false,
+                },
+                _ => return Err(Error::InvalidValue),
             }
         };
 
-        if !is_pairing {
+        if !self.security_manager.is_pairing_in_progress(address) {
             self.request_security(index)?;
         }
-        self.security_manager.wait_finished().await
+        match self.security_manager.wait_finished(address).await {
+            Ok(()) => Ok(()),
+            Err(Error::Busy) => {
+                // Another connection is now pairing. Check if pairing succeeded first.
+                if self.get_security_level(index)? != SecurityLevel::NoEncryption {
+                    Ok(())
+                } else {
+                    Err(Error::Busy)
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub(crate) fn get_security_level(&self, index: u8) -> Result<SecurityLevel, Error> {

@@ -211,6 +211,15 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.state.borrow_mut().local_address = Some(address);
     }
 
+    /// Returns true if no pairing is currently in progress.
+    fn is_idle(&self) -> bool {
+        self.pairing_sm
+            .borrow()
+            .as_ref()
+            .map(|sm| sm.result().is_some())
+            .unwrap_or(true)
+    }
+
     pub(crate) fn is_pairing_in_progress(&self, address: Address) -> bool {
         let sm = self.pairing_sm.borrow();
         match &*sm {
@@ -219,14 +228,19 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         }
     }
 
-    pub(crate) async fn wait_finished(&self) -> Result<(), Error> {
+    pub(crate) async fn wait_finished(&self, address: Address) -> Result<(), Error> {
         poll_fn(|cx| {
             self.finished_waker.borrow_mut().register(cx.waker());
             match &*self.pairing_sm.borrow() {
-                Some(sm) => match sm.result() {
-                    Some(result) => Poll::Ready(result),
-                    None => Poll::Pending,
-                },
+                Some(sm) => {
+                    if sm.peer_address() != address {
+                        return Poll::Ready(Err(Error::Busy));
+                    }
+                    match sm.result() {
+                        Some(result) => Poll::Ready(result),
+                        None => Poll::Pending,
+                    }
+                }
                 None => Poll::Ready(Err(Error::Disconnected)),
             }
         })
@@ -334,8 +348,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
 
         let address = {
+            let idle = self.is_idle();
             let mut state_machine = self.pairing_sm.borrow_mut();
-            if state_machine.is_none() {
+            if idle {
                 let local_address = self.state.borrow().local_address.unwrap();
                 let local_io = *self.io_capabilities.borrow();
 
@@ -435,8 +450,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
 
         let address = {
+            let idle = self.is_idle();
             let mut state_machine = self.pairing_sm.borrow_mut();
-            if state_machine.is_none() {
+            if idle {
                 *state_machine = Some(Pairing::new_central(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
@@ -498,13 +514,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             self.handle_central(pdu, connections, storage)
         };
 
-        if self
-            .pairing_sm
-            .borrow()
-            .as_ref()
-            .map(|sm| sm.result().is_some())
-            .unwrap_or(true)
-        {
+        if self.is_idle() {
             self.finished_waker.borrow_mut().wake();
         }
 
@@ -565,42 +575,42 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         }
 
         let role = storage.role.ok_or(Error::InvalidValue)?;
+        if !self.is_idle() {
+            return Err(Error::InvalidState);
+        }
         let mut pairing_sm = self.pairing_sm.borrow_mut();
-        if pairing_sm.is_none() {
-            let handle = storage.handle.ok_or(Error::InvalidValue)?;
-            let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
-            let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-            let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-            let peer_address = Address {
-                kind: peer_address_kind,
-                addr: peer_identity.bd_addr,
-            };
-            let mut ops = PairingOpsImpl {
-                security_manager: self,
-                conn_handle: handle,
-                connections,
-                storage,
-                peer_identity,
-            };
-            if role == LeConnRole::Peripheral {
-                *pairing_sm = Some(Pairing::initiate_peripheral(
-                    local_address,
-                    peer_address,
-                    &mut ops,
-                    *self.io_capabilities.borrow(),
-                )?);
-                Ok(())
-            } else {
-                *pairing_sm = Some(Pairing::initiate_central(
-                    local_address,
-                    peer_address,
-                    &mut ops,
-                    *self.io_capabilities.borrow(),
-                )?);
-                Ok(())
-            }
+
+        let handle = storage.handle.ok_or(Error::InvalidValue)?;
+        let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
+        let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+        let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+        let peer_address = Address {
+            kind: peer_address_kind,
+            addr: peer_identity.bd_addr,
+        };
+        let mut ops = PairingOpsImpl {
+            security_manager: self,
+            conn_handle: handle,
+            connections,
+            storage,
+            peer_identity,
+        };
+        if role == LeConnRole::Peripheral {
+            *pairing_sm = Some(Pairing::initiate_peripheral(
+                local_address,
+                peer_address,
+                &mut ops,
+                *self.io_capabilities.borrow(),
+            )?);
+            Ok(())
         } else {
-            Err(Error::InvalidState)
+            *pairing_sm = Some(Pairing::initiate_central(
+                local_address,
+                peer_address,
+                &mut ops,
+                *self.io_capabilities.borrow(),
+            )?);
+            Ok(())
         }
     }
 
@@ -613,17 +623,20 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Channel disconnected
-    pub(crate) fn disconnect(&self, handle: ConnHandle, identity: Option<Identity>) -> Result<(), Error> {
-        self.pairing_sm.replace(None);
-        self.finished_waker.borrow_mut().wake();
-        if let Some(identity) = identity {
-            self.state
-                .borrow_mut()
-                .bond
-                .retain(|x| x.is_bonded || x.identity != identity);
+    pub(crate) fn disconnect(&self, identity: &Identity) {
+        if self
+            .pairing_sm
+            .borrow()
+            .as_ref()
+            .is_some_and(|sm| sm.peer_address().addr == identity.bd_addr)
+        {
+            self.pairing_sm.replace(None);
+            self.finished_waker.borrow_mut().wake();
         }
-
-        Ok(())
+        self.state
+            .borrow_mut()
+            .bond
+            .retain(|x| x.is_bonded || x.identity != *identity);
     }
 
     /// Handle recevied events from HCI
