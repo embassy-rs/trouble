@@ -909,6 +909,19 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             }
         }
 
+        // Enable encryption with bonded peers before starting GATT operations
+        // (BT Core Spec Vol 3, Part C, Section 10.3.2: client "should" enable encryption on reconnection)
+        #[cfg(feature = "security")]
+        if connection.is_bonded_peer() {
+            match connection.try_enable_encryption().await {
+                Ok(_) => {}
+                Err(Error::Disconnected) => return Err(Error::Disconnected.into()),
+                Err(e) => {
+                    warn!("[gatt] failed to enable encryption for bonded peer: {:?}", e);
+                }
+            }
+        }
+
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),
             stack,

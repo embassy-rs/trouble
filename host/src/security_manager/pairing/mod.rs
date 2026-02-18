@@ -50,6 +50,17 @@ impl Pairing {
             _ => false,
         }
     }
+
+    pub(crate) fn result(&self) -> Option<Result<(), Error>> {
+        match self {
+            Pairing::Central(c) => c.result(),
+            Pairing::Peripheral(p) => p.result(),
+            #[cfg(feature = "legacy-pairing")]
+            Pairing::LegacyCentral(c) => c.result(),
+            #[cfg(feature = "legacy-pairing")]
+            Pairing::LegacyPeripheral(p) => p.result(),
+        }
+    }
     pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &self,
         command: Command,

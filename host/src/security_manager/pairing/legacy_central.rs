@@ -109,6 +109,15 @@ pub struct Pairing {
 }
 
 impl Pairing {
+    pub fn result(&self) -> Option<Result<(), Error>> {
+        let step = self.current_step.borrow();
+        match step.deref() {
+            Step::Success => Some(Ok(())),
+            Step::Error(e) => Some(Err(e.clone())),
+            _ => None,
+        }
+    }
+
     pub fn timeout_at(&self) -> Instant {
         let step = self.current_step.borrow();
         if matches!(step.deref(), Step::Success | Step::Error(_)) {

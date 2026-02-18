@@ -9,6 +9,7 @@ mod types;
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
 use core::ops::DerefMut;
+use core::task::Poll;
 
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
@@ -17,6 +18,7 @@ use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
 use rand_chacha::ChaCha12Rng;
@@ -171,6 +173,8 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     state: RefCell<SecurityManagerData<BOND_COUNT>>,
     /// State of an ongoing pairing as a peripheral
     pairing_sm: RefCell<Option<Pairing>>,
+    /// Waker for pairing finished
+    finished_waker: RefCell<WakerRegistration>,
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
     /// Io capabilities
@@ -186,6 +190,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
             pairing_sm: RefCell::new(None),
+            finished_waker: RefCell::new(WakerRegistration::new()),
             io_capabilities: RefCell::new(IoCapabilities::NoInputNoOutput),
         }
     }
@@ -204,6 +209,28 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Set the current local address
     pub(crate) fn set_local_address(&self, address: Address) {
         self.state.borrow_mut().local_address = Some(address);
+    }
+
+    pub(crate) fn is_pairing_in_progress(&self, address: Address) -> bool {
+        let sm = self.pairing_sm.borrow();
+        match &*sm {
+            Some(sm) => sm.peer_address() == address && sm.result().is_none(),
+            None => false,
+        }
+    }
+
+    pub(crate) async fn wait_finished(&self) -> Result<(), Error> {
+        poll_fn(|cx| {
+            self.finished_waker.borrow_mut().register(cx.waker());
+            match &*self.pairing_sm.borrow() {
+                Some(sm) => match sm.result() {
+                    Some(result) => Poll::Ready(result),
+                    None => Poll::Pending,
+                },
+                None => Poll::Ready(Err(Error::Disconnected)),
+            }
+        })
+        .await
     }
 
     pub(crate) fn get_peer_bond_information(&self, identity: &Identity) -> Option<BondInformation> {
@@ -471,6 +498,16 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             self.handle_central(pdu, connections, storage)
         };
 
+        if self
+            .pairing_sm
+            .borrow()
+            .as_ref()
+            .map(|sm| sm.result().is_some())
+            .unwrap_or(true)
+        {
+            self.finished_waker.borrow_mut().wake();
+        }
+
         if result.is_ok() {
             if let Some(sm) = self.pairing_sm.borrow().as_ref() {
                 sm.reset_timeout();
@@ -571,12 +608,14 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn cancel_timeout(&self) {
         if let Some(pairing) = self.pairing_sm.borrow().as_ref() {
             pairing.mark_timeout();
+            self.finished_waker.borrow_mut().wake();
         }
     }
 
     /// Channel disconnected
     pub(crate) fn disconnect(&self, handle: ConnHandle, identity: Option<Identity>) -> Result<(), Error> {
         self.pairing_sm.replace(None);
+        self.finished_waker.borrow_mut().wake();
         if let Some(identity) = identity {
             self.state
                 .borrow_mut()
@@ -648,13 +687,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                                 rng.deref_mut(),
                             );
                             let _ = self.handle_security_error(connections, storage, &res);
-                            match res {
-                                Ok(_) => {
-                                    storage.security_level = sm.security_level();
-                                    Ok(())
-                                }
-                                x => x,
-                            }?
+                            if res.is_ok() {
+                                storage.security_level = sm.security_level();
+                            }
+                            if sm.result().is_some() {
+                                self.finished_waker.borrow_mut().wake();
+                            }
+                            res?;
                         } else if let Some(identity) = storage.peer_identity.as_ref() {
                             match self.get_peer_bond_information(identity) {
                                 Some(bond) if encrypted => {
@@ -666,7 +705,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                                         "[smp] Either encryption failed to enable or bond not found for {:?}",
                                         identity
                                     );
-                                    storage.security_level = SecurityLevel::NoEncryption
+                                    storage.security_level = SecurityLevel::NoEncryption;
                                 }
                             }
                         }

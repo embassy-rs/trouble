@@ -575,6 +575,18 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.request_security(self.index)
     }
 
+    /// Check if the peer is a bonded device.
+    #[cfg(feature = "security")]
+    pub(crate) fn is_bonded_peer(&self) -> bool {
+        self.manager.is_bonded_peer(self.index)
+    }
+
+    /// Try to enable encryption with a bonded peer if it is not yet established
+    #[cfg(feature = "security")]
+    pub(crate) async fn try_enable_encryption(&self) -> Result<(), Error> {
+        self.manager.try_enable_encryption(self.index).await
+    }
+
     /// Get the encrypted state of the connection
     pub fn security_level(&self) -> Result<SecurityLevel, Error> {
         self.manager.get_security_level(self.index)
