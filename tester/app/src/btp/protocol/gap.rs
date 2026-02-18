@@ -38,6 +38,7 @@ pub mod opcodes {
     pub const PASSKEY_CONFIRM: Opcode = Opcode(0x14);
     pub const START_DIRECTED_ADVERTISING: Opcode = Opcode(0x15);
     pub const CONN_PARAM_UPDATE: Opcode = Opcode(0x16);
+    pub const SET_MITM: Opcode = Opcode(0x1b);
     pub const SET_FILTER_ACCEPT_LIST: Opcode = Opcode(0x1c);
 
     // Events
@@ -75,6 +76,7 @@ pub const SUPPORTED_COMMANDS: [u8; 4] = super::supported_commands_bitmask(&[
     opcodes::PASSKEY_CONFIRM,
     opcodes::START_DIRECTED_ADVERTISING,
     opcodes::CONN_PARAM_UPDATE,
+    opcodes::SET_MITM,
     opcodes::SET_FILTER_ACCEPT_LIST,
 ]);
 
@@ -462,6 +464,9 @@ pub enum GapCommand<'a> {
     /// Connection parameter update (0x16).
     ConnParamUpdate(ConnParamUpdateCommand<'a>),
 
+    /// Set MITM flag (0x1b).
+    SetMitm(bool),
+
     /// Set filter accept list (0x1c).
     SetFilterAcceptList(SetFilterAcceptListCommand<'a>),
 }
@@ -549,6 +554,10 @@ impl<'a> GapCommand<'a> {
                 let address = cursor.read_address()?;
                 let params = cursor.read_exact(8)?;
                 Ok(GapCommand::ConnParamUpdate(ConnParamUpdateCommand { address, params }))
+            }
+            opcodes::SET_MITM => {
+                let val = cursor.read_u8()?;
+                Ok(GapCommand::SetMitm(val != 0))
             }
             opcodes::SET_FILTER_ACCEPT_LIST => {
                 let count = cursor.read_u8()? as usize;

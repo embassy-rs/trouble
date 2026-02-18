@@ -53,6 +53,8 @@ struct GapState<'stack, C, P: PacketPool> {
     filter_accept_list: heapless::Vec<Address, 1>,
     stack: &'stack Stack<'stack, C, P>,
     scan_mode: &'stack Cell<ScanMode>,
+    /// Saved IO capability (for SET_MITM toggling).
+    io_capability: IoCapabilities,
 }
 
 /// Result of a BTP command handler, supporting immediate, error, and forwarded outcomes.
@@ -116,6 +118,7 @@ where
         filter_accept_list: heapless::Vec::new(),
         stack,
         scan_mode,
+        io_capability: IoCapabilities::NoInputNoOutput,
     };
 
     // Send IUT Ready event before entering the main loop
@@ -622,7 +625,18 @@ where
             *bondable,
         )),
         SetIoCapability(capability) => {
+            gap.io_capability = *capability;
             gap.stack.set_io_capabilities(*capability);
+            Ok(GapResponse::Success)
+        }
+        SetMitm(mitm) => {
+            if *mitm {
+                // Restore the real IO capability so MITM-based pairing methods are selected.
+                gap.stack.set_io_capabilities(gap.io_capability);
+            } else {
+                // Override to NoInputNoOutput so JustWorks (no MITM) is selected.
+                gap.stack.set_io_capabilities(IoCapabilities::NoInputNoOutput);
+            }
             Ok(GapResponse::Success)
         }
         SetFilterAcceptList(cmd) => {
@@ -805,6 +819,7 @@ where
         | SetDiscoverable(_)
         | SetBondable(_)
         | SetIoCapability(_)
+        | SetMitm(_)
         | SetFilterAcceptList(_) => unreachable!(),
     }
 }
