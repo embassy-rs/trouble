@@ -766,7 +766,7 @@ impl<P: PacketPool> Drop for Reply<'_, P> {
 
 /// Notification listener for GATT client.
 pub struct NotificationListener<'lst, const MTU: usize> {
-    handle: u16,
+    handle: Option<u16>,
     listener: pubsub::DynSubscriber<'lst, Notification<MTU>>,
 }
 
@@ -776,7 +776,7 @@ impl<'lst, const MTU: usize> NotificationListener<'lst, MTU> {
     pub async fn next(&mut self) -> Notification<MTU> {
         loop {
             if let WaitResult::Message(m) = self.listener.next_message().await {
-                if m.handle == self.handle {
+                if self.handle.is_none() || self.handle == Some(m.handle) {
                     return m;
                 }
             }
@@ -1444,7 +1444,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             AttRsp::Write => match self.notifications.dyn_subscriber() {
                 Ok(listener) => Ok(NotificationListener {
                     listener,
-                    handle: characteristic.handle,
+                    handle: Some(characteristic.handle),
                 }),
                 Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
                     Err(Error::GattSubscriberLimitReached.into())
@@ -1453,6 +1453,40 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             },
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
             _ => Err(Error::UnexpectedGattResponse.into()),
+        }
+    }
+
+    /// Listen for notifications/indications on a given Characteristic without writing the CCCD.
+    ///
+    /// Use this for reconnection scenarios where the server remembers the subscription
+    /// (per BLE spec 10.3.2.2, CCCD values persist across disconnections for bonded devices).
+    pub fn listen<T: AsGatt + ?Sized>(
+        &self,
+        characteristic: &Characteristic<T>,
+    ) -> Result<NotificationListener<'_, 512>, BleHostError<C::Error>> {
+        match self.notifications.dyn_subscriber() {
+            Ok(listener) => Ok(NotificationListener {
+                listener,
+                handle: Some(characteristic.handle),
+            }),
+            Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
+                Err(Error::GattSubscriberLimitReached.into())
+            }
+            Err(_) => Err(Error::Other.into()),
+        }
+    }
+
+    /// Listen for notifications/indications on all characteristics without writing the CCCD.
+    ///
+    /// Returns a catch-all listener that receives notifications for ALL handles.
+    /// Use [`Notification::handle()`] to determine which characteristic the notification is for.
+    pub fn listen_all(&self) -> Result<NotificationListener<'_, 512>, BleHostError<C::Error>> {
+        match self.notifications.dyn_subscriber() {
+            Ok(listener) => Ok(NotificationListener { listener, handle: None }),
+            Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
+                Err(Error::GattSubscriberLimitReached.into())
+            }
+            Err(_) => Err(Error::Other.into()),
         }
     }
 
