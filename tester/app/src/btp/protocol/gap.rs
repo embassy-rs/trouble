@@ -40,6 +40,7 @@ pub mod opcodes {
     pub const CONN_PARAM_UPDATE: Opcode = Opcode(0x16);
     pub const SET_MITM: Opcode = Opcode(0x1b);
     pub const SET_FILTER_ACCEPT_LIST: Opcode = Opcode(0x1c);
+    pub const SET_SC_ONLY: Opcode = Opcode(0x1e);
 
     // Events
     pub const EVENT_NEW_SETTINGS: Opcode = Opcode(0x80);
@@ -78,6 +79,7 @@ pub const SUPPORTED_COMMANDS: [u8; 4] = super::supported_commands_bitmask(&[
     opcodes::CONN_PARAM_UPDATE,
     opcodes::SET_MITM,
     opcodes::SET_FILTER_ACCEPT_LIST,
+    opcodes::SET_SC_ONLY,
 ]);
 
 /// GAP settings flags (bitfield). Bits 0-18 are defined by the BTP spec.
@@ -117,7 +119,8 @@ impl GapSettings {
         .union(Self::BONDABLE)
         .union(Self::LE)
         .union(Self::ADVERTISING)
-        .union(Self::SECURE_CONNECTIONS);
+        .union(Self::SECURE_CONNECTIONS)
+        .union(Self::SC_ONLY);
 }
 
 /// Synthetic flag stored in bit 31 (outside the valid BTP settings range of bits 0-18)
@@ -469,6 +472,9 @@ pub enum GapCommand<'a> {
 
     /// Set filter accept list (0x1c).
     SetFilterAcceptList(SetFilterAcceptListCommand<'a>),
+
+    /// Set Secure Connections Only mode (0x1e).
+    SetScOnly(bool),
 }
 
 impl<'a> GapCommand<'a> {
@@ -565,6 +571,10 @@ impl<'a> GapCommand<'a> {
                 Ok(GapCommand::SetFilterAcceptList(SetFilterAcceptListCommand {
                     addresses,
                 }))
+            }
+            opcodes::SET_SC_ONLY => {
+                let val = cursor.read_u8()?;
+                Ok(GapCommand::SetScOnly(val != 0))
             }
             _ => Err(Error::UnknownCommand {
                 service: ServiceId::GAP,

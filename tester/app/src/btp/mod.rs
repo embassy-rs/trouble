@@ -648,6 +648,14 @@ where
             }
             Ok(GapResponse::Success)
         }
+        SetScOnly(enabled) => {
+            gap.stack.set_secure_connections_only(*enabled);
+            Ok(change_current_settings(
+                &mut gap.current_settings,
+                GapSettings::SC_ONLY,
+                *enabled,
+            ))
+        }
         _ => Err(BtpStatus::NotReady),
     }
 }
@@ -819,7 +827,8 @@ where
         | SetBondable(_)
         | SetIoCapability(_)
         | SetMitm(_)
-        | SetFilterAcceptList(_) => unreachable!(),
+        | SetFilterAcceptList(_)
+        | SetScOnly(_) => unreachable!(),
     }
 }
 
