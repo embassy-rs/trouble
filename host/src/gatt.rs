@@ -805,6 +805,19 @@ pub struct Notification<const MTU: usize> {
     handle: u16,
     data: [u8; MTU],
     len: usize,
+    indication: bool,
+}
+
+impl<const MTU: usize> Notification<MTU> {
+    /// The characteristic value handle this notification is for.
+    pub fn handle(&self) -> u16 {
+        self.handle
+    }
+
+    /// Whether this notification was received as an indication.
+    pub fn is_indication(&self) -> bool {
+        self.indication
+    }
 }
 
 impl<const MTU: usize> AsRef<[u8]> for Notification<MTU> {
@@ -1470,8 +1483,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             .await
     }
 
-    /// Handle a notification that was received.
-    async fn handle_notification_packet(&self, data: &[u8]) -> Result<(), BleHostError<C::Error>> {
+    /// Handle a notification or indication that was received.
+    async fn handle_notification_packet(&self, data: &[u8], indication: bool) -> Result<(), BleHostError<C::Error>> {
         let mut r = ReadCursor::new(data);
         let value_handle: u16 = r.read()?;
         let value_attr = r.remaining();
@@ -1486,6 +1499,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             handle,
             data,
             len: to_copy,
+            indication,
         };
         self.notifications.immediate_publisher().publish_immediate(n);
         Ok(())
@@ -1499,7 +1513,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             let data = pdu.as_ref();
             // handle notifications
             if matches!(pdu.as_ref()[0], ATT_HANDLE_VALUE_IND | ATT_HANDLE_VALUE_NTF) {
-                self.handle_notification_packet(&pdu.as_ref()[1..]).await?;
+                let indication = pdu.as_ref()[0] == ATT_HANDLE_VALUE_IND;
+                self.handle_notification_packet(&pdu.as_ref()[1..], indication).await?;
             } else {
                 self.response_channel.send((handle, pdu)).await;
             }
