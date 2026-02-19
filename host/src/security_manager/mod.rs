@@ -756,6 +756,31 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 }
                 Err(error) => {
                     error!("[security manager] Encryption event error {:?}", error);
+                    connections.with_connected_handle(handle, |storage| {
+                        let sm = self.pairing_sm.borrow();
+                        if let Some(sm) = &*sm {
+                            let mut rng = self.rng.borrow_mut();
+                            let _res = sm.handle_event(
+                                pairing::Event::LinkEncryptedResult(false),
+                                &mut PairingOpsImpl {
+                                    security_manager: self,
+                                    peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                                    connections,
+                                    storage,
+                                    conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                                },
+                                rng.deref_mut(),
+                            );
+                            // Don't call handle_security_error here: sending SMP PairingFailed
+                            // for an HCI-level encryption failure would cause the peer to
+                            // delete its bond information, preventing future re-encryption.
+                            if sm.result().is_some() {
+                                self.finished_waker.borrow_mut().wake();
+                                let _ = self.events.try_send(SecurityEventData::TimerChange);
+                            }
+                        }
+                        Ok(())
+                    })?;
                 }
             }
         }
