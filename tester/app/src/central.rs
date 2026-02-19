@@ -55,6 +55,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     commands: CommandReceiver<'_, Command>,
     server: &Server<'_, P>,
     events: DynamicSender<'_, Event>,
+    gatt_client_signal: &crate::gatt_client::ConnectionSignal,
 ) -> ! {
     trace!("central::run");
 
@@ -151,8 +152,13 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                         match conn.with_attribute_server(server) {
                             Ok(gatt_conn) => {
                                 info!("Entering GATT connection loop");
-                                let res =
-                                    crate::connection::run(stack, &gatt_conn, conn_address, &events, async || {
+                                let res = crate::connection::run(
+                                    stack,
+                                    &gatt_conn,
+                                    conn_address,
+                                    &events,
+                                    gatt_client_signal,
+                                    async || {
                                         let inner_cmd = commands.receive().await;
                                         match &*inner_cmd {
                                             Command::StartDiscovery { .. } | Command::Connect { .. } => {
@@ -163,8 +169,9 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                                 inner_cmd.reply(Response::DiscoveryStopped).await;
                                             }
                                         }
-                                    })
-                                    .await;
+                                    },
+                                )
+                                .await;
                                 if let Err(err) = res {
                                     error!("Connection terminated with error: {:?}", err);
                                 }

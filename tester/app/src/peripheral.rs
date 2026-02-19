@@ -154,6 +154,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     commands: CommandReceiver<'_, Command>,
     server: &Server<'_, P>,
     events: DynamicSender<'_, Event>,
+    gatt_client_signal: &crate::gatt_client::ConnectionSignal,
 ) -> ! {
     trace!("peripheral::run");
     let mut cmd = commands.receive().await;
@@ -242,15 +243,22 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 info!("Entering GATT connection loop");
                 match conn.with_attribute_server(server) {
                     Ok(gatt_conn) => {
-                        let res = crate::connection::run(stack, &gatt_conn, address, &events, async || {
-                            let cmd = commands.receive().await;
-                            match &*cmd {
-                                Command::StartAdvertising(..) => cmd.reply(Response::Fail).await,
-                                Command::StopAdvertising => {
-                                    cmd.reply(Response::StoppedAdvertising).await;
+                        let res = crate::connection::run(
+                            stack,
+                            &gatt_conn,
+                            address,
+                            &events,
+                            gatt_client_signal,
+                            async || {
+                                let cmd = commands.receive().await;
+                                match &*cmd {
+                                    Command::StartAdvertising(..) => cmd.reply(Response::Fail).await,
+                                    Command::StopAdvertising => {
+                                        cmd.reply(Response::StoppedAdvertising).await;
+                                    }
                                 }
-                            }
-                        })
+                            },
+                        )
                         .await;
                         if let Err(err) = res {
                             error!("Connection terminated with error: {:?}", err);

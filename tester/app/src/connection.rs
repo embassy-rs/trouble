@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_futures::select::{Either, select};
 use embassy_sync::channel::DynamicSender;
@@ -6,6 +7,12 @@ use embassy_time::Duration;
 use trouble_host::prelude::*;
 
 use crate::Event;
+use crate::gatt_client::ConnectionSignal;
+
+/// Set on the first `PairingComplete` with bond information, never cleared.
+/// When true, new connections will signal the gatt_client task
+/// so it can proactively create a `GattClient` for bonded peers.
+static BONDED: AtomicBool = AtomicBool::new(false);
 
 /// Extract the peer's [`Address`] from a connection.
 pub(crate) fn peer_address<P: PacketPool>(conn: &Connection<'_, P>) -> Address {
@@ -24,9 +31,14 @@ pub async fn run<C: crate::Controller, P: PacketPool>(
     gatt_conn: &GattConnection<'_, '_, P>,
     address: Address,
     events: &DynamicSender<'_, Event>,
+    gatt_client_signal: &ConnectionSignal,
     mut on_command: impl AsyncFnMut(),
 ) -> Result<(), BleHostError<C::Error>> {
     trace!("connection::run addr={:?}", address);
+    if BONDED.load(Ordering::Relaxed) {
+        info!("Bonded peer reconnected, signaling gatt_client: {:?}", address);
+        gatt_client_signal.signal(address);
+    }
     loop {
         match select(gatt_conn.next(), on_command()).await {
             Either::First(event) => match event {
@@ -87,8 +99,9 @@ pub async fn run<C: crate::Controller, P: PacketPool>(
                     info!("PassKeyInput addr={:?}", address);
                     events.send(Event::PasskeyEntryRequest { address }).await;
                 }
-                GattConnectionEvent::PairingComplete { security_level, .. } => {
+                GattConnectionEvent::PairingComplete { security_level, bond } => {
                     info!("PairingComplete addr={:?} level={:?}", address, security_level);
+                    BONDED.fetch_or(bond.is_some(), Ordering::Relaxed);
                     events
                         .send(Event::SecLevelChanged {
                             address,

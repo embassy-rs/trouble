@@ -61,6 +61,7 @@ use bt_hci::param::LeAdvEventKind;
 use embassy_futures::select::{Either5, select5};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, DynamicSender};
+use embassy_sync::signal::Signal;
 use embedded_io_async::{Read, Write};
 use rand_core::{CryptoRng, RngCore};
 use static_cell::StaticCell;
@@ -331,6 +332,7 @@ where
     let peripheral_command = Channel::<NoopRawMutex, peripheral::Command, 1>::new();
     let central_command = Channel::<NoopRawMutex, central::Command, 1>::new();
     let gatt_client_command = Channel::<NoopRawMutex, gatt_client::Command, 1>::new();
+    let gatt_client_signal = Signal::<NoopRawMutex, Address>::new();
 
     let channels = command_channel::CommandChannels {
         peripheral: peripheral_command.sender(),
@@ -347,6 +349,7 @@ where
             CommandReceiver::new(peripheral_command.receiver(), response.sender()),
             &server,
             events.dyn_sender(),
+            &gatt_client_signal,
         ),
         central::run(
             &stack,
@@ -354,11 +357,13 @@ where
             CommandReceiver::new(central_command.receiver(), response.sender()),
             &server,
             events.dyn_sender(),
+            &gatt_client_signal,
         ),
         gatt_client::run(
             &stack,
             CommandReceiver::new(gatt_client_command.receiver(), response.sender()),
             events.dyn_sender(),
+            &gatt_client_signal,
         ),
         btp::run(
             pre,

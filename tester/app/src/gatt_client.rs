@@ -1,21 +1,24 @@
 use alloc::boxed::Box;
-use core::pin::Pin;
 
 use bt_hci::param::{AddrKind, BdAddr};
-use embassy_futures::select::{Either, select, select_slice};
+use embassy_futures::select::{Either, select};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::DynamicSender;
+use embassy_sync::signal::Signal;
 use trouble_host::prelude::*;
 
 use crate::Event;
 use crate::btp::protocol::gatt;
 use crate::command_channel::{self, CommandReceiver, HasResponse};
 
+/// Signal used by `connection::run` to notify the gatt_client task
+/// that a bonded peer has reconnected. Carries the peer's [`Address`].
+pub type ConnectionSignal = Signal<NoopRawMutex, Address>;
+
 /// Maximum number of discovered services cached per connection.
 const MAX_SERVICES: usize = 32;
 /// Maximum number of discovered characteristics cached per connection.
 const MAX_CHARACTERISTICS: usize = 64;
-/// Maximum number of concurrent notification/indication listeners.
-const MAX_LISTENERS: usize = trouble_host::config::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
 
 /// Commands forwarded from btp::run to the gatt_client task.
 ///
@@ -190,33 +193,41 @@ impl From<Response> for command_channel::Response {
     }
 }
 
-/// An active notification/indication listener with its metadata.
-struct ActiveListener<'lst> {
-    handle: u16,
-    is_indication: bool,
-    listener: NotificationListener<'lst, 512>,
-}
-
 /// GATT client task: processes client-side GATT operations (discovery, read, write, subscribe).
 ///
-/// Idles until a command arrives targeting a connected peer, then creates a `GattClient`
+/// Idles until a command arrives targeting a connected peer (or a bonded peer reconnects
+/// after subscriptions were previously established), then creates a `GattClient`
 /// and processes commands until the connection drops, at which point it returns to idle.
 pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     stack: &'stack Stack<'stack, C, P>,
     commands: CommandReceiver<'_, Command>,
     events: DynamicSender<'_, Event>,
+    connection_signal: &ConnectionSignal,
 ) -> ! {
     trace!("gatt_client::run");
+    let mut had_subscriptions = false;
     loop {
-        // === Phase 1: Idle — wait for a command that requires a GattClient ===
-        let (connection, first_cmd) = loop {
-            let cmd = commands.receive().await;
-            let addr = cmd.address();
-            if let Some(conn) = stack.get_connection_by_peer_address(addr) {
-                break (conn, cmd);
+        // === Phase 1: Idle — wait for a command or a bonded-peer reconnection signal ===
+        let (connection, mut cmd) = loop {
+            match select(commands.receive(), connection_signal.wait()).await {
+                Either::First(cmd) => {
+                    let addr = cmd.address();
+                    if let Some(conn) = stack.get_connection_by_peer_address(addr) {
+                        break (conn, Some(cmd));
+                    }
+                    warn!("No connection for address {:?}", addr);
+                    cmd.reply(Response::Fail).await;
+                }
+                Either::Second(addr) => {
+                    if had_subscriptions {
+                        info!("Bonded peer reconnected signal: {:?}", addr);
+                        if let Some(conn) = stack.get_connection_by_peer_address(addr) {
+                            break (conn, None);
+                        }
+                        warn!("No connection for signaled address {:?}", addr);
+                    }
+                }
             }
-            warn!("No connection for address {:?}", addr);
-            cmd.reply(Response::Fail).await;
         };
 
         // === Phase 2: Connected — create GattClient and process commands ===
@@ -224,7 +235,9 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
             Ok(client) => client,
             Err(e) => {
                 error!("Failed to create GattClient: {:?}", e);
-                first_cmd.reply(Response::Fail).await;
+                if let Some(cmd) = cmd {
+                    cmd.reply(Response::Fail).await;
+                }
                 continue;
             }
         };
@@ -236,62 +249,57 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
             addr: connection.peer_address(),
         };
         info!("GattClient created for {:?}", conn_address);
-        let mut cmd = Some(first_cmd);
         let mut cache = DiscoveryCache::new();
-        let mut listeners: heapless::Vec<ActiveListener<'_>, MAX_LISTENERS> = heapless::Vec::new();
-        let _result = select(client.task(), async {
+        let mut listener = match client.listen_all() {
+            Ok(l) => l,
+            Err(e) => {
+                error!("Failed to create listen_all listener: {:?}", e);
+                if let Some(cmd) = cmd.take() {
+                    cmd.reply(Response::Fail).await;
+                }
+                continue;
+            }
+        };
+
+        let result = select(client.task(), async {
             loop {
                 let c = match cmd.take() {
                     Some(c) => c,
-                    None => next_command(&commands, &mut listeners, &conn_address, &events).await,
+                    None => next_command(&commands, &mut listener, &conn_address, &events).await,
                 };
                 if c.address() != conn_address {
                     warn!("Command address doesn't match connection");
                     c.reply(Response::Fail).await;
                     continue;
                 }
-                let response = execute_command(&client, &c, &mut cache, &mut listeners).await;
+                let response = execute_command(&client, &c, &mut cache, &mut had_subscriptions).await;
                 c.reply(response).await;
             }
         })
         .await;
-        // Connection dropped — client is dropped, return to idle
+
+        if let Either::First(Err(e)) = result {
+            error!("GattClient task failed: {:?}", e);
+        }
     }
 }
 
-/// Wait for the next command, polling active notification listeners concurrently.
+/// Wait for the next command, polling the catch-all notification listener concurrently.
 ///
 /// When a notification fires, it is forwarded as an event and we continue
 /// waiting. Returns only when a command is received.
 async fn next_command<'a>(
     commands: &CommandReceiver<'a, Command>,
-    listeners: &mut heapless::Vec<ActiveListener<'_>, MAX_LISTENERS>,
+    listener: &mut NotificationListener<'_, 512>,
     conn_address: &Address,
     events: &DynamicSender<'_, Event>,
 ) -> command_channel::Command<'a, Command> {
     loop {
-        if listeners.is_empty() {
-            return commands.receive().await;
-        }
-
-        // Build notification futures that capture metadata by value, so we
-        // don't need to re-borrow listeners after select resolves.
-        let notification_futs: alloc::vec::Vec<_> = listeners
-            .iter_mut()
-            .map(|l| {
-                let handle = l.handle;
-                let is_indication = l.is_indication;
-                async move {
-                    let notification = l.listener.next().await;
-                    (handle, is_indication, notification)
-                }
-            })
-            .collect();
-        let mut pinned: Pin<Box<[_]>> = Pin::from(notification_futs.into_boxed_slice());
-
-        match select(commands.receive(), select_slice(pinned.as_mut())).await {
+        match select(commands.receive(), listener.next()).await {
             Either::First(c) => return c,
-            Either::Second(((handle, is_indication, notification), _idx)) => {
+            Either::Second(notification) => {
+                let handle = notification.handle();
+                let is_indication = notification.is_indication();
                 trace!("Notification received: handle={} indication={}", handle, is_indication);
                 if let Err(e) = events.try_send(Event::NotificationReceived {
                     address: *conn_address,
@@ -434,11 +442,11 @@ impl DiscoveryCache {
 }
 
 /// Execute a single GATT client command, returning the response.
-async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
-    client: &'client GattClient<'_, C, P, MAX_SERVICES>,
+async fn execute_command<C: crate::Controller, P: PacketPool>(
+    client: &GattClient<'_, C, P, MAX_SERVICES>,
     cmd: &command_channel::Command<'_, Command>,
     cache: &mut DiscoveryCache,
-    listeners: &mut heapless::Vec<ActiveListener<'client>, MAX_LISTENERS>,
+    had_subscriptions: &mut bool,
 ) -> Response {
     trace!("execute_command: {:?}", **cmd);
     match &**cmd {
@@ -621,25 +629,28 @@ async fn execute_command<'client, C: crate::Controller, P: PacketPool>(
             }
         }
         Command::CfgNotify { enable, ccc_handle, .. } => {
-            subscribe_cfg(client, cache, listeners, *ccc_handle, *enable, false).await
+            subscribe_cfg(client, cache, *ccc_handle, *enable, false, had_subscriptions).await
         }
         Command::CfgIndicate { enable, ccc_handle, .. } => {
-            subscribe_cfg(client, cache, listeners, *ccc_handle, *enable, true).await
+            subscribe_cfg(client, cache, *ccc_handle, *enable, true, had_subscriptions).await
         }
     }
 }
 
-/// Handle CfgNotify/CfgIndicate: subscribe or unsubscribe, managing the listener list.
+/// Handle CfgNotify/CfgIndicate: subscribe or unsubscribe.
 ///
 /// If the characteristic owning `ccc_handle` is not yet cached, this will
 /// auto-discover services and characteristics to find it.
-async fn subscribe_cfg<'client, C: crate::Controller, P: PacketPool>(
-    client: &'client GattClient<'_, C, P, MAX_SERVICES>,
+///
+/// The returned `NotificationListener` from `subscribe()` is dropped immediately;
+/// the single `listen_all()` listener in the caller catches all notifications.
+async fn subscribe_cfg<C: crate::Controller, P: PacketPool>(
+    client: &GattClient<'_, C, P, MAX_SERVICES>,
     cache: &mut DiscoveryCache,
-    listeners: &mut heapless::Vec<ActiveListener<'client>, MAX_LISTENERS>,
     ccc_handle: u16,
     enable: bool,
     is_indication: bool,
+    had_subscriptions: &mut bool,
 ) -> Response {
     trace!(
         "subscribe_cfg: ccc_handle={} enable={} indication={}",
@@ -652,19 +663,12 @@ async fn subscribe_cfg<'client, C: crate::Controller, P: PacketPool>(
     };
 
     if enable {
-        if listeners.is_full() {
-            error!("Cannot subscribe: listener limit ({}) reached", MAX_LISTENERS);
-            return Response::Fail;
-        }
+        // Write the CCCD to enable notifications/indications on the remote peer.
+        // The returned listener is dropped immediately — the listen_all() listener catches everything.
         match client.subscribe(chrc, is_indication).await {
-            Ok(listener) => {
+            Ok(_listener) => {
                 info!("Subscribed handle={}", chrc.handle);
-                // Safety: checked is_full() above, so push cannot fail.
-                let _ = listeners.push(ActiveListener {
-                    handle: chrc.handle,
-                    is_indication,
-                    listener,
-                });
+                *had_subscriptions = true;
                 Response::CfgDone
             }
             Err(e) => {
@@ -673,10 +677,6 @@ async fn subscribe_cfg<'client, C: crate::Controller, P: PacketPool>(
             }
         }
     } else {
-        // Remove the listener for this characteristic
-        if let Some(idx) = listeners.iter().position(|l| l.handle == chrc.handle) {
-            listeners.swap_remove(idx);
-        }
         match client.unsubscribe(chrc).await {
             Ok(()) => {
                 info!("Unsubscribed handle={}", chrc.handle);

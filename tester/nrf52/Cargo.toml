@@ -6,7 +6,7 @@ edition = "2024"
 [features]
 default = ["nrf52840", "defmt-usb"]
 nrf52840 = ["embassy-nrf/nrf52840", "nrf-sdc/nrf52840"]
-defmt-usb = ["dep:embassy-usb", "dep:defmt-embassy-usbserial"]
+defmt-usb = ["dep:embassy-usb", "dep:defmt-embassy-usbserial", "defmt-embassy-usbserial/buffersize-1024"]
 defmt-rtt = ["dep:defmt-rtt"]
 
 [dependencies]
@@ -24,7 +24,7 @@ trouble-host = { path = "../../host", features = ["derive", "scan", "gatt"] }
 trouble-tester-app = { path = "../app", features = ["defmt"] }
 
 defmt = "1.0.1"
-defmt-embassy-usbserial = { version = "0.2", optional = true }
+defmt-embassy-usbserial = { version = "0.2", default-features = false, optional = true }
 defmt-rtt = { version = "1", optional = true }
 embassy-usb = { version = "0.5.1", default-features = false, features = ["defmt"], optional = true }
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
