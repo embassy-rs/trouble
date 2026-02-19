@@ -3,32 +3,22 @@
 
 extern crate alloc;
 
-#[cfg(all(feature = "defmt-usb", feature = "defmt-rtt"))]
-compile_error!("Features `defmt-usb` and `defmt-rtt` are mutually exclusive");
-
-use defmt::{info, unwrap};
-#[cfg(feature = "defmt-rtt")]
-use defmt_rtt as _;
+use defmt::{error, info, unwrap, warn};
 use embassy_executor::Spawner;
 use embassy_nrf::buffered_uarte::{self, BufferedUarte};
+use embassy_nrf::gpio::{Input, Pull};
 use embassy_nrf::mode::Async;
-#[cfg(feature = "defmt-usb")]
-use embassy_nrf::peripherals;
 use embassy_nrf::peripherals::RNG;
-#[cfg(feature = "defmt-usb")]
-use embassy_nrf::usb;
-#[cfg(feature = "defmt-usb")]
-use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::{bind_interrupts, rng};
 use embedded_alloc::LlffHeap as Heap;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use panic_probe as _;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 use trouble_tester_app::BtpConfig;
+use {defmt_rtt as _, panic_probe as _};
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -36,11 +26,6 @@ static HEAP: Heap = Heap::empty();
 bind_interrupts!(struct Irqs {
     RNG => rng::InterruptHandler<RNG>;
     UARTE0 => embassy_nrf::buffered_uarte::InterruptHandler<embassy_nrf::peripherals::UARTE0>;
-    #[cfg(feature = "defmt-usb")]
-    USBD => usb::InterruptHandler<peripherals::USBD>;
-    #[cfg(feature = "defmt-usb")]
-    CLOCK_POWER => nrf_sdc::mpsl::ClockInterruptHandler, usb::vbus_detect::InterruptHandler;
-    #[cfg(not(feature = "defmt-usb"))]
     CLOCK_POWER => nrf_sdc::mpsl::ClockInterruptHandler;
     EGU0_SWI0 => nrf_sdc::mpsl::LowPrioInterruptHandler;
     RADIO => nrf_sdc::mpsl::HighPrioInterruptHandler;
@@ -53,20 +38,11 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-#[cfg(feature = "defmt-usb")]
 #[embassy_executor::task]
-async fn usb_task(driver: usb::Driver<'static, HardwareVbusDetect>) -> ! {
-    let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
-    config.manufacturer = Some("Tactile Engineering");
-    config.product = Some("TrouBLE-Tester defmt");
-    config.serial_number = Some("1");
-    config.max_power = 100;
-    config.max_packet_size_0 = 64;
-    config.device_class = 0xEF;
-    config.device_sub_class = 0x02;
-    config.device_protocol = 0x01;
-    defmt_embassy_usbserial::run(driver, config).await;
-    unreachable!()
+async fn button_reset_task(mut btn: Input<'static>) -> ! {
+    btn.wait_for_falling_edge().await;
+    warn!("Button 1 pressed, resetting...");
+    cortex_m::peripheral::SCB::sys_reset();
 }
 
 /// How many outgoing L2CAP buffers per link
@@ -116,11 +92,8 @@ async fn main(spawner: Spawner) -> ! {
 
     let p = embassy_nrf::init(cfg);
 
-    #[cfg(feature = "defmt-usb")]
-    {
-        let usb_driver = usb::Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-        spawner.spawn(unwrap!(usb_task(usb_driver)));
-    }
+    let btn1 = Input::new(p.P0_11, Pull::Up);
+    spawner.spawn(unwrap!(button_reset_task(btn1)));
 
     let mpsl_p = mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
@@ -193,7 +166,7 @@ async fn main(spawner: Spawner) -> ! {
     .await;
 
     if let Err(err) = res {
-        defmt::error!("BTP error: {:?}", err);
+        error!("BTP error: {:?}", err);
         // Give USB time to flush the error message before resetting.
         embassy_time::Timer::after_millis(500).await;
     }
