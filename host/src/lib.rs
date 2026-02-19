@@ -635,6 +635,20 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         }
     }
 
+    /// Enable or disable secure connections only mode.
+    ///
+    /// When enabled, legacy pairing is rejected even if the `legacy-pairing` feature is compiled in.
+    /// This matches the BLE spec's "Secure Connections Only Mode" (Vol 3, Part C, Section 10.2.4).
+    ///
+    /// Only relevant if the feature `legacy-pairing` is enabled.
+    #[cfg(feature = "legacy-pairing")]
+    pub fn set_secure_connections_only(&self, enabled: bool) {
+        self.host
+            .connections
+            .security_manager
+            .set_secure_connections_only(enabled);
+    }
+
     /// Build the stack.
     pub fn build(&'stack self) -> Host<'stack, C, P> {
         #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]

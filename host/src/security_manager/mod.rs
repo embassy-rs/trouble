@@ -6,6 +6,8 @@ mod constants;
 pub(crate) mod crypto;
 mod pairing;
 mod types;
+#[cfg(feature = "legacy-pairing")]
+use core::cell::Cell;
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
 use core::ops::DerefMut;
@@ -179,6 +181,9 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
     /// Io capabilities
     io_capabilities: RefCell<IoCapabilities>,
+    /// When true, reject legacy pairing even if the feature is compiled in
+    #[cfg(feature = "legacy-pairing")]
+    secure_connections_only: Cell<bool>,
 }
 
 impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
@@ -192,12 +197,26 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             pairing_sm: RefCell::new(None),
             finished_waker: RefCell::new(WakerRegistration::new()),
             io_capabilities: RefCell::new(IoCapabilities::NoInputNoOutput),
+            #[cfg(feature = "legacy-pairing")]
+            secure_connections_only: Cell::new(false),
         }
     }
 
     /// Set the IO capabilities
     pub(crate) fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
         self.io_capabilities.replace(io_capabilities);
+    }
+
+    /// Enable or disable secure connections only mode.
+    /// When enabled, legacy pairing is rejected even if the feature is compiled in.
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn set_secure_connections_only(&self, enabled: bool) {
+        self.secure_connections_only.set(enabled);
+    }
+
+    #[cfg(feature = "legacy-pairing")]
+    fn is_secure_connections_only(&self) -> bool {
+        self.secure_connections_only.get()
     }
 
     /// Set the current local address
@@ -361,6 +380,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                         && payload.len() >= 3
                         && !AuthReq::from(payload[2]).secure_connection();
 
+                    if use_legacy && self.is_secure_connections_only() {
+                        return Err(Error::Security(Reason::AuthenticationRequirements));
+                    }
+
                     if use_legacy {
                         *state_machine = Some(Pairing::new_legacy_peripheral(local_address, peer_address, local_io));
                     } else {
@@ -381,6 +404,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 && !AuthReq::from(payload[2]).secure_connection()
                 && matches!(state_machine.as_ref(), Some(Pairing::Peripheral(_)))
             {
+                if self.is_secure_connections_only() {
+                    return Err(Error::Security(Reason::AuthenticationRequirements));
+                }
                 let old = state_machine.take().unwrap();
                 *state_machine = Some(old.switch_to_legacy_peripheral()?);
             }
@@ -468,6 +494,9 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 && !AuthReq::from(payload[2]).secure_connection()
                 && matches!(state_machine.as_ref(), Some(Pairing::Central(_)))
             {
+                if self.is_secure_connections_only() {
+                    return Err(Error::Security(Reason::AuthenticationRequirements));
+                }
                 let old = state_machine.take().unwrap();
                 *state_machine = Some(old.switch_to_legacy_central()?);
             }
