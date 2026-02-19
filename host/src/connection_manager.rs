@@ -206,8 +206,21 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) async fn next_gatt_client(&self, index: u8) -> Pdu<P::Packet> {
-        poll_fn(|cx| self.with_mut(|state| state.connections[index as usize].gatt_client.poll_receive(cx))).await
+    pub(crate) async fn next_gatt_client(&self, index: u8) -> Option<Pdu<P::Packet>> {
+        poll_fn(|cx| {
+            self.with_mut(|state| {
+                let storage = &mut state.connections[index as usize];
+                storage.gatt_client_waker.register(cx.waker());
+                match storage.gatt_client.poll_receive(cx) {
+                    core::task::Poll::Ready(pdu) => core::task::Poll::Ready(Some(pdu)),
+                    core::task::Poll::Pending if storage.state == ConnectionState::Disconnected => {
+                        core::task::Poll::Ready(None)
+                    }
+                    core::task::Poll::Pending => core::task::Poll::Pending,
+                }
+            })
+        })
+        .await
     }
 
     pub(crate) fn peer_addr_kind(&self, index: u8) -> AddrKind {
@@ -367,7 +380,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.reassembly.clear();
                 let _ = storage.events.try_send(ConnectionEvent::Disconnected { reason });
                 #[cfg(feature = "gatt")]
-                storage.gatt.clear();
+                {
+                    storage.gatt.clear();
+                    storage.gatt_client_waker.wake();
+                }
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
                 #[cfg(feature = "security")]
@@ -1012,6 +1028,8 @@ pub struct ConnectionStorage<P> {
     pub gatt: GattChannel<P>,
     #[cfg(feature = "gatt")]
     pub(crate) gatt_client: GattChannel<P>,
+    #[cfg(feature = "gatt")]
+    pub(crate) gatt_client_waker: WakerRegistration,
     #[cfg(feature = "att-queued-writes")]
     pub(crate) prepare_write: PrepareWriteState,
 }
@@ -1104,6 +1122,8 @@ impl<P> ConnectionStorage<P> {
             gatt: GattChannel::new(),
             #[cfg(feature = "gatt")]
             gatt_client: GattChannel::new(),
+            #[cfg(feature = "gatt")]
+            gatt_client_waker: WakerRegistration::new(),
             reassembly: PacketReassembly::new(),
             #[cfg(feature = "security")]
             bondable: false,

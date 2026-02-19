@@ -919,7 +919,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
         loop {
-            let pdu = connection.next_gatt_client().await;
+            let pdu = connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
             match pdu.as_ref()[0] {
                 att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => break,
                 _ => {
@@ -1543,8 +1543,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     pub async fn task(&self) -> Result<(), BleHostError<C::Error>> {
         loop {
             let handle = self.connection.handle();
-            let pdu = self.connection.next_gatt_client().await;
-            let data = pdu.as_ref();
+            let pdu = self.connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
             // handle notifications
             if matches!(pdu.as_ref()[0], ATT_HANDLE_VALUE_IND | ATT_HANDLE_VALUE_NTF) {
                 let indication = pdu.as_ref()[0] == ATT_HANDLE_VALUE_IND;
