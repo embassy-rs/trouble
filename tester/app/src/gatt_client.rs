@@ -278,8 +278,10 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
         })
         .await;
 
-        if let Either::First(Err(e)) = result {
-            error!("GattClient task failed: {:?}", e);
+        match result {
+            Either::First(Err(BleHostError::BleHost(Error::Disconnected))) => info!("GattClient disconnected"),
+            Either::First(Err(e)) => error!("GattClient task failed: {:?}", e),
+            _ => (),
         }
     }
 }
