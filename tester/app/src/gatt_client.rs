@@ -219,13 +219,11 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     cmd.reply(Response::Fail).await;
                 }
                 Either::Second(addr) => {
-                    if had_subscriptions {
-                        info!("Bonded peer reconnected signal: {:?}", addr);
-                        if let Some(conn) = stack.get_connection_by_peer_address(addr) {
-                            break (conn, None);
-                        }
-                        warn!("No connection for signaled address {:?}", addr);
+                    info!("Bonded peer reconnected signal: {:?}", addr);
+                    if let Some(conn) = stack.get_connection_by_peer_address(addr) {
+                        break (conn, None);
                     }
+                    warn!("No connection for signaled address {:?}", addr);
                 }
             }
         };
