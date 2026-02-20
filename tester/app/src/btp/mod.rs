@@ -737,10 +737,18 @@ where
             Forwarded
         }
         Connect(cmd) => {
+            // All-zeros address means "use the filter accept list" (Auto Connection Establishment)
+            let filter_accept_list = if cmd.address.addr == BdAddr::default() {
+                gap.filter_accept_list.clone()
+            } else {
+                let mut list = heapless::Vec::new();
+                let _ = list.push(cmd.address);
+                list
+            };
             channels
                 .central
                 .send(central::Command::Connect {
-                    address: cmd.address,
+                    filter_accept_list,
                     bondable: gap.current_settings.contains(GapSettings::BONDABLE),
                 })
                 .await;

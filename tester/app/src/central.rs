@@ -19,7 +19,7 @@ pub enum Command {
     },
     StopDiscovery,
     Connect {
-        address: Address,
+        filter_accept_list: heapless::Vec<Address, 1>,
         bondable: bool,
     },
 }
@@ -116,25 +116,33 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 // Not currently scanning, treat as idempotent success
                 cmd.reply(Response::DiscoveryStopped).await;
             }
-            Command::Connect { address, bondable } => {
-                let address = *address;
+            Command::Connect {
+                filter_accept_list,
+                bondable,
+            } => {
+                let filter_accept_list = filter_accept_list.clone();
+                let bondable = *bondable;
+                cmd.reply(Response::Connecting).await;
 
-                let accept = (address.kind, &address.addr);
+                let bd_addrs: heapless::Vec<BdAddr, 1> = filter_accept_list.iter().map(|a| a.addr).collect();
+                let filter_list: heapless::Vec<(AddrKind, &BdAddr), 1> = filter_accept_list
+                    .iter()
+                    .zip(bd_addrs.iter())
+                    .map(|(a, bd)| (a.kind, bd))
+                    .collect();
                 let config = ConnectConfig {
                     scan_config: ScanConfig {
-                        filter_accept_list: core::slice::from_ref(&accept),
+                        filter_accept_list: &filter_list,
                         interval: Duration::from_millis(60),
                         window: Duration::from_millis(60),
                         ..Default::default()
                     },
                     connect_params: Default::default(),
                 };
-                let bondable = *bondable;
 
-                cmd.reply(Response::Connecting).await;
                 match central.connect(&config).await {
                     Ok(conn) => {
-                        info!("Connect success: {:?}", address);
+                        info!("Connect success: {:?}", filter_accept_list);
                         if let Err(err) = conn.set_bondable(bondable) {
                             error!("Failed to set bondable: {:?}", err);
                         }
