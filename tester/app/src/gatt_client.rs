@@ -443,6 +443,14 @@ impl DiscoveryCache {
     }
 }
 
+/// Extract the ATT error code from a `BleHostError`, if the error is an ATT error.
+fn att_error_code<E>(err: &BleHostError<E>) -> Option<u8> {
+    match err {
+        BleHostError::BleHost(Error::Att(code)) => Some(code.to_u8()),
+        _ => None,
+    }
+}
+
 /// Execute a single GATT client command, returning the response.
 async fn execute_command<C: crate::Controller, P: PacketPool>(
     client: &GattClient<'_, C, P, MAX_SERVICES>,
@@ -536,6 +544,14 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                         data: buf.into_boxed_slice(),
                     })
                 }
+                Err(ref e) if att_error_code(e).is_some() => {
+                    let code = att_error_code(e).unwrap();
+                    warn!("Read returned ATT error: {:#x}", code);
+                    Response::ReadData(gatt::ReadDataResponse {
+                        att_response: code,
+                        data: Box::from([]),
+                    })
+                }
                 Err(e) => {
                     error!("Read failed: {:?}", e);
                     Response::Fail
@@ -560,6 +576,14 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                         data: buf.into_boxed_slice(),
                     })
                 }
+                Err(ref e) if att_error_code(e).is_some() => {
+                    let code = att_error_code(e).unwrap();
+                    warn!("ReadLong returned ATT error: {:#x}", code);
+                    Response::ReadData(gatt::ReadDataResponse {
+                        att_response: code,
+                        data: Box::from([]),
+                    })
+                }
                 Err(e) => {
                     error!("ReadLong failed: {:?}", e);
                     Response::Fail
@@ -581,6 +605,7 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                 cache.services_in_range(*start_handle, *end_handle)
             };
             let mut buf = alloc::vec![0u8; 512];
+            let mut last_att_error = None;
             for service in services {
                 match client.read_characteristic_by_uuid(service, uuid, &mut buf).await {
                     Ok(len) => {
@@ -595,8 +620,20 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                             values: alloc::vec![value].into_boxed_slice(),
                         });
                     }
-                    Err(_) => continue,
+                    Err(ref e) => {
+                        if let Some(code) = att_error_code(e) {
+                            last_att_error = Some(code);
+                        }
+                        continue;
+                    }
                 }
+            }
+            if let Some(code) = last_att_error {
+                warn!("ReadUuid returned ATT error: {:#x}", code);
+                return Response::ReadUuidData(gatt::ReadUuidDataResponse {
+                    att_response: code,
+                    values: Box::from([]),
+                });
             }
             error!(
                 "ReadUuid: no service with UUID {:?} in range {}..={}",
@@ -611,6 +648,11 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             };
             match client.write_characteristic(chrc, data).await {
                 Ok(()) => Response::WriteResult(0x00),
+                Err(ref e) if att_error_code(e).is_some() => {
+                    let code = att_error_code(e).unwrap();
+                    warn!("Write returned ATT error: {:#x}", code);
+                    Response::WriteResult(code)
+                }
                 Err(e) => {
                     error!("Write failed: {:?}", e);
                     Response::Fail
