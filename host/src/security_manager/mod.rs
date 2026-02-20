@@ -747,6 +747,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                             }
                             if sm.result().is_some() {
                                 self.finished_waker.borrow_mut().wake();
+                                let _ = self.events.try_send(SecurityEventData::TimerChange);
                             }
                             res?;
                         } else if let Some(identity) = storage.peer_identity.as_ref() {
