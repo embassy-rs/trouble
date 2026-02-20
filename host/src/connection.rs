@@ -575,7 +575,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// If the link is already encrypted then this will always generate an error.
     ///
     pub fn request_security(&self) -> Result<(), Error> {
-        self.manager.request_security(self.index)
+        self.manager.request_security(self.index, true)
     }
 
     /// Check if the peer is a bonded device.

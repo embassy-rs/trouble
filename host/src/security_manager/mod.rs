@@ -598,6 +598,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         &self,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
+        user_initiated: bool,
     ) -> Result<(), Error> {
         if storage.security_level != SecurityLevel::NoEncryption {
             return Err(Error::Security(Reason::UnspecifiedReason));
@@ -638,6 +639,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 peer_address,
                 &mut ops,
                 *self.io_capabilities.borrow(),
+                user_initiated,
             )?);
             Ok(())
         }

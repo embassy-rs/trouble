@@ -146,6 +146,7 @@ struct PairingData {
     ltk: Option<LongTermKey>,
     timeout_at: Instant,
     bond_information: Option<BondInformation>,
+    user_initiated: bool,
 }
 
 impl PairingData {
@@ -215,6 +216,7 @@ impl Pairing {
             private_key: None,
             timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE,
             bond_information: None,
+            user_initiated: false,
         };
         Self {
             pairing_data: RefCell::new(pairing_data),
@@ -227,10 +229,12 @@ impl Pairing {
         peer_address: Address,
         ops: &mut OPS,
         local_io: IoCapabilities,
+        user_initiated: bool,
     ) -> Result<Pairing, Error> {
         let ret = Self::new_idle(local_address, peer_address, local_io);
         {
             let mut pairing_data = ret.pairing_data.borrow_mut();
+            pairing_data.user_initiated = user_initiated;
             let mut auth_req = AuthReq::new(ops.bonding_flag());
             if local_io != IoCapabilities::NoInputNoOutput {
                 auth_req = auth_req.with_mitm();
@@ -336,6 +340,11 @@ impl Pairing {
                 if res {
                     info!("Link encrypted using bonded key!");
                     Step::Success
+                } else if self.pairing_data.borrow().user_initiated {
+                    warn!("Link encryption with bonded key failed, initiating fresh pairing");
+                    ops.try_send_connection_event(ConnectionEvent::BondLost)?;
+                    let mut pairing_data = self.pairing_data.borrow_mut();
+                    Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data.deref_mut(), ops)?)
                 } else {
                     error!("Link encryption with bonded key failed!");
                     bond_lost = true;

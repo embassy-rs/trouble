@@ -615,7 +615,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         Err(Error::NotSupported)
     }
 
-    pub(crate) fn request_security(&self, index: u8) -> Result<(), Error> {
+    pub(crate) fn request_security(&self, index: u8, user_initiated: bool) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let current_level = self.get_security_level(index)?;
@@ -623,7 +623,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 return Err(Error::NotSupported);
             }
             self.security_manager
-                .initiate(self, &self.state.borrow().connections[index as usize])
+                .initiate(self, &self.state.borrow().connections[index as usize], user_initiated)
         }
         #[cfg(not(feature = "security"))]
         Err(Error::NotSupported)
@@ -662,7 +662,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         };
 
         if !self.security_manager.is_pairing_in_progress(address) {
-            self.request_security(index)?;
+            self.request_security(index, false)?;
         }
         match self.security_manager.wait_finished(address).await {
             Ok(()) => Ok(()),
