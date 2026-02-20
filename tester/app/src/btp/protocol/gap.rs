@@ -50,6 +50,7 @@ pub mod opcodes {
     pub const EVENT_PASSKEY_CONFIRM_REQUEST: Opcode = Opcode(0x86);
     pub const EVENT_CONN_PARAM_UPDATE: Opcode = Opcode(0x88);
     pub const EVENT_SEC_LEVEL_CHANGED: Opcode = Opcode(0x89);
+    pub const EVENT_BOND_LOST: Opcode = Opcode(0x8b);
     pub const EVENT_PAIRING_FAILED: Opcode = Opcode(0x8c);
 }
 
@@ -822,6 +823,9 @@ pub enum GapEvent<'a> {
     /// Security level changed (0x89).
     SecLevelChanged(SecLevelChangedEvent),
 
+    /// Bond lost (0x8b).
+    BondLost(Address),
+
     /// Pairing failed (0x8c).
     PairingFailed(PairingFailedEvent),
 }
@@ -839,6 +843,7 @@ impl GapEvent<'_> {
             GapEvent::PasskeyConfirmRequest(..) => (opcodes::EVENT_PASSKEY_CONFIRM_REQUEST, 11),
             GapEvent::ConnParamUpdate(..) => (opcodes::EVENT_CONN_PARAM_UPDATE, 13),
             GapEvent::SecLevelChanged(..) => (opcodes::EVENT_SEC_LEVEL_CHANGED, 8),
+            GapEvent::BondLost(..) => (opcodes::EVENT_BOND_LOST, 7),
             GapEvent::PairingFailed(..) => (opcodes::EVENT_PAIRING_FAILED, 8),
         };
         BtpHeader::event(ServiceId::GAP, opcode, Some(0), data_len)
@@ -892,6 +897,10 @@ impl GapEvent<'_> {
                 writer.write_all(&[evt.address.kind.as_raw()]).await?;
                 writer.write_all(evt.address.addr.raw()).await?;
                 writer.write_all(&[evt.sec_level]).await
+            }
+            GapEvent::BondLost(address) => {
+                writer.write_all(&[address.kind.as_raw()]).await?;
+                writer.write_all(address.addr.raw()).await
             }
             GapEvent::PairingFailed(evt) => {
                 writer.write_all(&[evt.address.kind.as_raw()]).await?;

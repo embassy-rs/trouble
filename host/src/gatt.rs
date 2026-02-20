@@ -123,6 +123,9 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     #[cfg(feature = "security")]
     /// Pairing failed
     PairingFailed(Error),
+    #[cfg(feature = "security")]
+    /// The peer has lost its bond.
+    BondLost,
 }
 
 /// Used to manage a GATT connection with a client.
@@ -235,6 +238,9 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::PairingFailed(err) => GattConnectionEvent::PairingFailed(err),
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::BondLost => GattConnectionEvent::BondLost,
             },
             Either::Second(data) => GattConnectionEvent::Gatt {
                 event: GattEvent::new(GattData::new(data, self.connection.clone()), self.server),

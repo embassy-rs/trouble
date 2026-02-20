@@ -17,6 +17,7 @@ mod util;
 
 pub trait PairingOps<P: PacketPool> {
     fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error>;
+    fn find_bond(&self) -> Option<BondInformation>;
     fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error>;
     fn try_enable_encryption(
         &mut self,
@@ -297,6 +298,10 @@ mod tests {
                 #[cfg(feature = "legacy-pairing")]
                 rand,
             })
+        }
+
+        fn find_bond(&self) -> Option<BondInformation> {
+            self.bond_information.clone()
         }
 
         fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error> {

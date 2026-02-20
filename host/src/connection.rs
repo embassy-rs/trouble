@@ -269,6 +269,9 @@ pub enum ConnectionEvent {
     #[cfg(feature = "security")]
     /// Pairing completed
     PairingFailed(Error),
+    #[cfg(feature = "security")]
+    /// The peer has lost its bond (received pairing request for a bonded peer).
+    BondLost,
 }
 
 /// A connection parameters update request

@@ -899,6 +899,16 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         self.security_manager.add_bond_information(bond.clone())
     }
 
+    fn find_bond(&self) -> Option<BondInformation> {
+        self.security_manager
+            .state
+            .borrow()
+            .bond
+            .iter()
+            .find(|x| x.identity.match_identity(&self.peer_identity))
+            .cloned()
+    }
+
     fn try_enable_encryption(
         &mut self,
         ltk: &LongTermKey,

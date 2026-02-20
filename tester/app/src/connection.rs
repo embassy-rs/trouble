@@ -100,6 +100,10 @@ pub async fn run<C: crate::Controller, P: PacketPool>(
                     info!("PairingFailed addr={:?}", address);
                     events.send(Event::PairingFailed { address, error }).await;
                 }
+                GattConnectionEvent::BondLost => {
+                    info!("BondLost addr={:?}", address);
+                    events.send(Event::BondLost { address }).await;
+                }
                 GattConnectionEvent::PhyUpdated { .. } => warn!("Ignored Phy update event"),
                 GattConnectionEvent::RequestConnectionParams(req) => {
                     let params = req.params();

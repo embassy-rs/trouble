@@ -398,6 +398,9 @@ impl Pairing {
             trace!("[smp legacy] Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
                 (Step::WaitingPairingRequest, Command::PairingRequest) => {
+                    if ops.find_bond().is_some() {
+                        ops.try_send_connection_event(ConnectionEvent::BondLost)?;
+                    }
                     Self::handle_pairing_request(command.payload, ops, pairing_data, rng)?
                 }
                 (Step::WaitingPassKeyInput(_), Command::PairingConfirm) => {

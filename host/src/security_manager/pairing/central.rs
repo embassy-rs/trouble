@@ -316,6 +316,7 @@ impl Pairing {
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let current_state = self.current_step.borrow().clone();
+        let mut bond_lost = false;
         let next_state = match (current_state, event) {
             (Step::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
                 if res {
@@ -333,6 +334,7 @@ impl Pairing {
                     Step::Success
                 } else {
                     error!("Link encryption with bonded key failed!");
+                    bond_lost = true;
                     Step::Error(Error::Security(Reason::KeyRejected))
                 }
             }
@@ -363,7 +365,12 @@ impl Pairing {
         match next_state {
             Step::Error(x) => {
                 self.current_step.replace(Step::Error(x.clone()));
-                ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
+                let event = if bond_lost {
+                    ConnectionEvent::BondLost
+                } else {
+                    ConnectionEvent::PairingFailed(x.clone())
+                };
+                ops.try_send_connection_event(event)?;
                 Err(x)
             }
             x => {

@@ -501,6 +501,7 @@ fn convert_event<'a>(event: &'a Event, current_settings: &mut GapSettings) -> Bt
                 reason,
             }))
         }
+        Event::BondLost { address } => BtpEvent::Gap(GapEvent::BondLost(*address)),
         Event::ConnParamUpdate {
             address,
             conn_interval,
