@@ -122,22 +122,24 @@ bitflags::bitflags! {
 
 impl From<AttPermission> for trouble_host::attribute::AttPermissions {
     fn from(value: AttPermission) -> Self {
-        let read = if value.contains(AttPermission::READ) {
-            PermissionLevel::Allowed
+        // Most restrictive security level wins. BTP may set both the bare access bit (e.g. READ)
+        // and a security bit (e.g. READ_AUTHEN) together, meaning "readable with authentication".
+        let read = if value.contains(AttPermission::READ_AUTHEN) {
+            PermissionLevel::AuthenticationRequired
         } else if value.contains(AttPermission::READ_ENC) {
             PermissionLevel::EncryptionRequired
-        } else if value.contains(AttPermission::READ_AUTHEN) {
-            PermissionLevel::AuthenticationRequired
+        } else if value.contains(AttPermission::READ) {
+            PermissionLevel::Allowed
         } else {
             PermissionLevel::NotAllowed
         };
 
-        let write = if value.contains(AttPermission::WRITE) {
-            PermissionLevel::Allowed
+        let write = if value.contains(AttPermission::WRITE_AUTHEN) {
+            PermissionLevel::AuthenticationRequired
         } else if value.contains(AttPermission::WRITE_ENC) {
             PermissionLevel::EncryptionRequired
-        } else if value.contains(AttPermission::WRITE_AUTHEN) {
-            PermissionLevel::AuthenticationRequired
+        } else if value.contains(AttPermission::WRITE) {
+            PermissionLevel::Allowed
         } else {
             PermissionLevel::NotAllowed
         };
@@ -148,17 +150,20 @@ impl From<AttPermission> for trouble_host::attribute::AttPermissions {
 
 impl From<trouble_host::attribute::AttPermissions> for AttPermission {
     fn from(value: trouble_host::attribute::AttPermissions) -> Self {
+        // Always include the bare access bit alongside the security bit so that BTP handlers
+        // checking `perm & Perm.read` can identify accessible attributes, while handlers
+        // checking `perm & Perm.read_authn` can identify the required security level.
         let mut result = AttPermission::empty();
         match value.read {
             PermissionLevel::Allowed => result |= AttPermission::READ,
-            PermissionLevel::EncryptionRequired => result |= AttPermission::READ_ENC,
-            PermissionLevel::AuthenticationRequired => result |= AttPermission::READ_AUTHEN,
+            PermissionLevel::EncryptionRequired => result |= AttPermission::READ | AttPermission::READ_ENC,
+            PermissionLevel::AuthenticationRequired => result |= AttPermission::READ | AttPermission::READ_AUTHEN,
             PermissionLevel::NotAllowed => (),
         }
         match value.write {
             PermissionLevel::Allowed => result |= AttPermission::WRITE,
-            PermissionLevel::EncryptionRequired => result |= AttPermission::WRITE_ENC,
-            PermissionLevel::AuthenticationRequired => result |= AttPermission::WRITE_AUTHEN,
+            PermissionLevel::EncryptionRequired => result |= AttPermission::WRITE | AttPermission::WRITE_ENC,
+            PermissionLevel::AuthenticationRequired => result |= AttPermission::WRITE | AttPermission::WRITE_AUTHEN,
             PermissionLevel::NotAllowed => (),
         }
         result
