@@ -424,12 +424,25 @@ impl Pairing {
             trace!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
                 (Step::Idle, Command::SecurityRequest) => {
+                    // Parse the peer's AuthReq from the SecurityRequest payload
+                    let peer_auth_req = AuthReq::from(command.payload[0]);
+                    let peer_requests_mitm = peer_auth_req.man_in_the_middle();
+
                     let mut auth_req = AuthReq::new(ops.bonding_flag());
                     if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
                         auth_req = auth_req.with_mitm();
                     }
                     pairing_data.local_features.security_properties = auth_req;
-                    if let Some(bond) = ops.try_enable_bonded_encryption()? {
+
+                    // Per Core Spec Vol 3, Part H, Section 3.6.7: if the existing bond
+                    // meets the peer's security requirements, re-encrypt with it;
+                    // otherwise initiate new pairing.
+                    let bond = ops.find_bond();
+                    let bond_sufficient = bond.as_ref().is_some_and(|b| {
+                        !peer_requests_mitm || b.security_level == SecurityLevel::EncryptedAuthenticated
+                    });
+                    if bond_sufficient {
+                        let bond = ops.try_enable_bonded_encryption()?.unwrap();
                         pairing_data.bond_information = Some(bond);
                         Step::WaitingBondedLinkEncryption
                     } else {
