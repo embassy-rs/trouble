@@ -262,6 +262,10 @@ impl Pairing {
         self.pairing_data.borrow().peer_address
     }
 
+    pub(crate) fn is_waiting_bonded_encryption(&self) -> bool {
+        matches!(*self.current_step.borrow(), Step::WaitingBondedLinkEncryption)
+    }
+
     #[cfg(feature = "legacy-pairing")]
     pub(crate) fn into_legacy(self) -> super::legacy_central::Pairing {
         let PairingData {

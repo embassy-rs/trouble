@@ -170,6 +170,13 @@ impl Pairing {
         }
     }
 
+    pub(crate) fn is_waiting_bonded_encryption(&self) -> bool {
+        match self {
+            Pairing::Central(c) => c.is_waiting_bonded_encryption(),
+            _ => false,
+        }
+    }
+
     pub(crate) fn peer_address(&self) -> Address {
         match self {
             Pairing::Central(central) => central.peer_address(),

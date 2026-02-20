@@ -367,6 +367,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 });
                 storage.role.replace(role);
                 storage.params = params;
+                #[cfg(feature = "security")]
+                {
+                    storage.bond_rejected = false;
+                }
 
                 match role {
                     LeConnRole::Central => {
@@ -902,6 +906,8 @@ pub struct ConnectionStorage<P> {
     pub security_level: SecurityLevel,
     #[cfg(feature = "security")]
     pub bondable: bool,
+    #[cfg(feature = "security")]
+    pub bond_rejected: bool,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -989,6 +995,8 @@ impl<P> ConnectionStorage<P> {
             metrics: Metrics::new(),
             #[cfg(feature = "security")]
             security_level: SecurityLevel::NoEncryption,
+            #[cfg(feature = "security")]
+            bond_rejected: false,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),

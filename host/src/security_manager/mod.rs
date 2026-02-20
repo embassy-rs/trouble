@@ -731,6 +731,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                             let _ = self.handle_security_error(connections, storage, &res);
                             if res.is_ok() {
                                 storage.security_level = sm.security_level();
+                                storage.bond_rejected = false;
                             }
                             if sm.result().is_some() {
                                 self.finished_waker.borrow_mut().wake();
@@ -759,6 +760,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     connections.with_connected_handle(handle, |storage| {
                         let sm = self.pairing_sm.borrow();
                         if let Some(sm) = &*sm {
+                            // If we were waiting for bonded encryption, mark the bond as
+                            // rejected on this connection so the next pairing attempt will
+                            // skip bonded encryption and initiate fresh pairing instead.
+                            if sm.is_waiting_bonded_encryption() {
+                                storage.bond_rejected = true;
+                            }
                             let mut rng = self.rng.borrow_mut();
                             let _res = sm.handle_event(
                                 pairing::Event::LinkEncryptedResult(false),
@@ -935,17 +942,13 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
     }
 
     fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error> {
-        if let Some(bond) = self
-            .security_manager
-            .state
-            .borrow()
-            .bond
-            .iter()
-            .find(|x| x.identity.match_identity(&self.peer_identity))
-        {
+        if self.storage.bond_rejected {
+            return Ok(None);
+        }
+        if let Some(bond) = self.find_bond() {
             self.security_manager
                 .try_send_event(SecurityEventData::EnableEncryption(self.conn_handle, bond.clone()))?;
-            Ok(Some(bond.clone()))
+            Ok(Some(bond))
         } else {
             Ok(None)
         }
