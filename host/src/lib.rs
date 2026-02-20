@@ -23,7 +23,7 @@ use crate::channel_manager::ChannelStorage;
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason};
 pub use crate::types::capabilities::IoCapabilities;
 
 /// Number of bonding information stored
@@ -107,7 +107,9 @@ pub mod prelude {
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "security")]
-    pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+    pub use crate::security_manager::{
+        BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason,
+    };
     pub use crate::types::capabilities::IoCapabilities;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
@@ -268,7 +270,7 @@ pub enum Error {
     Att(AttErrorCode),
     #[cfg(feature = "security")]
     /// Error from the security manager
-    Security(crate::security_manager::Reason),
+    Security(PairingFailedReason),
     /// Insufficient space in the buffer.
     InsufficientSpace,
     /// Invalid value.
