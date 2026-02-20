@@ -71,7 +71,7 @@ impl AttPermissions {
             PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
                 if level < SecurityLevel::Encrypted =>
             {
-                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
             }
             PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
                 Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
@@ -86,7 +86,7 @@ impl AttPermissions {
             PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
                 if level < SecurityLevel::Encrypted =>
             {
-                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
             }
             PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
                 Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
