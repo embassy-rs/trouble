@@ -606,6 +606,16 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
         let role = storage.role.ok_or(Error::InvalidValue)?;
         if !self.is_idle() {
+            // If pairing is already in progress for this peer, consider the request fulfilled.
+            let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+            let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+            let peer_address = Address {
+                kind: peer_address_kind,
+                addr: peer_identity.bd_addr,
+            };
+            if self.is_pairing_in_progress(peer_address) {
+                return Ok(());
+            }
             return Err(Error::InvalidState);
         }
         let mut pairing_sm = self.pairing_sm.borrow_mut();
