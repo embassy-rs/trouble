@@ -1562,6 +1562,65 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         }
     }
 
+    /// Read a long descriptor value using blob reads if necessary.
+    ///
+    /// This method automatically handles descriptors longer than ATT MTU
+    /// by using Read Blob requests to fetch the complete value.
+    pub async fn read_descriptor_long<T: AsGatt + ?Sized>(
+        &self,
+        descriptor: &Descriptor<T>,
+        dest: &mut [u8],
+    ) -> Result<usize, BleHostError<C::Error>> {
+        let first_read_len = self.read_descriptor(descriptor, dest).await?;
+        let att_mtu = self.connection.att_mtu() as usize;
+
+        if first_read_len != att_mtu - 1 {
+            return Ok(first_read_len);
+        }
+
+        let mut offset = first_read_len;
+        loop {
+            let response = self
+                .request(att::AttReq::ReadBlob {
+                    handle: descriptor.handle,
+                    offset: offset as u16,
+                })
+                .await?;
+
+            match Self::response(response.pdu.as_ref())? {
+                AttRsp::ReadBlob { data } => {
+                    debug!("[read_descriptor_long] Blob read returned {} bytes", data.len());
+                    if data.is_empty() {
+                        break;
+                    }
+
+                    let blob_read_len = data.len();
+                    let len_to_copy = blob_read_len.min(dest.len() - offset);
+                    dest[offset..offset + len_to_copy].copy_from_slice(&data[..len_to_copy]);
+                    offset += len_to_copy;
+
+                    if blob_read_len < att_mtu - 1 || len_to_copy < blob_read_len {
+                        break;
+                    }
+                }
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::INVALID_OFFSET => {
+                    trace!("[read_descriptor_long] Got INVALID_OFFSET, no more data");
+                    break;
+                }
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_LONG => {
+                    trace!("[read_descriptor_long] Attribute not long, no blob reads needed");
+                    break;
+                }
+                AttRsp::Error { code, .. } => {
+                    trace!("[read_descriptor_long] Got error: {:?}", code);
+                    return Err(Error::Att(code).into());
+                }
+                _ => return Err(Error::UnexpectedGattResponse.into()),
+            }
+        }
+        Ok(offset)
+    }
+
     /// Subscribe to indication/notification of a given Characteristic
     ///
     /// A listener is returned, which has a `next()` method
