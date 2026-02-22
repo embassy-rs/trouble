@@ -634,9 +634,22 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                             .next()
                             .and_then(|(handle, att)| matches!(att.data, AttributeData::Cccd { .. }).then_some(handle));
 
+                        // Scan forward to find the end of this characteristic's handles
+                        let mut end_handle = cccd_handle.unwrap_or(handle);
+                        while let Some((h, att)) = it.next() {
+                            if matches!(
+                                att.data,
+                                AttributeData::Declaration { .. } | AttributeData::Service { .. }
+                            ) {
+                                break;
+                            }
+                            end_handle = h;
+                        }
+
                         return Ok(Characteristic {
                             handle,
                             cccd_handle,
+                            end_handle,
                             props,
                             uuid,
                             phantom: PhantomData,
@@ -807,6 +820,8 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             handle: Characteristic {
                 handle,
                 cccd_handle,
+                // Temporarily set to value handle; updated in build() after descriptors are added
+                end_handle: cccd_handle.unwrap_or(handle),
                 props,
                 uuid: chrc_uuid,
                 phantom: PhantomData,
@@ -936,6 +951,8 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
     pub cccd_handle: Option<u16>,
     /// Handle value assigned to this characteristic when it is added to the Gatt Attribute Table
     pub handle: u16,
+    /// Last attribute handle belonging to this characteristic (value handle + descriptors)
+    pub end_handle: u16,
     /// Properties of this characteristic
     pub props: CharacteristicProps,
     /// UUID of this characteristic
@@ -1053,6 +1070,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         Characteristic {
             cccd_handle: self.cccd_handle,
             handle: self.handle,
+            end_handle: self.end_handle,
             props: self.props,
             uuid: self.uuid,
             phantom: PhantomData,
@@ -1244,7 +1262,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         }
     }
     /// Return the built characteristic.
-    pub fn build(self) -> Characteristic<T> {
+    pub fn build(mut self) -> Characteristic<T> {
+        self.handle.end_handle = self.table.with_inner(|t| t.next_handle() - 1);
         self.handle
     }
 }

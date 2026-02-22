@@ -18,7 +18,7 @@ use crate::att::{
     self, Att, AttCfm, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_IND,
     ATT_HANDLE_VALUE_NTF,
 };
-use crate::attribute::{AttributeData, Characteristic, Uuid};
+use crate::attribute::{AttributeData, Characteristic, CharacteristicProps, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 #[cfg(feature = "security")]
@@ -1112,6 +1112,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         characteristics
                             .push(Characteristic {
                                 handle,
+                                end_handle: 0, // Populated below after all characteristics are discovered
                                 props,
                                 cccd_handle: None,
                                 uuid: decl_uuid,
@@ -1132,8 +1133,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         let mut iter = characteristics.iter_mut().peekable();
         while let Some(characteristic) = iter.next() {
+            let end = iter.peek().map(|x| x.handle - 2).unwrap_or(service.end);
+            characteristic.end_handle = end;
             if characteristic.props.has_cccd() {
-                let end = iter.peek().map(|x| x.handle - 2).unwrap_or(service.end);
                 characteristic.cccd_handle = match self.get_characteristic_cccd(characteristic.handle + 1, end).await {
                     Ok(handle) => Some(handle),
                     Err(BleHostError::BleHost(Error::NotFound)) => None,
@@ -1152,7 +1154,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         uuid: &Uuid,
     ) -> Result<Characteristic<T>, BleHostError<C::Error>> {
         let mut start: u16 = service.start;
-        let mut found_indicate_or_notify_uuid = Option::None;
+        // Once we find the matching UUID, we store (value_handle, props) and continue
+        // iterating to find the next characteristic declaration to determine end_handle.
+        let mut found: Option<(u16, CharacteristicProps)> = None;
 
         loop {
             let data = att::AttReq::ReadByType {
@@ -1165,7 +1169,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             match Self::response(response.pdu.as_ref())? {
                 AttRsp::ReadByType { mut it } => {
                     while let Some(res) = it.next() {
-                        let (handle, item) = res?;
+                        let (declaration_handle, item) = res?;
                         let expected_items_len = 5;
                         let item_len = item.len();
 
@@ -1178,61 +1182,70 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         }
                         if let AttributeData::Declaration {
                             props,
-                            handle,
+                            handle: value_handle,
                             uuid: decl_uuid,
                         } = AttributeData::decode_declaration(item)?
                         {
-                            if let Some((start_handle, _)) = found_indicate_or_notify_uuid {
+                            if let Some((found_handle, found_props)) = found {
+                                let end = declaration_handle - 1;
+                                let cccd_handle: Option<u16> = if found_props.has_cccd() {
+                                    Some(self.get_characteristic_cccd(found_handle + 1, end).await?)
+                                } else {
+                                    None
+                                };
                                 return Ok(Characteristic {
-                                    handle: start_handle,
-                                    cccd_handle: Some(self.get_characteristic_cccd(start_handle, handle).await?),
-                                    props,
+                                    handle: found_handle,
+                                    end_handle: end,
+                                    cccd_handle,
+                                    props: found_props,
                                     uuid: *uuid,
                                     phantom: PhantomData,
                                 });
                             }
 
                             if *uuid == decl_uuid {
-                                // If there are "notify" and "indicate" characteristic properties we need to find the
-                                // next characteristic so we can determine the search space for the CCCD
-                                if !props.has_cccd() {
-                                    return Ok(Characteristic {
-                                        handle,
-                                        cccd_handle: None,
-                                        props,
-                                        uuid: *uuid,
-                                        phantom: PhantomData,
-                                    });
-                                }
-                                found_indicate_or_notify_uuid = Some((handle, props));
+                                found = Some((value_handle, props));
                             }
 
-                            if handle == 0xFFFF {
+                            if value_handle == 0xFFFF {
+                                if found.is_some() {
+                                    break; // Will be handled below as last characteristic
+                                }
                                 return Err(Error::NotFound.into());
                             }
-                            start = handle + 1;
+                            start = value_handle + 1;
                         } else {
                             return Err(Error::InvalidCharacteristicDeclarationData.into());
                         }
                     }
                 }
-                AttRsp::Error { request, handle, code } => match code {
-                    att::AttErrorCode::ATTRIBUTE_NOT_FOUND => match found_indicate_or_notify_uuid {
-                        Some((handle, props)) => {
-                            return Ok(Characteristic {
-                                handle,
-                                cccd_handle: Some(self.get_characteristic_cccd(handle, service.end).await?),
-                                props,
-                                uuid: *uuid,
-                                phantom: PhantomData,
-                            });
-                        }
-                        None => return Err(Error::NotFound.into()),
-                    },
+                AttRsp::Error { code, .. } => match code {
+                    att::AttErrorCode::ATTRIBUTE_NOT_FOUND => break,
                     _ => return Err(Error::Att(code).into()),
                 },
                 _ => return Err(Error::UnexpectedGattResponse.into()),
             }
+        }
+
+        // If we found the characteristic but it was the last one in the service
+        match found {
+            Some((handle, props)) => {
+                let end = service.end;
+                let cccd_handle: Option<u16> = if props.has_cccd() {
+                    Some(self.get_characteristic_cccd(handle + 1, end).await?)
+                } else {
+                    None
+                };
+                Ok(Characteristic {
+                    handle,
+                    end_handle: end,
+                    cccd_handle,
+                    props,
+                    uuid: *uuid,
+                    phantom: PhantomData,
+                })
+            }
+            None => Err(Error::NotFound.into()),
         }
     }
 
