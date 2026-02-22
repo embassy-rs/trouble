@@ -366,7 +366,6 @@ pub struct ExchangeMtuCommand {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[allow(unused)]
 pub struct DiscoverAllPrimaryCommand {
     pub addr_type: AddrKind,
     pub address: BdAddr,
@@ -392,7 +391,6 @@ pub struct FindIncludedCommand {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[allow(unused)]
 pub struct DiscoverAllChrcCommand {
     pub addr_type: AddrKind,
     pub address: BdAddr,
@@ -412,7 +410,6 @@ pub struct DiscoverChrcUuidCommand {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[allow(unused)]
 pub struct DiscoverAllDescCommand {
     pub addr_type: AddrKind,
     pub address: BdAddr,
@@ -621,7 +618,7 @@ pub enum GattCommand<'a> {
     ExchangeMtu(ExchangeMtuCommand),
 
     /// Discover all primary services (0x0b).
-    DiscoverAllPrimary(#[allow(unused)] DiscoverAllPrimaryCommand),
+    DiscoverAllPrimary(DiscoverAllPrimaryCommand),
 
     /// Discover primary service by UUID (0x0c).
     DiscoverPrimaryUuid(DiscoverPrimaryUuidCommand),
@@ -630,13 +627,13 @@ pub enum GattCommand<'a> {
     FindIncluded(#[allow(unused)] FindIncludedCommand),
 
     /// Discover all characteristics of a service (0x0e).
-    DiscoverAllChrc(#[allow(unused)] DiscoverAllChrcCommand),
+    DiscoverAllChrc(DiscoverAllChrcCommand),
 
     /// Discover characteristics by UUID (0x0f).
     DiscoverChrcUuid(DiscoverChrcUuidCommand),
 
     /// Discover all characteristic descriptors (0x10).
-    DiscoverAllDesc(#[allow(unused)] DiscoverAllDescCommand),
+    DiscoverAllDesc(DiscoverAllDescCommand),
 
     // === Client Commands - Read (0x11-0x14, 0x20) ===
     /// Read characteristic value/descriptor (0x11).
@@ -1092,7 +1089,6 @@ pub enum GattResponse {
     Characteristics(Box<[CharacteristicInfo]>),
 
     /// Descriptors discovered (response to 0x10).
-    #[allow(unused)]
     Descriptors(Box<[DescriptorInfo]>),
 
     /// Read data (response to 0x11, 0x13, 0x14, 0x20).

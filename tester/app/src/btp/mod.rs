@@ -358,6 +358,7 @@ where
                                 GR::MtuExchanged => Ok(BtpResponse::Gatt(GattResponse::MtuExchanged)),
                                 GR::Services(s) => Ok(BtpResponse::Gatt(GattResponse::Services(s))),
                                 GR::Characteristics(c) => Ok(BtpResponse::Gatt(GattResponse::Characteristics(c))),
+                                GR::Descriptors(d) => Ok(BtpResponse::Gatt(GattResponse::Descriptors(d))),
                                 GR::ReadData(r) => Ok(BtpResponse::Gatt(GattResponse::ReadData(r))),
                                 GR::ReadUuidData(r) => Ok(BtpResponse::Gatt(GattResponse::ReadUuidData(r))),
                                 GR::WriteResult(att_rsp) => Ok(BtpResponse::Gatt(GattResponse::WriteResult(att_rsp))),
@@ -1019,11 +1020,43 @@ async fn handle_gatt<'a>(
             Forwarded
         }
 
+        DiscoverAllPrimary(c) => {
+            channels
+                .gatt_client
+                .send(gatt_client::Command::DiscoverAllPrimary {
+                    addr_type: c.addr_type,
+                    address: c.address,
+                })
+                .await;
+            Forwarded
+        }
+        DiscoverAllChrc(c) => {
+            channels
+                .gatt_client
+                .send(gatt_client::Command::DiscoverAllChrc {
+                    addr_type: c.addr_type,
+                    address: c.address,
+                    start_handle: c.start_handle,
+                    end_handle: c.end_handle,
+                })
+                .await;
+            Forwarded
+        }
+        DiscoverAllDesc(c) => {
+            channels
+                .gatt_client
+                .send(gatt_client::Command::DiscoverAllDesc {
+                    addr_type: c.addr_type,
+                    address: c.address,
+                    start_handle: c.start_handle,
+                    end_handle: c.end_handle,
+                })
+                .await;
+            Forwarded
+        }
+
         // Tier 2/3 commands — not supported by trouble-host
-        DiscoverAllPrimary(..)
-        | FindIncluded(..)
-        | DiscoverAllChrc(..)
-        | DiscoverAllDesc(..)
+        FindIncluded(..)
         | ReadMultiple(..)
         | ReadMultipleVar(..)
         | WriteLong(..)

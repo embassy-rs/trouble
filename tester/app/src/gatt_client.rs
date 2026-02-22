@@ -83,6 +83,22 @@ pub enum Command {
         enable: bool,
         ccc_handle: u16,
     },
+    DiscoverAllPrimary {
+        addr_type: AddrKind,
+        address: BdAddr,
+    },
+    DiscoverAllChrc {
+        addr_type: AddrKind,
+        address: BdAddr,
+        start_handle: u16,
+        end_handle: u16,
+    },
+    DiscoverAllDesc {
+        addr_type: AddrKind,
+        address: BdAddr,
+        start_handle: u16,
+        end_handle: u16,
+    },
 }
 
 impl Command {
@@ -98,7 +114,10 @@ impl Command {
             | Command::Write { addr_type, address, .. }
             | Command::WriteWithoutRsp { addr_type, address, .. }
             | Command::CfgNotify { addr_type, address, .. }
-            | Command::CfgIndicate { addr_type, address, .. } => (addr_type, address),
+            | Command::CfgIndicate { addr_type, address, .. }
+            | Command::DiscoverAllPrimary { addr_type, address, .. }
+            | Command::DiscoverAllChrc { addr_type, address, .. }
+            | Command::DiscoverAllDesc { addr_type, address, .. } => (addr_type, address),
         };
         Address {
             kind: *kind,
@@ -120,6 +139,9 @@ impl core::fmt::Debug for Command {
             Self::WriteWithoutRsp { .. } => write!(f, "WriteWithoutRsp"),
             Self::CfgNotify { .. } => write!(f, "CfgNotify"),
             Self::CfgIndicate { .. } => write!(f, "CfgIndicate"),
+            Self::DiscoverAllPrimary { .. } => write!(f, "DiscoverAllPrimary"),
+            Self::DiscoverAllChrc { .. } => write!(f, "DiscoverAllChrc"),
+            Self::DiscoverAllDesc { .. } => write!(f, "DiscoverAllDesc"),
         }
     }
 }
@@ -138,17 +160,20 @@ impl defmt::Format for Command {
             Self::WriteWithoutRsp { .. } => defmt::write!(fmt, "WriteWithoutRsp"),
             Self::CfgNotify { .. } => defmt::write!(fmt, "CfgNotify"),
             Self::CfgIndicate { .. } => defmt::write!(fmt, "CfgIndicate"),
+            Self::DiscoverAllPrimary { .. } => defmt::write!(fmt, "DiscoverAllPrimary"),
+            Self::DiscoverAllChrc { .. } => defmt::write!(fmt, "DiscoverAllChrc"),
+            Self::DiscoverAllDesc { .. } => defmt::write!(fmt, "DiscoverAllDesc"),
         }
     }
 }
 
 /// Responses from the GATT client task back to the BTP dispatcher.
 #[derive(Debug)]
-#[allow(dead_code)] // Variants used once trouble-host API additions are made
 pub enum Response {
     MtuExchanged,
     Services(Box<[gatt::ServiceInfo]>),
     Characteristics(Box<[gatt::CharacteristicInfo]>),
+    Descriptors(Box<[gatt::DescriptorInfo]>),
     ReadData(gatt::ReadDataResponse),
     ReadUuidData(gatt::ReadUuidDataResponse),
     WriteResult(u8),
@@ -164,6 +189,7 @@ impl defmt::Format for Response {
             Self::MtuExchanged => defmt::write!(fmt, "MtuExchanged"),
             Self::Services(s) => defmt::write!(fmt, "Services(count={})", s.len()),
             Self::Characteristics(c) => defmt::write!(fmt, "Characteristics(count={})", c.len()),
+            Self::Descriptors(d) => defmt::write!(fmt, "Descriptors(count={})", d.len()),
             Self::ReadData(r) => {
                 defmt::write!(fmt, "ReadData(att_rsp={}, len={})", r.att_response, r.data.len())
             }
@@ -666,6 +692,86 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                 Ok(()) => Response::WriteWithoutRspDone,
                 Err(e) => {
                     error!("WriteWithoutRsp failed: {:?}", e);
+                    Response::Fail
+                }
+            }
+        }
+        Command::DiscoverAllPrimary { .. } => match client.services().await {
+            Ok(discovered) => {
+                let infos: alloc::vec::Vec<gatt::ServiceInfo> = discovered
+                    .iter()
+                    .map(|s| {
+                        let range = s.handle_range();
+                        gatt::ServiceInfo {
+                            start_handle: *range.start(),
+                            end_handle: *range.end(),
+                            uuid: s.uuid(),
+                        }
+                    })
+                    .collect();
+                cache.services = discovered;
+                Response::Services(infos.into_boxed_slice())
+            }
+            Err(e) => {
+                error!("DiscoverAllPrimary failed: {:?}", e);
+                Response::Fail
+            }
+        },
+        Command::DiscoverAllChrc {
+            start_handle,
+            end_handle,
+            ..
+        } => {
+            let Some(service) = cache.find_service(*start_handle, *end_handle, client).await else {
+                error!("No cached service for handle range {}..={}", start_handle, end_handle);
+                return Response::Fail;
+            };
+            match client.characteristics::<MAX_CHARACTERISTICS>(service).await {
+                Ok(chars) => {
+                    let infos: alloc::vec::Vec<gatt::CharacteristicInfo> = chars
+                        .iter()
+                        .map(|c| gatt::CharacteristicInfo {
+                            char_handle: c.handle - 1,
+                            value_handle: c.handle,
+                            properties: c.props.to_raw(),
+                            uuid: c.uuid.clone(),
+                        })
+                        .collect();
+                    cache.characteristics.extend(chars.into_iter());
+                    Response::Characteristics(infos.into_boxed_slice())
+                }
+                Err(e) => {
+                    error!("DiscoverAllChrc failed: {:?}", e);
+                    Response::Fail
+                }
+            }
+        }
+        Command::DiscoverAllDesc {
+            start_handle,
+            end_handle,
+            ..
+        } => {
+            // start_handle is the characteristic value handle + 1, so the characteristic
+            // declaration handle is start_handle - 2 and its value handle is start_handle - 1.
+            let char_handle = start_handle - 1;
+            let Some(chrc) = cache.find_characteristic(char_handle, client).await else {
+                error!("No cached characteristic for handle {}", char_handle);
+                return Response::Fail;
+            };
+            match client.descriptors::<[u8], 64>(chrc).await {
+                Ok(descs) => {
+                    let infos: alloc::vec::Vec<gatt::DescriptorInfo> = descs
+                        .iter()
+                        .filter(|d| d.handle() <= *end_handle)
+                        .map(|d| gatt::DescriptorInfo {
+                            handle: d.handle(),
+                            uuid: d.uuid().clone(),
+                        })
+                        .collect();
+                    Response::Descriptors(infos.into_boxed_slice())
+                }
+                Err(e) => {
+                    error!("DiscoverAllDesc failed: {:?}", e);
                     Response::Fail
                 }
             }
