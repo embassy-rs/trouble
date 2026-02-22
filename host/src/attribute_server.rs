@@ -726,7 +726,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
                     } = &att.data
                     {
                         if uuid.as_raw() == attr_value {
-                            if w.available() < 4 + uuid.as_raw().len() {
+                            if w.available() < 4 {
                                 break;
                             }
                             w.write(handle)?;
@@ -767,6 +767,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
                     if t == 0 {
                         t = att.uuid.get_type();
                     } else if t != att.uuid.get_type() {
+                        break;
+                    }
+                    if body.available() < 2 + att.uuid.as_raw().len() {
                         break;
                     }
                     body.write(handle)?;
