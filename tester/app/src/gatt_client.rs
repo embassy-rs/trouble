@@ -19,6 +19,8 @@ pub type ConnectionSignal = Signal<NoopRawMutex, Address>;
 const MAX_SERVICES: usize = 32;
 /// Maximum number of discovered characteristics cached per connection.
 const MAX_CHARACTERISTICS: usize = 64;
+/// Maximum number of discovered descriptors cached per connection.
+const MAX_DESCRIPTORS: usize = 64;
 
 /// Commands forwarded from btp::run to the gatt_client task.
 ///
@@ -347,6 +349,7 @@ async fn next_command<'a>(
 struct DiscoveryCache {
     services: heapless::Vec<ServiceHandle, MAX_SERVICES>,
     characteristics: heapless::Vec<Characteristic<[u8]>, MAX_CHARACTERISTICS>,
+    descriptors: heapless::Vec<Descriptor<[u8]>, MAX_DESCRIPTORS>,
 }
 
 impl DiscoveryCache {
@@ -354,6 +357,7 @@ impl DiscoveryCache {
         Self {
             services: heapless::Vec::new(),
             characteristics: heapless::Vec::new(),
+            descriptors: heapless::Vec::new(),
         }
     }
 
@@ -430,6 +434,56 @@ impl DiscoveryCache {
             }
             Err(e) => {
                 error!("Auto-discover services failed: {:?}", e);
+                None
+            }
+        }
+    }
+
+    /// Find a cached descriptor by its handle, with auto-discovery fallback.
+    async fn find_descriptor<C: crate::Controller, P: PacketPool>(
+        &mut self,
+        handle: u16,
+        client: &GattClient<'_, C, P, MAX_SERVICES>,
+    ) -> Option<&Descriptor<[u8]>> {
+        if let Some(i) = self.descriptors.iter().position(|d| d.handle() == handle) {
+            return Some(&self.descriptors[i]);
+        }
+
+        // Find the characteristic whose handle range contains this descriptor handle.
+        // A descriptor handle is between char.handle (exclusive) and char.end_handle (inclusive).
+        let chrc_idx = self
+            .characteristics
+            .iter()
+            .position(|c| c.handle < handle && handle <= c.end_handle);
+        let chrc = if let Some(i) = chrc_idx {
+            &self.characteristics[i]
+        } else {
+            // Auto-discover services, then characteristics for the containing service.
+            let service = self.find_service_containing(handle, client).await?;
+            match client.characteristics::<MAX_CHARACTERISTICS>(service).await {
+                Ok(chars) => {
+                    self.characteristics.extend(chars.into_iter());
+                }
+                Err(e) => {
+                    error!("Auto-discover characteristics for descriptor lookup failed: {:?}", e);
+                    return None;
+                }
+            }
+            let i = self
+                .characteristics
+                .iter()
+                .position(|c| c.handle < handle && handle <= c.end_handle)?;
+            &self.characteristics[i]
+        };
+
+        // Discover descriptors for the containing characteristic.
+        match client.descriptors::<[u8], MAX_DESCRIPTORS>(chrc).await {
+            Ok(descs) => {
+                self.descriptors.extend(descs.into_iter());
+                self.descriptors.iter().find(|d| d.handle() == handle)
+            }
+            Err(e) => {
+                error!("Auto-discover descriptors failed: {:?}", e);
                 None
             }
         }
@@ -555,12 +609,16 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             }
         }
         Command::Read { handle, .. } => {
-            let Some(chrc) = cache.find_characteristic(*handle, client).await else {
-                error!("No cached characteristic for handle {}", handle);
+            let mut buf = alloc::vec![0u8; 512];
+            let result = if let Some(chrc) = cache.find_characteristic(*handle, client).await {
+                client.read_characteristic(chrc, &mut buf).await
+            } else if let Some(desc) = cache.find_descriptor(*handle, client).await {
+                client.read_descriptor(desc, &mut buf).await
+            } else {
+                error!("No cached characteristic or descriptor for handle {}", handle);
                 return Response::Fail;
             };
-            let mut buf = alloc::vec![0u8; 512];
-            match client.read_characteristic(chrc, &mut buf).await {
+            match result {
                 Ok(len) => {
                     buf.truncate(len);
                     Response::ReadData(gatt::ReadDataResponse {
@@ -583,16 +641,20 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             }
         }
         Command::ReadLong { handle, offset, .. } => {
-            let Some(chrc) = cache.find_characteristic(*handle, client).await else {
-                error!("No cached characteristic for handle {}", handle);
-                return Response::Fail;
-            };
             if *offset != 0 {
                 error!("Trouble does not support read long with offset {}", offset);
                 return Response::Fail;
             }
             let mut buf = alloc::vec![0u8; 512];
-            match client.read_characteristic_long(chrc, &mut buf).await {
+            let result = if let Some(chrc) = cache.find_characteristic(*handle, client).await {
+                client.read_characteristic_long(chrc, &mut buf).await
+            } else if let Some(desc) = cache.find_descriptor(*handle, client).await {
+                client.read_descriptor_long(desc, &mut buf).await
+            } else {
+                error!("No cached characteristic or descriptor for handle {}", handle);
+                return Response::Fail;
+            };
+            match result {
                 Ok(len) => {
                     buf.truncate(len);
                     Response::ReadData(gatt::ReadDataResponse {
@@ -666,11 +728,15 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             Response::Fail
         }
         Command::Write { handle, data, .. } => {
-            let Some(chrc) = cache.find_characteristic(*handle, client).await else {
-                error!("No cached characteristic for handle {}", handle);
+            let result = if let Some(chrc) = cache.find_characteristic(*handle, client).await {
+                client.write_characteristic(chrc, data).await
+            } else if let Some(desc) = cache.find_descriptor(*handle, client).await {
+                client.write_descriptor(desc, data).await
+            } else {
+                error!("No cached characteristic or descriptor for handle {}", handle);
                 return Response::Fail;
             };
-            match client.write_characteristic(chrc, data).await {
+            match result {
                 Ok(()) => Response::WriteResult(0x00),
                 Err(ref e) if att_error_code(e).is_some() => {
                     let code = att_error_code(e).unwrap();
@@ -758,7 +824,7 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                 error!("No cached characteristic for handle {}", char_handle);
                 return Response::Fail;
             };
-            match client.descriptors::<[u8], 64>(chrc).await {
+            match client.descriptors::<[u8], MAX_DESCRIPTORS>(chrc).await {
                 Ok(descs) => {
                     let infos: alloc::vec::Vec<gatt::DescriptorInfo> = descs
                         .iter()
@@ -768,6 +834,7 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                             uuid: d.uuid().clone(),
                         })
                         .collect();
+                    cache.descriptors.extend(descs.into_iter());
                     Response::Descriptors(infos.into_boxed_slice())
                 }
                 Err(e) => {
