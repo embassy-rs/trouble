@@ -2,6 +2,7 @@
 use core::cell::RefCell;
 use core::future::Future;
 use core::marker::PhantomData;
+use core::ops::ControlFlow;
 
 use bt_hci::controller::Controller;
 use bt_hci::param::{ConnHandle, FrameSpaceInitiator, PhyKind, PhyMask, SpacingTypes, Status};
@@ -18,7 +19,7 @@ use crate::att::{
     self, Att, AttCfm, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_IND,
     ATT_HANDLE_VALUE_NTF,
 };
-use crate::attribute::{AttributeData, Characteristic, CharacteristicProps, Uuid};
+use crate::attribute::{AttributeData, Characteristic, CharacteristicProps, Descriptor, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 #[cfg(feature = "security")]
@@ -1249,17 +1250,22 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         }
     }
 
-    async fn get_characteristic_cccd(
+    /// Discover descriptors in a handle range, calling `callback` for each discovered handle/UUID pair.
+    ///
+    /// Returns `Ok(Some(val))` if `callback` returns `ControlFlow::Break(val)`, or `Ok(None)` if
+    /// the entire range was iterated without breaking.
+    async fn find_descriptors<R>(
         &self,
-        char_start_handle: u16,
-        char_end_handle: u16,
-    ) -> Result<u16, BleHostError<C::Error>> {
-        let mut start_handle = char_start_handle;
+        start: u16,
+        end: u16,
+        mut callback: impl FnMut(u16, Uuid) -> ControlFlow<R>,
+    ) -> Result<Option<R>, BleHostError<C::Error>> {
+        let mut start_handle = start;
 
-        while start_handle <= char_end_handle {
+        while start_handle <= end {
             let data = att::AttReq::FindInformation {
                 start_handle,
-                end_handle: char_end_handle,
+                end_handle: end,
             };
 
             let response = self.request(data).await?;
@@ -1267,17 +1273,90 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             match Self::response(response.pdu.as_ref())? {
                 AttRsp::FindInformation { mut it } => {
                     while let Some(Ok((handle, uuid))) = it.next() {
-                        if uuid == CLIENT_CHARACTERISTIC_CONFIGURATION.into() {
-                            return Ok(handle);
+                        if let ControlFlow::Break(val) = callback(handle, uuid) {
+                            return Ok(Some(val));
                         }
                         start_handle = handle + 1;
                     }
                 }
-                AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND => {
+                    return Ok(None);
+                }
+                AttRsp::Error { code, .. } => return Err(Error::Att(code).into()),
                 _ => return Err(Error::UnexpectedGattResponse.into()),
             }
         }
-        Err(Error::NotFound.into())
+        Ok(None)
+    }
+
+    async fn get_characteristic_cccd(
+        &self,
+        char_start_handle: u16,
+        char_end_handle: u16,
+    ) -> Result<u16, BleHostError<C::Error>> {
+        self.find_descriptors(char_start_handle, char_end_handle, |handle, uuid| {
+            if uuid == CLIENT_CHARACTERISTIC_CONFIGURATION.into() {
+                ControlFlow::Break(handle)
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .await?
+        .ok_or(Error::NotFound.into())
+    }
+
+    /// Discover all descriptors for a characteristic.
+    ///
+    /// Returns a list of descriptors found in the handle range belonging to the characteristic.
+    pub async fn descriptors<T: AsGatt + ?Sized, const N: usize>(
+        &self,
+        characteristic: &Characteristic<T>,
+    ) -> Result<Vec<Descriptor<[u8]>, N>, BleHostError<C::Error>> {
+        let start = characteristic.handle + 1;
+        let end = characteristic.end_handle;
+        if start > end {
+            return Ok(Vec::new());
+        }
+        let mut result = Vec::new();
+        self.find_descriptors(start, end, |handle, uuid| {
+            let desc = Descriptor {
+                handle,
+                uuid,
+                phantom: PhantomData,
+            };
+            if result.push(desc).is_err() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .await?;
+        Ok(result)
+    }
+
+    /// Find a specific descriptor by UUID for a characteristic.
+    ///
+    /// Returns the first descriptor matching the given UUID.
+    pub async fn descriptor_by_uuid<T: AsGatt + ?Sized, DT: AsGatt + ?Sized>(
+        &self,
+        characteristic: &Characteristic<T>,
+        uuid: &Uuid,
+    ) -> Result<Descriptor<DT>, BleHostError<C::Error>> {
+        let start = characteristic.handle + 1;
+        let end = characteristic.end_handle;
+        self.find_descriptors(start, end, |handle, desc_uuid| {
+            if desc_uuid == *uuid {
+                ControlFlow::Break(Descriptor {
+                    handle,
+                    uuid: desc_uuid,
+                    phantom: PhantomData,
+                })
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .await?
+        .ok_or(Error::NotFound.into())
     }
 
     /// Read a characteristic described by a handle.
@@ -1437,6 +1516,50 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         self.command(data).await?;
 
         Ok(())
+    }
+
+    /// Read a descriptor value.
+    ///
+    /// The number of bytes copied into the provided buffer is returned.
+    pub async fn read_descriptor<T: AsGatt + ?Sized>(
+        &self,
+        descriptor: &Descriptor<T>,
+        dest: &mut [u8],
+    ) -> Result<usize, BleHostError<C::Error>> {
+        let response = self
+            .request(att::AttReq::Read {
+                handle: descriptor.handle,
+            })
+            .await?;
+
+        match Self::response(response.pdu.as_ref())? {
+            AttRsp::Read { data } => {
+                let to_copy = data.len().min(dest.len());
+                dest[..to_copy].copy_from_slice(&data[..to_copy]);
+                Ok(to_copy)
+            }
+            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
+        }
+    }
+
+    /// Write a descriptor value.
+    pub async fn write_descriptor<T: AsGatt + ?Sized>(
+        &self,
+        descriptor: &Descriptor<T>,
+        buf: &[u8],
+    ) -> Result<(), BleHostError<C::Error>> {
+        let data = att::AttReq::Write {
+            handle: descriptor.handle,
+            data: buf,
+        };
+
+        let response = self.request(data).await?;
+        match Self::response(response.pdu.as_ref())? {
+            AttRsp::Write => Ok(()),
+            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
+        }
     }
 
     /// Subscribe to indication/notification of a given Characteristic
