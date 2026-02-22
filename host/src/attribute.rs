@@ -480,7 +480,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// Returns `None` if the attribute handle is invalid.
     pub fn uuid(&self, attribute: u16) -> Option<Uuid> {
-        self.with_attribute(attribute, |att| att.uuid.clone())
+        self.with_attribute(attribute, |att| att.uuid)
     }
 
     pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
@@ -772,7 +772,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                 data: AttributeData::Declaration {
                     props,
                     handle: value_handle,
-                    uuid: uuid.clone(),
+                    uuid,
                 },
             });
 

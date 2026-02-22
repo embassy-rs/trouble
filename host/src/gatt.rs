@@ -843,7 +843,7 @@ impl ServiceHandle {
 
     /// Get the UUID of this service
     pub fn uuid(&self) -> Uuid {
-        self.uuid.clone()
+        self.uuid
     }
 }
 
@@ -1042,7 +1042,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         let svc = ServiceHandle {
                             start: handle,
                             end,
-                            uuid: uuid.clone(),
+                            uuid: *uuid,
                         };
                         result.push(svc.clone()).map_err(|_| Error::InsufficientSpace)?;
                         let mut known = self.known_services.borrow_mut();
@@ -1367,7 +1367,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         let data = att::AttReq::ReadByType {
             start: service.start,
             end: service.end,
-            attribute_type: uuid.clone(),
+            attribute_type: *uuid,
         };
 
         let response = self.request(data).await?;
@@ -1587,7 +1587,7 @@ mod tests {
         let att = Att::Client(AttClient::Request(AttReq::ReadByType {
             start,
             end,
-            attribute_type: uuid.clone(),
+            attribute_type: *uuid,
         }));
 
         let mut packet = DefaultPacketPool::allocate().unwrap();
