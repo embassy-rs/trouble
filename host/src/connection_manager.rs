@@ -685,7 +685,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         {
             let current_level = self.get_security_level(index)?;
             if current_level != SecurityLevel::NoEncryption {
-                return Err(Error::NotSupported);
+                return Ok(());
             }
             self.security_manager
                 .initiate(self, &self.state.borrow().connections[index as usize], user_initiated)
