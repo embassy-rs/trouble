@@ -626,7 +626,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
         self.iterate_from(handle - 1, |mut it| {
             if let Some((_, att)) = it.next() {
-                if let AttributeData::Declaration { props, .. } = att.data {
+                if let AttributeData::Declaration { props, uuid, .. } = &att.data {
+                    let props = *props;
+                    let uuid = *uuid;
                     if it.next().is_some() {
                         let cccd_handle = it
                             .next()
@@ -636,6 +638,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                             handle,
                             cccd_handle,
                             props,
+                            uuid,
                             phantom: PhantomData,
                         });
                     }
@@ -764,6 +767,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         props: CharacteristicProps,
         data: AttributeData<'d>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
+        let chrc_uuid = uuid;
         // First the characteristic declaration
         let (handle, cccd_handle) = self.table.with_inner(|table| {
             let value_handle = table.next_handle() + 1;
@@ -804,6 +808,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                 handle,
                 cccd_handle,
                 props,
+                uuid: chrc_uuid,
                 phantom: PhantomData,
             },
             table: self.table,
@@ -933,6 +938,8 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
     pub handle: u16,
     /// Properties of this characteristic
     pub props: CharacteristicProps,
+    /// UUID of this characteristic
+    pub uuid: Uuid,
     pub(crate) phantom: PhantomData<T>,
 }
 
@@ -1047,6 +1054,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
             cccd_handle: self.cccd_handle,
             handle: self.handle,
             props: self.props,
+            uuid: self.uuid,
             phantom: PhantomData,
         }
     }
@@ -1100,6 +1108,7 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
 
         Descriptor {
             handle,
+            uuid,
             phantom: PhantomData,
         }
     }
@@ -1245,7 +1254,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
 #[derive(Clone, Copy, Debug)]
 pub struct Descriptor<T: AsGatt + ?Sized> {
     pub(crate) handle: u16,
-    phantom: PhantomData<T>,
+    pub(crate) uuid: Uuid,
+    pub(crate) phantom: PhantomData<T>,
 }
 
 impl<T: AsGatt> AttributeHandle for Descriptor<T> {
@@ -1257,6 +1267,16 @@ impl<T: AsGatt> AttributeHandle for Descriptor<T> {
 }
 
 impl<T: AsGatt + ?Sized> Descriptor<T> {
+    /// Get the handle of this descriptor.
+    pub fn handle(&self) -> u16 {
+        self.handle
+    }
+
+    /// Get the UUID of this descriptor.
+    pub fn uuid(&self) -> &Uuid {
+        &self.uuid
+    }
+
     /// Set the value of the descriptor in the provided attribute server.
     pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
         &self,

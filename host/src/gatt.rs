@@ -1114,6 +1114,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                                 handle,
                                 props,
                                 cccd_handle: None,
+                                uuid: decl_uuid,
                                 phantom: PhantomData,
                             })
                             .map_err(|_| Error::InsufficientSpace)?;
@@ -1186,6 +1187,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                                     handle: start_handle,
                                     cccd_handle: Some(self.get_characteristic_cccd(start_handle, handle).await?),
                                     props,
+                                    uuid: *uuid,
                                     phantom: PhantomData,
                                 });
                             }
@@ -1198,6 +1200,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                                         handle,
                                         cccd_handle: None,
                                         props,
+                                        uuid: *uuid,
                                         phantom: PhantomData,
                                     });
                                 }
@@ -1220,6 +1223,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                                 handle,
                                 cccd_handle: Some(self.get_characteristic_cccd(handle, service.end).await?),
                                 props,
+                                uuid: *uuid,
                                 phantom: PhantomData,
                             });
                         }
