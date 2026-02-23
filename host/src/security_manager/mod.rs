@@ -247,6 +247,14 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         }
     }
 
+    /// The address of the peer that is currently being paired with.
+    pub(crate) fn peer_address(&self) -> Option<Address> {
+        self.pairing_sm
+            .borrow()
+            .as_ref()
+            .and_then(|sm| sm.result().is_none().then_some(sm.peer_address()))
+    }
+
     pub(crate) async fn wait_finished(&self, address: Address) -> Result<(), Error> {
         poll_fn(|cx| {
             self.finished_waker.borrow_mut().register(cx.waker());
