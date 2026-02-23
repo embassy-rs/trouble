@@ -78,19 +78,20 @@ impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
 impl<P> State<'_, P> {
     /// Register PSMs for listening. Returns Err(AlreadyInUse) if any PSM is already registered.
     fn register_psms(&mut self, psms: &[u16]) -> Result<(), Error> {
-        // Check for overlap first
+        // Validate and check for overlap first
         for &psm in psms {
-            if self.is_psm_registered(psm) {
+            if !(1..=255).contains(&psm) {
+                return Err(Error::InvalidValue);
+            } else if self.is_psm_registered(psm) {
                 return Err(Error::AlreadyInUse);
             }
         }
+
         // All clear, set the bits
         for &psm in psms {
-            if (1..=255).contains(&psm) {
-                let idx = psm as usize / 32;
-                let bit = psm as usize % 32;
-                self.registered_psms[idx] |= 1 << bit;
-            }
+            let idx = psm as usize / 32;
+            let bit = psm as usize % 32;
+            self.registered_psms[idx] |= 1 << bit;
         }
         Ok(())
     }
