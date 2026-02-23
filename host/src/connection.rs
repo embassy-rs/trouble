@@ -580,7 +580,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
 
     /// Check if the peer is a bonded device.
     #[cfg(feature = "security")]
-    pub(crate) fn is_bonded_peer(&self) -> bool {
+    pub fn is_bonded_peer(&self) -> bool {
         self.manager.is_bonded_peer(self.index)
     }
 
