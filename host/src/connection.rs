@@ -632,6 +632,24 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.metrics(self.index, f)
     }
 
+    #[cfg(feature = "att-queued-writes")]
+    pub(crate) fn prepare_write(&self, handle: u16, offset: u16, value: &[u8]) -> Result<(), crate::att::AttErrorCode> {
+        self.manager.prepare_write(self.index, handle, offset, value)
+    }
+
+    #[cfg(feature = "att-queued-writes")]
+    pub(crate) fn with_prepare_write<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&crate::connection_manager::PrepareWriteState) -> R,
+    {
+        self.manager.with_prepare_write(self.index, f)
+    }
+
+    #[cfg(feature = "att-queued-writes")]
+    pub(crate) fn clear_prepare_write(&self) {
+        self.manager.clear_prepare_write(self.index)
+    }
+
     /// The RSSI value for this connection.
     pub async fn rssi<T>(&self, stack: &Stack<'_, T, P>) -> Result<i8, BleHostError<T::Error>>
     where

@@ -323,9 +323,9 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
         let allowed = match &att {
             AttClient::Command(AttCmd::Write { handle, .. }) => server.can_write(&data.connection, *handle),
             AttClient::Request(req) => match req {
-                AttReq::Write { handle, .. } | AttReq::PrepareWrite { handle, .. } => {
-                    server.can_write(&data.connection, *handle)
-                }
+                AttReq::Write { handle, .. } => server.can_write(&data.connection, *handle),
+                #[cfg(feature = "att-queued-writes")]
+                AttReq::PrepareWrite { handle, .. } => server.can_write(&data.connection, *handle),
                 AttReq::Read { handle } | AttReq::ReadBlob { handle, .. } => server.can_read(&data.connection, *handle),
                 AttReq::ReadMultiple { handles } => handles.chunks_exact(2).try_for_each(|handle| {
                     server.can_read(&data.connection, u16::from_le_bytes(handle.try_into().unwrap()))
