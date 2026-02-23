@@ -61,7 +61,7 @@ use bt_hci::param::LeAdvEventKind;
 use embassy_futures::select::{Either, Either5, select, select5};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, DynamicSender};
-use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
 use embedded_io_async::{Read, Write};
 use rand_core::{CryptoRng, RngCore};
 use static_cell::StaticCell;
@@ -352,8 +352,10 @@ where
     let central_command = Channel::<NoopRawMutex, central::Command, 1>::new();
     let gatt_client_command = Channel::<NoopRawMutex, gatt_client::Command, 1>::new();
     let l2cap_command = Channel::<NoopRawMutex, l2cap::Command, 1>::new();
-    let gatt_client_signal = Signal::<NoopRawMutex, Address>::new();
-    let l2cap_conn_signal: l2cap::ConnectionSignal<'_, DefaultPacketPool> = Signal::new();
+    let conn_watch: Watch<NoopRawMutex, Connection<'_, DefaultPacketPool>, 2> = Watch::new();
+    let conn_sender = conn_watch.dyn_sender();
+    let mut gatt_client_rx = conn_watch.dyn_receiver().unwrap();
+    let mut l2cap_rx = conn_watch.dyn_receiver().unwrap();
 
     let channels = command_channel::CommandChannels {
         peripheral: peripheral_command.sender(),
@@ -368,7 +370,7 @@ where
             &stack,
             CommandReceiver::new(l2cap_command.receiver(), response.sender()),
             events.dyn_sender(),
-            &l2cap_conn_signal,
+            &mut l2cap_rx,
         ),
         select5(
             ble_task(runner, events.dyn_sender(), &scan_mode),
@@ -378,8 +380,7 @@ where
                 CommandReceiver::new(peripheral_command.receiver(), response.sender()),
                 &server,
                 events.dyn_sender(),
-                &gatt_client_signal,
-                &l2cap_conn_signal,
+                &conn_sender,
             ),
             central::run(
                 &stack,
@@ -387,14 +388,13 @@ where
                 CommandReceiver::new(central_command.receiver(), response.sender()),
                 &server,
                 events.dyn_sender(),
-                &gatt_client_signal,
-                &l2cap_conn_signal,
+                &conn_sender,
             ),
             gatt_client::run(
                 &stack,
                 CommandReceiver::new(gatt_client_command.receiver(), response.sender()),
                 events.dyn_sender(),
-                &gatt_client_signal,
+                &mut gatt_client_rx,
             ),
             btp::run(
                 pre,

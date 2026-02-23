@@ -1,18 +1,12 @@
 use alloc::boxed::Box;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_futures::select::{Either, select};
 use embassy_sync::channel::DynamicSender;
+use embassy_sync::watch;
 use embassy_time::Duration;
 use trouble_host::prelude::*;
 
 use crate::Event;
-use crate::gatt_client::ConnectionSignal;
-
-/// Set on the first `PairingComplete` with bond information, never cleared.
-/// When true, new connections will signal the gatt_client task
-/// so it can proactively create a `GattClient` for bonded peers.
-static BONDED: AtomicBool = AtomicBool::new(false);
 
 /// Extract the peer's [`Address`] from a connection.
 pub(crate) fn peer_address<P: PacketPool>(conn: &Connection<'_, P>) -> Address {
@@ -26,24 +20,22 @@ pub(crate) fn peer_address<P: PacketPool>(conn: &Connection<'_, P>) -> Address {
 ///
 /// Handles connection events (disconnect, GATT writes, pairing, etc.) and
 /// concurrently invokes `on_command` to process commands from the caller's channel.
-pub async fn run<C: crate::Controller, P: PacketPool>(
+pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     stack: &Stack<'_, C, P>,
-    gatt_conn: &GattConnection<'_, '_, P>,
+    gatt_conn: &GattConnection<'stack, '_, P>,
     address: Address,
     events: &DynamicSender<'_, Event>,
-    gatt_client_signal: &ConnectionSignal,
+    conn_watch: &watch::DynSender<'_, Connection<'stack, P>>,
     mut on_command: impl AsyncFnMut(),
 ) -> Result<(), BleHostError<C::Error>> {
     trace!("connection::run addr={:?}", address);
-    if BONDED.load(Ordering::Relaxed) {
-        info!("Bonded peer reconnected, signaling gatt_client: {:?}", address);
-        gatt_client_signal.signal(address);
-    }
+    conn_watch.send(gatt_conn.raw().clone());
     loop {
         match select(gatt_conn.next(), on_command()).await {
             Either::First(event) => match event {
                 GattConnectionEvent::Disconnected { .. } => {
                     info!("Disconnected addr={:?}", address);
+                    conn_watch.clear();
                     events.send(Event::DeviceDisconnected { address }).await;
                     break Ok(());
                 }
@@ -99,9 +91,11 @@ pub async fn run<C: crate::Controller, P: PacketPool>(
                     info!("PassKeyInput addr={:?}", address);
                     events.send(Event::PasskeyEntryRequest { address }).await;
                 }
-                GattConnectionEvent::PairingComplete { security_level, bond } => {
+                GattConnectionEvent::PairingComplete {
+                    security_level,
+                    bond: _,
+                } => {
                     info!("PairingComplete addr={:?} level={:?}", address, security_level);
-                    BONDED.fetch_or(bond.is_some(), Ordering::Relaxed);
                     events
                         .send(Event::SecLevelChanged {
                             address,

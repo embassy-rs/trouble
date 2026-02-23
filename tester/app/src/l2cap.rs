@@ -3,20 +3,17 @@ use core::future::Future;
 use core::pin::Pin;
 use core::task::Poll;
 
-use embassy_futures::join::join;
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::join::join3;
+use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, DynamicSender};
 use embassy_sync::signal::Signal;
+use embassy_sync::watch;
 use trouble_host::prelude::*;
 
 use crate::Event;
 use crate::btp::protocol::l2cap::{self as proto, MAX_CHANNELS};
 use crate::command_channel::{self, CommandReceiver, HasResponse};
-
-/// Signal used by peripheral/central tasks to notify the L2CAP task
-/// that a new connection has been established.
-pub type ConnectionSignal<'stack, P> = Signal<NoopRawMutex, Connection<'stack, P>>;
 
 /// Commands sent to the L2CAP task from the BTP dispatcher.
 #[derive(Debug)]
@@ -80,28 +77,25 @@ impl<P: PacketPool> ChannelSlot<'_, P> {
     }
 }
 
-/// Arguments for starting a new channel task.
-struct ChannelArgs<'stack, P: PacketPool> {
-    op: ChannelOp,
-    conn: Connection<'stack, P>,
+/// Arguments passed to the listener task via signal (one-time config, no connection).
+struct ListenerArgs {
     psm: u16,
     mtu: Option<u16>,
-    chan_id: u8,
     response: LeCreditConnResultCode,
 }
 
-/// A deferred listen request waiting for a connection to become available.
-struct PendingListen {
-    psm: u16,
-    mtu: u16,
-    response: LeCreditConnResultCode,
-    chan_id: u8,
-}
-
-/// Whether the channel task should accept an incoming or create an outgoing channel.
-enum ChannelOp {
-    Accept,
-    Connect,
+/// Whether the channel task should create an outgoing channel or receive on an accepted one.
+enum ChannelOp<'stack, P: PacketPool> {
+    Connect {
+        conn: Connection<'stack, P>,
+        psm: u16,
+        mtu: Option<u16>,
+    },
+    Accepted {
+        reader: L2capChannelReader<'stack, P>,
+        psm: u16,
+        address: Address,
+    },
 }
 
 /// Notification from a channel task back to the main loop.
@@ -112,6 +106,20 @@ enum ChannelNotification<'stack, P: PacketPool> {
     },
     Done {
         chan_id: u8,
+    },
+    Accepted {
+        writer: L2capChannelWriter<'stack, P>,
+        reader: L2capChannelReader<'stack, P>,
+        psm: u16,
+        our_mtu: u16,
+        our_mps: u16,
+        peer_mtu: u16,
+        peer_mps: u16,
+        address: Address,
+    },
+    Rejected {
+        psm: u16,
+        address: Address,
     },
 }
 
@@ -124,7 +132,7 @@ type NotifyChannel<'stack, P> = embassy_sync::channel::Channel<NoopRawMutex, Cha
 /// (never cancelled) — they are only removed when they return.
 async fn poll_channels<'stack, C: crate::Controller, P: PacketPool>(
     stack: &'stack Stack<'stack, C, P>,
-    rx: &embassy_sync::channel::Channel<NoopRawMutex, ChannelArgs<'stack, P>, MAX_CHANNELS>,
+    rx: &embassy_sync::channel::Channel<NoopRawMutex, (ChannelOp<'stack, P>, u8), MAX_CHANNELS>,
     notify: &NotifyChannel<'stack, P>,
     events: &DynamicSender<'_, Event>,
 ) {
@@ -132,10 +140,10 @@ async fn poll_channels<'stack, C: crate::Controller, P: PacketPool>(
 
     core::future::poll_fn(|cx| {
         // Check for new channel requests.
-        if let Poll::Ready(args) = rx.poll_receive(cx) {
-            let idx = args.chan_id as usize;
+        if let Poll::Ready((op, chan_id)) = rx.poll_receive(cx) {
+            let idx = chan_id as usize;
             if idx < MAX_CHANNELS && channels[idx].is_none() {
-                channels[idx] = Some(channel_task(stack, args, notify, events));
+                channels[idx] = Some(channel_task(stack, op, chan_id, notify, events));
             }
         }
 
@@ -162,36 +170,37 @@ async fn poll_channels<'stack, C: crate::Controller, P: PacketPool>(
     .await
 }
 
-/// Run one L2CAP channel lifecycle: accept/create, receive data, exit on disconnect.
-async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
+/// Listener task: waits for listen config, then loops over connections accepting/rejecting
+/// incoming L2CAP channels. When a connection disconnects, listen() returns an error and
+/// the inner loop breaks, waiting for the next connection.
+async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
     stack: &'stack Stack<'stack, C, P>,
-    args: ChannelArgs<'stack, P>,
+    listener_signal: &Signal<NoopRawMutex, ListenerArgs>,
+    conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,
     notify: &NotifyChannel<'stack, P>,
-    events: &DynamicSender<'_, Event>,
 ) {
-    let ChannelArgs {
-        op,
-        conn,
-        psm,
-        mtu,
-        chan_id,
-        response,
-    } = args;
-    let config = L2capChannelConfig {
-        mtu,
-        ..Default::default()
-    };
-    let address = crate::connection::peer_address(&conn);
+    let ListenerArgs { psm, mtu, response } = listener_signal.wait().await;
 
-    let channel = match op {
-        ChannelOp::Accept => {
+    loop {
+        // Wait for a connection to become available
+        let conn = conn_rx.changed().await;
+        info!("listener_task: connection available, listening on PSM {}", psm);
+
+        // Listen on this connection until it disconnects
+        loop {
+            let config = L2capChannelConfig {
+                mtu,
+                mps: Some(64),
+                ..Default::default()
+            };
+            let address = crate::connection::peer_address(&conn);
             let psm_list = [psm];
 
             let pending = match L2capChannel::listen(stack, &conn, &psm_list).await {
                 Ok(pending) => pending,
                 Err(e) => {
                     info!("L2CAP listen ended (connection lost or error): {:?}", e);
-                    return;
+                    break;
                 }
             };
 
@@ -199,50 +208,89 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
                 if let Err(e) = pending.reject(stack, response).await {
                     error!("L2CAP reject failed: {:?}", e);
                 }
-                events.send(Event::L2capDisconnected { chan_id, psm, address }).await;
-                notify.send(ChannelNotification::Done { chan_id }).await;
-                return;
-            }
-            match pending.accept(stack, &config).await {
-                Ok(ch) => ch,
-                Err(e) => {
-                    error!("L2CAP accept failed: {:?}", e);
-                    notify.send(ChannelNotification::Done { chan_id }).await;
-                    return;
+                notify.send(ChannelNotification::Rejected { psm, address }).await;
+            } else {
+                match pending.accept(stack, &config).await {
+                    Ok(channel) => {
+                        let our_mtu = channel.mtu();
+                        let our_mps = channel.mps();
+                        let peer_mtu = channel.peer_mtu();
+                        let peer_mps = channel.peer_mps();
+                        let (writer, reader) = channel.split();
+                        notify
+                            .send(ChannelNotification::Accepted {
+                                writer,
+                                reader,
+                                psm,
+                                our_mtu,
+                                our_mps,
+                                peer_mtu,
+                                peer_mps,
+                                address,
+                            })
+                            .await;
+                    }
+                    Err(e) => {
+                        error!("L2CAP accept failed: {:?}", e);
+                        notify.send(ChannelNotification::Rejected { psm, address }).await;
+                    }
                 }
             }
         }
-        ChannelOp::Connect => match L2capChannel::create(stack, &conn, psm, &config).await {
-            Ok(ch) => ch,
-            Err(e) => {
-                error!("L2CAP create failed: {:?}", e);
-                events.send(Event::L2capDisconnected { chan_id, psm, address }).await;
-                notify.send(ChannelNotification::Done { chan_id }).await;
-                return;
-            }
-        },
+    }
+}
+
+/// Run one L2CAP channel lifecycle: create or receive data, exit on disconnect.
+async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
+    stack: &'stack Stack<'stack, C, P>,
+    op: ChannelOp<'stack, P>,
+    chan_id: u8,
+    notify: &NotifyChannel<'stack, P>,
+    events: &DynamicSender<'_, Event>,
+) {
+    let (mut reader, psm, address) = match op {
+        ChannelOp::Connect { conn, psm, mtu } => {
+            let config = L2capChannelConfig {
+                mtu,
+                mps: Some(64),
+                ..Default::default()
+            };
+            let address = crate::connection::peer_address(&conn);
+
+            let channel = match L2capChannel::create(stack, &conn, psm, &config).await {
+                Ok(ch) => ch,
+                Err(e) => {
+                    error!("L2CAP create failed: {:?}", e);
+                    events.send(Event::L2capDisconnected { chan_id, psm, address }).await;
+                    notify.send(ChannelNotification::Done { chan_id }).await;
+                    return;
+                }
+            };
+
+            let our_mtu = channel.mtu();
+            let our_mps = channel.mps();
+            let peer_mtu = channel.peer_mtu();
+            let peer_mps = channel.peer_mps();
+            let (writer, reader) = channel.split();
+
+            notify.send(ChannelNotification::Connected { chan_id, writer }).await;
+
+            events
+                .send(Event::L2capConnected {
+                    chan_id,
+                    psm,
+                    peer_mtu,
+                    peer_mps,
+                    our_mtu,
+                    our_mps,
+                    address,
+                })
+                .await;
+
+            (reader, psm, address)
+        }
+        ChannelOp::Accepted { reader, psm, address } => (reader, psm, address),
     };
-
-    let peer_mtu = channel.peer_mtu();
-    let peer_mps = channel.peer_mps();
-    let our_mtu = channel.mtu();
-    let our_mps = channel.mps();
-
-    let (writer, mut reader) = channel.split();
-
-    notify.send(ChannelNotification::Connected { chan_id, writer }).await;
-
-    events
-        .send(Event::L2capConnected {
-            chan_id,
-            psm,
-            peer_mtu,
-            peer_mps,
-            our_mtu,
-            our_mps,
-            address,
-        })
-        .await;
 
     let mut buf = [0u8; proto::MAX_DATA_SIZE];
 
@@ -274,58 +322,30 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     stack: &'stack Stack<'stack, C, P>,
     commands: CommandReceiver<'_, Command>,
     events: DynamicSender<'_, Event>,
-    connection_signal: &ConnectionSignal<'stack, P>,
+    conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,
 ) -> ! {
     trace!("l2cap::run");
 
-    let args_tx: Channel<NoopRawMutex, ChannelArgs<'stack, P>, MAX_CHANNELS> = Channel::new();
+    let args_tx: Channel<NoopRawMutex, (ChannelOp<'stack, P>, u8), MAX_CHANNELS> = Channel::new();
     let notify_ch: NotifyChannel<'stack, P> = Channel::new();
+    let listener_signal: Signal<NoopRawMutex, ListenerArgs> = Signal::new();
 
     let command_loop = async {
         let mut slots: [ChannelSlot<'stack, P>; MAX_CHANNELS] = Default::default();
-        let mut pending_listen: Option<PendingListen> = None;
 
         loop {
-            match select3(commands.receive(), notify_ch.receive(), connection_signal.wait()).await {
-                Either3::First(cmd) => {
+            match select(commands.receive(), notify_ch.receive()).await {
+                Either::First(cmd) => {
                     info!("l2cap command: {:?}", *cmd);
                     match &*cmd {
                         Command::Listen { psm, mtu, response } => {
-                            let free_idx = match slots.iter().position(|s| s.is_idle()) {
-                                Some(idx) => idx,
-                                None => {
-                                    error!("No free L2CAP slot for accept");
-                                    cmd.reply(Response::Fail).await;
-                                    continue;
-                                }
-                            };
-                            slots[free_idx] = ChannelSlot::Connecting;
-
-                            match stack.connections().next() {
-                                Some(conn) => {
-                                    args_tx
-                                        .send(ChannelArgs {
-                                            op: ChannelOp::Accept,
-                                            conn,
-                                            psm: *psm,
-                                            mtu: if *mtu > 0 { Some(*mtu) } else { None },
-                                            chan_id: free_idx as u8,
-                                            response: *response,
-                                        })
-                                        .await;
-                                    cmd.reply(Response::Listening).await;
-                                }
-                                None => {
-                                    info!("No active connection, deferring listen");
-                                    pending_listen = Some(PendingListen {
-                                        psm: *psm,
-                                        mtu: *mtu,
-                                        response: *response,
-                                        chan_id: free_idx as u8,
-                                    });
-                                    cmd.reply(Response::Listening).await;
-                                }
-                            }
+                            let mtu_opt = if *mtu > 0 { Some(*mtu) } else { None };
+                            listener_signal.signal(ListenerArgs {
+                                psm: *psm,
+                                mtu: mtu_opt,
+                                response: *response,
+                            });
+                            cmd.reply(Response::Listening).await;
                         }
                         Command::Connect { address, psm, mtu, num } => {
                             let conn = match stack.get_connection_by_peer_address(*address) {
@@ -349,14 +369,14 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                 };
                                 slots[free_idx] = ChannelSlot::Connecting;
                                 args_tx
-                                    .send(ChannelArgs {
-                                        op: ChannelOp::Connect,
-                                        conn: conn.clone(),
-                                        psm: *psm,
-                                        mtu: mtu_opt,
-                                        chan_id: free_idx as u8,
-                                        response: LeCreditConnResultCode::Success,
-                                    })
+                                    .send((
+                                        ChannelOp::Connect {
+                                            conn: conn.clone(),
+                                            psm: *psm,
+                                            mtu: mtu_opt,
+                                        },
+                                        free_idx as u8,
+                                    ))
                                     .await;
                                 let _ = chan_ids.push(free_idx as u8);
                             }
@@ -374,10 +394,13 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                     // closed channel, send the L2capDisconnected event, and
                                     // notify Done to reset the slot to Idle.
                                     writer.disconnect();
-                                    cmd.reply(Response::Disconnected).await;
                                 } else {
-                                    cmd.reply(Response::Fail).await;
+                                    warn!(
+                                        "L2CAP Disconnect: no connected channel for {:?} (already disconnected)",
+                                        chan_id
+                                    );
                                 }
+                                cmd.reply(Response::Disconnected).await;
                             } else {
                                 cmd.reply(Response::Fail).await;
                             }
@@ -402,7 +425,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                         }
                     }
                 }
-                Either3::Second(notification) => match notification {
+                Either::Second(notification) => match notification {
                     ChannelNotification::Connected { chan_id, writer } => {
                         let idx = chan_id as usize;
                         if idx < MAX_CHANNELS {
@@ -415,26 +438,61 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                             slots[idx] = ChannelSlot::Idle;
                         }
                     }
-                },
-                Either3::Third(conn) => {
-                    if let Some(listen) = pending_listen.take() {
-                        info!("Connection arrived, starting deferred listen on PSM {}", listen.psm);
+                    ChannelNotification::Accepted {
+                        writer,
+                        reader,
+                        psm,
+                        our_mtu,
+                        our_mps,
+                        peer_mtu,
+                        peer_mps,
+                        address,
+                    } => {
+                        let free_idx = match slots.iter().position(|s| s.is_idle()) {
+                            Some(idx) => idx,
+                            None => {
+                                error!("No free L2CAP slot for accepted channel");
+                                continue;
+                            }
+                        };
+                        let chan_id = free_idx as u8;
+                        slots[free_idx] = ChannelSlot::Connected { writer };
+
+                        events
+                            .send(Event::L2capConnected {
+                                chan_id,
+                                psm,
+                                peer_mtu,
+                                peer_mps,
+                                our_mtu,
+                                our_mps,
+                                address,
+                            })
+                            .await;
+
                         args_tx
-                            .send(ChannelArgs {
-                                op: ChannelOp::Accept,
-                                conn,
-                                psm: listen.psm,
-                                mtu: if listen.mtu > 0 { Some(listen.mtu) } else { None },
-                                chan_id: listen.chan_id,
-                                response: listen.response,
+                            .send((ChannelOp::Accepted { reader, psm, address }, chan_id))
+                            .await;
+                    }
+                    ChannelNotification::Rejected { psm, address } => {
+                        events
+                            .send(Event::L2capDisconnected {
+                                chan_id: 0,
+                                psm,
+                                address,
                             })
                             .await;
                     }
-                }
+                },
             }
         }
     };
 
-    join(poll_channels(stack, &args_tx, &notify_ch, &events), command_loop).await;
+    join3(
+        poll_channels(stack, &args_tx, &notify_ch, &events),
+        listener_task(stack, &listener_signal, conn_rx, &notify_ch),
+        command_loop,
+    )
+    .await;
     unreachable!()
 }

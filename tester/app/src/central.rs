@@ -1,5 +1,6 @@
 use bt_hci::param::{AddrKind, BdAddr};
 use embassy_sync::channel::DynamicSender;
+use embassy_sync::watch;
 use embassy_time::Duration;
 use trouble_host::Address;
 use trouble_host::connection::{ConnectConfig, ScanConfig};
@@ -55,8 +56,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     commands: CommandReceiver<'_, Command>,
     server: &Server<'_, P>,
     events: DynamicSender<'_, Event>,
-    gatt_client_signal: &crate::gatt_client::ConnectionSignal,
-    l2cap_signal: &crate::l2cap::ConnectionSignal<'stack, P>,
+    conn_watch: &watch::DynSender<'_, Connection<'stack, P>>,
 ) -> ! {
     trace!("central::run");
 
@@ -157,7 +157,6 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                 conn_params,
                             })
                             .await;
-                        l2cap_signal.signal(conn.clone());
 
                         match conn.with_attribute_server(server) {
                             Ok(gatt_conn) => {
@@ -167,7 +166,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                     &gatt_conn,
                                     conn_address,
                                     &events,
-                                    gatt_client_signal,
+                                    conn_watch,
                                     async || {
                                         let inner_cmd = commands.receive().await;
                                         match &*inner_cmd {
