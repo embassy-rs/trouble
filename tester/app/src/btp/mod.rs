@@ -765,6 +765,9 @@ where
         }
         Pair(address) => {
             if let Some(conn) = gap.stack.get_connection_by_peer_address(*address) {
+                if let Err(err) = conn.set_bondable(gap.current_settings.contains(GapSettings::BONDABLE)) {
+                    warn!("Pair: failed to set bondable flag for {:?}: {:?}", address, err);
+                }
                 match conn.request_security() {
                     Ok(()) => Ready(GapResponse::Success),
                     Err(_) => {
