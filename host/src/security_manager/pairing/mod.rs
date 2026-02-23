@@ -33,6 +33,8 @@ pub trait PairingOps<P: PacketPool> {
     fn bonding_flag(&self) -> BondingFlag;
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Pairing {
     Central(central::Pairing),
     Peripheral(peripheral::Pairing),

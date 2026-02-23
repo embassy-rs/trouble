@@ -34,6 +34,8 @@ enum Step {
     Error(Error),
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct PairingData {
     local_address: Address,
     peer_address: Address,
@@ -103,6 +105,8 @@ impl PairingData {
     }
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Pairing {
     current_step: RefCell<Step>,
     pairing_data: RefCell<PairingData>,
