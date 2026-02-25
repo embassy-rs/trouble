@@ -269,6 +269,9 @@ pub enum ConnectionEvent {
     #[cfg(feature = "security")]
     /// Pairing completed
     PairingFailed(Error),
+    #[cfg(feature = "security")]
+    /// The peer has lost its bond (received pairing request for a bonded peer).
+    BondLost,
 }
 
 /// A connection parameters update request
@@ -572,7 +575,19 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// If the link is already encrypted then this will always generate an error.
     ///
     pub fn request_security(&self) -> Result<(), Error> {
-        self.manager.request_security(self.index)
+        self.manager.request_security(self.index, true)
+    }
+
+    /// Check if the peer is a bonded device.
+    #[cfg(feature = "security")]
+    pub(crate) fn is_bonded_peer(&self) -> bool {
+        self.manager.is_bonded_peer(self.index)
+    }
+
+    /// Try to enable encryption with a bonded peer if it is not yet established
+    #[cfg(feature = "security")]
+    pub(crate) async fn try_enable_encryption(&self) -> Result<(), Error> {
+        self.manager.try_enable_encryption(self.index).await
     }
 
     /// Get the encrypted state of the connection

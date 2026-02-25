@@ -7,7 +7,6 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
-use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use crate::security_manager::pairing::util::{
     choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet,
@@ -147,6 +146,7 @@ struct PairingData {
     ltk: Option<LongTermKey>,
     timeout_at: Instant,
     bond_information: Option<BondInformation>,
+    user_initiated: bool,
 }
 
 impl PairingData {
@@ -162,6 +162,15 @@ pub struct Pairing {
 }
 
 impl Pairing {
+    pub fn result(&self) -> Option<Result<(), Error>> {
+        let step = self.current_step.borrow();
+        match step.deref() {
+            Step::Success => Some(Ok(())),
+            Step::Error(e) => Some(Err(e.clone())),
+            _ => None,
+        }
+    }
+
     pub fn timeout_at(&self) -> Instant {
         let step = self.current_step.borrow();
         if matches!(step.deref(), Step::Success | Step::Error(_)) {
@@ -207,6 +216,7 @@ impl Pairing {
             private_key: None,
             timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE,
             bond_information: None,
+            user_initiated: false,
         };
         Self {
             pairing_data: RefCell::new(pairing_data),
@@ -219,11 +229,27 @@ impl Pairing {
         peer_address: Address,
         ops: &mut OPS,
         local_io: IoCapabilities,
+        user_initiated: bool,
     ) -> Result<Pairing, Error> {
         let ret = Self::new_idle(local_address, peer_address, local_io);
         {
             let mut pairing_data = ret.pairing_data.borrow_mut();
-            pairing_data.local_features.security_properties = AuthReq::new(ops.bonding_flag());
+            pairing_data.user_initiated = user_initiated;
+            let mut auth_req = AuthReq::new(ops.bonding_flag());
+            if local_io != IoCapabilities::NoInputNoOutput {
+                auth_req = auth_req.with_mitm();
+            }
+            pairing_data.local_features.security_properties = auth_req;
+            if matches!(ops.bonding_flag(), BondingFlag::Bonding) {
+                pairing_data
+                    .local_features
+                    .initiator_key_distribution
+                    .set_encryption_key();
+                pairing_data
+                    .local_features
+                    .responder_key_distribution
+                    .set_encryption_key();
+            }
             let next_step = if let Some(bond) = ops.try_enable_bonded_encryption()? {
                 pairing_data.bond_information = Some(bond);
                 Step::WaitingBondedLinkEncryption
@@ -238,6 +264,26 @@ impl Pairing {
 
     pub fn peer_address(&self) -> Address {
         self.pairing_data.borrow().peer_address
+    }
+
+    pub(crate) fn is_waiting_bonded_encryption(&self) -> bool {
+        matches!(*self.current_step.borrow(), Step::WaitingBondedLinkEncryption)
+    }
+
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn into_legacy(self) -> super::legacy_central::Pairing {
+        let PairingData {
+            local_address,
+            local_features,
+            peer_address,
+            ..
+        } = self.pairing_data.into_inner();
+
+        let mut preq = [0u8; 7];
+        preq[0] = u8::from(Command::PairingRequest);
+        local_features.encode(&mut preq[1..]).unwrap();
+
+        super::legacy_central::Pairing::from_lesc_switch(local_address, peer_address, local_features, preq)
     }
 
     pub fn security_level(&self) -> SecurityLevel {
@@ -278,6 +324,7 @@ impl Pairing {
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let current_state = self.current_step.borrow().clone();
+        let mut bond_lost = false;
         let next_state = match (current_state, event) {
             (Step::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
                 if res {
@@ -293,8 +340,14 @@ impl Pairing {
                 if res {
                     info!("Link encrypted using bonded key!");
                     Step::Success
+                } else if self.pairing_data.borrow().user_initiated {
+                    warn!("Link encryption with bonded key failed, initiating fresh pairing");
+                    ops.try_send_connection_event(ConnectionEvent::BondLost)?;
+                    let mut pairing_data = self.pairing_data.borrow_mut();
+                    Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data.deref_mut(), ops)?)
                 } else {
                     error!("Link encryption with bonded key failed!");
+                    bond_lost = true;
                     Step::Error(Error::Security(Reason::KeyRejected))
                 }
             }
@@ -325,7 +378,12 @@ impl Pairing {
         match next_state {
             Step::Error(x) => {
                 self.current_step.replace(Step::Error(x.clone()));
-                ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
+                let event = if bond_lost {
+                    ConnectionEvent::BondLost
+                } else {
+                    ConnectionEvent::PairingFailed(x.clone())
+                };
+                ops.try_send_connection_event(event)?;
                 Err(x)
             }
             x => {
@@ -335,6 +393,7 @@ impl Pairing {
                     let pairing_data = self.pairing_data.borrow();
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
                         let pairing_bond = if pairing_data.want_bonding() {
+                            ops.try_update_bond_information(bond)?;
                             Some(bond.clone())
                         } else {
                             None
@@ -365,8 +424,25 @@ impl Pairing {
             trace!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
                 (Step::Idle, Command::SecurityRequest) => {
-                    pairing_data.local_features.security_properties = AuthReq::new(ops.bonding_flag());
-                    if let Some(bond) = ops.try_enable_bonded_encryption()? {
+                    // Parse the peer's AuthReq from the SecurityRequest payload
+                    let peer_auth_req = AuthReq::from(command.payload[0]);
+                    let peer_requests_mitm = peer_auth_req.man_in_the_middle();
+
+                    let mut auth_req = AuthReq::new(ops.bonding_flag());
+                    if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
+                        auth_req = auth_req.with_mitm();
+                    }
+                    pairing_data.local_features.security_properties = auth_req;
+
+                    // Per Core Spec Vol 3, Part H, Section 3.6.7: if the existing bond
+                    // meets the peer's security requirements, re-encrypt with it;
+                    // otherwise initiate new pairing.
+                    let bond = ops.find_bond();
+                    let bond_sufficient = bond.as_ref().is_some_and(|b| {
+                        !peer_requests_mitm || b.security_level == SecurityLevel::EncryptedAuthenticated
+                    });
+                    if bond_sufficient {
+                        let bond = ops.try_enable_bonded_encryption()?.unwrap();
                         pairing_data.bond_information = Some(bond);
                         Step::WaitingBondedLinkEncryption
                     } else {
@@ -462,11 +538,15 @@ impl Pairing {
         pairing_data: &mut PairingData,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
-        if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
-            return Err(Error::Security(Reason::EncryptionKeySize));
-        }
+
+        #[cfg(not(feature = "legacy-pairing"))]
         if !peer_features.security_properties.secure_connection() {
-            return Err(Error::Security(Reason::UnspecifiedReason));
+            return Err(Error::Security(Reason::AuthenticationRequirements));
+        }
+
+        if peer_features.maximum_encryption_key_size < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS
+        {
+            return Err(Error::Security(Reason::EncryptionKeySize));
         }
 
         pairing_data.peer_features = peer_features;
@@ -602,6 +682,10 @@ impl Pairing {
             &pairing_data.ltk.ok_or(Error::InvalidValue)?,
             pairing_data.pairing_method.security_level(),
             pairing_data.want_bonding(),
+            #[cfg(feature = "legacy-pairing")]
+            0,
+            #[cfg(feature = "legacy-pairing")]
+            [0; 8],
         )?;
         pairing_data.bond_information = Some(bond);
         Ok(())
@@ -631,7 +715,7 @@ impl Pairing {
             rai,
         );
         if cbi != pairing_data.confirm {
-            return Err(Error::Security(Reason::NumericComparisonFailed));
+            return Err(Error::Security(Reason::ConfirmValueFailed));
         }
         pairing_data.peer_nonce = peer_nonce;
         Ok(())

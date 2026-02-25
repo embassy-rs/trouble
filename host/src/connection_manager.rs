@@ -328,7 +328,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 {
                     storage.security_level = SecurityLevel::NoEncryption;
                     storage.bondable = false;
-                    let _ = self.security_manager.disconnect(h, storage.peer_identity);
+                    if let Some(identity) = storage.peer_identity.as_ref() {
+                        self.security_manager.disconnect(identity);
+                    }
                 }
                 return Ok(());
             }
@@ -365,6 +367,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 });
                 storage.role.replace(role);
                 storage.params = params;
+                #[cfg(feature = "security")]
+                {
+                    storage.bond_rejected = false;
+                }
 
                 match role {
                     LeConnRole::Central => {
@@ -609,7 +615,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         Err(Error::NotSupported)
     }
 
-    pub(crate) fn request_security(&self, index: u8) -> Result<(), Error> {
+    pub(crate) fn request_security(&self, index: u8, user_initiated: bool) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let current_level = self.get_security_level(index)?;
@@ -617,10 +623,59 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 return Err(Error::NotSupported);
             }
             self.security_manager
-                .initiate(self, &self.state.borrow().connections[index as usize])
+                .initiate(self, &self.state.borrow().connections[index as usize], user_initiated)
         }
         #[cfg(not(feature = "security"))]
         Err(Error::NotSupported)
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) fn is_bonded_peer(&self, index: u8) -> bool {
+        let state = self.state.borrow();
+        let storage = &state.connections[index as usize];
+        if let Some(identity) = storage.peer_identity.as_ref() {
+            self.security_manager
+                .get_peer_bond_information(identity)
+                .is_some_and(|b| b.is_bonded)
+        } else {
+            false
+        }
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) async fn try_enable_encryption(&self, index: u8) -> Result<(), Error> {
+        let address = {
+            let state = self.state.borrow();
+            let storage = &state.connections[index as usize];
+            if storage.state != ConnectionState::Connected {
+                return Err(Error::Disconnected);
+            } else if storage.security_level != SecurityLevel::NoEncryption {
+                return Ok(());
+            }
+            match (storage.peer_addr_kind, storage.peer_identity.as_ref()) {
+                (Some(kind), Some(identity)) => Address {
+                    kind,
+                    addr: identity.bd_addr,
+                },
+                _ => return Err(Error::InvalidValue),
+            }
+        };
+
+        if !self.security_manager.is_pairing_in_progress(address) {
+            self.request_security(index, false)?;
+        }
+        match self.security_manager.wait_finished(address).await {
+            Ok(()) => Ok(()),
+            Err(Error::Busy) => {
+                // Another connection is now pairing. Check if pairing succeeded first.
+                if self.get_security_level(index)? != SecurityLevel::NoEncryption {
+                    Ok(())
+                } else {
+                    Err(Error::Busy)
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub(crate) fn get_security_level(&self, index: u8) -> Result<SecurityLevel, Error> {
@@ -725,7 +780,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         use bt_hci::cmd::link_control::Disconnect;
 
         match _event {
-            crate::security_manager::SecurityEventData::SendLongTermKey(handle) => {
+            crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
                 let conn_info = self.state.borrow().connections.iter().find_map(|connection| {
                     match (connection.handle, connection.peer_identity) {
                         (Some(connection_handle), Some(identity)) => {
@@ -740,7 +795,20 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 });
 
                 if let Some((conn, identity)) = conn_info {
-                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(&identity) {
+                    // Match EDIV/Rand against stored bonds to find the correct LTK.
+                    // During active legacy pairing (STK phase), the STK is stored with EDIV=0, Rand=0.
+                    let bond = self.security_manager.get_peer_bond_information(&identity);
+                    #[cfg(not(feature = "legacy-pairing"))]
+                    let ltk = bond.map(|b| b.ltk);
+                    #[cfg(feature = "legacy-pairing")]
+                    let ltk = bond.and_then(|b| {
+                        if b.ediv == ediv && b.rand == rand {
+                            Some(b.ltk)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(ltk) = ltk {
                         let _ = host
                             .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
                             .await?;
@@ -756,32 +824,20 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 }
             }
             crate::security_manager::SecurityEventData::EnableEncryption(handle, bond_info) => {
-                let connection_data =
-                    self.state
-                        .borrow()
-                        .connections
-                        .iter()
-                        .enumerate()
-                        .find_map(
-                            |(index, connection)| match (connection.handle, connection.peer_identity) {
-                                (Some(connection_handle), Some(identity)) => {
-                                    if handle == connection_handle {
-                                        Some((index, connection.role, identity))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                (_, _) => None,
-                            },
-                        );
-                if let Some((index, role, identity)) = connection_data {
-                    if let Some(ltk) = self.security_manager.get_peer_long_term_key(&identity) {
-                        if let Some(LeConnRole::Central) = role {
-                            host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
-                                .await?;
-                        }
-                    } else {
-                        warn!("[host] Enable encryption failed, no long term key")
+                let connection_data = self
+                    .state
+                    .borrow()
+                    .connections
+                    .iter()
+                    .find_map(|connection| (connection.handle == Some(handle)).then_some(connection.role));
+                if let Some(role) = connection_data {
+                    if let Some(LeConnRole::Central) = role {
+                        #[cfg(feature = "legacy-pairing")]
+                        let (ediv, rand) = (bond_info.ediv, bond_info.rand);
+                        #[cfg(not(feature = "legacy-pairing"))]
+                        let (ediv, rand) = (0, [0; 8]);
+                        host.async_command(LeEnableEncryption::new(handle, rand, ediv, bond_info.ltk.to_le_bytes()))
+                            .await?;
                     }
                 } else {
                     warn!("[host] Enable encryption failed, unknown peer")
@@ -850,6 +906,8 @@ pub struct ConnectionStorage<P> {
     pub security_level: SecurityLevel,
     #[cfg(feature = "security")]
     pub bondable: bool,
+    #[cfg(feature = "security")]
+    pub bond_rejected: bool,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -937,6 +995,8 @@ impl<P> ConnectionStorage<P> {
             metrics: Metrics::new(),
             #[cfg(feature = "security")]
             security_level: SecurityLevel::NoEncryption,
+            #[cfg(feature = "security")]
+            bond_rejected: false,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),

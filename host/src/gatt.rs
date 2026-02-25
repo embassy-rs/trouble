@@ -123,6 +123,9 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     #[cfg(feature = "security")]
     /// Pairing failed
     PairingFailed(Error),
+    #[cfg(feature = "security")]
+    /// The peer has lost its bond.
+    BondLost,
 }
 
 /// Used to manage a GATT connection with a client.
@@ -235,6 +238,9 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::PairingFailed(err) => GattConnectionEvent::PairingFailed(err),
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::BondLost => GattConnectionEvent::BondLost,
             },
             Either::Second(data) => GattConnectionEvent::Gatt {
                 event: GattEvent::new(GattData::new(data, self.connection.clone()), self.server),
@@ -905,6 +911,19 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => break,
                 _ => {
                     warn!("[gatt] unexpected PDU during MTU exchange, discarding");
+                }
+            }
+        }
+
+        // Enable encryption with bonded peers before starting GATT operations
+        // (BT Core Spec Vol 3, Part C, Section 10.3.2: client "should" enable encryption on reconnection)
+        #[cfg(feature = "security")]
+        if connection.is_bonded_peer() {
+            match connection.try_enable_encryption().await {
+                Ok(_) => {}
+                Err(Error::Disconnected) => return Err(Error::Disconnected.into()),
+                Err(e) => {
+                    warn!("[gatt] failed to enable encryption for bonded peer: {:?}", e);
                 }
             }
         }

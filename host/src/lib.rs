@@ -23,7 +23,7 @@ use crate::channel_manager::ChannelStorage;
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason};
 pub use crate::types::capabilities::IoCapabilities;
 
 /// Number of bonding information stored
@@ -107,7 +107,9 @@ pub mod prelude {
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "security")]
-    pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+    pub use crate::security_manager::{
+        BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason,
+    };
     pub use crate::types::capabilities::IoCapabilities;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
@@ -268,7 +270,7 @@ pub enum Error {
     Att(AttErrorCode),
     #[cfg(feature = "security")]
     /// Error from the security manager
-    Security(crate::security_manager::Reason),
+    Security(PairingFailedReason),
     /// Insufficient space in the buffer.
     InsufficientSpace,
     /// Invalid value.
@@ -633,6 +635,20 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
                 .security_manager
                 .set_io_capabilities(io_capabilities);
         }
+    }
+
+    /// Enable or disable secure connections only mode.
+    ///
+    /// When enabled, legacy pairing is rejected even if the `legacy-pairing` feature is compiled in.
+    /// This matches the BLE spec's "Secure Connections Only Mode" (Vol 3, Part C, Section 10.2.4).
+    ///
+    /// Only relevant if the feature `legacy-pairing` is enabled.
+    #[cfg(feature = "legacy-pairing")]
+    pub fn set_secure_connections_only(&self, enabled: bool) {
+        self.host
+            .connections
+            .security_manager
+            .set_secure_connections_only(enabled);
     }
 
     /// Build the stack.

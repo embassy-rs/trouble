@@ -77,6 +77,8 @@ connection-metrics = []
 # Enable additional channel metrics
 channel-metrics = []
 security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:rand_chacha", "gatt", "dep:rand" ]
+# Enable LE Legacy Pairing (BLE 4.0/4.1 fallback when peer doesn't support Secure Connections)
+legacy-pairing = ["security"]
 # For development. Disable security manager cryptographically secure pseudorandom number
 # generator (CSPRNG) to require a cryptographically secure seed
 dev-disable-csprng-seed-requirement = []
