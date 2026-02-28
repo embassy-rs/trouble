@@ -2,7 +2,7 @@ use embassy_futures::join::join;
 use embassy_futures::select::{select, Either};
 use embassy_time::Timer;
 use embedded_hal_async::digital::Wait;
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, Rng};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -33,7 +33,7 @@ struct BatteryService {
 pub async fn run<C, RNG, YES, NO>(controller: C, random_generator: &mut RNG, mut yes: YES, mut no: NO)
 where
     C: Controller,
-    RNG: RngCore + CryptoRng,
+    RNG: Rng + CryptoRng,
     YES: embedded_hal_async::digital::Wait,
     NO: embedded_hal_async::digital::Wait,
 {
@@ -93,7 +93,7 @@ where
 ///     runner.run().await;
 /// }
 ///
-/// spawner.must_spawn(ble_task(runner));
+/// spawner.spawn(unwrap!(ble_task(runner)));
 /// ```
 async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
     loop {

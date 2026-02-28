@@ -8,13 +8,10 @@ resolver = "2"
 embassy-executor = { version = "0.9", default-features = false, features = ["arch-cortex-m", "executor-thread", "defmt", "executor-interrupt"] }
 embassy-time = { version = "0.5", default-features = false, features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-nrf = { version = "0.9", default-features = false, features = ["defmt", "time-driver-rtc1", "gpiote", "unstable-pac", "rt"] }
-embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7", features = ["defmt"] }
 
-futures = { version = "0.3", default-features = false, features = ["async-await"]}
 nrf-sdc = { version = "0.4", default-features = false, features = ["defmt", "peripheral", "central"] }
-nrf-mpsl = { version = "0.3", default-features = false, features = ["defmt", "critical-section-impl"] }
-bt-hci = { version = "0.8", default-features = false, features = ["defmt"] }
+nrf-mpsl = { version = "0.3", default-features = false, features = ["defmt", "critical-section-impl"] } # critical-section-impl needed
 trouble-host = { path = "../../host", features = ["derive", "scan", "gatt"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 
@@ -24,10 +21,8 @@ panic-probe = { version = "1.0", features = ["print-defmt"] }
 
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
-rand = { version = "0.8.5", default-features = false }
+rand = { version = "0.10.0", default-features = false, features = ["chacha"], optional = true }
 static_cell = "2"
-rand_core = { version = "0.6"}
-rand_chacha = { version = "0.3", default-features = false }
 
 [profile.release]
 debug = 2
@@ -37,7 +32,6 @@ debug = 2
 #embassy-time-queue-utils = {path = "../../../embassy/embassy-time-queue-utils"}
 #embassy-sync = {path = "../../../embassy/embassy-sync"}
 #embassy-nrf = {path = "../../../embassy/embassy-nrf"}
-#embassy-futures = {path = "../../../embassy/embassy-futures"}
 #embassy-time = {path = "../../../embassy/embassy-time"}
 #embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
 #embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
@@ -46,13 +40,11 @@ debug = 2
 embassy-executor = {git = "https://github.com/embassy-rs/embassy.git", rev="ed8d4277cd8165c8b280ccbb1501534056691b6a"}
 embassy-nrf = {git = "https://github.com/embassy-rs/embassy.git", rev="ed8d4277cd8165c8b280ccbb1501534056691b6a"}
 embassy-sync = {git = "https://github.com/embassy-rs/embassy.git", rev="ed8d4277cd8165c8b280ccbb1501534056691b6a"}
-embassy-futures = {git = "https://github.com/embassy-rs/embassy.git", rev="ed8d4277cd8165c8b280ccbb1501534056691b6a"}
 embassy-time = {git = "https://github.com/embassy-rs/embassy.git", rev="ed8d4277cd8165c8b280ccbb1501534056691b6a"}
 embassy-time-driver = {git = "https://github.com/embassy-rs/embassy.git", rev="ed8d4277cd8165c8b280ccbb1501534056691b6a"}
 embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="ed8d4277cd8165c8b280ccbb1501534056691b6a"}
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "df7e3b4f363275e2c9ad42005758cf3eb8a798e0"}
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "df7e3b4f363275e2c9ad42005758cf3eb8a798e0"}
-#bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "83a9e179ff019ed60abb73705f54383f89fc60fc" }
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 
@@ -63,4 +55,5 @@ nrf54l15 = [
 ]
 security = [
     "trouble-example-apps/security",
+    "dep:rand",
 ]

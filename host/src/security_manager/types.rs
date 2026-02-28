@@ -534,7 +534,7 @@ impl KeyDistributionFlags {
     pub(crate) fn set_encryption_key(&mut self) {
         self.0 |= Self::ENCRYPTION_KEY;
     }
-    /// Set the identity key flag   
+    /// Set the identity key flag
     pub(crate) fn set_identity_key(&mut self) {
         self.0 |= Self::IDENTITY_KEY;
     }

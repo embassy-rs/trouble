@@ -1269,7 +1269,6 @@ dependencies = [
  "embedded-io",
  "futures",
  "heapless",
- "rand_core 0.6.4",
  "static_cell",
  "zerocopy",
 ]

@@ -8,17 +8,17 @@ license = "MIT OR Apache-2.0"
 embassy-executor = "0.9.1"
 esp-bootloader-esp-idf = "0.4.0"
 esp-backtrace = { version = "0.18.1", features = [ "panic-handler", "println" ] }
-esp-hal = { version = "1.0.0", features = [ "unstable" ] }
+esp-hal = { version = "1.0.0", features = ["unstable"] }
 esp-alloc = { version = "0.9.0" }
-esp-println = { version = "0.16.0", features = ["log-04"] }
+esp-println = { version = "0.16.1", features = ["log-04"] }
 esp-radio = { version = "0.17.0", features = ["ble", "log-04", "unstable"] }
 esp-rtos = { version = "0.2.0", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
 trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
 
-# for 'ble_bas_peripheral_bonding'
-embassy-embedded-hal = "0.5.0"
-esp-storage = { version = "0.8.1" }
+# for 'ble_bas_peripheral_bonding' only
+embassy-embedded-hal = { version = "0.5.0", optional = true }
+esp-storage = { version = "0.8.1", optional = true }
 
 [features]
 default = ["esp32c3"]
@@ -32,6 +32,8 @@ esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-println/esp32s3", "e
 
 security = [
     "trouble-example-apps/security",
+    "dep:embassy-embedded-hal",
+    "dep:esp-storage"
 ]
 
 [profile.dev]
@@ -60,13 +62,23 @@ required-features = ["security"]
 name = "ble_bas_peripheral_bonding"
 required-features = ["security"]
 
-# Enable for using latest 'main'
+# Q @lulf: what are the features you'd like to get, from that rev?
 [patch.crates-io]
-esp-alloc =             { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
-esp-backtrace =         { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
-esp-bootloader-esp-idf ={ git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
-esp-hal =               { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
-esp-println =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
-esp-radio =             { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
-esp-rtos =              { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
-esp-storage =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+#|esp-alloc =             { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+#|esp-backtrace =         { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+#|esp-bootloader-esp-idf ={ git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+#|esp-hal =               { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+#|esp-println =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+#|esp-radio =             { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+#|esp-rtos =              { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+#|esp-storage =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+
+# Enable for using latest 'main'
+esp-backtrace =         { git = "https://github.com/esp-rs/esp-hal.git" }
+esp-alloc =             { git = "https://github.com/esp-rs/esp-hal.git" }
+esp-bootloader-esp-idf ={ git = "https://github.com/esp-rs/esp-hal.git" }
+esp-hal =               { git = "https://github.com/esp-rs/esp-hal.git" }
+esp-println =           { git = "https://github.com/esp-rs/esp-hal.git" }
+esp-radio =             { git = "https://github.com/esp-rs/esp-hal.git" }
+esp-rtos =              { git = "https://github.com/esp-rs/esp-hal.git" }
+esp-storage =           { git = "https://github.com/esp-rs/esp-hal.git" }

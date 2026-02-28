@@ -2,7 +2,7 @@ use embassy_futures::join::join;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 use embedded_hal_async::digital::Wait;
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, Rng};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -14,7 +14,7 @@ const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 pub async fn run<C, RNG, YES, NO>(controller: C, random_generator: &mut RNG, mut yes: YES, mut no: NO)
 where
     C: Controller,
-    RNG: RngCore + CryptoRng,
+    RNG: Rng + CryptoRng,
     YES: Wait,
     NO: Wait,
 {

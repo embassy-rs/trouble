@@ -25,8 +25,6 @@ cortex-m = { version = "0.7" }
 cortex-m-rt = "0.7"
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
-rand_core = { version = "0.6"}
-rand_chacha = { version = "0.3", default-features = false }
 
 [build-dependencies]
 reqwest = { version = "0.12.9", features = ["blocking"]}

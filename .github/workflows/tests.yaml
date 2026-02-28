@@ -56,6 +56,9 @@ jobs:
         run: |
           gh pr checkout "${{ github.event.inputs.prNr }}"
           echo "commit=$(git rev-parse --verify HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Set up submodules
+        run: |
+          git submodule update --init --depth 1 --recursive
       - name: Set pending
         env:
           COMMIT: ${{ steps.checkout.outputs.commit }}
@@ -102,6 +105,9 @@ jobs:
         run: |
           gh pr checkout "${{ github.event.inputs.prNr }}"
           echo "commit=$(git rev-parse --verify HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Set up submodules
+        run: |
+          git submodule update --init --depth 1 --recursive
       - name: Set pending
         env:
           COMMIT: ${{ steps.checkout.outputs.commit }}

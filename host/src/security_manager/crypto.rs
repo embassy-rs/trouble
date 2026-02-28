@@ -1,12 +1,13 @@
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use aes::Aes128;
 use bt_hci::param::BdAddr;
 use cmac::digest;
 use p256::ecdh;
-use rand_core::{CryptoRng, RngCore};
+use p256::elliptic_curve::Generate;
+use rand::rand_core::{CryptoRng, Rng};
 
 use crate::Address;
 
@@ -83,7 +84,7 @@ impl IdentityResolvingKey {
     ///
     /// The generated address follows the format described in
     /// Bluetooth Core Specification [Vol 3] Part C, Section 10.8.2.
-    pub fn generate_resolvable_address<T: RngCore + CryptoRng>(&self, rng: &mut T) -> [u8; 6] {
+    pub fn generate_resolvable_address<T: CryptoRng + Rng>(&self, rng: &mut T) -> [u8; 6] {
         // Generate prand (24 bits with top 2 bits set to 0b01 to indicate resolvable private address)
         let mut prand = [0u8; 3];
         rng.fill_bytes(&mut prand);
@@ -281,7 +282,7 @@ impl Nonce {
     /// Panics if the OS CSPRNG is broken.
     #[allow(clippy::new_without_default)]
     #[inline]
-    pub fn new<T: RngCore>(rng: &mut T) -> Self {
+    pub fn new<R: Rng>(rng: &mut R) -> Self {
         let mut b = [0; core::mem::size_of::<u128>()];
         rng.fill_bytes(b.as_mut_slice());
         let n = u128::from_ne_bytes(b);
@@ -333,15 +334,19 @@ impl SecretKey {
     /// Generates a new random secret key.
     #[allow(clippy::new_without_default)]
     #[inline(always)]
-    pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
-        Self(p256::NonZeroScalar::random(rng))
+    pub fn new<T: CryptoRng + ?Sized>(rng: &mut T) -> Self {
+        // Update note: '::random()' is deprecated in 0.14.0. Can use:
+        //      - '::generate()'; no 'rng' param needed, but needs "getrandom" feature
+        //      - '::generate_from_rng()'; smaller step.
+        //
+        Self(p256::NonZeroScalar::generate_from_rng(rng))
     }
 
     /// Computes the associated public key.
     pub fn public_key(&self) -> PublicKey {
         use p256::elliptic_curve::sec1::Coordinates::Uncompressed;
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
-        let p = p256::PublicKey::from_secret_scalar(&self.0).to_encoded_point(false);
+        use p256::elliptic_curve::sec1::ToSec1Point;
+        let p = p256::PublicKey::from_secret_scalar(&self.0).to_sec1_point(false);
         match p.coordinates() {
             Uncompressed { x, y } => PublicKey {
                 x: PublicKeyX(Coord(*x.as_ref())),
@@ -356,17 +361,17 @@ impl SecretKey {
     /// from the same secret key ([Vol 3] Part H, Section 2.3.5.6.1).
     #[must_use]
     pub fn dh_key(&self, pk: PublicKey) -> Option<DHKey> {
-        use p256::elliptic_curve::sec1::FromEncodedPoint;
+        use p256::elliptic_curve::sec1::FromSec1Point;
         if pk.is_debug() {
             return None; // TODO: Compile-time option for debug-only mode
         }
 
         let (x, y) = (&pk.x.0 .0.into(), &pk.y.0.into());
-        let rep = p256::EncodedPoint::from_affine_coordinates(x, y, false);
+        let rep = p256::Sec1Point::from_affine_coordinates(x, y, false);
         let lpk = p256::PublicKey::from_secret_scalar(&self.0);
-        // Constant-time ops not required:
+        // Constant-time ops not required:  // <-- tbd. is this comment still relevant?
         // https://github.com/RustCrypto/traits/issues/1227
-        let rpk = Option::from(p256::PublicKey::from_encoded_point(&rep)).unwrap_or(lpk);
+        let rpk = Option::from(p256::PublicKey::from_sec1_point(&rep)).unwrap_or(lpk);
         (rpk != lpk).then(|| DHKey(ecdh::diffie_hellman(&self.0, rpk.as_affine())))
     }
 }
@@ -576,7 +581,8 @@ pub(super) fn u256<T: From<[u8; 32]>>(hi: u128, lo: u128) -> T {
 #[allow(clippy::unusual_byte_groupings)]
 #[cfg(test)]
 mod tests {
-    use p256::elliptic_curve::rand_core::OsRng;
+    use rand::rand_core::UnwrapErr;
+    use rand::rngs::SysRng;
 
     use super::*;
     extern crate std;
@@ -742,10 +748,10 @@ mod tests {
 
     #[test]
     fn testtest() {
-        let skb = SecretKey::new(&mut OsRng::default());
+        let skb = SecretKey::new(&mut UnwrapErr(SysRng));
         let _pkb = skb.public_key();
 
-        let ska = SecretKey::new(&mut OsRng::default());
+        let ska = SecretKey::new(&mut UnwrapErr(SysRng));
         let pka = ska.public_key();
 
         let _dh_key = skb.dh_key(pka).unwrap();
@@ -760,7 +766,7 @@ mod tests {
             0x71, 0xe4, 0x95, 0x17, 0x71, 0x98, 0x82, 0x8f, 0xf8, 0x79, 0x94,
         ];
 
-        let skb = SecretKey::new(&mut OsRng::default());
+        let skb = SecretKey::new(&mut UnwrapErr(SysRng));
         let _pkb = skb.public_key();
 
         let pka = PublicKey::from_bytes(&bytes);
@@ -771,7 +777,7 @@ mod tests {
     #[test]
     fn nonce() {
         // No fair dice rolls for us!
-        assert_ne!(Nonce::new(&mut OsRng::default()), Nonce::new(&mut OsRng::default()));
+        assert_ne!(Nonce::new(&mut UnwrapErr(SysRng)), Nonce::new(&mut UnwrapErr(SysRng)));
     }
 
     /// Confirm value generation function ([Vol 3] Part H, Section D.2).

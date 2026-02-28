@@ -1,6 +1,6 @@
 use bt_hci::param::ConnHandle;
 use embassy_time::Instant;
-use rand_core::{CryptoRng, RngCore};
+use rand::rand_core::{CryptoRng, Rng};
 
 use crate::connection::{ConnectionEvent, SecurityLevel};
 use crate::security_manager::types::{BondingFlag, Command};
@@ -62,7 +62,7 @@ impl Pairing {
             Pairing::LegacyPeripheral(p) => p.result(),
         }
     }
-    pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         command: Command,
         payload: &[u8],
@@ -79,7 +79,7 @@ impl Pairing {
         }
     }
 
-    pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + Rng>(
         &self,
         event: Event,
         ops: &mut OPS,
@@ -233,11 +233,20 @@ pub enum Event {
 
 #[cfg(test)]
 mod tests {
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
+    use rand::rngs::ChaCha12Rng;
+    use rand::SeedableRng;
 
     use super::*;
     use crate::{Identity, Packet};
+
+    // Prior to chacha20 0.10 API changes, the seed was a simple '1_u64'.
+    pub(crate) const SEED: [u8; 32] = {
+        let mut buf = [0u8; 32];
+        buf[0] = 1;
+        buf
+    };
+    //R use crate::security_manager::crypto::u256;
+    //R const SEED: [u8; 32] = u256(0, 1);  // not const
 
     #[derive(Debug)]
     pub(crate) struct TestPacket(pub(crate) heapless::Vec<u8, 128>);
@@ -364,7 +373,7 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng = ChaCha12Rng::from_seed(SEED);
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
@@ -421,7 +430,7 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng = ChaCha12Rng::from_seed(SEED);
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
@@ -513,7 +522,7 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng = ChaCha12Rng::from_seed(SEED);
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
@@ -599,7 +608,7 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng = ChaCha12Rng::from_seed(SEED);
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
@@ -678,7 +687,7 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng = ChaCha12Rng::from_seed(SEED);
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
@@ -764,7 +773,7 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng = ChaCha12Rng::from_seed(SEED);
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
@@ -844,7 +853,7 @@ mod tests {
             rand: [0; 8],
         });
 
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng = ChaCha12Rng::from_seed(SEED);
 
         let peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
         let central_pairing = central::Pairing::initiate(
@@ -925,7 +934,7 @@ mod tests {
             rand: [0; 8],
         });
 
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng = ChaCha12Rng::from_seed(SEED);
 
         let peripheral_pairing = peripheral::Pairing::initiate(
             peripheral,

@@ -8,12 +8,13 @@ license = "MIT OR Apache-2.0"
 trouble-host = { path = "../../host", features = ["derive", "scan"] }
 bt-hci = { version = "0.8" }
 embassy-futures = "0.1.1"
-embassy-sync = { version = "0.7" }
+embassy-sync = { version = "0.7" } # host-macros
 embassy-time = "0.5"
 embedded-hal-async = "1.0"
-static_cell = "2"
-heapless = "0.9"
-rand_core = { version = "0.6", default-features = false }
+static_cell = "2" # host-macros
+heapless = "0.9" # ble_scanner.rs
+rand_core = { version = "0.10.0", default-features = false, optional = true }
+    # tbd. Have the PR #521 remove need for 'rand[_core]' from the 'examples/' side. 'examples/**/Cargo.toml'
 
 # Used by 'security' feature
 embedded-storage-async = { version = "0.4.1", optional = true }
@@ -37,6 +38,8 @@ log = [
 security = [
     "trouble-host/security",
     "dep:sequential-storage",
-    "dep:embedded-storage-async"
+    "dep:embedded-storage-async",
+    "dep:rand_core",
+    #"dep:rand"
 ]
 std = []
