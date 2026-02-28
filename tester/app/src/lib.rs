@@ -161,6 +161,9 @@ pub(crate) enum Event {
         address: Address,
         error: trouble_host::Error,
     },
+    BondLost {
+        address: Address,
+    },
     ConnParamUpdate {
         address: Address,
         conn_interval: embassy_time::Duration,

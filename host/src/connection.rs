@@ -1,10 +1,14 @@
 //! BLE connection.
 
-use bt_hci::cmd::le::{LeConnUpdate, LeReadLocalSupportedFeatures, LeReadPhy, LeSetDataLength, LeSetPhy};
+use bt_hci::cmd::le::{
+    LeConnUpdate, LeConnectionRateRequest, LeFrameSpaceUpdate, LeReadLocalSupportedFeatures, LeReadPhy,
+    LeSetDataLength, LeSetPhy,
+};
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
-    AddrKind, AllPhys, BdAddr, ConnHandle, DisconnectReason, LeConnRole, PhyKind, PhyMask, PhyOptions, Status,
+    AddrKind, AllPhys, BdAddr, ConnHandle, DisconnectReason, FrameSpaceInitiator, LeConnRole, PhyKind, PhyMask,
+    PhyOptions, SpacingTypes, Status,
 };
 #[cfg(feature = "connection-params-update")]
 use bt_hci::{
@@ -156,6 +160,30 @@ pub struct ConnParams {
     pub supervision_timeout: Duration,
 }
 
+/// Connection rate parameters.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ConnectRateParams {
+    /// Minimum connection interval.
+    pub min_connection_interval: Duration,
+    /// Maximum connection interval.
+    pub max_connection_interval: Duration,
+    /// Minimum subrate factor.
+    pub subrate_min: u16,
+    /// Maximum subrate factor.
+    pub subrate_max: u16,
+    /// Maximum slave latency.
+    pub max_latency: u16,
+    /// Number of continuation events allowed for subrate processing.
+    pub continuation_number: u16,
+    /// Supervision timeout.
+    pub supervision_timeout: Duration,
+    /// Minimum connection event length.
+    pub min_ce_length: Duration,
+    /// Maximum connection event length.
+    pub max_ce_length: Duration,
+}
+
 /// A connection event.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -192,6 +220,30 @@ pub enum ConnectionEvent {
         /// Max RX time.
         max_rx_time: u16,
     },
+    /// The frame space was updated for this connection.
+    FrameSpaceUpdated {
+        /// The negotiated frame space value.
+        frame_space: Duration,
+        /// Who initiated the frame space update.
+        initiator: FrameSpaceInitiator,
+        /// PHYs affected.
+        phys: PhyMask,
+        /// Spacing types affected.
+        spacing_types: SpacingTypes,
+    },
+    /// Connection rate has been changed.
+    ConnectionRateChanged {
+        /// Connection interval.
+        conn_interval: Duration,
+        /// Subrate factor.
+        subrate_factor: u16,
+        /// Peripheral latency.
+        peripheral_latency: u16,
+        /// Continuation number.
+        continuation_number: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
+    },
     /// A request to change the connection parameters.
     ///
     /// [`ConnectionParamsRequest::accept()`] or [`ConnectionParamsRequest::reject()`]
@@ -217,6 +269,9 @@ pub enum ConnectionEvent {
     #[cfg(feature = "security")]
     /// Pairing completed
     PairingFailed(Error),
+    #[cfg(feature = "security")]
+    /// The peer has lost its bond (received pairing request for a bonded peer).
+    BondLost,
 }
 
 /// A connection parameters update request
@@ -520,7 +575,19 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// If the link is already encrypted then this will always generate an error.
     ///
     pub fn request_security(&self) -> Result<(), Error> {
-        self.manager.request_security(self.index)
+        self.manager.request_security(self.index, true)
+    }
+
+    /// Check if the peer is a bonded device.
+    #[cfg(feature = "security")]
+    pub(crate) fn is_bonded_peer(&self) -> bool {
+        self.manager.is_bonded_peer(self.index)
+    }
+
+    /// Try to enable encryption with a bonded peer if it is not yet established
+    #[cfg(feature = "security")]
+    pub(crate) async fn try_enable_encryption(&self) -> Result<(), Error> {
+        self.manager.try_enable_encryption(self.index).await
     }
 
     /// Get the encrypted state of the connection
@@ -710,6 +777,79 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
             stack.host.send_conn_param_update_req(handle, &param).await?;
         }
         Ok(())
+    }
+
+    /// Update frame space for this connection.
+    pub async fn update_frame_space<T>(
+        &self,
+        stack: &Stack<'_, T, P>,
+        frame_space_min: Duration,
+        frame_space_max: Duration,
+        phys: PhyMask,
+        spacing_types: SpacingTypes,
+    ) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdSync<LeFrameSpaceUpdate>,
+    {
+        let handle = self.handle();
+        let frame_space_min_dur = bt_hci_duration(frame_space_min);
+        let frame_space_max_dur = bt_hci_duration(frame_space_max);
+        match stack
+            .host
+            .command(LeFrameSpaceUpdate::new(
+                handle,
+                frame_space_min_dur,
+                frame_space_max_dur,
+                phys,
+                spacing_types,
+            ))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                Err(crate::Error::Disconnected.into())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Request a change in connection rate (interval and subrate) for this connection.
+    pub async fn request_connection_rate<T>(
+        &self,
+        stack: &Stack<'_, T, P>,
+        conn_rate_params: &ConnectRateParams,
+    ) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdSync<LeConnectionRateRequest>,
+    {
+        let handle = self.handle();
+        let min_interval = bt_hci_duration(conn_rate_params.min_connection_interval);
+        let max_interval = bt_hci_duration(conn_rate_params.max_connection_interval);
+        let timeout = bt_hci_duration(conn_rate_params.supervision_timeout);
+        let min_ce = bt_hci_duration(conn_rate_params.min_ce_length);
+        let max_ce = bt_hci_duration(conn_rate_params.max_ce_length);
+        match stack
+            .host
+            .command(LeConnectionRateRequest::new(
+                handle,
+                min_interval,
+                max_interval,
+                conn_rate_params.subrate_min,
+                conn_rate_params.subrate_max,
+                conn_rate_params.max_latency,
+                conn_rate_params.continuation_number,
+                timeout,
+                min_ce,
+                max_ce,
+            ))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                Err(crate::Error::Disconnected.into())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Transform BLE connection into a `GattConnection`

@@ -72,7 +72,9 @@ controller-host-flow-control = []
 connection-metrics = []
 # Enable additional channel metrics
 channel-metrics = []
-security = ["dep:aes", "dep:cmac", "dep:p256", "dep:rand", "gatt"]
+security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:rand", "gatt" ]
+# Enable LE Legacy Pairing (BLE 4.0/4.1 fallback when peer doesn't support Secure Connections)
+legacy-pairing = ["security"]
 # For development. Disable security manager cryptographically secure pseudorandom number
 # generator (CSPRNG) to require a cryptographically secure seed
 dev-disable-csprng-seed-requirement = []

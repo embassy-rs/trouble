@@ -483,6 +483,90 @@ impl DHKey {
     }
 }
 
+#[cfg(feature = "legacy-pairing")]
+#[allow(clippy::too_many_arguments)]
+/// Confirm value generation function `c1` for LE Legacy Pairing
+/// ([Vol 3] Part H, Section 2.2.3).
+///
+/// Uses two rounds of AES-128 with XOR combining:
+///   c1(k, r, preq, pres, iat, ia, rat, ra) = e(k, e(k, r XOR p1) XOR p2)
+/// where:
+///   p1 = pres || preq || rat || iat
+///   p2 = padding || ia || ra
+///
+/// - `preq`/`pres`: 7 bytes each in wire order (command code at index 0)
+/// - `iat`/`rat`: address type (0=public, 1=random)
+/// - `ia`/`ra`: 6-byte address in MSO order (reversed from BdAddr raw)
+pub(super) fn c1(
+    k: u128,
+    r: u128,
+    preq: &[u8; 7],
+    pres: &[u8; 7],
+    iat: u8,
+    ia: &[u8; 6],
+    rat: u8,
+    ra: &[u8; 6],
+) -> u128 {
+    // p1 = pres || preq || rat || iat (MSO to LSO, 16 bytes)
+    // preq/pres are treated as LE integers in the concatenation, so the wire-order
+    // bytes must be reversed to place the most significant byte at the MSO position.
+    let mut pres_rev = *pres;
+    pres_rev.reverse();
+    let mut preq_rev = *preq;
+    preq_rev.reverse();
+
+    let mut p1 = [0u8; 16];
+    p1[0..7].copy_from_slice(&pres_rev);
+    p1[7..14].copy_from_slice(&preq_rev);
+    p1[14] = rat;
+    p1[15] = iat;
+
+    // p2 = padding(4) || ia(6) || ra(6) (MSO to LSO)
+    let mut p2 = [0u8; 16];
+    p2[4..10].copy_from_slice(ia);
+    p2[10..16].copy_from_slice(ra);
+
+    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
+
+    // e(k, r XOR p1)
+    let r_bytes = r.to_be_bytes();
+    let mut block = [0u8; 16];
+    for i in 0..16 {
+        block[i] = r_bytes[i] ^ p1[i];
+    }
+    cipher.encrypt_block((&mut block).into());
+
+    // e(k, result XOR p2)
+    for i in 0..16 {
+        block[i] ^= p2[i];
+    }
+    cipher.encrypt_block((&mut block).into());
+
+    u128::from_be_bytes(block)
+}
+
+#[cfg(feature = "legacy-pairing")]
+/// Short Term Key (STK) generation function `s1` for LE Legacy Pairing
+/// ([Vol 3] Part H, Section 2.2.4).
+///
+///   s1(k, r1, r2) = e(k, r1' || r2')
+/// where r1' and r2' are the least significant 64 bits of r1 and r2.
+pub(super) fn s1(k: u128, r1: u128, r2: u128) -> u128 {
+    let r1_bytes = r1.to_be_bytes();
+    let r2_bytes = r2.to_be_bytes();
+
+    // r1' = r1[63:0] = least significant 8 bytes (bytes [8..16] in big-endian)
+    // r2' = r2[63:0] = least significant 8 bytes
+    let mut r_prime = [0u8; 16];
+    r_prime[0..8].copy_from_slice(&r1_bytes[8..16]);
+    r_prime[8..16].copy_from_slice(&r2_bytes[8..16]);
+
+    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
+    cipher.encrypt_block((&mut r_prime).into());
+
+    u128::from_be_bytes(r_prime)
+}
+
 /// Combines `hi` and `lo` values into a big-endian byte array.
 #[allow(clippy::redundant_pub_crate)]
 #[cfg(test)]
@@ -804,5 +888,38 @@ mod tests {
         let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
         let re = irk.resolve_address(&address);
         assert_eq!(re, true);
+    }
+
+    /// LE Legacy Pairing c1 test vector ([Vol 3] Part H, Appendix D.1).
+    /// preq/pres in wire order (command code at index 0).
+    #[cfg(feature = "legacy-pairing")]
+    #[allow(clippy::unreadable_literal)]
+    #[test]
+    fn legacy_c1() {
+        let k: u128 = 0;
+        let r: u128 = 0x5783D52156AD6F0E6388274EC6702EE0;
+        // Wire order: [Code, IO, OOB, Auth, MaxKey, InitDist, RespDist]
+        let preq: [u8; 7] = [0x01, 0x01, 0x00, 0x00, 0x10, 0x07, 0x07];
+        let pres: [u8; 7] = [0x02, 0x03, 0x00, 0x00, 0x08, 0x00, 0x05];
+        let iat: u8 = 0x01;
+        let rat: u8 = 0x00;
+        let ia: [u8; 6] = [0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6];
+        let ra: [u8; 6] = [0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6];
+
+        let result = c1(k, r, &preq, &pres, iat, &ia, rat, &ra);
+        assert_eq!(result, 0x1E1E3FEF878988EAD2A74DC5BEF13B86);
+    }
+
+    /// LE Legacy Pairing s1 test vector ([Vol 3] Part H, Appendix D.2).
+    #[cfg(feature = "legacy-pairing")]
+    #[allow(clippy::unreadable_literal)]
+    #[test]
+    fn legacy_s1() {
+        let k: u128 = 0;
+        let r1: u128 = 0x000F0E0D0C0B0A091122334455667788;
+        let r2: u128 = 0x010203040506070899AABBCCDDEEFF00;
+
+        let result = s1(k, r1, r2);
+        assert_eq!(result, 0x9a1fe1f0e8b0f49b5b4216ae796da062);
     }
 }

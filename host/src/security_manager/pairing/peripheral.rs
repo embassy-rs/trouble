@@ -9,7 +9,6 @@ use rand::RngExt; // brings in 'Rng::sample()'
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
 use crate::prelude::ConnectionEvent;
-use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use crate::security_manager::pairing::util::{
     choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet,
@@ -111,6 +110,15 @@ impl PairingData {
 }
 
 impl Pairing {
+    pub fn result(&self) -> Option<Result<(), Error>> {
+        let step = self.current_step.borrow();
+        match step.deref() {
+            Step::Success => Some(Ok(())),
+            Step::Error(e) => Some(Err(e.clone())),
+            _ => None,
+        }
+    }
+
     pub fn timeout_at(&self) -> Instant {
         let step = self.current_step.borrow();
         if matches!(step.deref(), Step::Success | Step::Error(_)) {
@@ -164,6 +172,17 @@ impl Pairing {
         }
     }
 
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn into_legacy(self) -> super::legacy_peripheral::Pairing {
+        let PairingData {
+            local_address,
+            peer_address,
+            local_features,
+            ..
+        } = self.pairing_data.into_inner();
+        super::legacy_peripheral::Pairing::new(local_address, peer_address, local_features.io_capabilities)
+    }
+
     pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
         local_address: Address,
         peer_address: Address,
@@ -174,7 +193,11 @@ impl Pairing {
         {
             let mut security_request = prepare_packet(Command::SecurityRequest)?;
             let payload = security_request.payload_mut();
-            payload[0] = AuthReq::new(ops.bonding_flag()).into();
+            let mut auth_req = AuthReq::new(ops.bonding_flag());
+            if local_io != IoCapabilities::NoInputNoOutput {
+                auth_req = auth_req.with_mitm();
+            }
+            payload[0] = auth_req.into();
             ops.try_send_packet(security_request)?;
         }
         Ok(ret)
@@ -316,6 +339,9 @@ impl Pairing {
             trace!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
                 (Step::WaitingPairingRequest, Command::PairingRequest) => {
+                    if ops.find_bond().is_some() {
+                        ops.try_send_connection_event(ConnectionEvent::BondLost)?;
+                    }
                     Self::handle_pairing_request(command.payload, ops, pairing_data)?;
                     Self::send_pairing_response(ops, pairing_data)?;
                     Step::WaitingPublicKey
@@ -425,11 +451,15 @@ impl Pairing {
         pairing_data: &mut PairingData,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
-        if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
-            return Err(Error::Security(Reason::EncryptionKeySize));
-        }
+
+        #[cfg(not(feature = "legacy-pairing"))]
         if !peer_features.security_properties.secure_connection() {
-            return Err(Error::Security(Reason::UnspecifiedReason));
+            return Err(Error::Security(Reason::AuthenticationRequirements));
+        }
+
+        if peer_features.maximum_encryption_key_size < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS
+        {
+            return Err(Error::Security(Reason::EncryptionKeySize));
         }
 
         if peer_features.initiator_key_distribution.identity_key() {
@@ -440,7 +470,11 @@ impl Pairing {
         }
 
         pairing_data.peer_features = peer_features;
-        pairing_data.local_features.security_properties = AuthReq::new(ops.bonding_flag());
+        let mut auth_req = AuthReq::new(ops.bonding_flag());
+        if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
+            auth_req = auth_req.with_mitm();
+        }
+        pairing_data.local_features.security_properties = auth_req;
         pairing_data.pairing_method = choose_pairing_method(pairing_data.peer_features, pairing_data.local_features);
         info!("[smp] Pairing method {:?}", pairing_data.pairing_method);
         Ok(())
@@ -612,6 +646,10 @@ impl Pairing {
                 &pairing_data.long_term_key,
                 pairing_data.pairing_method.security_level(),
                 pairing_data.want_bonding(),
+                #[cfg(feature = "legacy-pairing")]
+                0,
+                #[cfg(feature = "legacy-pairing")]
+                [0; 8],
             )?;
             pairing_data.bond_information = Some(bond);
             Ok(Step::WaitingLinkEncrypted)
@@ -704,7 +742,7 @@ impl Pairing {
                 "Confirm and computed confirm mismatch: {:?} != {:?}",
                 pairing_data.confirm.0, expected_confirm.0
             );
-            Err(Error::Security(Reason::PasskeyEntryFailed))
+            Err(Error::Security(Reason::ConfirmValueFailed))
         } else {
             let nonce_packet = make_pairing_random(&pairing_data.local_nonce)?;
             ops.try_send_packet(nonce_packet)?;
@@ -769,12 +807,12 @@ mod tests {
             assert_eq!(sent_packets.len(), 1);
             let pairing_response = &sent_packets[0];
             assert_eq!(pairing_response.command, Command::PairingResponse);
-            assert_eq!(pairing_response.payload(), &[0x03, 0, 12, 16, 0, 0]);
+            assert_eq!(pairing_response.payload(), &[0x03, 0, 8, 16, 0, 0]);
             assert_eq!(
                 pairing_data.local_features,
                 PairingFeatures {
                     io_capabilities: IoCapabilities::NoInputNoOutput,
-                    security_properties: 12.into(),
+                    security_properties: 8.into(),
                     ..Default::default()
                 }
             );
@@ -878,7 +916,7 @@ mod tests {
             assert_eq!(sent_packets[4].command, Command::PairingDhKeyCheck);
             assert_eq!(
                 sent_packets[4].payload(),
-                [22, 123, 0, 74, 239, 81, 163, 188, 71, 111, 251, 117, 54, 186, 205, 3]
+                [161, 50, 135, 68, 154, 19, 105, 76, 55, 97, 207, 61, 193, 29, 234, 92]
             );
             assert_eq!(pairing_ops.encryptions.len(), 1);
             assert!(matches!(pairing_ops.encryptions[0], LongTermKey(_)));

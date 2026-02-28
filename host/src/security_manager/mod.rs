@@ -6,17 +6,21 @@ mod constants;
 pub(crate) mod crypto;
 mod pairing;
 mod types;
+#[cfg(feature = "legacy-pairing")]
+use core::cell::Cell;
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
 use core::ops::DerefMut;
+use core::task::Poll;
 
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
-use bt_hci::event::{EncryptionChangeV1, EventKind, EventPacket};
+use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
 use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
 use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
 use rand::rngs::ChaCha12Rng;
@@ -29,14 +33,16 @@ use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 use crate::security_manager::pairing::{Pairing, PairingOps};
+#[cfg(feature = "legacy-pairing")]
+use crate::security_manager::types::AuthReq;
 use crate::security_manager::types::BondingFlag;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, IoCapabilities, PacketPool};
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
-    /// A long term key request has been issued
-    SendLongTermKey(ConnHandle),
+    /// A long term key request has been issued (handle, ediv, rand)
+    SendLongTermKey(ConnHandle, u16, [u8; 8]),
     /// Enable encryption on channel
     EnableEncryption(ConnHandle, BondInformation),
     /// Pairing timeout
@@ -56,6 +62,12 @@ pub struct BondInformation {
     pub is_bonded: bool,
     /// Security level of this long term key.
     pub security_level: SecurityLevel,
+    #[cfg(feature = "legacy-pairing")]
+    /// Encrypted Diversifier (0 for LESC, non-zero for legacy)
+    pub ediv: u16,
+    #[cfg(feature = "legacy-pairing")]
+    /// Random Number (all zeros for LESC, non-zero for legacy)
+    pub rand: [u8; 8],
 }
 
 impl BondInformation {
@@ -66,6 +78,10 @@ impl BondInformation {
             identity,
             is_bonded,
             security_level,
+            #[cfg(feature = "legacy-pairing")]
+            ediv: 0,
+            #[cfg(feature = "legacy-pairing")]
+            rand: [0; 8],
         }
     }
 }
@@ -149,19 +165,6 @@ impl<P: PacketPool> TxPacket<P> {
     }
 }
 
-/// Pairing methods
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum PairingMethod {
-    /// Uninitialized pairing
-    None,
-    /// Numeric Comparison
-    LeSecureConnectionNumericComparison,
-    /// Passkey entry
-    LeSecureConnectionPasskey,
-    /// Out-of-band
-    LeSecureConnectionOob,
-}
-
 // TODO: IRK exchange, HCI_LE_­Add_­Device_­To_­Resolving_­List
 
 /// Security manager that handles SM packet
@@ -172,10 +175,15 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     state: RefCell<SecurityManagerData<BOND_COUNT>>,
     /// State of an ongoing pairing as a peripheral
     pairing_sm: RefCell<Option<Pairing>>,
+    /// Waker for pairing finished
+    finished_waker: RefCell<WakerRegistration>,
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
     /// Io capabilities
     io_capabilities: RefCell<IoCapabilities>,
+    /// When true, reject legacy pairing even if the feature is compiled in
+    #[cfg(feature = "legacy-pairing")]
+    secure_connections_only: Cell<bool>,
 }
 
 impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
@@ -187,13 +195,28 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
             pairing_sm: RefCell::new(None),
+            finished_waker: RefCell::new(WakerRegistration::new()),
             io_capabilities: RefCell::new(IoCapabilities::NoInputNoOutput),
+            #[cfg(feature = "legacy-pairing")]
+            secure_connections_only: Cell::new(false),
         }
     }
 
     /// Set the IO capabilities
     pub(crate) fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
         self.io_capabilities.replace(io_capabilities);
+    }
+
+    /// Enable or disable secure connections only mode.
+    /// When enabled, legacy pairing is rejected even if the feature is compiled in.
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn set_secure_connections_only(&self, enabled: bool) {
+        self.secure_connections_only.set(enabled);
+    }
+
+    #[cfg(feature = "legacy-pairing")]
+    fn is_secure_connections_only(&self) -> bool {
+        self.secure_connections_only.get()
     }
 
     /// Set the current local address
@@ -207,23 +230,47 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.state.borrow_mut().local_address = Some(address);
     }
 
-    fn get_peer_bond_information(&self, identity: &Identity) -> Option<BondInformation> {
+    /// Returns true if no pairing is currently in progress.
+    fn is_idle(&self) -> bool {
+        self.pairing_sm
+            .borrow()
+            .as_ref()
+            .map(|sm| sm.result().is_some())
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn is_pairing_in_progress(&self, address: Address) -> bool {
+        let sm = self.pairing_sm.borrow();
+        match &*sm {
+            Some(sm) => sm.peer_address() == address && sm.result().is_none(),
+            None => false,
+        }
+    }
+
+    pub(crate) async fn wait_finished(&self, address: Address) -> Result<(), Error> {
+        poll_fn(|cx| {
+            self.finished_waker.borrow_mut().register(cx.waker());
+            match &*self.pairing_sm.borrow() {
+                Some(sm) => {
+                    if sm.peer_address() != address {
+                        return Poll::Ready(Err(Error::Busy));
+                    }
+                    match sm.result() {
+                        Some(result) => Poll::Ready(result),
+                        None => Poll::Pending,
+                    }
+                }
+                None => Poll::Ready(Err(Error::Disconnected)),
+            }
+        })
+        .await
+    }
+
+    pub(crate) fn get_peer_bond_information(&self, identity: &Identity) -> Option<BondInformation> {
         trace!("[security manager] Find long term key for {:?}", identity);
         self.state.borrow().bond.iter().find_map(|bond| {
             if bond.identity.match_identity(identity) {
                 Some(bond.clone())
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Get the long term key for peer
-    pub(crate) fn get_peer_long_term_key(&self, identity: &Identity) -> Option<LongTermKey> {
-        trace!("[security manager] Find long term key for {:?}", identity);
-        self.state.borrow().bond.iter().find_map(|bond| {
-            if bond.identity.match_identity(identity) {
-                Some(bond.ltk)
             } else {
                 None
             }
@@ -320,13 +367,48 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
 
         let address = {
+            let idle = self.is_idle();
             let mut state_machine = self.pairing_sm.borrow_mut();
-            if state_machine.is_none() {
-                *state_machine = Some(Pairing::new_peripheral(
-                    self.state.borrow().local_address.unwrap(),
-                    peer_address,
-                    *self.io_capabilities.borrow(),
-                ));
+            if idle {
+                let local_address = self.state.borrow().local_address.unwrap();
+                let local_io = *self.io_capabilities.borrow();
+
+                #[cfg(feature = "legacy-pairing")]
+                {
+                    // Check if peer supports SC by peeking at PairingRequest AuthReq byte
+                    let use_legacy = command == Command::PairingRequest
+                        && payload.len() >= 3
+                        && !AuthReq::from(payload[2]).secure_connection();
+
+                    if use_legacy && self.is_secure_connections_only() {
+                        return Err(Error::Security(Reason::AuthenticationRequirements));
+                    }
+
+                    if use_legacy {
+                        *state_machine = Some(Pairing::new_legacy_peripheral(local_address, peer_address, local_io));
+                    } else {
+                        *state_machine = Some(Pairing::new_peripheral(local_address, peer_address, local_io));
+                    }
+                }
+                #[cfg(not(feature = "legacy-pairing"))]
+                {
+                    *state_machine = Some(Pairing::new_peripheral(local_address, peer_address, local_io));
+                }
+            }
+
+            // Check if we need to switch from LESC to legacy peripheral
+            // when receiving a PairingRequest without SC flag
+            #[cfg(feature = "legacy-pairing")]
+            if command == Command::PairingRequest
+                && payload.len() >= 3
+                && !AuthReq::from(payload[2]).secure_connection()
+                && matches!(state_machine.as_ref(), Some(Pairing::Peripheral(_)))
+            {
+                if self.is_secure_connections_only() {
+                    return Err(Error::Security(Reason::AuthenticationRequirements));
+                }
+                let old = state_machine.take().unwrap();
+                *state_machine = Some(old.switch_to_legacy_peripheral()?);
             }
 
             let state_machine = state_machine.as_ref().unwrap();
@@ -394,13 +476,29 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
 
         let address = {
+            let idle = self.is_idle();
             let mut state_machine = self.pairing_sm.borrow_mut();
-            if state_machine.is_none() {
+            if idle {
                 *state_machine = Some(Pairing::new_central(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
                     *self.io_capabilities.borrow(),
                 ));
+            }
+
+            // Check if we need to switch from LESC to legacy central
+            // when receiving a PairingResponse without SC flag
+            #[cfg(feature = "legacy-pairing")]
+            if command == Command::PairingResponse
+                && payload.len() >= 3
+                && !AuthReq::from(payload[2]).secure_connection()
+                && matches!(state_machine.as_ref(), Some(Pairing::Central(_)))
+            {
+                if self.is_secure_connections_only() {
+                    return Err(Error::Security(Reason::AuthenticationRequirements));
+                }
+                let old = state_machine.take().unwrap();
+                *state_machine = Some(old.switch_to_legacy_central()?);
             }
 
             let state_machine = state_machine.as_ref().unwrap();
@@ -444,6 +542,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         } else {
             self.handle_central(pdu, connections, storage)
         };
+
+        if self.is_idle() {
+            self.finished_waker.borrow_mut().wake();
+        }
 
         if result.is_ok() {
             if let Some(sm) = self.pairing_sm.borrow().as_ref() {
@@ -496,48 +598,60 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         &self,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
+        user_initiated: bool,
     ) -> Result<(), Error> {
         if storage.security_level != SecurityLevel::NoEncryption {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
 
         let role = storage.role.ok_or(Error::InvalidValue)?;
-        let mut pairing_sm = self.pairing_sm.borrow_mut();
-        if pairing_sm.is_none() {
-            let handle = storage.handle.ok_or(Error::InvalidValue)?;
-            let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
+        if !self.is_idle() {
+            // If pairing is already in progress for this peer, consider the request fulfilled.
             let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
             let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
             let peer_address = Address {
                 kind: peer_address_kind,
                 addr: peer_identity.bd_addr,
             };
-            let mut ops = PairingOpsImpl {
-                security_manager: self,
-                conn_handle: handle,
-                connections,
-                storage,
-                peer_identity,
-            };
-            if role == LeConnRole::Peripheral {
-                *pairing_sm = Some(Pairing::initiate_peripheral(
-                    local_address,
-                    peer_address,
-                    &mut ops,
-                    *self.io_capabilities.borrow(),
-                )?);
-                Ok(())
-            } else {
-                *pairing_sm = Some(Pairing::initiate_central(
-                    local_address,
-                    peer_address,
-                    &mut ops,
-                    *self.io_capabilities.borrow(),
-                )?);
-                Ok(())
+            if self.is_pairing_in_progress(peer_address) {
+                return Ok(());
             }
+            return Err(Error::InvalidState);
+        }
+        let mut pairing_sm = self.pairing_sm.borrow_mut();
+
+        let handle = storage.handle.ok_or(Error::InvalidValue)?;
+        let local_address = self.state.borrow().local_address.ok_or(Error::InvalidValue)?;
+        let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+        let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+        let peer_address = Address {
+            kind: peer_address_kind,
+            addr: peer_identity.bd_addr,
+        };
+        let mut ops = PairingOpsImpl {
+            security_manager: self,
+            conn_handle: handle,
+            connections,
+            storage,
+            peer_identity,
+        };
+        if role == LeConnRole::Peripheral {
+            *pairing_sm = Some(Pairing::initiate_peripheral(
+                local_address,
+                peer_address,
+                &mut ops,
+                *self.io_capabilities.borrow(),
+            )?);
+            Ok(())
         } else {
-            Err(Error::InvalidState)
+            *pairing_sm = Some(Pairing::initiate_central(
+                local_address,
+                peer_address,
+                &mut ops,
+                *self.io_capabilities.borrow(),
+                user_initiated,
+            )?);
+            Ok(())
         }
     }
 
@@ -545,20 +659,25 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn cancel_timeout(&self) {
         if let Some(pairing) = self.pairing_sm.borrow().as_ref() {
             pairing.mark_timeout();
+            self.finished_waker.borrow_mut().wake();
         }
     }
 
     /// Channel disconnected
-    pub(crate) fn disconnect(&self, handle: ConnHandle, identity: Option<Identity>) -> Result<(), Error> {
-        self.pairing_sm.replace(None);
-        if let Some(identity) = identity {
-            self.state
-                .borrow_mut()
-                .bond
-                .retain(|x| x.is_bonded || x.identity != identity);
+    pub(crate) fn disconnect(&self, identity: &Identity) {
+        if self
+            .pairing_sm
+            .borrow()
+            .as_ref()
+            .is_some_and(|sm| sm.peer_address().addr == identity.bd_addr)
+        {
+            self.pairing_sm.replace(None);
+            self.finished_waker.borrow_mut().wake();
         }
-
-        Ok(())
+        self.state
+            .borrow_mut()
+            .bond
+            .retain(|x| x.is_bonded || x.identity != *identity);
     }
 
     /// Handle recevied events from HCI
@@ -571,7 +690,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         match event.kind {
             LeEventKind::LeLongTermKeyRequest => {
                 let event_data = LeLongTermKeyRequest::from_hci_bytes_complete(event.data)?;
-                self.try_send_event(SecurityEventData::SendLongTermKey(event_data.handle))?;
+                self.try_send_event(SecurityEventData::SendLongTermKey(
+                    event_data.handle,
+                    event_data.encrypted_diversifier,
+                    event_data.random_number,
+                ))?;
             }
             _ => (),
         }
@@ -584,62 +707,102 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         event: EventPacket,
         connections: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
-        #[allow(clippy::single_match)]
-        match event.kind {
+        // Extract (handle, status, encrypted) from either encryption event type
+        let encryption_event = match event.kind {
             EventKind::EncryptionChangeV1 => {
-                let event_data = EncryptionChangeV1::from_hci_bytes_complete(event.data)?;
-                match event_data.status.to_result() {
-                    Ok(()) => {
-                        trace!("[smp] Encryption Changed event {:?}", event_data.enabled);
-                        connections.with_connected_handle(event_data.handle, |storage| {
-                            let sm = self.pairing_sm.borrow();
-                            if let Some(sm) = &*sm {
-                                let mut rng = self.rng.borrow_mut();
-                                let res = sm.handle_event(
-                                    pairing::Event::LinkEncryptedResult(
-                                        event_data.enabled != EncryptionEnabledLevel::Off,
-                                    ),
-                                    &mut PairingOpsImpl {
-                                        security_manager: self,
-                                        peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
-                                        connections,
-                                        storage,
-                                        conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
-                                    },
-                                    rng.deref_mut(),
-                                );
-                                let _ = self.handle_security_error(connections, storage, &res);
-                                match res {
-                                    Ok(_) => {
-                                        storage.security_level = sm.security_level();
-                                        Ok(())
-                                    }
-                                    x => x,
-                                }?
-                            } else if let Some(identity) = storage.peer_identity.as_ref() {
-                                match self.get_peer_bond_information(identity) {
-                                    Some(bond) if event_data.enabled != EncryptionEnabledLevel::Off => {
-                                        info!("[smp] Encryption changed to true using bond {:?}", bond.identity);
-                                        storage.security_level = bond.security_level;
-                                    }
-                                    _ => {
-                                        warn!(
-                                            "[smp] Either encryption failed to enable or bond not found for {:?}",
-                                            identity
-                                        );
-                                        storage.security_level = SecurityLevel::NoEncryption
-                                    }
+                let e = EncryptionChangeV1::from_hci_bytes_complete(event.data)?;
+                Some((e.handle, e.status, e.enabled != EncryptionEnabledLevel::Off))
+            }
+            EventKind::EncryptionKeyRefreshComplete => {
+                let e = EncryptionKeyRefreshComplete::from_hci_bytes_complete(event.data)?;
+                // Key refresh implies encryption is still on
+                Some((e.handle, e.status, true))
+            }
+            _ => None,
+        };
+
+        if let Some((handle, status, encrypted)) = encryption_event {
+            match status.to_result() {
+                Ok(()) => {
+                    trace!("[smp] Encryption event (encrypted={})", encrypted);
+                    connections.with_connected_handle(handle, |storage| {
+                        let sm = self.pairing_sm.borrow();
+                        if let Some(sm) = &*sm {
+                            let mut rng = self.rng.borrow_mut();
+                            let res = sm.handle_event(
+                                pairing::Event::LinkEncryptedResult(encrypted),
+                                &mut PairingOpsImpl {
+                                    security_manager: self,
+                                    peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                                    connections,
+                                    storage,
+                                    conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                                },
+                                rng.deref_mut(),
+                            );
+                            let _ = self.handle_security_error(connections, storage, &res);
+                            if res.is_ok() {
+                                storage.security_level = sm.security_level();
+                                storage.bond_rejected = false;
+                            }
+                            if sm.result().is_some() {
+                                self.finished_waker.borrow_mut().wake();
+                                let _ = self.events.try_send(SecurityEventData::TimerChange);
+                            }
+                            res?;
+                        } else if let Some(identity) = storage.peer_identity.as_ref() {
+                            match self.get_peer_bond_information(identity) {
+                                Some(bond) if encrypted => {
+                                    info!("[smp] Encrypted using bond {:?}", bond.identity);
+                                    storage.security_level = bond.security_level;
+                                }
+                                _ => {
+                                    warn!(
+                                        "[smp] Either encryption failed to enable or bond not found for {:?}",
+                                        identity
+                                    );
+                                    storage.security_level = SecurityLevel::NoEncryption;
                                 }
                             }
-                            Ok(())
-                        })?;
-                    }
-                    Err(error) => {
-                        error!("[security manager] Encryption Changed Handle Error {:?}", error);
-                    }
+                        }
+                        Ok(())
+                    })?;
+                }
+                Err(error) => {
+                    error!("[security manager] Encryption event error {:?}", error);
+                    connections.with_connected_handle(handle, |storage| {
+                        let sm = self.pairing_sm.borrow();
+                        if let Some(sm) = &*sm {
+                            // If we were waiting for bonded encryption, mark the bond as
+                            // rejected on this connection so the next pairing attempt will
+                            // skip bonded encryption and initiate fresh pairing instead.
+                            if sm.is_waiting_bonded_encryption() {
+                                storage.bond_rejected = true;
+                            }
+                            let mut rng = self.rng.borrow_mut();
+                            let _res = sm.handle_event(
+                                pairing::Event::LinkEncryptedResult(false),
+                                &mut PairingOpsImpl {
+                                    security_manager: self,
+                                    peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                                    connections,
+                                    storage,
+                                    conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                                },
+                                rng.deref_mut(),
+                            );
+                            // Don't call handle_security_error here: sending SMP PairingFailed
+                            // for an HCI-level encryption failure would cause the peer to
+                            // delete its bond information, preventing future re-encryption.
+                            if sm.result().is_some() {
+                                self.finished_waker.borrow_mut().wake();
+                                let _ = self.events.try_send(SecurityEventData::TimerChange);
+                            }
+                        }
+                        Ok(())
+                    })?;
                 }
             }
-            _ => (),
         }
         Ok(())
     }
@@ -756,11 +919,23 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         self.security_manager.add_bond_information(bond.clone())
     }
 
+    fn find_bond(&self) -> Option<BondInformation> {
+        self.security_manager
+            .state
+            .borrow()
+            .bond
+            .iter()
+            .find(|x| x.identity.match_identity(&self.peer_identity))
+            .cloned()
+    }
+
     fn try_enable_encryption(
         &mut self,
         ltk: &LongTermKey,
         security_level: SecurityLevel,
         is_bonded: bool,
+        #[cfg(feature = "legacy-pairing")] ediv: u16,
+        #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
     ) -> Result<BondInformation, Error> {
         info!("Enabling encryption for {:?}", self.peer_identity);
         let bond_info = BondInformation {
@@ -768,6 +943,10 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
             identity: self.peer_identity,
             is_bonded,
             security_level,
+            #[cfg(feature = "legacy-pairing")]
+            ediv,
+            #[cfg(feature = "legacy-pairing")]
+            rand,
         };
         self.try_update_bond_information(&bond_info)?;
         self.security_manager
@@ -776,17 +955,13 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
     }
 
     fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error> {
-        if let Some(bond) = self
-            .security_manager
-            .state
-            .borrow()
-            .bond
-            .iter()
-            .find(|x| x.identity.match_identity(&self.peer_identity))
-        {
+        if self.storage.bond_rejected {
+            return Ok(None);
+        }
+        if let Some(bond) = self.find_bond() {
             self.security_manager
                 .try_send_event(SecurityEventData::EnableEncryption(self.conn_handle, bond.clone()))?;
-            Ok(Some(bond.clone()))
+            Ok(Some(bond))
         } else {
             Ok(None)
         }

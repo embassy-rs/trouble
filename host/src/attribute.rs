@@ -944,18 +944,20 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         server.set(self.handle, value)?;
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
-        let connection = connection.raw();
-        if !server.should_notify(connection, cccd_handle) {
+        let conn = connection.raw();
+        if !server.should_notify(conn, cccd_handle) {
             // No reason to fail?
             return Ok(());
         }
+
+        self.authorize_unsolicited(connection, cccd_handle).await?;
 
         let uns = AttUns::Notify {
             handle: self.handle,
             data: value,
         };
-        let pdu = gatt::assemble(connection, crate::att::AttServer::Unsolicited(uns))?;
-        connection.send(pdu).await;
+        let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
+        conn.send(pdu).await;
         Ok(())
     }
 
@@ -977,18 +979,20 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         server.set(self.handle, value)?;
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
-        let connection = connection.raw();
-        if !server.should_indicate(connection, cccd_handle) {
+        let conn = connection.raw();
+        if !server.should_indicate(conn, cccd_handle) {
             // No reason to fail?
             return Ok(());
         }
+
+        self.authorize_unsolicited(connection, cccd_handle).await?;
 
         let uns = AttUns::Indicate {
             handle: self.handle,
             data: value,
         };
-        let pdu = gatt::assemble(connection, crate::att::AttServer::Unsolicited(uns))?;
-        connection.send(pdu).await;
+        let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
+        conn.send(pdu).await;
         Ok(())
     }
 
@@ -1040,6 +1044,31 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
             handle: self.handle,
             props: self.props,
             phantom: PhantomData,
+        }
+    }
+
+    async fn authorize_unsolicited<P: PacketPool>(
+        &self,
+        connection: &GattConnection<'_, '_, P>,
+        cccd_handle: u16,
+    ) -> Result<(), Error> {
+        let server = connection.server;
+        let conn = connection.raw();
+
+        // Ensure encryption before sending notifications that require security
+        // (BT Core Spec Vol 3, Part C, Section 10.3.1.1: server "shall" initiate encryption)
+        // Write permission on the CCCD defines permission to receive notifications/indications
+        match server.can_write(conn, cccd_handle) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                #[cfg(feature = "security")]
+                if conn.is_bonded_peer() && !conn.security_level().is_ok_and(|l| l.encrypted()) {
+                    conn.try_enable_encryption().await?;
+                    server.can_write(conn, cccd_handle)?;
+                    return Ok(());
+                }
+                Err(err.into())
+            }
         }
     }
 }

@@ -8,6 +8,7 @@
 use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
+use bt_hci::cmd::le::LeReadMinimumSupportedConnectionInterval;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr};
@@ -23,7 +24,7 @@ use crate::channel_manager::ChannelStorage;
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason};
 pub use crate::types::capabilities::IoCapabilities;
 
 /// Number of bonding information stored
@@ -92,7 +93,7 @@ pub mod prelude {
     pub use crate::attribute_server::*;
     #[cfg(feature = "central")]
     pub use crate::central::*;
-    pub use crate::connection::*;
+    pub use crate::connection::{ConnectRateParams, *};
     #[cfg(feature = "gatt")]
     pub use crate::gap::*;
     #[cfg(feature = "gatt")]
@@ -107,7 +108,9 @@ pub mod prelude {
     #[cfg(feature = "scan")]
     pub use crate::scan::*;
     #[cfg(feature = "security")]
-    pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey};
+    pub use crate::security_manager::{
+        BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason,
+    };
     pub use crate::types::capabilities::IoCapabilities;
     #[cfg(feature = "gatt")]
     pub use crate::types::gatt_traits::{AsGatt, FixedGattValue, FromGatt};
@@ -268,7 +271,7 @@ pub enum Error {
     Att(AttErrorCode),
     #[cfg(feature = "security")]
     /// Error from the security manager
-    Security(crate::security_manager::Reason),
+    Security(PairingFailedReason),
     /// Insufficient space in the buffer.
     InsufficientSpace,
     /// Invalid value.
@@ -633,6 +636,20 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
             .set_io_capabilities(io_capabilities);
     }
 
+    /// Enable or disable secure connections only mode.
+    ///
+    /// When enabled, legacy pairing is rejected even if the `legacy-pairing` feature is compiled in.
+    /// This matches the BLE spec's "Secure Connections Only Mode" (Vol 3, Part C, Section 10.2.4).
+    ///
+    /// Only relevant if the feature `legacy-pairing` is enabled.
+    #[cfg(feature = "legacy-pairing")]
+    pub fn set_secure_connections_only(&self, enabled: bool) {
+        self.host
+            .connections
+            .security_manager
+            .set_secure_connections_only(enabled);
+    }
+
     /// Build the stack.
     pub fn build(&'stack self) -> Host<'stack, C, P> {
         #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
@@ -668,6 +685,16 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         C: ControllerCmdAsync<T>,
     {
         self.host.async_command(cmd).await
+    }
+
+    /// Read the minimum supported connection interval from the controller.
+    pub async fn read_minimum_supported_connection_interval(
+        &self,
+    ) -> Result<<LeReadMinimumSupportedConnectionInterval as SyncCmd>::Return, BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<LeReadMinimumSupportedConnectionInterval>,
+    {
+        self.host.command(LeReadMinimumSupportedConnectionInterval::new()).await
     }
 
     /// Read current host metrics

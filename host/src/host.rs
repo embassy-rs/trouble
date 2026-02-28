@@ -25,8 +25,9 @@ use bt_hci::event::le::LeAdvertisingReport;
 #[cfg(feature = "scan")]
 use bt_hci::event::le::LeExtendedAdvertisingReport;
 use bt_hci::event::le::{
-    LeAdvertisingSetTerminated, LeConnectionComplete, LeConnectionUpdateComplete, LeDataLengthChange,
-    LeEnhancedConnectionComplete, LeEventKind, LeEventPacket, LePhyUpdateComplete, LeRemoteConnectionParameterRequest,
+    LeAdvertisingSetTerminated, LeConnectionComplete, LeConnectionRateChange, LeConnectionUpdateComplete,
+    LeDataLengthChange, LeEnhancedConnectionComplete, LeEventKind, LeEventPacket, LeFrameSpaceUpdateComplete,
+    LePhyUpdateComplete, LeRemoteConnectionParameterRequest,
 };
 use bt_hci::event::{DisconnectionComplete, EventKind, NumberOfCompletedPackets, Vendor};
 use bt_hci::param::{
@@ -971,6 +972,42 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         },
                                     );
                                 }
+                                LeEventKind::LeFrameSpaceUpdateComplete => {
+                                    let event =
+                                        unwrap!(LeFrameSpaceUpdateComplete::from_hci_bytes_complete(event.data));
+                                    if let Err(e) = event.status.to_result() {
+                                        warn!("[host] error updating frame space for {:?}: {:?}", event.handle, e);
+                                    } else {
+                                        let _ = host.connections.post_handle_event(
+                                            event.handle,
+                                            ConnectionEvent::FrameSpaceUpdated {
+                                                frame_space: Duration::from_micros(event.frame_space.as_micros()),
+                                                initiator: event.initiator,
+                                                phys: event.phys,
+                                                spacing_types: event.spacing_types,
+                                            },
+                                        );
+                                    }
+                                }
+                                LeEventKind::LeConnectionRateChange => {
+                                    let event = unwrap!(LeConnectionRateChange::from_hci_bytes_complete(event.data));
+                                    if let Err(e) = event.status.to_result() {
+                                        warn!("[host] error in connection rate change for {:?}: {:?}", event.handle, e);
+                                    } else {
+                                        let _ = host.connections.post_handle_event(
+                                            event.handle,
+                                            ConnectionEvent::ConnectionRateChanged {
+                                                conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
+                                                subrate_factor: event.subrate_factor,
+                                                peripheral_latency: event.peripheral_latency,
+                                                continuation_number: event.continuation_number,
+                                                supervision_timeout: Duration::from_micros(
+                                                    event.supervision_timeout.as_micros(),
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
                                 LeEventKind::LeRemoteConnectionParameterRequest => {
                                     let event = unwrap!(LeRemoteConnectionParameterRequest::from_hci_bytes_complete(
                                         event.data
@@ -1042,7 +1079,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             let vendor = unwrap!(Vendor::from_hci_bytes_complete(event.data));
                             event_handler.on_vendor(&vendor);
                         }
-                        EventKind::EncryptionChangeV1 => {
+                        EventKind::EncryptionChangeV1 | EventKind::EncryptionKeyRefreshComplete => {
                             host.connections.handle_security_hci_event(event)?;
                         }
                         // Ignore
@@ -1098,7 +1135,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 .enable_conn_complete(true)
                 .enable_hardware_error(true)
                 .enable_disconnection_complete(true)
-                .enable_encryption_change_v1(true),
+                .enable_encryption_change_v1(true)
+                .enable_encryption_key_refresh_complete(true),
         )
         .exec(&host.controller)
         .await?;
