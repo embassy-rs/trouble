@@ -16,7 +16,6 @@ use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::Vec;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
@@ -611,30 +610,24 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         self.host.connections.security_manager.set_local_address(address);
         self
     }
-    /// Set the random generator seed for random generator used by security manager
-    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
-        #[cfg(feature = "security")]
-        {
-            let mut random_seed = [0u8; 32];
-            _random_generator.fill_bytes(&mut random_seed);
-            self.host
-                .connections
-                .security_manager
-                .set_random_generator_seed(random_seed);
-        }
+
+    /// Set the IO capabilities used by the security manager.
+    #[cfg(feature = "security")]
+    pub fn set_io_capabilities(self, io_capabilities: IoCapabilities) -> Self {
+        self.host
+            .connections
+            .security_manager
+            .set_io_capabilities(io_capabilities);
         self
     }
-    /// Set the IO capabilities used by the security manager.
-    ///
-    /// Only relevant if the feature `security` is enabled.
-    pub fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
-        #[cfg(feature = "security")]
-        {
-            self.host
-                .connections
-                .security_manager
-                .set_io_capabilities(io_capabilities);
-        }
+
+    /// Set the IO capabilities used by the security manager. Version needed by 'tester/app'.
+    #[cfg(feature = "legacy-pairing")]
+    pub fn set_io_capabilities_ref(&self, io_capabilities: IoCapabilities) {
+        self.host
+            .connections
+            .security_manager
+            .set_io_capabilities(io_capabilities);
     }
 
     /// Enable or disable secure connections only mode.
@@ -653,13 +646,16 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
 
     /// Build the stack.
     pub fn build(&'stack self) -> Host<'stack, C, P> {
+        // Seed the security manager via a seed from 'getrandom()'.
+        //
+        // todo Kept the 'dev-disable-csprng-seed-requirement' feature. What's the use case of it?
         #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
         {
-            if !self.host.connections.security_manager.get_random_generator_seeded() {
-                panic!(
-                    "The security manager random number generator has not been seeded from a cryptographically secure random number generator"
-                )
-            }
+            let un = MaybeUninit::uninit();
+            let mut buf: [u8; 32] = unsafe { un.assume_init() };
+            getrandom::fill(&mut buf).expect("getrandom failed");
+
+            self.host.connections.security_manager.set_random_generator_seed(buf);
         }
         Host {
             #[cfg(feature = "central")]
@@ -708,8 +704,8 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         self.host.log_status(verbose);
     }
 
-    #[cfg(feature = "security")]
     /// Get bonded devices
+    #[cfg(feature = "security")]
     pub fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
         self.host
             .connections
@@ -717,14 +713,14 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
             .add_bond_information(bond_information)
     }
 
-    #[cfg(feature = "security")]
     /// Remove a bonded device
+    #[cfg(feature = "security")]
     pub fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
         self.host.connections.security_manager.remove_bond_information(identity)
     }
 
-    #[cfg(feature = "security")]
     /// Get bonded devices
+    #[cfg(feature = "security")]
     pub fn get_bond_information(&self) -> Vec<BondInformation, BI_COUNT> {
         self.host.connections.security_manager.get_bond_information()
     }

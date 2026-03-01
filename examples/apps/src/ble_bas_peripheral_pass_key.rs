@@ -1,7 +1,6 @@
 use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::Timer;
-use rand_core::{CryptoRng, RngCore};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -29,11 +28,7 @@ struct BatteryService {
 }
 
 /// Run the BLE stack.
-pub async fn run<C, RNG>(controller: C, random_generator: &mut RNG)
-where
-    C: Controller,
-    RNG: RngCore + CryptoRng,
-{
+pub async fn run<C: Controller>(controller: C) {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x19, 0x05, 0xe4, 0xff]);
@@ -42,9 +37,7 @@ where
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator);
-
-    stack.set_io_capabilities(IoCapabilities::KeyboardOnly);
+        .set_io_capabilities(IoCapabilities::KeyboardOnly);
 
     let Host {
         mut peripheral, runner, ..
