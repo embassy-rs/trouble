@@ -726,7 +726,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
                     } = &att.data
                     {
                         if uuid.as_raw() == attr_value {
-                            if w.available() < 4 + uuid.as_raw().len() {
+                            if w.available() < 4 {
                                 break;
                             }
                             w.write(handle)?;
@@ -769,6 +769,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
                     } else if t != att.uuid.get_type() {
                         break;
                     }
+                    if body.available() < 2 + att.uuid.as_raw().len() {
+                        break;
+                    }
                     body.write(handle)?;
                     body.append(att.uuid.as_raw())?;
                 }
@@ -803,6 +806,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         Ok(w.len())
     }
 
+    #[cfg(feature = "att-queued-writes")]
     fn handle_prepare_write(
         &self,
         connection: &Connection<'_, P>,
@@ -812,29 +816,75 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         value: &[u8],
     ) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(buf);
-        w.write(att::ATT_PREPARE_WRITE_RSP)?;
-        w.write(handle)?;
-        w.write(offset)?;
 
-        let err = self
-            .att_table
-            .with_attribute(handle, |att| {
-                let err = self.write_attribute_data(connection, handle, 0, att, value);
-                w.append(value)?;
-                err
-            })
-            .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND));
-
+        let err = connection.prepare_write(handle, offset, value);
         match err {
-            Ok(()) => Ok(w.len()),
+            Ok(()) => {
+                w.write(att::ATT_PREPARE_WRITE_RSP)?;
+                w.write(handle)?;
+                w.write(offset)?;
+                w.append(value)?;
+                Ok(w.len())
+            }
             Err(e) => Ok(Self::error_response(w, att::ATT_PREPARE_WRITE_REQ, handle, e)?),
         }
     }
 
-    fn handle_execute_write(&self, buf: &mut [u8], _flags: u8) -> Result<usize, codec::Error> {
+    #[cfg(not(feature = "att-queued-writes"))]
+    fn handle_prepare_write(
+        &self,
+        _connection: &Connection<'_, P>,
+        buf: &mut [u8],
+        handle: u16,
+        _offset: u16,
+        _value: &[u8],
+    ) -> Result<usize, codec::Error> {
+        let w = WriteCursor::new(buf);
+        Self::error_response(w, att::ATT_PREPARE_WRITE_REQ, 0, AttErrorCode::REQUEST_NOT_SUPPORTED)
+    }
+
+    #[cfg(feature = "att-queued-writes")]
+    fn handle_execute_write(
+        &self,
+        connection: &Connection<'_, P>,
+        buf: &mut [u8],
+        flags: u8,
+    ) -> Result<usize, codec::Error> {
         let mut w = WriteCursor::new(buf);
-        w.write(att::ATT_EXECUTE_WRITE_RSP)?;
-        Ok(w.len())
+        if flags == 0x01 {
+            let err = connection.with_prepare_write(|pw| {
+                if pw.handle == 0 {
+                    return Ok(());
+                }
+                let data = &pw.buf[..pw.len as usize];
+                self.att_table
+                    .with_attribute(pw.handle, |att| att.write(pw.offset as usize, data))
+                    .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND))
+            });
+            connection.clear_prepare_write();
+            match err {
+                Ok(()) => {
+                    w.write(att::ATT_EXECUTE_WRITE_RSP)?;
+                    Ok(w.len())
+                }
+                Err(e) => Ok(Self::error_response(w, att::ATT_EXECUTE_WRITE_REQ, 0, e)?),
+            }
+        } else {
+            connection.clear_prepare_write();
+            w.write(att::ATT_EXECUTE_WRITE_RSP)?;
+            Ok(w.len())
+        }
+    }
+
+    #[cfg(not(feature = "att-queued-writes"))]
+    fn handle_execute_write(
+        &self,
+        _connection: &Connection<'_, P>,
+        buf: &mut [u8],
+        _flags: u8,
+    ) -> Result<usize, codec::Error> {
+        let w = WriteCursor::new(buf);
+        Self::error_response(w, att::ATT_EXECUTE_WRITE_REQ, 0, AttErrorCode::REQUEST_NOT_SUPPORTED)
     }
 
     fn handle_read_blob(
@@ -918,7 +968,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
                 self.handle_prepare_write(connection, rx, *handle, *offset, value)?
             }
 
-            AttClient::Request(AttReq::ExecuteWrite { flags }) => self.handle_execute_write(rx, *flags)?,
+            AttClient::Request(AttReq::ExecuteWrite { flags }) => self.handle_execute_write(connection, rx, *flags)?,
 
             AttClient::Request(AttReq::ReadBlob { handle, offset }) => {
                 self.handle_read_blob(connection, rx, *handle, *offset)?

@@ -479,6 +479,24 @@ where
                         Ok(att::Att::Client(_)) => {
                             self.connections.post_gatt(acl.handle(), pdu)?;
                         }
+                        Ok(att::Att::Server(AttServer::Unsolicited(att::AttUns::Indicate { .. }))) => {
+                            // Per BLE spec, ATT_HANDLE_VALUE_CFM must always be sent in response
+                            // to an indication, regardless of whether a GATT client task is running.
+                            let cfm = att::Att::Client(AttClient::Confirmation(crate::att::AttCfm::ConfirmIndication));
+                            let l2cap = L2capHeader {
+                                channel: L2CAP_CID_ATT,
+                                length: cfm.size() as u16,
+                            };
+                            let mut buf = P::allocate().ok_or(Error::OutOfMemory)?;
+                            let mut w = WriteCursor::new(buf.as_mut());
+                            w.write_hci(&l2cap)?;
+                            w.write(cfm)?;
+                            let len = w.len();
+                            self.connections.try_outbound(acl.handle(), Pdu::new(buf, len))?;
+
+                            // Also queue the indication for the GATT client if possible
+                            let _ = self.connections.post_gatt_client(acl.handle(), pdu);
+                        }
                         Ok(att::Att::Server(_)) => {
                             if let Err(e) = self.connections.post_gatt_client(acl.handle(), pdu) {
                                 return Err(Error::OutOfMemory);
@@ -486,6 +504,25 @@ where
                         }
                         Err(e) => {
                             warn!("Error decoding attribute payload: {:?}", e);
+                            let opcode = pdu.as_ref()[0];
+                            // Bit 6 = Command Flag. Only send error responses for requests (flag=0)
+                            if opcode & 0x40 == 0 {
+                                let rsp = att::Att::Server(AttServer::Response(att::AttRsp::Error {
+                                    request: opcode,
+                                    handle: 0,
+                                    code: att::AttErrorCode::REQUEST_NOT_SUPPORTED,
+                                }));
+                                let l2cap = L2capHeader {
+                                    channel: L2CAP_CID_ATT,
+                                    length: rsp.size() as u16,
+                                };
+                                let mut packet = pdu.into_inner();
+                                let mut w = WriteCursor::new(packet.as_mut());
+                                w.write_hci(&l2cap)?;
+                                w.write(rsp)?;
+                                let len = w.len();
+                                self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
+                            }
                         }
                     }
                     #[cfg(not(feature = "gatt"))]
