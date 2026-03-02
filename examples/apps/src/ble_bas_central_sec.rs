@@ -1,6 +1,5 @@
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
-use rand_core::{CryptoRng, RngCore};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -9,11 +8,7 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, RNG>(controller: C, random_generator: &mut RNG)
-where
-    C: Controller,
-    RNG: RngCore + CryptoRng,
-{
+pub async fn run<C: Controller>(controller: C) {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
@@ -21,8 +16,7 @@ where
 
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
-        .set_random_address(address)
-        .set_random_generator_seed(random_generator);
+        .set_random_address(address);
 
     let Host {
         mut central,

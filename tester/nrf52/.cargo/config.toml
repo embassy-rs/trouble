@@ -1,6 +1,10 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
 runner = "probe-rs download --chip nRF52840_xxAA"
 
+# NOTE: 'tester/nrf52' being a binary (having 'src/main.rs'), this *should work*, but the author wasn't able to have
+#       'getrandom' see it. Thus, resorting to 'RUSTFLAGS' in CI script.
+#rustflags = ["--cfg", 'getrandom_backend="custom"']
+
 [build]
 target = "thumbv7em-none-eabihf" # Cortex-M4F and Cortex-M7F (with FPU)
 

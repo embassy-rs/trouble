@@ -15,13 +15,14 @@ use embedded_alloc::LlffHeap as Heap;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use panic_probe as _;
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 use trouble_tester_app::BtpConfig;
 
 mod defmt_usb;
+
+// Reusing the nRF52 getrandom backend from '/examples' (symbolic link).
+include!("./getrandom.in");
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -180,7 +181,7 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let chacha_rng = ChaCha12Rng::from_rng(&mut rng).unwrap();
+    preset_random_with(&mut rng);
 
     let mut sdc_mem = sdc::Mem::<5872>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
@@ -228,7 +229,6 @@ async fn main(spawner: Spawner) -> ! {
             device_name: "TrouBLE-Tester",
             appearance: bt_hci::uuid::appearance::UNKNOWN,
         },
-        chacha_rng,
     )
     .await;
 

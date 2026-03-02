@@ -20,13 +20,12 @@ embedded-io = "0.7.1"
 embedded-io-async = "0.7.0"
 heapless = "0.9"
 log = { version = "0.4.29", optional = true }
-rand_core = { version = "0.6", default-features = false }
 static_cell = "2.1.1"
 trouble-host = { path = "../../host", features = ["scan", "legacy-pairing", "gatt-client-notification-max-subscribers-16", "att-queued-writes"] }
 
 [dev-dependencies]
 futures-executor = "0.3.31"
-tokio = { version = "1", features = ["full"] }
+#tokio = { version = "1", features = ["full"] } # not used?
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }

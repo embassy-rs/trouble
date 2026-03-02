@@ -2,7 +2,6 @@ use core::ops::Range;
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use embedded_storage_async::nor_flash::NorFlash;
-use rand_core::{CryptoRng, RngCore};
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::{Key, SerializationError, Value};
 use trouble_host::prelude::*;
@@ -125,11 +124,10 @@ async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformati
     None
 }
 
-pub async fn run<C, RNG, S>(controller: C, random_generator: &mut RNG, storage: &mut S)
+pub async fn run<C, S>(controller: C, storage: &mut S)
 where
     C: Controller,
-    RNG: RngCore + CryptoRng,
-    S: NorFlash,
+    S: NorFlash
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
@@ -138,8 +136,7 @@ where
 
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
-        .set_random_address(address)
-        .set_random_generator_seed(random_generator);
+        .set_random_address(address);
 
     let mut has_bond_info = if let Some(bond_info) = load_bonding_info(storage).await {
         info!("Bond stored. Adding to stack.");

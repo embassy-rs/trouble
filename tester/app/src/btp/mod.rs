@@ -618,7 +618,7 @@ where
             *bondable,
         )),
         SetIoCapability(capability) => {
-            gap.stack.set_io_capabilities(*capability);
+            gap.stack.set_io_capabilities_ref(*capability);
             Ok(GapResponse::Success)
         }
         SetFilterAcceptList(cmd) => {

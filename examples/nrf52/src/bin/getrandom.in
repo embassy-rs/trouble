@@ -1,0 +1,44 @@
+// Note: The types pollute the calling scope. Trying to keep their number to the minimum; some of
+//      them are used in the 'main' so not duplicating here.
+//
+use core::sync::atomic::AtomicBool as _AtomicBool;
+use embassy_nrf::rng::Rng as _Rng;
+use embassy_nrf::mode::Async as _Async;
+use getrandom::Error as _Error;
+
+// 32 bytes of pre-generated entropy
+static mut RANDOM: Option<[u8; 32]> = None;
+static CONSUMED: _AtomicBool = _AtomicBool::new(false);
+
+/// Fill the RANDOM buffer once at startup.
+///
+pub fn preset_random_with(rng: &mut _Rng<_Async>) {
+    let mut buf: [u8; 32] = [0; _];
+    rng.blocking_fill_bytes(&mut buf);
+
+    unsafe {
+        RANDOM = Some(buf);
+    }
+}
+
+/// Custom backend for getrandom.
+///
+/// This is called exactly once by TrouBLE to obtain 32 bytes of entropy.
+///
+/// Note: The name of the function needs to be '..._v03_...' also in getrandom 0.4. Due to ABI.
+#[unsafe(no_mangle)]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe extern "Rust" fn __getrandom_v03_custom(dest: *mut u8, len: usize) -> Result<(), _Error> {
+    use core::sync::atomic::Ordering;
+
+    assert_eq!(len, 32, "Unexpected length");
+
+    let b = CONSUMED.swap(true, Ordering::Relaxed);
+    assert!(!b, "Entropy already consumed");
+
+    let bytes = RANDOM.expect("Entropy not set");
+
+    core::ptr::copy_nonoverlapping(bytes.as_ptr(), dest, len);
+
+    Ok(())
+}

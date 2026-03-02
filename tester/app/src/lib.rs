@@ -30,17 +30,15 @@
 //!
 //! ```no_run
 //! use embedded_io_async::{Read, Write};
-//! use rand_core::{CryptoRng, RngCore};
 //! use trouble_tester_app::{run, BtpConfig, Controller};
 //!
-//! async fn run_btp<C, R, W, RNG>(controller: C, reader: R, writer: W, rng: RNG)
+//! async fn run_btp<C, R, W>(controller: C, reader: R, writer: W)
 //! where
 //!     C: Controller,
 //!     R: Read,
 //!     W: Write,
-//!     RNG: RngCore + CryptoRng,
 //! {
-//!     let _ = run(controller, reader, writer, BtpConfig::default(), rng).await;
+//!     let _ = run(controller, reader, writer, BtpConfig::default()).await;
 //! }
 //! ```
 
@@ -59,7 +57,6 @@ use embassy_futures::select::{Either5, select5};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, DynamicSender};
 use embedded_io_async::{Read, Write};
-use rand_core::{CryptoRng, RngCore};
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
@@ -256,18 +253,11 @@ impl Default for BtpConfig<'_> {
 /// * `C` - Controller type
 /// * `R` - Reader type
 /// * `W` - Writer type
-pub async fn run<C, R, W, RNG>(
-    controller: C,
-    reader: R,
-    writer: W,
-    config: BtpConfig<'_>,
-    mut random_generator: RNG,
-) -> Result<(), Error<C::Error>>
+pub async fn run<C, R, W>(controller: C, reader: R, writer: W, config: BtpConfig<'_>) -> Result<(), Error<C::Error>>
 where
     C: Controller,
     R: Read,
     W: Write,
-    RNG: RngCore + CryptoRng,
 {
     use core::sync::atomic::{AtomicBool, Ordering};
     static CALLED: AtomicBool = AtomicBool::new(false);
@@ -278,9 +268,9 @@ where
     info!("BTP run: name={:?} addr={:?}", config.device_name, config.address);
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
 
+    #[rustfmt::skip]
     let stack = trouble_host::new(controller, &mut resources)
-        .set_random_address(config.address)
-        .set_random_generator_seed(&mut random_generator);
+        .set_random_address(config.address);
 
     let Host {
         peripheral,
