@@ -16,7 +16,6 @@ embedded-io = { version = "0.7", features = ["std"] }
 libc = "0.2"
 bt-hci = "0.8"
 embassy-time = { version = "0.5", features = ["std"] }
-rand = { version = "0.8.5", features = ["getrandom"] }
 env_logger = "0.11"
 log = "0.4"
 critical-section = { version = "1", features = ["std"] }

@@ -16,7 +16,8 @@ use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::Vec;
-use rand_core::{CryptoRng, RngCore};
+#[cfg(feature = "security")]
+use rand::rand_core::{CryptoRng, Rng};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
@@ -611,9 +612,9 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         self.host.connections.security_manager.set_local_address(address);
         self
     }
+    #[cfg(feature = "security")]
     /// Set the random generator seed for random generator used by security manager
-    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
-        #[cfg(feature = "security")]
+    pub fn set_random_generator_seed<RNG: Rng + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
         {
             let mut random_seed = [0u8; 32];
             _random_generator.fill_bytes(&mut random_seed);
@@ -624,17 +625,15 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         }
         self
     }
+    #[cfg(feature = "security")]
     /// Set the IO capabilities used by the security manager.
     ///
     /// Only relevant if the feature `security` is enabled.
     pub fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
-        #[cfg(feature = "security")]
-        {
-            self.host
-                .connections
-                .security_manager
-                .set_io_capabilities(io_capabilities);
-        }
+        self.host
+            .connections
+            .security_manager
+            .set_io_capabilities(io_capabilities);
     }
 
     /// Enable or disable secure connections only mode.

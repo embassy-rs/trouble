@@ -34,5 +34,7 @@ async fn main(_s: Spawner) {
     let connector = BleConnector::new(bluetooth, Default::default()).unwrap();
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
+    unimplemented!();   // problem dissolves with 'getrandom()' (#521)
+    #[cfg(false)]
     ble_bas_peripheral_sec::run(controller, &mut trng).await;
 }

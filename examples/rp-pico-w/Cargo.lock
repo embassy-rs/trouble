@@ -2553,7 +2553,6 @@ dependencies = [
  "embassy-time",
  "embedded-hal-async",
  "heapless",
- "rand_core 0.6.4",
  "static_cell",
  "trouble-host",
 ]
@@ -2570,7 +2569,6 @@ dependencies = [
  "embedded-io",
  "futures",
  "heapless",
- "rand_core 0.6.4",
  "static_cell",
  "trouble-host-macros",
  "zerocopy",

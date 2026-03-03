@@ -54,7 +54,3 @@ embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d427
 cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
-#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
-#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-#bt-hci = { path = "../../../bt-hci" }
-#bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "83a9e179ff019ed60abb73705f54383f89fc60fc" }
