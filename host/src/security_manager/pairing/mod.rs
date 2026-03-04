@@ -2,10 +2,30 @@ use bt_hci::param::ConnHandle;
 use embassy_time::Instant;
 use rand_core::{CryptoRng, RngCore};
 
+use self::util::PairingMethod;
 use crate::connection::{ConnectionEvent, SecurityLevel};
-use crate::security_manager::types::{BondingFlag, Command};
+use crate::security_manager::types::{BondingFlag, Command, PairingFeatures};
 use crate::security_manager::TxPacket;
 use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(super) struct PairingData {
+    pub(super) local_address: Address,
+    pub(super) peer_address: Address,
+    pub(super) local_features: PairingFeatures,
+    pub(super) peer_features: PairingFeatures,
+    pub(super) pairing_method: PairingMethod,
+    pub(super) timeout_at: Instant,
+    pub(super) bond_information: Option<BondInformation>,
+}
+
+impl PairingData {
+    pub(super) fn want_bonding(&self) -> bool {
+        matches!(self.local_features.security_properties.bond(), BondingFlag::Bonding)
+            && matches!(self.peer_features.security_properties.bond(), BondingFlag::Bonding)
+    }
+}
 
 pub mod central;
 #[cfg(feature = "legacy-pairing")]

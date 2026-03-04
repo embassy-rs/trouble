@@ -214,6 +214,7 @@ impl AesCmac {
 #[repr(transparent)]
 pub struct Check(pub u128);
 
+#[derive(Clone, Copy)]
 #[repr(transparent)]
 pub(super) struct Key(aes::cipher::Key<aes::Aes128>);
 
@@ -248,6 +249,7 @@ impl IoCap {
 
 /// 128-bit key used to compute LE Secure Connections check value
 /// ([Vol 3] Part H, Section 2.2.8).
+#[derive(Clone, Copy)]
 #[must_use]
 #[repr(transparent)]
 pub struct MacKey(Key);
@@ -341,6 +343,7 @@ pub struct Confirm(pub u128);
 pub struct NumCompare(pub u32);
 
 /// P-256 elliptic curve secret key.
+#[derive(Clone)]
 #[must_use]
 #[repr(transparent)]
 pub struct SecretKey(p256::NonZeroScalar);
@@ -485,6 +488,12 @@ impl PublicKeyX {
 #[must_use]
 #[repr(transparent)]
 pub struct DHKey(ecdh::SharedSecret);
+
+impl Clone for DHKey {
+    fn clone(&self) -> Self {
+        Self(ecdh::SharedSecret::from(*self.0.raw_secret_bytes()))
+    }
+}
 
 impl core::fmt::Debug for DHKey {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

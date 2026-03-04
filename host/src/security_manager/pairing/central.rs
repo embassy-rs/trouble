@@ -7,32 +7,69 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
-use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
+use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, PublicKeyX, SecretKey};
 use crate::security_manager::pairing::util::{
     choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet,
     prepare_packet, CommandAndPayload, PairingMethod, PassKeyEntryAction,
 };
-use crate::security_manager::pairing::{Event, PairingOps};
+use crate::security_manager::pairing::{Event, PairingData, PairingOps};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures};
 use crate::security_manager::{PassKey, Reason};
-use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, PacketPool};
+use crate::{Address, Error, IoCapabilities, LongTermKey, PacketPool};
+
+/// EC key and comparison phase data carried through LESC step variants.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct LescPhaseData {
+    local_public_key_x: PublicKeyX,
+    peer_public_key_x: PublicKeyX,
+    dh_key: DHKey,
+    confirm: Confirm,
+    local_nonce: Nonce,
+    peer_nonce: Nonce,
+    local_secret_ra: u128,
+    peer_secret_rb: u128,
+}
+
+/// Data carried through the DH key check phase.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct DhKeyCheckData {
+    mac_key: MacKey,
+    ltk: LongTermKey,
+    local_nonce: Nonce,
+    peer_nonce: Nonce,
+    local_secret_ra: u128,
+}
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum Step {
     Idle,
-    WaitingPairingResponse(PairingRequestSentTag),
-    WaitingPublicKey,
+    WaitingPairingResponse,
+    WaitingPublicKey {
+        private_key: SecretKey,
+        local_public_key: PublicKey,
+    },
     // Numeric comparison
-    WaitingNumericComparisonConfirm,
-    WaitingNumericComparisonRandom,
-    WaitingNumericComparisonResult,
+    WaitingNumericComparisonConfirm(LescPhaseData),
+    WaitingNumericComparisonRandom(LescPhaseData),
+    WaitingNumericComparisonResult(LescPhaseData),
     // Pass key entry
-    WaitingPassKeyInput(Option<[u8; size_of::<u128>()]>),
-    WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag),
-    WaitingPassKeyEntryRandom(i32),
+    WaitingPassKeyInput {
+        phase_data: LescPhaseData,
+        confirm_bytes: Option<[u8; size_of::<u128>()]>,
+    },
+    WaitingPassKeyEntryConfirm {
+        phase_data: LescPhaseData,
+        round: i32,
+    },
+    WaitingPassKeyEntryRandom {
+        phase_data: LescPhaseData,
+        round: i32,
+    },
     // TODO add OOB
-    WaitingDHKeyEb(DHKeyEaSentTag),
+    WaitingDHKeyEb(DhKeyCheckData),
     WaitingLinkEncrypted,
     WaitingBondedLinkEncryption,
     ReceivingKeys(i32),
@@ -41,128 +78,12 @@ enum Step {
     Error(Error),
 }
 
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct PairingRequestSentTag {}
-
-impl PairingRequestSentTag {
-    fn new<P: PacketPool, OPS: PairingOps<P>>(pairing_data: &mut PairingData, ops: &mut OPS) -> Result<Self, Error> {
-        let mut packet = prepare_packet::<P>(Command::PairingRequest)?;
-
-        let payload = packet.payload_mut();
-        pairing_data
-            .local_features
-            .encode(payload)
-            .map_err(|_| Error::InvalidValue)?;
-
-        match ops.try_send_packet(packet) {
-            Ok(_) => {}
-            Err(error) => {
-                error!("[smp] Failed to respond to request {:?}", error);
-                return Err(error);
-            }
-        }
-
-        Ok(Self {})
-    }
-}
-
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct PassKeyEntryConfirmSentTag(i32);
-
-impl PassKeyEntryConfirmSentTag {
-    fn new<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
-        round: i32,
-        pairing_data: &mut PairingData,
-        ops: &mut OPS,
-        rng: &mut RNG,
-    ) -> Result<PassKeyEntryConfirmSentTag, Error> {
-        pairing_data.local_nonce = Nonce::new(rng);
-        let rai = 0x80u8 | (((pairing_data.local_secret_ra & (1 << round as u128)) >> (round as u128)) as u8);
-        let cai = pairing_data.local_nonce.f4(
-            pairing_data.local_public_key.as_ref().ok_or(Error::InvalidValue)?.x(),
-            pairing_data.peer_public_key.as_ref().ok_or(Error::InvalidValue)?.x(),
-            rai,
-        );
-        let confirm = make_confirm_packet(&cai)?;
-        ops.try_send_packet(confirm)?;
-        Ok(PassKeyEntryConfirmSentTag(round))
-    }
-}
-
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct DHKeyEaSentTag {}
-
-impl DHKeyEaSentTag {
-    fn new<P: PacketPool, OPS: PairingOps<P>>(
-        pairing_data: &mut PairingData,
-        ops: &mut OPS,
-    ) -> Result<DHKeyEaSentTag, Error> {
-        let (mac, ltk) = {
-            let dh_key = pairing_data.dh_key.as_ref().ok_or(Error::InvalidValue)?;
-            dh_key.f5(
-                pairing_data.local_nonce,
-                pairing_data.peer_nonce,
-                pairing_data.local_address,
-                pairing_data.peer_address,
-            )
-        };
-
-        let ea = mac.f6(
-            pairing_data.local_nonce,
-            pairing_data.peer_nonce,
-            pairing_data.peer_secret_rb,
-            pairing_data.local_features.as_io_cap(),
-            pairing_data.local_address,
-            pairing_data.peer_address,
-        );
-
-        let check = make_dhkey_check_packet(&ea)?;
-        ops.try_send_packet(check)?;
-        pairing_data.mac_key = Some(mac);
-        pairing_data.ltk = Some(ltk);
-        Ok(DHKeyEaSentTag {})
-    }
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct PairingData {
-    local_address: Address,
-    peer_address: Address,
-    local_features: PairingFeatures,
-    peer_features: PairingFeatures,
-    pairing_method: PairingMethod,
-    local_public_key: Option<PublicKey>,
-    private_key: Option<SecretKey>,
-    peer_public_key: Option<PublicKey>,
-    dh_key: Option<DHKey>,
-    local_secret_ra: u128,
-    peer_secret_rb: u128,
-    confirm: Confirm,
-    local_nonce: Nonce,
-    peer_nonce: Nonce,
-    mac_key: Option<MacKey>,
-    ltk: Option<LongTermKey>,
-    timeout_at: Instant,
-    bond_information: Option<BondInformation>,
-    user_initiated: bool,
-}
-
-impl PairingData {
-    fn want_bonding(&self) -> bool {
-        matches!(self.local_features.security_properties.bond(), BondingFlag::Bonding)
-            && matches!(self.peer_features.security_properties.bond(), BondingFlag::Bonding)
-    }
-}
-
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Pairing {
     current_step: RefCell<Step>,
     pairing_data: RefCell<PairingData>,
+    user_initiated: bool,
 }
 
 impl Pairing {
@@ -202,30 +123,32 @@ impl Pairing {
             pairing_method: PairingMethod::JustWorks,
             local_address,
             peer_address,
-            peer_public_key: None,
-            local_public_key: None,
-            local_secret_ra: 0,
-            peer_secret_rb: 0,
             peer_features: PairingFeatures::default(),
-            mac_key: None,
             local_features: PairingFeatures {
                 io_capabilities: local_io,
                 ..Default::default()
             },
-            peer_nonce: Nonce(0),
-            local_nonce: Nonce(0),
-            dh_key: None,
-            confirm: Confirm(0),
-            ltk: None,
-            private_key: None,
             timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE,
             bond_information: None,
-            user_initiated: false,
         };
         Self {
             pairing_data: RefCell::new(pairing_data),
             current_step: RefCell::new(Step::Idle),
+            user_initiated: false,
         }
+    }
+
+    fn send_pairing_request<P: PacketPool, OPS: PairingOps<P>>(
+        pairing_data: &PairingData,
+        ops: &mut OPS,
+    ) -> Result<(), Error> {
+        let mut packet = prepare_packet::<P>(Command::PairingRequest)?;
+        pairing_data
+            .local_features
+            .encode(packet.payload_mut())
+            .map_err(|_| Error::InvalidValue)?;
+        ops.try_send_packet(packet)?;
+        Ok(())
     }
 
     pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
@@ -235,10 +158,10 @@ impl Pairing {
         local_io: IoCapabilities,
         user_initiated: bool,
     ) -> Result<Pairing, Error> {
-        let ret = Self::new_idle(local_address, peer_address, local_io);
+        let mut ret = Self::new_idle(local_address, peer_address, local_io);
+        ret.user_initiated = user_initiated;
         {
             let mut pairing_data = ret.pairing_data.borrow_mut();
-            pairing_data.user_initiated = user_initiated;
             let mut auth_req = AuthReq::new(ops.bonding_flag());
             if local_io != IoCapabilities::NoInputNoOutput {
                 auth_req = auth_req.with_mitm();
@@ -258,7 +181,8 @@ impl Pairing {
                 pairing_data.bond_information = Some(bond);
                 Step::WaitingBondedLinkEncryption
             } else {
-                Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data.deref_mut(), ops)?)
+                Self::send_pairing_request(pairing_data.deref(), ops)?;
+                Step::WaitingPairingResponse
             };
             ret.current_step.replace(next_step);
         }
@@ -344,35 +268,42 @@ impl Pairing {
                 if res {
                     info!("Link encrypted using bonded key!");
                     Step::Success
-                } else if self.pairing_data.borrow().user_initiated {
+                } else if self.user_initiated {
                     warn!("Link encryption with bonded key failed, initiating fresh pairing");
                     ops.try_send_connection_event(ConnectionEvent::BondLost)?;
-                    let mut pairing_data = self.pairing_data.borrow_mut();
-                    Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data.deref_mut(), ops)?)
+                    let pairing_data = self.pairing_data.borrow();
+                    Self::send_pairing_request(pairing_data.deref(), ops)?;
+                    Step::WaitingPairingResponse
                 } else {
                     error!("Link encryption with bonded key failed!");
                     bond_lost = true;
                     Step::Error(Error::Security(Reason::KeyRejected))
                 }
             }
-            (Step::WaitingNumericComparisonResult, Event::PassKeyConfirm) => {
-                Step::WaitingDHKeyEb(DHKeyEaSentTag::new(self.pairing_data.borrow_mut().deref_mut(), ops)?)
+            (Step::WaitingNumericComparisonResult(phase_data), Event::PassKeyConfirm) => {
+                let pairing_data = self.pairing_data.borrow();
+                Self::send_dhkey_ea_and_transition(ops, &pairing_data, &phase_data)?
             }
-            (Step::WaitingNumericComparisonResult, Event::PassKeyCancel) => {
+            (Step::WaitingNumericComparisonResult(_), Event::PassKeyCancel) => {
                 Step::Error(Error::Security(Reason::NumericComparisonFailed))
             }
-            (Step::WaitingPassKeyInput(confirm), Event::PassKeyInput(input)) => {
-                let mut pairing_data = self.pairing_data.borrow_mut();
-                pairing_data.local_secret_ra = input as u128;
-                pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
-                let round = PassKeyEntryConfirmSentTag::new(0, pairing_data.deref_mut(), ops, rng)?;
-                match confirm {
+            (
+                Step::WaitingPassKeyInput {
+                    mut phase_data,
+                    confirm_bytes,
+                },
+                Event::PassKeyInput(input),
+            ) => {
+                phase_data.local_secret_ra = input as u128;
+                phase_data.peer_secret_rb = phase_data.local_secret_ra;
+                Self::send_pass_key_confirm(0, &mut phase_data, ops, rng)?;
+                match confirm_bytes {
                     Some(payload) => {
-                        Self::handle_pass_key_confirm(&payload, pairing_data.deref_mut())?;
-                        Self::send_nonce(ops, &pairing_data.local_nonce)?;
-                        Step::WaitingPassKeyEntryRandom(round.0)
+                        Self::store_pass_key_confirm(&payload, &mut phase_data)?;
+                        Self::send_nonce(ops, &phase_data.local_nonce)?;
+                        Step::WaitingPassKeyEntryRandom { phase_data, round: 0 }
                     }
-                    None => Step::WaitingPassKeyEntryConfirm(round),
+                    None => Step::WaitingPassKeyEntryConfirm { phase_data, round: 0 },
                 }
             }
             (x, Event::PassKeyConfirm | Event::PassKeyCancel) => x,
@@ -450,79 +381,111 @@ impl Pairing {
                         pairing_data.bond_information = Some(bond);
                         Step::WaitingBondedLinkEncryption
                     } else {
-                        Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data, ops)?)
+                        Self::send_pairing_request(pairing_data, ops)?;
+                        Step::WaitingPairingResponse
                     }
                 }
-                (Step::WaitingPairingResponse(x), Command::SecurityRequest) => {
-                    // SM test spec SM/CEN/PIS/BV-03-C, security requests while waiting for pairing respsonse shall be ignored
-                    Step::WaitingPairingResponse(x)
+                (Step::WaitingPairingResponse, Command::SecurityRequest) => {
+                    // SM test spec SM/CEN/PIS/BV-03-C, security requests while waiting for pairing response shall be ignored
+                    Step::WaitingPairingResponse
                 }
-                (Step::WaitingPairingResponse(_), Command::PairingResponse) => {
+                (Step::WaitingPairingResponse, Command::PairingResponse) => {
                     Self::handle_pairing_response(command.payload, ops, pairing_data)?;
-                    Self::generate_private_public_key_pair(pairing_data, rng)?;
-                    Self::send_public_key(ops, pairing_data.local_public_key.as_ref().unwrap())?;
-                    Step::WaitingPublicKey
+                    let secret_key = SecretKey::new(rng);
+                    let public_key = secret_key.public_key();
+                    Self::send_public_key(ops, &public_key)?;
+                    Step::WaitingPublicKey {
+                        private_key: secret_key,
+                        local_public_key: public_key,
+                    }
                 }
-                (Step::WaitingPublicKey, Command::PairingPublicKey) => {
-                    Self::handle_public_key(command.payload, pairing_data)?;
+                (
+                    Step::WaitingPublicKey {
+                        private_key,
+                        local_public_key,
+                    },
+                    Command::PairingPublicKey,
+                ) => {
+                    let peer_public_key = PublicKey::from_bytes(command.payload);
+                    let dh_key = private_key
+                        .dh_key(peer_public_key)
+                        .ok_or(Error::Security(Reason::DHKeyCheckFailed))?;
+
+                    let mut phase_data = LescPhaseData {
+                        local_public_key_x: *local_public_key.x(),
+                        peer_public_key_x: *peer_public_key.x(),
+                        dh_key,
+                        confirm: Confirm(0),
+                        local_nonce: Nonce(0),
+                        peer_nonce: Nonce(0),
+                        local_secret_ra: 0,
+                        peer_secret_rb: 0,
+                    };
+
                     match pairing_data.pairing_method {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
                         PairingMethod::PassKeyEntry { central, .. } => {
                             if central == PassKeyEntryAction::Display {
-                                pairing_data.local_secret_ra =
+                                phase_data.local_secret_ra =
                                     rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
-                                pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
+                                phase_data.peer_secret_rb = phase_data.local_secret_ra;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
-                                    pairing_data.local_secret_ra as u32,
+                                    phase_data.local_secret_ra as u32,
                                 )))?;
-                                Step::WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag::new(
-                                    0,
-                                    pairing_data,
-                                    ops,
-                                    rng,
-                                )?)
+                                Self::send_pass_key_confirm(0, &mut phase_data, ops, rng)?;
+                                Step::WaitingPassKeyEntryConfirm { phase_data, round: 0 }
                             } else {
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyInput)?;
-                                Step::WaitingPassKeyInput(None)
+                                Step::WaitingPassKeyInput {
+                                    phase_data,
+                                    confirm_bytes: None,
+                                }
                             }
                         }
-                        _ => Step::WaitingNumericComparisonConfirm,
+                        _ => Step::WaitingNumericComparisonConfirm(phase_data),
                     }
                 }
-                (Step::WaitingNumericComparisonConfirm, Command::PairingConfirm) => {
-                    Self::handle_numeric_compare_confirm(command.payload, pairing_data, rng)?;
-                    Self::send_nonce(ops, &pairing_data.local_nonce)?;
-                    Step::WaitingNumericComparisonRandom
+                (Step::WaitingNumericComparisonConfirm(mut phase_data), Command::PairingConfirm) => {
+                    Self::handle_numeric_compare_confirm(command.payload, &mut phase_data, rng)?;
+                    Self::send_nonce(ops, &phase_data.local_nonce)?;
+                    Step::WaitingNumericComparisonRandom(phase_data)
                 }
-                (Step::WaitingNumericComparisonRandom, Command::PairingRandom) => {
-                    Self::handle_numeric_compare_random(command.payload, pairing_data, ops)?
+                (Step::WaitingNumericComparisonRandom(mut phase_data), Command::PairingRandom) => {
+                    Self::handle_numeric_compare_random(command.payload, &mut phase_data, pairing_data, ops)?
                 }
-                (Step::WaitingPassKeyInput(_), Command::PairingConfirm) => {
-                    let confirm: [u8; size_of::<u128>()] =
+                (
+                    Step::WaitingPassKeyInput {
+                        phase_data,
+                        confirm_bytes: _,
+                    },
+                    Command::PairingConfirm,
+                ) => {
+                    let confirm_bytes: [u8; size_of::<u128>()] =
                         command.payload.try_into().map_err(|_| Error::InvalidValue)?;
-                    Step::WaitingPassKeyInput(Some(confirm))
-                }
-                (Step::WaitingPassKeyEntryConfirm(round), Command::PairingConfirm) => {
-                    Self::handle_pass_key_confirm(command.payload, pairing_data)?;
-                    Self::send_nonce(ops, &pairing_data.local_nonce)?;
-                    Step::WaitingPassKeyEntryRandom(round.0)
-                }
-
-                (Step::WaitingPassKeyEntryRandom(round), Command::PairingRandom) => {
-                    Self::handle_pass_key_random(round, command.payload, ops, pairing_data)?;
-                    if round == 19 {
-                        Step::WaitingDHKeyEb(DHKeyEaSentTag::new(pairing_data, ops)?)
-                    } else {
-                        Step::WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag::new(
-                            round + 1,
-                            pairing_data,
-                            ops,
-                            rng,
-                        )?)
+                    Step::WaitingPassKeyInput {
+                        phase_data,
+                        confirm_bytes: Some(confirm_bytes),
                     }
                 }
-                (Step::WaitingDHKeyEb(_), Command::PairingDhKeyCheck) => {
-                    Self::handle_dhkey_eb(command.payload, ops, pairing_data)?;
+                (Step::WaitingPassKeyEntryConfirm { mut phase_data, round }, Command::PairingConfirm) => {
+                    Self::store_pass_key_confirm(command.payload, &mut phase_data)?;
+                    Self::send_nonce(ops, &phase_data.local_nonce)?;
+                    Step::WaitingPassKeyEntryRandom { phase_data, round }
+                }
+                (Step::WaitingPassKeyEntryRandom { mut phase_data, round }, Command::PairingRandom) => {
+                    Self::handle_pass_key_random(round, command.payload, ops, &mut phase_data)?;
+                    if round == 19 {
+                        Self::send_dhkey_ea_and_transition(ops, pairing_data, &phase_data)?
+                    } else {
+                        Self::send_pass_key_confirm(round + 1, &mut phase_data, ops, rng)?;
+                        Step::WaitingPassKeyEntryConfirm {
+                            phase_data,
+                            round: round + 1,
+                        }
+                    }
+                }
+                (Step::WaitingDHKeyEb(check_data), Command::PairingDhKeyCheck) => {
+                    Self::handle_dhkey_eb(command.payload, ops, pairing_data, &check_data)?;
                     Step::WaitingLinkEncrypted
                 }
                 (x, Command::KeypressNotification) => x,
@@ -560,18 +523,6 @@ impl Pairing {
         Ok(())
     }
 
-    fn generate_private_public_key_pair<RNG: CryptoRng + RngCore>(
-        pairing_data: &mut PairingData,
-        rng: &mut RNG,
-    ) -> Result<(), Error> {
-        let secret_key = SecretKey::new(rng);
-        let public_key = secret_key.public_key();
-        pairing_data.local_public_key = Some(public_key);
-        pairing_data.private_key = Some(secret_key);
-
-        Ok(())
-    }
-
     fn send_public_key<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, public_key: &PublicKey) -> Result<(), Error> {
         let packet = make_public_key_packet::<P>(public_key).map_err(|_| Error::Security(Reason::InvalidParameters))?;
 
@@ -586,29 +537,15 @@ impl Pairing {
         Ok(())
     }
 
-    fn handle_public_key(payload: &[u8], pairing_data: &mut PairingData) -> Result<(), Error> {
-        let peer_public_key = PublicKey::from_bytes(payload);
-        let secret_key = pairing_data.private_key.as_ref().ok_or(Error::InvalidValue)?;
-        pairing_data.dh_key = Some(
-            secret_key
-                .dh_key(peer_public_key)
-                .ok_or(Error::Security(Reason::InvalidParameters))?,
-        );
-
-        pairing_data.peer_public_key = Some(peer_public_key);
-
-        Ok(())
-    }
-
     fn handle_numeric_compare_confirm<RNG: CryptoRng + RngCore>(
         payload: &[u8],
-        pairing_data: &mut PairingData,
+        phase_data: &mut LescPhaseData,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        pairing_data.confirm = Confirm(u128::from_le_bytes(
+        phase_data.confirm = Confirm(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
-        pairing_data.local_nonce = Nonce::new(rng);
+        phase_data.local_nonce = Nonce::new(rng);
         Ok(())
     }
 
@@ -628,62 +565,92 @@ impl Pairing {
 
     fn handle_numeric_compare_random<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
-        pairing_data: &mut PairingData,
+        phase_data: &mut LescPhaseData,
+        pairing_data: &PairingData,
         ops: &mut OPS,
     ) -> Result<Step, Error> {
         let peer_nonce = Nonce(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
-        let expected_cb = peer_nonce.f4(
-            pairing_data.peer_public_key.ok_or(Error::InvalidValue)?.x(),
-            pairing_data.local_public_key.ok_or(Error::InvalidValue)?.x(),
-            0,
-        );
-        if pairing_data.confirm != expected_cb {
+        let expected_cb = peer_nonce.f4(&phase_data.peer_public_key_x, &phase_data.local_public_key_x, 0);
+        if phase_data.confirm != expected_cb {
             return Err(Error::Security(Reason::NumericComparisonFailed));
         }
-        pairing_data.peer_nonce = peer_nonce;
-        let va = pairing_data.local_nonce.g2(
-            pairing_data.local_public_key.ok_or(Error::InvalidValue)?.x(),
-            pairing_data.peer_public_key.ok_or(Error::InvalidValue)?.x(),
-            &pairing_data.peer_nonce,
+        phase_data.peer_nonce = peer_nonce;
+        let va = phase_data.local_nonce.g2(
+            &phase_data.local_public_key_x,
+            &phase_data.peer_public_key_x,
+            &phase_data.peer_nonce,
         );
 
         if pairing_data.pairing_method == PairingMethod::JustWorks {
             info!("[smp] Just works pairing with compare {}", va.0);
-            Ok(Step::WaitingDHKeyEb(DHKeyEaSentTag::new(pairing_data, ops)?))
+            Self::send_dhkey_ea_and_transition(ops, pairing_data, phase_data)
         } else {
             info!("[smp] Numeric comparison pairing with compare {}", va.0);
             ops.try_send_connection_event(ConnectionEvent::PassKeyConfirm(PassKey(va.0)))?;
-            Ok(Step::WaitingNumericComparisonResult)
+            Ok(Step::WaitingNumericComparisonResult(phase_data.clone()))
         }
+    }
+
+    /// Compute f5/f6, send DHKey check Ea, and transition to WaitingDHKeyEb.
+    fn send_dhkey_ea_and_transition<P: PacketPool, OPS: PairingOps<P>>(
+        ops: &mut OPS,
+        pairing_data: &PairingData,
+        phase_data: &LescPhaseData,
+    ) -> Result<Step, Error> {
+        let (mac_key, ltk) = phase_data.dh_key.f5(
+            phase_data.local_nonce,
+            phase_data.peer_nonce,
+            pairing_data.local_address,
+            pairing_data.peer_address,
+        );
+
+        let ea = mac_key.f6(
+            phase_data.local_nonce,
+            phase_data.peer_nonce,
+            phase_data.peer_secret_rb,
+            pairing_data.local_features.as_io_cap(),
+            pairing_data.local_address,
+            pairing_data.peer_address,
+        );
+
+        let check = make_dhkey_check_packet(&ea)?;
+        ops.try_send_packet(check)?;
+
+        Ok(Step::WaitingDHKeyEb(DhKeyCheckData {
+            mac_key,
+            ltk,
+            local_nonce: phase_data.local_nonce,
+            peer_nonce: phase_data.peer_nonce,
+            local_secret_ra: phase_data.local_secret_ra,
+        }))
     }
 
     fn handle_dhkey_eb<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &mut PairingData,
+        check_data: &DhKeyCheckData,
     ) -> Result<(), Error> {
-        let expected_eb = {
-            let mac_key = pairing_data.mac_key.as_ref().ok_or(Error::InvalidValue)?;
-            mac_key
-                .f6(
-                    pairing_data.peer_nonce,
-                    pairing_data.local_nonce,
-                    pairing_data.local_secret_ra,
-                    pairing_data.peer_features.as_io_cap(),
-                    pairing_data.peer_address,
-                    pairing_data.local_address,
-                )
-                .0
-                .to_le_bytes()
-        };
+        let expected_eb = check_data
+            .mac_key
+            .f6(
+                check_data.peer_nonce,
+                check_data.local_nonce,
+                check_data.local_secret_ra,
+                pairing_data.peer_features.as_io_cap(),
+                pairing_data.peer_address,
+                pairing_data.local_address,
+            )
+            .0
+            .to_le_bytes();
         if payload != expected_eb {
             return Err(Error::Security(Reason::DHKeyCheckFailed));
         }
 
         let bond = ops.try_enable_encryption(
-            &pairing_data.ltk.ok_or(Error::InvalidValue)?,
+            &check_data.ltk,
             pairing_data.pairing_method.security_level(),
             pairing_data.want_bonding(),
             #[cfg(feature = "legacy-pairing")]
@@ -695,11 +662,27 @@ impl Pairing {
         Ok(())
     }
 
-    fn handle_pass_key_confirm(payload: &[u8], pairing_data: &mut PairingData) -> Result<(), Error> {
-        let confirm = Confirm(u128::from_le_bytes(
+    /// Send a passkey entry confirm for the given round.
+    fn send_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+        round: i32,
+        phase_data: &mut LescPhaseData,
+        ops: &mut OPS,
+        rng: &mut RNG,
+    ) -> Result<(), Error> {
+        phase_data.local_nonce = Nonce::new(rng);
+        let rai = 0x80u8 | (((phase_data.local_secret_ra & (1 << round as u128)) >> (round as u128)) as u8);
+        let cai = phase_data
+            .local_nonce
+            .f4(&phase_data.local_public_key_x, &phase_data.peer_public_key_x, rai);
+        let confirm = make_confirm_packet(&cai)?;
+        ops.try_send_packet(confirm)?;
+        Ok(())
+    }
+
+    fn store_pass_key_confirm(payload: &[u8], phase_data: &mut LescPhaseData) -> Result<(), Error> {
+        phase_data.confirm = Confirm(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
-        pairing_data.confirm = confirm;
         Ok(())
     }
 
@@ -707,21 +690,17 @@ impl Pairing {
         round: i32,
         payload: &[u8],
         ops: &mut OPS,
-        pairing_data: &mut PairingData,
+        phase_data: &mut LescPhaseData,
     ) -> Result<(), Error> {
         let peer_nonce = Nonce(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
-        let rai = 0x80u8 | (((pairing_data.local_secret_ra & (1 << round as u128)) >> (round as u128)) as u8);
-        let cbi = peer_nonce.f4(
-            pairing_data.peer_public_key.as_ref().ok_or(Error::InvalidValue)?.x(),
-            pairing_data.local_public_key.as_ref().ok_or(Error::InvalidValue)?.x(),
-            rai,
-        );
-        if cbi != pairing_data.confirm {
+        let rai = 0x80u8 | (((phase_data.local_secret_ra & (1 << round as u128)) >> (round as u128)) as u8);
+        let cbi = peer_nonce.f4(&phase_data.peer_public_key_x, &phase_data.local_public_key_x, rai);
+        if cbi != phase_data.confirm {
             return Err(Error::Security(Reason::ConfirmValueFailed));
         }
-        pairing_data.peer_nonce = peer_nonce;
+        phase_data.peer_nonce = peer_nonce;
         Ok(())
     }
 }
