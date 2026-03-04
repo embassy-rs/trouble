@@ -7,9 +7,9 @@ use crate::connection::ConnectionEvent;
 use crate::security_manager::pairing::util::{
     choose_legacy_pairing_method, make_central_identification_packet, make_encryption_information_packet,
     make_identity_address_information_packet, make_identity_information_packet, make_pairing_random, prepare_packet,
-    CommandAndPayload, PairingMethod, PassKeyEntryAction,
+    PairingMethod, PassKeyEntryAction,
 };
-use crate::security_manager::pairing::{Event, PairingData, PairingOps};
+use crate::security_manager::pairing::{Event, Input, PairingData, PairingOps};
 use crate::security_manager::types::{Command, PairingFeatures, PassKey};
 use crate::security_manager::{crypto, Reason};
 use crate::{Address, Error, IdentityResolvingKey, LongTermKey, PacketPool};
@@ -26,15 +26,6 @@ pub(super) struct ConfirmPhaseData {
     pres: [u8; 7],
     /// Central's random (Mrand)
     local_nonce: u128,
-}
-
-/// Key distribution data generated for bonding.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(super) struct KeyDistData {
-    long_term_key: LongTermKey,
-    ediv: u16,
-    rand: [u8; 8],
 }
 
 #[derive(Debug, Clone)]
@@ -59,10 +50,6 @@ pub(super) enum Pairing {
     ReceivingKeys {
         phase: u8,
         received_ltk: LongTermKey,
-    },
-    SendingKeys {
-        phase: u8,
-        keys: KeyDistData,
     },
     Success,
     Error(Error),
@@ -107,68 +94,72 @@ impl Pairing {
     }
 
     pub(crate) fn is_encrypted(&self) -> bool {
-        matches!(
-            self,
-            Self::SendingKeys { .. } | Self::ReceivingKeys { .. } | Self::Success
-        )
+        matches!(self, Self::ReceivingKeys { .. } | Self::Success)
     }
 
-    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    // --- FSM core ---
+
+    pub(super) fn handle_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
-        command: Command,
-        payload: &[u8],
+        input: Input<'_>,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        match self.handle_impl(CommandAndPayload { payload, command }, pairing_data, ops, rng) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                error!(
-                    "[smp legacy central] Failed to handle command {:?}, {:?}",
-                    command, error
-                );
-                *self = Self::Error(error.clone());
-                Err(error)
+        let current = core::mem::replace(self, Self::Error(Error::InvalidState));
+        let next = Self::transition::<P, OPS, RNG>(current, input, pairing_data, ops, rng).unwrap_or_else(Self::Error);
+        self.enter(next, pairing_data, ops);
+        self.result().unwrap_or(Ok(()))
+    }
+
+    fn transition<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+        current: Self,
+        input: Input<'_>,
+        pairing_data: &mut PairingData,
+        ops: &mut OPS,
+        rng: &mut RNG,
+    ) -> Result<Self, Error> {
+        match (current, input) {
+            // --- Command transitions ---
+            (Self::WaitingPairingResponse { preq }, Input::Command(Command::PairingResponse, payload)) => {
+                Self::handle_pairing_response(payload, ops, pairing_data, rng, preq)
             }
-        }
-    }
+            (Self::WaitingPassKeyInput { preq, pres, .. }, Input::Command(Command::PairingConfirm, payload)) => {
+                Self::store_confirm_bytes(payload, preq, pres)
+            }
+            (Self::WaitingPairingConfirm(confirm_data), Input::Command(Command::PairingConfirm, payload)) => {
+                Self::handle_peer_confirm(payload, ops, confirm_data)
+            }
+            (
+                Self::WaitingPairingRandom {
+                    confirm_data,
+                    peer_confirm,
+                },
+                Input::Command(Command::PairingRandom, payload),
+            ) => Self::handle_pairing_random(payload, ops, pairing_data, &confirm_data, peer_confirm),
+            (Self::ReceivingKeys { phase: 0, .. }, Input::Command(Command::EncryptionInformation, payload)) => {
+                Self::handle_encryption_information(payload)
+            }
+            (
+                Self::ReceivingKeys { phase: 1, received_ltk },
+                Input::Command(Command::CentralIdentification, payload),
+            ) => Self::handle_central_identification(payload, pairing_data, received_ltk, ops, rng),
+            (Self::WaitingIdentitityInformation, Input::Command(Command::IdentityInformation, payload)) => {
+                Self::handle_identity_information(payload, pairing_data)
+            }
+            (
+                Self::WaitingIdentitityAddressInformation,
+                Input::Command(Command::IdentityAddressInformation, payload),
+            ) => Self::handle_identity_address_information(payload, pairing_data, ops, rng),
+            (current, Input::Command(Command::KeypressNotification, _)) => Ok(current),
 
-    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
-        &mut self,
-        event: Event,
-        pairing_data: &mut PairingData,
-        ops: &mut OPS,
-        rng: &mut RNG,
-    ) -> Result<(), Error> {
-        let current_state = core::mem::replace(self, Self::Error(Error::InvalidState));
-        let next_state = match (current_state, event) {
-            (Self::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
-                if res {
-                    info!("[smp legacy central] Link encrypted!");
-                    if pairing_data.want_bonding() {
-                        // Receive keys from peripheral first, then send ours
-                        if pairing_data.peer_features.responder_key_distribution.encryption_key() {
-                            Self::ReceivingKeys {
-                                phase: 0,
-                                received_ltk: LongTermKey(0),
-                            }
-                        } else if pairing_data.peer_features.responder_key_distribution.identity_key() {
-                            Self::WaitingIdentitityInformation
-                        } else if pairing_data.local_features.initiator_key_distribution.encryption_key() {
-                            Self::make_sending_keys_step(0, rng)
-                        } else if pairing_data.local_features.initiator_key_distribution.identity_key() {
-                            Self::make_sending_keys_step(2, rng)
-                        } else {
-                            Self::Success
-                        }
-                    } else {
-                        Self::Success
-                    }
-                } else {
-                    error!("[smp legacy central] Link encryption failed!");
-                    Self::Error(Error::Security(Reason::ConfirmValueFailed))
-                }
+            // --- Event transitions ---
+            (Self::WaitingLinkEncrypted, Input::Event(Event::LinkEncryptedResult(true))) => {
+                Self::handle_link_encrypted_success(pairing_data, ops, rng)
+            }
+            (Self::WaitingLinkEncrypted, Input::Event(Event::LinkEncryptedResult(false))) => {
+                error!("[smp legacy central] Link encryption failed!");
+                Err(Error::Security(Reason::ConfirmValueFailed))
             }
             (
                 Self::WaitingPassKeyInput {
@@ -176,214 +167,165 @@ impl Pairing {
                     preq,
                     pres,
                 },
-                Event::PassKeyInput(input),
-            ) => {
-                let tk = input as u128;
-                let mut confirm_data = ConfirmPhaseData {
-                    tk,
-                    preq,
-                    pres,
-                    local_nonce: 0,
-                };
-                Self::send_mconfirm(ops, pairing_data, &mut confirm_data, rng)?;
-                match confirm_bytes {
-                    Some(payload) => {
-                        let peer_confirm = u128::from_le_bytes(payload);
-                        Self::send_mrand(ops, &confirm_data)?;
-                        Self::WaitingPairingRandom {
-                            confirm_data,
-                            peer_confirm,
+                Input::Event(Event::PassKeyInput(input)),
+            ) => Self::handle_pass_key_input(input, confirm_bytes, preq, pres, ops, pairing_data, rng),
+            (Self::WaitingPassKeyInput { .. }, Input::Event(Event::PassKeyCancel)) => {
+                Err(Error::Security(Reason::PasskeyEntryFailed))
+            }
+            (current, Input::Event(Event::PassKeyConfirm | Event::PassKeyCancel | Event::PassKeyInput(_))) => {
+                Ok(current)
+            }
+
+            // --- Catch-all ---
+            _ => Err(Error::InvalidState),
+        }
+    }
+
+    fn enter<P: PacketPool, OPS: PairingOps<P>>(&mut self, next: Self, pairing_data: &PairingData, ops: &mut OPS) {
+        match &next {
+            Self::Error(e) => {
+                if let Err(e) = ops.try_send_connection_event(ConnectionEvent::PairingFailed(e.clone())) {
+                    error!("[smp] Failed to send PairingFailed event: {:?}", e);
+                }
+            }
+            Self::Success => {
+                if let Some(bond) = pairing_data.bond_information.as_ref() {
+                    let pairing_bond = if pairing_data.want_bonding() {
+                        if let Err(e) = ops.try_update_bond_information(bond) {
+                            error!("[smp] Failed to update bond information: {:?}", e);
                         }
-                    }
-                    None => Self::WaitingPairingConfirm(confirm_data),
-                }
-            }
-            (Self::WaitingPassKeyInput { .. }, Event::PassKeyCancel) => {
-                Self::Error(Error::Security(Reason::PasskeyEntryFailed))
-            }
-            (x, Event::PassKeyConfirm | Event::PassKeyCancel | Event::PassKeyInput(_)) => x,
-            _ => Self::Error(Error::InvalidState),
-        };
-
-        self.handle_step_result(next_state, pairing_data, ops)
-    }
-
-    fn generate_key_dist_data<RNG: RngCore>(rng: &mut RNG) -> KeyDistData {
-        let mut ltk_bytes = [0u8; 16];
-        rng.fill_bytes(&mut ltk_bytes);
-        let ediv = rng.gen();
-        let mut rand = [0u8; 8];
-        rng.fill_bytes(&mut rand);
-        KeyDistData {
-            long_term_key: LongTermKey::from_le_bytes(ltk_bytes),
-            ediv,
-            rand,
-        }
-    }
-
-    fn make_sending_keys_step<RNG: RngCore>(phase: u8, rng: &mut RNG) -> Pairing {
-        let keys = if phase == 0 {
-            Self::generate_key_dist_data(rng)
-        } else {
-            // Identity-only phases don't use encryption key fields
-            KeyDistData {
-                long_term_key: LongTermKey(0),
-                ediv: 0,
-                rand: [0; 8],
-            }
-        };
-        Self::SendingKeys { phase, keys }
-    }
-
-    fn handle_step_result<P: PacketPool, OPS: PairingOps<P>>(
-        &mut self,
-        next_step: Pairing,
-        pairing_data: &mut PairingData,
-        ops: &mut OPS,
-    ) -> Result<(), Error> {
-        match next_step {
-            Self::Error(x) => {
-                *self = Self::Error(x.clone());
-                ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
-                Err(x)
-            }
-            Self::SendingKeys { phase, keys } => {
-                *self = Self::SendingKeys { phase, keys };
-                self.send_keys(pairing_data, ops, phase, keys)
-            }
-            x => {
-                let is_success = matches!(x, Self::Success);
-                *self = x;
-                if is_success {
-                    if let Some(bond) = pairing_data.bond_information.as_ref() {
-                        let pairing_bond = if pairing_data.want_bonding() {
-                            ops.try_update_bond_information(bond)?;
-                            Some(bond.clone())
-                        } else {
-                            None
-                        };
-                        ops.try_send_connection_event(ConnectionEvent::PairingComplete {
-                            security_level: bond.security_level,
-                            bond: pairing_bond,
-                        })?;
+                        Some(bond.clone())
                     } else {
-                        error!("[smp legacy central] No bond information stored");
+                        None
+                    };
+                    if let Err(e) = ops.try_send_connection_event(ConnectionEvent::PairingComplete {
+                        security_level: bond.security_level,
+                        bond: pairing_bond,
+                    }) {
+                        error!("[smp] Failed to send PairingComplete event: {:?}", e);
                     }
-                }
-                Ok(())
-            }
-        }
-    }
-
-    fn send_keys<P: PacketPool, OPS: PairingOps<P>>(
-        &mut self,
-        pairing_data: &mut PairingData,
-        ops: &mut OPS,
-        phase: u8,
-        keys: KeyDistData,
-    ) -> Result<(), Error> {
-        let next = match phase {
-            // Phase 0: send EncryptionInformation (LTK)
-            0 => {
-                let packet = make_encryption_information_packet(&keys.long_term_key)?;
-                ops.try_send_packet(packet)?;
-                Self::SendingKeys { phase: 1, keys }
-            }
-            // Phase 1: send CentralIdentification (EDIV + Rand)
-            1 => {
-                let packet = make_central_identification_packet(keys.ediv, &keys.rand)?;
-                ops.try_send_packet(packet)?;
-                if pairing_data.local_features.initiator_key_distribution.identity_key() {
-                    Self::SendingKeys { phase: 2, keys }
                 } else {
-                    Self::Success
+                    error!("[smp legacy central] No bond information stored");
                 }
             }
-            // Phase 2: send IdentityInformation (IRK)
-            2 => {
-                let irk = IdentityResolvingKey::new(0);
-                let packet = make_identity_information_packet(&irk)?;
-                ops.try_send_packet(packet)?;
-                Self::SendingKeys { phase: 3, keys }
-            }
-            // Phase 3: send IdentityAddressInformation
-            3 => {
-                let packet = make_identity_address_information_packet(&pairing_data.local_address)?;
-                ops.try_send_packet(packet)?;
-                Self::Success
-            }
-            _ => Self::Success,
-        };
-        self.handle_step_result(next, pairing_data, ops)
+            _ => {}
+        }
+        *self = next;
     }
 
-    fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
-        &mut self,
-        command: CommandAndPayload,
+    // --- Transition helpers ---
+
+    fn handle_link_encrypted_success<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         pairing_data: &mut PairingData,
         ops: &mut OPS,
         rng: &mut RNG,
-    ) -> Result<(), Error> {
-        let current_step = core::mem::replace(self, Self::Error(Error::InvalidState));
-        let next_step = {
-            trace!(
-                "[smp legacy central] Handling {:?}, step {:?}",
-                command.command,
-                current_step
-            );
-            match (current_step, command.command) {
-                (Self::WaitingPairingResponse { preq }, Command::PairingResponse) => {
-                    Self::handle_pairing_response(command.payload, ops, pairing_data, rng, preq)?
-                }
-                (Self::WaitingPassKeyInput { preq, pres, .. }, Command::PairingConfirm) => {
-                    let confirm_bytes: [u8; size_of::<u128>()] =
-                        command.payload.try_into().map_err(|_| Error::InvalidValue)?;
-                    Self::WaitingPassKeyInput {
-                        confirm_bytes: Some(confirm_bytes),
-                        preq,
-                        pres,
-                    }
-                }
-                (Self::WaitingPairingConfirm(confirm_data), Command::PairingConfirm) => {
-                    let peer_confirm = u128::from_le_bytes(
-                        command
-                            .payload
-                            .try_into()
-                            .map_err(|_| Error::Security(Reason::InvalidParameters))?,
-                    );
-                    // Send Mrand after receiving Sconfirm
-                    Self::send_mrand(ops, &confirm_data)?;
-                    Self::WaitingPairingRandom {
-                        confirm_data,
-                        peer_confirm,
-                    }
-                }
-                (
-                    Self::WaitingPairingRandom {
-                        confirm_data,
-                        peer_confirm,
-                    },
-                    Command::PairingRandom,
-                ) => Self::handle_pairing_random(command.payload, ops, pairing_data, &confirm_data, peer_confirm)?,
-                (Self::ReceivingKeys { phase: 0, .. }, Command::EncryptionInformation) => {
-                    Self::handle_encryption_information(command.payload)?
-                }
-                (Self::ReceivingKeys { phase: 1, received_ltk }, Command::CentralIdentification) => {
-                    Self::handle_central_identification(command.payload, pairing_data, received_ltk, rng)?
-                }
-                (Self::WaitingIdentitityInformation, Command::IdentityInformation) => {
-                    Self::handle_identity_information(command.payload, pairing_data)?
-                }
-                (Self::WaitingIdentitityAddressInformation, Command::IdentityAddressInformation) => {
-                    Self::handle_identity_address_information(command.payload, pairing_data, rng)?
-                }
-                (x, Command::KeypressNotification) => x,
-                _ => return Err(Error::InvalidState),
+    ) -> Result<Self, Error> {
+        info!("[smp legacy central] Link encrypted!");
+        if pairing_data.want_bonding() {
+            // Receive keys from peripheral first, then send ours
+            if pairing_data.peer_features.responder_key_distribution.encryption_key() {
+                Ok(Self::ReceivingKeys {
+                    phase: 0,
+                    received_ltk: LongTermKey(0),
+                })
+            } else if pairing_data.peer_features.responder_key_distribution.identity_key() {
+                Ok(Self::WaitingIdentitityInformation)
+            } else {
+                Self::send_all_keys(pairing_data, ops, rng)
             }
-        };
-
-        self.handle_step_result(next_step, pairing_data, ops)
+        } else {
+            Ok(Self::Success)
+        }
     }
+
+    fn store_confirm_bytes(payload: &[u8], preq: [u8; 7], pres: [u8; 7]) -> Result<Self, Error> {
+        let confirm_bytes: [u8; size_of::<u128>()] = payload.try_into().map_err(|_| Error::InvalidValue)?;
+        Ok(Self::WaitingPassKeyInput {
+            confirm_bytes: Some(confirm_bytes),
+            preq,
+            pres,
+        })
+    }
+
+    #[inline]
+    fn handle_peer_confirm<P: PacketPool, OPS: PairingOps<P>>(
+        payload: &[u8],
+        ops: &mut OPS,
+        confirm_data: ConfirmPhaseData,
+    ) -> Result<Self, Error> {
+        let peer_confirm = u128::from_le_bytes(
+            payload
+                .try_into()
+                .map_err(|_| Error::Security(Reason::InvalidParameters))?,
+        );
+        Self::send_mrand(ops, &confirm_data)?;
+        Ok(Self::WaitingPairingRandom {
+            confirm_data,
+            peer_confirm,
+        })
+    }
+
+    #[inline]
+    fn handle_pass_key_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+        input: u32,
+        confirm_bytes: Option<[u8; size_of::<u128>()]>,
+        preq: [u8; 7],
+        pres: [u8; 7],
+        ops: &mut OPS,
+        pairing_data: &PairingData,
+        rng: &mut RNG,
+    ) -> Result<Self, Error> {
+        let tk = input as u128;
+        let mut confirm_data = ConfirmPhaseData {
+            tk,
+            preq,
+            pres,
+            local_nonce: 0,
+        };
+        Self::send_mconfirm(ops, pairing_data, &mut confirm_data, rng)?;
+        match confirm_bytes {
+            Some(payload) => {
+                let peer_confirm = u128::from_le_bytes(payload);
+                Self::send_mrand(ops, &confirm_data)?;
+                Ok(Self::WaitingPairingRandom {
+                    confirm_data,
+                    peer_confirm,
+                })
+            }
+            None => Ok(Self::WaitingPairingConfirm(confirm_data)),
+        }
+    }
+
+    /// Send all initiator key distribution packets at once.
+    fn send_all_keys<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
+        pairing_data: &mut PairingData,
+        ops: &mut OPS,
+        rng: &mut RNG,
+    ) -> Result<Self, Error> {
+        if pairing_data.local_features.initiator_key_distribution.encryption_key() {
+            let mut ltk_bytes = [0u8; 16];
+            rng.fill_bytes(&mut ltk_bytes);
+            let long_term_key = LongTermKey::from_le_bytes(ltk_bytes);
+            let ediv: u16 = rng.gen();
+            let mut rand = [0u8; 8];
+            rng.fill_bytes(&mut rand);
+
+            let packet = make_encryption_information_packet(&long_term_key)?;
+            ops.try_send_packet(packet)?;
+            let packet = make_central_identification_packet(ediv, &rand)?;
+            ops.try_send_packet(packet)?;
+        }
+        if pairing_data.local_features.initiator_key_distribution.identity_key() {
+            let irk = IdentityResolvingKey::new(0);
+            let packet = make_identity_information_packet(&irk)?;
+            ops.try_send_packet(packet)?;
+            let packet = make_identity_address_information_packet(&pairing_data.local_address)?;
+            ops.try_send_packet(packet)?;
+        }
+        Ok(Self::Success)
+    }
+
+    // --- Protocol helpers ---
 
     fn handle_pairing_response<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         payload: &[u8],
@@ -391,9 +333,8 @@ impl Pairing {
         pairing_data: &mut PairingData,
         rng: &mut RNG,
         preq: [u8; 7],
-    ) -> Result<Pairing, Error> {
+    ) -> Result<Self, Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
-        // Key size validation (7-16 range) is done in PairingFeatures::decode
 
         // Store the PairingResponse command bytes for c1
         let mut pres = [0u8; 7];
@@ -451,7 +392,6 @@ impl Pairing {
         confirm_data: &mut ConfirmPhaseData,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        // Generate Mrand
         let mut mrand_bytes = [0u8; 16];
         rng.fill_bytes(&mut mrand_bytes);
         confirm_data.local_nonce = u128::from_be_bytes(mrand_bytes);
@@ -459,7 +399,6 @@ impl Pairing {
             confirm_data.local_nonce = 1;
         }
 
-        // Compute Mconfirm = c1(TK, Mrand, preq, pres, iat, ia, rat, ra)
         let mconfirm = crypto::c1(
             confirm_data.tk,
             confirm_data.local_nonce,
@@ -486,20 +425,19 @@ impl Pairing {
         Ok(())
     }
 
+    #[inline]
     fn handle_pairing_random<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &mut PairingData,
         confirm_data: &ConfirmPhaseData,
         peer_confirm: u128,
-    ) -> Result<Pairing, Error> {
-        // Parse Srand from peripheral
+    ) -> Result<Self, Error> {
         let srand_le: [u8; 16] = payload
             .try_into()
             .map_err(|_| Error::Security(Reason::InvalidParameters))?;
         let peer_nonce = u128::from_le_bytes(srand_le);
 
-        // Verify: c1(TK, Srand, preq, pres, iat, ia, rat, ra) == stored Sconfirm
         let expected_sconfirm = crypto::c1(
             confirm_data.tk,
             peer_nonce,
@@ -516,11 +454,8 @@ impl Pairing {
             return Err(Error::Security(Reason::ConfirmValueFailed));
         }
 
-        // Compute STK = s1(TK, Srand, Mrand)
         let stk = crypto::s1(confirm_data.tk, peer_nonce, confirm_data.local_nonce);
 
-        // Mask STK to negotiated key size (Bluetooth Core Spec Vol 3, Part H, Section 2.4.4):
-        // Zero out the most significant (16 - key_size) bytes.
         let negotiated_key_size = core::cmp::min(
             pairing_data.peer_features.maximum_encryption_key_size,
             pairing_data.local_features.maximum_encryption_key_size,
@@ -532,14 +467,13 @@ impl Pairing {
         };
         let stk = LongTermKey(masked_stk);
 
-        // Central enables encryption with STK (not yet bonded — real LTK comes via key distribution)
         let bond = ops.try_enable_encryption(&stk, pairing_data.pairing_method.security_level(), false, 0, [0; 8])?;
         pairing_data.bond_information = Some(bond);
 
         Ok(Self::WaitingLinkEncrypted)
     }
 
-    fn handle_encryption_information(payload: &[u8]) -> Result<Pairing, Error> {
+    fn handle_encryption_information(payload: &[u8]) -> Result<Self, Error> {
         let ltk = LongTermKey::from_le_bytes(payload.try_into().map_err(|_| Error::InvalidValue)?);
         trace!("[smp legacy central] Received LTK from peripheral");
         Ok(Self::ReceivingKeys {
@@ -548,12 +482,13 @@ impl Pairing {
         })
     }
 
-    fn handle_central_identification<RNG: RngCore>(
+    fn handle_central_identification<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         payload: &[u8],
         pairing_data: &mut PairingData,
         received_ltk: LongTermKey,
+        ops: &mut OPS,
         rng: &mut RNG,
-    ) -> Result<Pairing, Error> {
+    ) -> Result<Self, Error> {
         if payload.len() < 10 {
             return Err(Error::Security(Reason::InvalidParameters));
         }
@@ -561,8 +496,7 @@ impl Pairing {
         let mut rand = [0u8; 8];
         rand.copy_from_slice(&payload[2..10]);
 
-        // Update bond with the peripheral's distributed keys, masking LTK to negotiated
-        // key size per BT Core Spec Vol 3, Part H, Section 2.4.4.
+        // Update bond with the peripheral's distributed keys
         let want_bonding = pairing_data.want_bonding();
         if let Some(ref mut bond) = pairing_data.bond_information {
             let negotiated_key_size = core::cmp::min(
@@ -582,16 +516,12 @@ impl Pairing {
         trace!("[smp legacy central] Received EDIV/Rand from peripheral");
         if pairing_data.peer_features.responder_key_distribution.identity_key() {
             Ok(Self::WaitingIdentitityInformation)
-        } else if pairing_data.local_features.initiator_key_distribution.encryption_key() {
-            Ok(Self::make_sending_keys_step(0, rng))
-        } else if pairing_data.local_features.initiator_key_distribution.identity_key() {
-            Ok(Self::make_sending_keys_step(2, rng))
         } else {
-            Ok(Self::Success)
+            Self::send_all_keys(pairing_data, ops, rng)
         }
     }
 
-    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Pairing, Error> {
+    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Self, Error> {
         let irk = IdentityResolvingKey::new(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
@@ -602,11 +532,12 @@ impl Pairing {
         Ok(Self::WaitingIdentitityAddressInformation)
     }
 
-    fn handle_identity_address_information<RNG: RngCore>(
+    fn handle_identity_address_information<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         payload: &[u8],
         pairing_data: &mut PairingData,
+        ops: &mut OPS,
         rng: &mut RNG,
-    ) -> Result<Pairing, Error> {
+    ) -> Result<Self, Error> {
         let addr_type = payload[0];
         let kind = if addr_type == 0 {
             AddrKind::PUBLIC
@@ -624,15 +555,8 @@ impl Pairing {
 
         trace!("[smp legacy central] Received identity address {:?}", addr);
 
-        // After receiving peripheral keys, send central keys
         if pairing_data.want_bonding() {
-            if pairing_data.local_features.initiator_key_distribution.encryption_key() {
-                Ok(Self::make_sending_keys_step(0, rng))
-            } else if pairing_data.local_features.initiator_key_distribution.identity_key() {
-                Ok(Self::make_sending_keys_step(2, rng))
-            } else {
-                Ok(Self::Success)
-            }
+            Self::send_all_keys(pairing_data, ops, rng)
         } else {
             Ok(Self::Success)
         }

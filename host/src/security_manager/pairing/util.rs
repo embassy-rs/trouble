@@ -1,8 +1,7 @@
-use crate::pdu::Pdu;
 use crate::prelude::SecurityLevel;
 use crate::security_manager::crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey};
 use crate::security_manager::types::{Command, PairingFeatures, UseOutOfBand};
-use crate::security_manager::{Reason, TxPacket};
+use crate::security_manager::TxPacket;
 use crate::{Address, Error, IoCapabilities, LongTermKey, PacketPool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,41 +198,6 @@ pub fn make_identity_address_information_packet<P: PacketPool>(addr: &Address) -
     payload[0] = addr_type;
     payload[1..7].copy_from_slice(addr.addr.raw());
     Ok(packet)
-}
-
-#[derive(Debug, Clone)]
-pub struct CommandAndPayload<'a> {
-    pub command: Command,
-    pub payload: &'a [u8],
-}
-
-impl<'a> CommandAndPayload<'a> {
-    pub fn try_parse<P: PacketPool>(pdu: Pdu<P::Packet>, buffer: &'a mut [u8]) -> Result<Self, Error> {
-        let size = {
-            let size = pdu.len().min(buffer.len());
-            buffer[..size].copy_from_slice(&pdu.as_ref()[..size]);
-            size
-        };
-        if size < 2 {
-            error!("[security manager] Payload size too small {}", size);
-            return Err(Error::Security(Reason::InvalidParameters));
-        }
-        let payload = &buffer[1..size];
-        let command = buffer[0];
-
-        let command = match Command::try_from(command) {
-            Ok(command) => {
-                if usize::from(command.payload_size()) != payload.len() {
-                    error!("[security manager] Payload size mismatch for command {}", command);
-                    return Err(Error::Security(Reason::InvalidParameters));
-                }
-                command
-            }
-            Err(_) => return Err(Error::Security(Reason::CommandNotSupported)),
-        };
-
-        Ok(Self { command, payload })
-    }
 }
 
 #[cfg(test)]

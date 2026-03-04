@@ -55,6 +55,11 @@ pub mod legacy_peripheral;
 pub mod peripheral;
 mod util;
 
+pub(super) enum Input<'a> {
+    Command(Command, &'a [u8]),
+    Event(Event),
+}
+
 pub trait PairingOps<P: PacketPool> {
     fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error>;
     fn find_bond(&self) -> Option<BondInformation>;
@@ -129,20 +134,7 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        match &mut self.state {
-            State::Central(central) => central.handle_l2cap_command(command, payload, &mut self.pairing_data, ops, rng),
-            State::Peripheral(peripheral) => {
-                peripheral.handle_l2cap_command(command, payload, &mut self.pairing_data, ops, rng)
-            }
-            #[cfg(feature = "legacy-pairing")]
-            State::LegacyCentral(central) => {
-                central.handle_l2cap_command(command, payload, &mut self.pairing_data, ops, rng)
-            }
-            #[cfg(feature = "legacy-pairing")]
-            State::LegacyPeripheral(peripheral) => {
-                peripheral.handle_l2cap_command(command, payload, &mut self.pairing_data, ops, rng)
-            }
-        }
+        self.handle_input(Input::Command(command, payload), ops, rng)
     }
 
     pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
@@ -151,13 +143,22 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
+        self.handle_input(Input::Event(event), ops, rng)
+    }
+
+    fn handle_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+        &mut self,
+        input: Input<'_>,
+        ops: &mut OPS,
+        rng: &mut RNG,
+    ) -> Result<(), Error> {
         match &mut self.state {
-            State::Central(central) => central.handle_event(event, &mut self.pairing_data, ops, rng),
-            State::Peripheral(peripheral) => peripheral.handle_event(event, &mut self.pairing_data, ops, rng),
+            State::Central(central) => central.handle_input(input, &mut self.pairing_data, ops, rng),
+            State::Peripheral(peripheral) => peripheral.handle_input(input, &mut self.pairing_data, ops, rng),
             #[cfg(feature = "legacy-pairing")]
-            State::LegacyCentral(central) => central.handle_event(event, &mut self.pairing_data, ops, rng),
+            State::LegacyCentral(central) => central.handle_input(input, &mut self.pairing_data, ops, rng),
             #[cfg(feature = "legacy-pairing")]
-            State::LegacyPeripheral(peripheral) => peripheral.handle_event(event, &mut self.pairing_data, ops, rng),
+            State::LegacyPeripheral(peripheral) => peripheral.handle_input(input, &mut self.pairing_data, ops, rng),
         }
     }
 
