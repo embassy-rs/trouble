@@ -410,7 +410,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             if command == Command::PairingRequest
                 && payload.len() >= 3
                 && !AuthReq::from(payload[2]).secure_connection()
-                && matches!(state_machine.as_ref(), Some(Pairing::Peripheral(_)))
+                && state_machine.as_ref().is_some_and(|p| p.is_lesc_peripheral())
             {
                 if self.is_secure_connections_only() {
                     return Err(Error::Security(Reason::AuthenticationRequirements));
@@ -500,7 +500,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             if command == Command::PairingResponse
                 && payload.len() >= 3
                 && !AuthReq::from(payload[2]).secure_connection()
-                && matches!(state_machine.as_ref(), Some(Pairing::Central(_)))
+                && state_machine.as_ref().is_some_and(|p| p.is_lesc_central())
             {
                 if self.is_secure_connections_only() {
                     return Err(Error::Security(Reason::AuthenticationRequirements));

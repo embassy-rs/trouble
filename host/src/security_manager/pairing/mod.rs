@@ -21,6 +21,26 @@ pub(super) struct PairingData {
 }
 
 impl PairingData {
+    pub(super) fn new(
+        local_address: Address,
+        peer_address: Address,
+        local_io: IoCapabilities,
+        timeout: embassy_time::Duration,
+    ) -> PairingData {
+        PairingData {
+            local_address,
+            peer_address,
+            local_features: PairingFeatures {
+                io_capabilities: local_io,
+                ..Default::default()
+            },
+            peer_features: PairingFeatures::default(),
+            pairing_method: PairingMethod::JustWorks,
+            timeout_at: Instant::now() + timeout,
+            bond_information: None,
+        }
+    }
+
     pub(super) fn want_bonding(&self) -> bool {
         matches!(self.local_features.security_properties.bond(), BondingFlag::Bonding)
             && matches!(self.peer_features.security_properties.bond(), BondingFlag::Bonding)
@@ -55,7 +75,7 @@ pub trait PairingOps<P: PacketPool> {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Pairing {
+enum State {
     Central(central::Pairing),
     Peripheral(peripheral::Pairing),
     #[cfg(feature = "legacy-pairing")]
@@ -64,26 +84,44 @@ pub enum Pairing {
     LegacyPeripheral(legacy_peripheral::Pairing),
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Pairing {
+    pairing_data: PairingData,
+    state: State,
+}
+
 impl Pairing {
     pub(crate) fn is_central(&self) -> bool {
-        match self {
-            Pairing::Central(_) => true,
+        match &self.state {
+            State::Central(_) => true,
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(_) => true,
+            State::LegacyCentral(_) => true,
             _ => false,
         }
     }
 
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn is_lesc_central(&self) -> bool {
+        matches!(&self.state, State::Central(_))
+    }
+
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn is_lesc_peripheral(&self) -> bool {
+        matches!(&self.state, State::Peripheral(_))
+    }
+
     pub(crate) fn result(&self) -> Option<Result<(), Error>> {
-        match self {
-            Pairing::Central(c) => c.result(),
-            Pairing::Peripheral(p) => p.result(),
+        match &self.state {
+            State::Central(c) => c.result(),
+            State::Peripheral(p) => p.result(),
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(c) => c.result(),
+            State::LegacyCentral(c) => c.result(),
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyPeripheral(p) => p.result(),
+            State::LegacyPeripheral(p) => p.result(),
         }
     }
+
     pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         command: Command,
@@ -91,13 +129,19 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        match self {
-            Pairing::Central(central) => central.handle_l2cap_command(command, payload, ops, rng),
-            Pairing::Peripheral(peripheral) => peripheral.handle_l2cap_command(command, payload, ops, rng),
+        match &mut self.state {
+            State::Central(central) => central.handle_l2cap_command(command, payload, &mut self.pairing_data, ops, rng),
+            State::Peripheral(peripheral) => {
+                peripheral.handle_l2cap_command(command, payload, &mut self.pairing_data, ops, rng)
+            }
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(central) => central.handle_l2cap_command(command, payload, ops, rng),
+            State::LegacyCentral(central) => {
+                central.handle_l2cap_command(command, payload, &mut self.pairing_data, ops, rng)
+            }
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyPeripheral(peripheral) => peripheral.handle_l2cap_command(command, payload, ops, rng),
+            State::LegacyPeripheral(peripheral) => {
+                peripheral.handle_l2cap_command(command, payload, &mut self.pairing_data, ops, rng)
+            }
         }
     }
 
@@ -107,28 +151,46 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        match self {
-            Pairing::Central(central) => central.handle_event(event, ops, rng),
-            Pairing::Peripheral(peripheral) => peripheral.handle_event(event, ops, rng),
+        match &mut self.state {
+            State::Central(central) => central.handle_event(event, &mut self.pairing_data, ops, rng),
+            State::Peripheral(peripheral) => peripheral.handle_event(event, &mut self.pairing_data, ops, rng),
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(central) => central.handle_event(event, ops, rng),
+            State::LegacyCentral(central) => central.handle_event(event, &mut self.pairing_data, ops, rng),
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyPeripheral(peripheral) => peripheral.handle_event(event, ops, rng),
+            State::LegacyPeripheral(peripheral) => peripheral.handle_event(event, &mut self.pairing_data, ops, rng),
         }
     }
 
     pub(crate) fn security_level(&self) -> SecurityLevel {
-        match self {
-            Pairing::Central(c) => c.security_level(),
-            Pairing::Peripheral(p) => p.security_level(),
+        let is_encrypted = match &self.state {
+            State::Central(c) => c.is_encrypted(),
+            State::Peripheral(p) => p.is_encrypted(),
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(c) => c.security_level(),
+            State::LegacyCentral(c) => c.is_encrypted(),
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyPeripheral(p) => p.security_level(),
+            State::LegacyPeripheral(p) => p.is_encrypted(),
+        };
+        if is_encrypted {
+            self.pairing_data
+                .bond_information
+                .as_ref()
+                .map(|x| x.security_level)
+                .unwrap_or(SecurityLevel::NoEncryption)
+        } else {
+            SecurityLevel::NoEncryption
         }
     }
+
     pub(crate) fn new_central(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
-        Pairing::Central(central::Pairing::new_idle(local_address, peer_address, local_io))
+        Pairing {
+            pairing_data: PairingData::new(
+                local_address,
+                peer_address,
+                local_io,
+                crate::security_manager::constants::TIMEOUT_DISABLE,
+            ),
+            state: State::Central(central::Pairing::new_idle()),
+        }
     }
 
     pub(crate) fn initiate_central<P: PacketPool, OPS: PairingOps<P>>(
@@ -138,17 +200,30 @@ impl Pairing {
         local_io: IoCapabilities,
         user_initiated: bool,
     ) -> Result<Self, Error> {
-        Ok(Pairing::Central(central::Pairing::initiate(
+        let mut pairing_data = PairingData::new(
             local_address,
             peer_address,
-            ops,
             local_io,
-            user_initiated,
-        )?))
+            crate::security_manager::constants::TIMEOUT_DISABLE,
+        );
+        let state = central::Pairing::initiate(&mut pairing_data, ops, user_initiated)?;
+        pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
+        Ok(Pairing {
+            pairing_data,
+            state: State::Central(state),
+        })
     }
 
     pub(crate) fn new_peripheral(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
-        Pairing::Peripheral(peripheral::Pairing::new(local_address, peer_address, local_io))
+        Pairing {
+            pairing_data: PairingData::new(
+                local_address,
+                peer_address,
+                local_io,
+                crate::security_manager::constants::TIMEOUT,
+            ),
+            state: State::Peripheral(peripheral::Pairing::new()),
+        }
     }
 
     #[cfg(feature = "legacy-pairing")]
@@ -157,7 +232,15 @@ impl Pairing {
         peer_address: Address,
         local_io: IoCapabilities,
     ) -> Pairing {
-        Pairing::LegacyPeripheral(legacy_peripheral::Pairing::new(local_address, peer_address, local_io))
+        Pairing {
+            pairing_data: PairingData::new(
+                local_address,
+                peer_address,
+                local_io,
+                crate::security_manager::constants::TIMEOUT,
+            ),
+            state: State::LegacyPeripheral(legacy_peripheral::Pairing::new()),
+        }
     }
 
     pub(crate) fn initiate_peripheral<P: PacketPool, OPS: PairingOps<P>>(
@@ -166,82 +249,83 @@ impl Pairing {
         ops: &mut OPS,
         local_io: IoCapabilities,
     ) -> Result<Self, Error> {
-        Ok(Pairing::Peripheral(peripheral::Pairing::initiate(
+        let pairing_data = PairingData::new(
             local_address,
             peer_address,
-            ops,
             local_io,
-        )?))
+            crate::security_manager::constants::TIMEOUT,
+        );
+        let state = peripheral::Pairing::initiate(&pairing_data, ops)?;
+        Ok(Pairing {
+            pairing_data,
+            state: State::Peripheral(state),
+        })
     }
 
     /// Switch from a LESC Central to a Legacy Central when the peer doesn't support SC.
-    /// Consumes the current Pairing and returns a new LegacyCentral variant.
     #[cfg(feature = "legacy-pairing")]
     pub(crate) fn switch_to_legacy_central(self) -> Result<Pairing, Error> {
-        match self {
-            Pairing::Central(lesc_central) => Ok(Pairing::LegacyCentral(lesc_central.into_legacy())),
+        use crate::codec::Encode;
+
+        let Pairing { pairing_data, state } = self;
+        match state {
+            State::Central(_) => {
+                let mut preq = [0u8; 7];
+                preq[0] = u8::from(Command::PairingRequest);
+                pairing_data.local_features.encode(&mut preq[1..]).unwrap();
+                Ok(Pairing {
+                    pairing_data,
+                    state: State::LegacyCentral(legacy_central::Pairing::from_lesc_switch(preq)),
+                })
+            }
             _ => Err(Error::InvalidState),
         }
     }
 
     /// Switch from a LESC Peripheral to a Legacy Peripheral when the peer doesn't support SC.
-    /// Consumes the current Pairing and returns a new LegacyPeripheral variant.
     #[cfg(feature = "legacy-pairing")]
     pub(crate) fn switch_to_legacy_peripheral(self) -> Result<Pairing, Error> {
-        match self {
-            Pairing::Peripheral(lesc_peripheral) => Ok(Pairing::LegacyPeripheral(lesc_peripheral.into_legacy())),
+        let Pairing { pairing_data, state } = self;
+        match state {
+            State::Peripheral(_) => Ok(Pairing {
+                pairing_data,
+                state: State::LegacyPeripheral(legacy_peripheral::Pairing::new()),
+            }),
             _ => Err(Error::InvalidState),
         }
     }
 
     pub(crate) fn is_waiting_bonded_encryption(&self) -> bool {
-        match self {
-            Pairing::Central(c) => c.is_waiting_bonded_encryption(),
+        match &self.state {
+            State::Central(c) => c.is_waiting_bonded_encryption(),
             _ => false,
         }
     }
 
     pub(crate) fn peer_address(&self) -> Address {
-        match self {
-            Pairing::Central(central) => central.peer_address(),
-            Pairing::Peripheral(per) => per.peer_address(),
-            #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(central) => central.peer_address(),
-            #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyPeripheral(per) => per.peer_address(),
-        }
+        self.pairing_data.peer_address
     }
 
     pub(crate) fn timeout_at(&self) -> Instant {
-        match self {
-            Pairing::Central(c) => c.timeout_at(),
-            Pairing::Peripheral(p) => p.timeout_at(),
-            #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(c) => c.timeout_at(),
-            #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyPeripheral(p) => p.timeout_at(),
+        if self.result().is_some() {
+            Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE
+        } else {
+            self.pairing_data.timeout_at
         }
     }
 
     pub(crate) fn reset_timeout(&mut self) {
-        match self {
-            Pairing::Central(c) => c.reset_timeout(),
-            Pairing::Peripheral(p) => p.reset_timeout(),
-            #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(c) => c.reset_timeout(),
-            #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyPeripheral(p) => p.reset_timeout(),
-        }
+        self.pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
     }
 
     pub(crate) fn mark_timeout(&mut self) {
-        match self {
-            Pairing::Central(c) => c.mark_timeout(),
-            Pairing::Peripheral(p) => p.mark_timeout(),
+        match &mut self.state {
+            State::Central(c) => c.mark_timeout(),
+            State::Peripheral(p) => p.mark_timeout(),
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyCentral(c) => c.mark_timeout(),
+            State::LegacyCentral(c) => c.mark_timeout(),
             #[cfg(feature = "legacy-pairing")]
-            Pairing::LegacyPeripheral(p) => p.mark_timeout(),
+            State::LegacyPeripheral(p) => p.mark_timeout(),
         }
     }
 }
@@ -374,8 +458,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<10>::default();
         let mut central_ops = TestOps::<10>::default();
 
-        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
-        let mut central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = Pairing::initiate_central(
             central,
             peripheral,
             &mut central_ops,
@@ -431,8 +515,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<10>::default();
         let mut central_ops = TestOps::<10>::default();
 
-        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::DisplayYesNo);
-        let mut central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::DisplayYesNo);
+        let mut central_pairing = Pairing::initiate_central(
             central,
             peripheral,
             &mut central_ops,
@@ -523,8 +607,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<80>::default();
         let mut central_ops = TestOps::<80>::default();
 
-        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::KeyboardOnly);
-        let mut central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::KeyboardOnly);
+        let mut central_pairing = Pairing::initiate_central(
             central,
             peripheral,
             &mut central_ops,
@@ -609,8 +693,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<80>::default();
         let mut central_ops = TestOps::<80>::default();
 
-        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::DisplayOnly);
-        let mut central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::DisplayOnly);
+        let mut central_pairing = Pairing::initiate_central(
             central,
             peripheral,
             &mut central_ops,
@@ -693,9 +777,9 @@ mod tests {
         let mut peripheral_ops = TestOps::<80>::default();
         let mut central_ops = TestOps::<80>::default();
 
-        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::KeyboardOnly);
+        let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::KeyboardOnly);
         let mut central_pairing =
-            central::Pairing::initiate(central, peripheral, &mut central_ops, IoCapabilities::DisplayOnly, true)
+            Pairing::initiate_central(central, peripheral, &mut central_ops, IoCapabilities::DisplayOnly, true)
                 .unwrap();
 
         let mut num_central_data_sent = 0;
@@ -774,8 +858,8 @@ mod tests {
         peripheral_ops.bondable = true;
         central_ops.bondable = true;
 
-        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
-        let mut central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = Pairing::initiate_central(
             central,
             peripheral,
             &mut central_ops,
@@ -868,8 +952,8 @@ mod tests {
 
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
-        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
-        let mut central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = Pairing::initiate_central(
             central,
             peripheral,
             &mut central_ops,
@@ -949,14 +1033,14 @@ mod tests {
 
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
-        let mut peripheral_pairing = peripheral::Pairing::initiate(
+        let mut peripheral_pairing = Pairing::initiate_peripheral(
             peripheral,
             central,
             &mut peripheral_ops,
             IoCapabilities::NoInputNoOutput,
         )
         .unwrap();
-        let mut central_pairing = central::Pairing::new_idle(central, peripheral, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = Pairing::new_central(central, peripheral, IoCapabilities::NoInputNoOutput);
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
@@ -1009,8 +1093,8 @@ mod tests {
         peripheral_ops: &mut TestOps<N>,
         central_ops: &mut TestOps<N>,
         rng: &mut ChaCha12Rng,
-        peripheral_pairing: &mut peripheral::Pairing,
-        central_pairing: &mut central::Pairing,
+        peripheral_pairing: &mut Pairing,
+        central_pairing: &mut Pairing,
         num_central_data_sent: &mut usize,
         num_peripheral_data_sent: &mut usize,
     ) {

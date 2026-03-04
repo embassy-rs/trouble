@@ -1,10 +1,8 @@
 use bt_hci::param::{AddrKind, BdAddr};
-use embassy_time::Instant;
 use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
-use crate::connection::SecurityLevel;
 use crate::prelude::ConnectionEvent;
 use crate::security_manager::crypto::{Confirm, DHKey, Nonce, PublicKey, PublicKeyX, SecretKey};
 use crate::security_manager::pairing::util::{
@@ -71,7 +69,6 @@ enum Step {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Pairing {
     current_step: Step,
-    pairing_data: PairingData,
 }
 
 impl Pairing {
@@ -83,68 +80,40 @@ impl Pairing {
         }
     }
 
-    pub fn timeout_at(&self) -> Instant {
-        if matches!(&self.current_step, Step::Success | Step::Error(_)) {
-            Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE
-        } else {
-            self.pairing_data.timeout_at
-        }
-    }
-
-    pub fn reset_timeout(&mut self) {
-        self.pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
-    }
-
     pub(crate) fn mark_timeout(&mut self) {
         if matches!(&self.current_step, Step::Success | Step::Error(_)) {
             return;
         }
         self.current_step = Step::Error(Error::Timeout);
     }
-    pub fn peer_address(&self) -> Address {
-        self.pairing_data.peer_address
-    }
-    pub fn new(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Self {
+
+    pub fn new() -> Self {
         Self {
             current_step: Step::WaitingPairingRequest,
-            pairing_data: PairingData {
-                local_address,
-                peer_address,
-                local_features: PairingFeatures {
-                    io_capabilities: local_io,
-                    ..Default::default()
-                },
-                pairing_method: PairingMethod::JustWorks,
-                peer_features: PairingFeatures::default(),
-                timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT,
-                bond_information: None,
-            },
         }
     }
 
-    #[cfg(feature = "legacy-pairing")]
-    pub(crate) fn into_legacy(self) -> super::legacy_peripheral::Pairing {
-        let PairingData {
-            local_address,
-            peer_address,
-            local_features,
-            ..
-        } = self.pairing_data;
-        super::legacy_peripheral::Pairing::new(local_address, peer_address, local_features.io_capabilities)
+    pub(crate) fn is_encrypted(&self) -> bool {
+        matches!(
+            &self.current_step,
+            Step::WaitingIdentitityInformation
+                | Step::WaitingIdentitityAddressInformation
+                | Step::SendingKeys(_)
+                | Step::ReceivingKeys(_)
+                | Step::Success
+        )
     }
 
     pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
-        local_address: Address,
-        peer_address: Address,
+        pairing_data: &PairingData,
         ops: &mut OPS,
-        local_io: IoCapabilities,
     ) -> Result<Self, Error> {
-        let ret = Self::new(local_address, peer_address, local_io);
+        let ret = Self::new();
         {
             let mut security_request = prepare_packet(Command::SecurityRequest)?;
             let payload = security_request.payload_mut();
             let mut auth_req = AuthReq::new(ops.bonding_flag());
-            if local_io != IoCapabilities::NoInputNoOutput {
+            if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
                 auth_req = auth_req.with_mitm();
             }
             payload[0] = auth_req.into();
@@ -157,10 +126,11 @@ impl Pairing {
         &mut self,
         command: Command,
         payload: &[u8],
+        pairing_data: &mut PairingData,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        match self.handle_impl(CommandAndPayload { payload, command }, ops, rng) {
+        match self.handle_impl(CommandAndPayload { payload, command }, pairing_data, ops, rng) {
             Ok(()) => Ok(()),
             Err(error) => {
                 error!("[smp] Failed to handle command {:?}, {:?}", command, error);
@@ -173,6 +143,7 @@ impl Pairing {
     pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         event: Event,
+        pairing_data: &mut PairingData,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
@@ -185,15 +156,10 @@ impl Pairing {
                         if matches!(x.0, Step::WaitingLinkEncrypted) {
                             // TODO send key data
                         } else {
-                            self.pairing_data.bond_information = ops.try_enable_bonded_encryption()?;
+                            pairing_data.bond_information = ops.try_enable_bonded_encryption()?;
                         }
 
-                        if self
-                            .pairing_data
-                            .peer_features
-                            .initiator_key_distribution
-                            .identity_key()
-                        {
+                        if pairing_data.peer_features.initiator_key_distribution.identity_key() {
                             // Remote will share identity key
                             Step::WaitingIdentitityInformation
                         } else {
@@ -210,7 +176,7 @@ impl Pairing {
                         ea: Some(ea),
                     },
                     Event::PassKeyConfirm,
-                ) => Self::handle_dhkey_ea(&ea, ops, &mut self.pairing_data, &phase_data)?,
+                ) => Self::handle_dhkey_ea(&ea, ops, pairing_data, &phase_data)?,
                 (Step::WaitingNumericComparisonResult { phase_data, ea: None }, Event::PassKeyConfirm) => {
                     Step::WaitingDHKeyEa(phase_data)
                 }
@@ -228,7 +194,7 @@ impl Pairing {
                     phase_data.peer_secret_ra = phase_data.local_secret_rb;
                     match confirm_bytes {
                         Some(payload) => {
-                            Self::handle_pass_key_confirm(0, &payload, ops, &mut self.pairing_data, phase_data, rng)?
+                            Self::handle_pass_key_confirm(0, &payload, ops, pairing_data, phase_data, rng)?
                         }
                         None => Step::WaitingPassKeyEntryConfirm { phase_data, round: 0 },
                     }
@@ -249,9 +215,9 @@ impl Pairing {
                 let is_success = matches!(x, Step::Success);
                 self.current_step = x;
                 if is_success {
-                    if let Some(bond) = self.pairing_data.bond_information.as_ref() {
+                    if let Some(bond) = pairing_data.bond_information.as_ref() {
                         debug!("bond info: {:?}", bond);
-                        let pairing_bond = if self.pairing_data.want_bonding() {
+                        let pairing_bond = if pairing_data.want_bonding() {
                             Some(bond.clone())
                         } else {
                             None
@@ -268,30 +234,14 @@ impl Pairing {
         }
     }
 
-    pub fn security_level(&self) -> SecurityLevel {
-        match &self.current_step {
-            Step::WaitingIdentitityInformation
-            | Step::WaitingIdentitityAddressInformation
-            | Step::SendingKeys(_)
-            | Step::ReceivingKeys(_)
-            | Step::Success => self
-                .pairing_data
-                .bond_information
-                .as_ref()
-                .map(|x| x.security_level)
-                .unwrap_or(SecurityLevel::NoEncryption),
-            _ => SecurityLevel::NoEncryption,
-        }
-    }
-
     fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         command: CommandAndPayload,
+        pairing_data: &mut PairingData,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let current_step = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
-        let pairing_data = &mut self.pairing_data;
         let next_step = {
             trace!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
@@ -741,35 +691,59 @@ mod tests {
     use rand_chacha::{ChaCha12Core, ChaCha12Rng};
     use rand_core::SeedableRng;
 
-    use super::{Pairing, Step};
+    use super::Pairing;
     use crate::prelude::{ConnectionEvent, SecurityLevel};
     use crate::security_manager::crypto::SecretKey;
     use crate::security_manager::pairing::tests::{HeaplessPool, TestOps};
     use crate::security_manager::pairing::util::make_public_key_packet;
-    use crate::security_manager::pairing::Event;
+    use crate::security_manager::pairing::{Event, PairingData};
     use crate::security_manager::types::{Command, PairingFeatures};
     use crate::{Address, IoCapabilities, LongTermKey};
+
+    fn make_default_pairing_data(
+        local_address: Address,
+        peer_address: Address,
+        local_io: IoCapabilities,
+    ) -> PairingData {
+        use embassy_time::Instant;
+
+        use crate::security_manager::pairing::util::PairingMethod;
+
+        PairingData {
+            local_address,
+            peer_address,
+            local_features: PairingFeatures {
+                io_capabilities: local_io,
+                ..Default::default()
+            },
+            pairing_method: PairingMethod::JustWorks,
+            peer_features: PairingFeatures::default(),
+            timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT,
+            bond_information: None,
+        }
+    }
 
     #[test]
     fn just_works() {
         let mut pairing_ops: TestOps<10> = TestOps::default();
-        let mut pairing = Pairing::new(
+        let mut pairing_data = make_default_pairing_data(
             Address::random([1, 2, 3, 4, 5, 6]),
             Address::random([7, 8, 9, 10, 11, 12]),
             IoCapabilities::NoInputNoOutput,
         );
+        let mut pairing = Pairing::new();
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
         pairing
             .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingRequest,
                 &[0x03, 0, 0x08, 16, 0, 0],
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
             .unwrap();
         {
-            let pairing_data = &pairing.pairing_data;
             let sent_packets = &pairing_ops.sent_packets;
             assert_eq!(
                 pairing_data.peer_features,
@@ -800,6 +774,7 @@ mod tests {
             .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingPublicKey,
                 packet.payload(),
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
@@ -833,6 +808,7 @@ mod tests {
             .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingRandom,
                 &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
@@ -850,13 +826,13 @@ mod tests {
                 &[
                     0x70, 0xa9, 0xf1, 0xd0, 0xcf, 0x52, 0x84, 0xe9, 0xfc, 0x36, 0x9b, 0x84, 0x35, 0x13, 0xc5, 0xed,
                 ],
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
             .unwrap();
 
         {
-            let pairing_data = &pairing.pairing_data;
             let sent_packets = &pairing_ops.sent_packets;
             assert_eq!(sent_packets.len(), 5);
             assert_eq!(sent_packets[4].command, Command::PairingDhKeyCheck);
@@ -875,11 +851,12 @@ mod tests {
             bondable: true,
             ..Default::default()
         };
-        let mut pairing = Pairing::new(
+        let mut pairing_data = make_default_pairing_data(
             Address::random([1, 2, 3, 4, 5, 6]),
             Address::random([7, 8, 9, 10, 11, 12]),
             IoCapabilities::NoInputNoOutput,
         );
+        let mut pairing = Pairing::new();
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
         // Central sends pairing request with identity_key bit set, expects pairing response from peripheral
@@ -896,13 +873,13 @@ mod tests {
             .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingRequest,
                 &pairing_request,
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
             .unwrap();
 
         {
-            let pairing_data = &pairing.pairing_data;
             let sent_packets = &pairing_ops.sent_packets;
 
             assert!(pairing_data.local_features.initiator_key_distribution.identity_key());
@@ -923,6 +900,7 @@ mod tests {
             .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingPublicKey,
                 packet.payload(),
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
@@ -933,6 +911,7 @@ mod tests {
             .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingRandom,
                 &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
@@ -945,17 +924,23 @@ mod tests {
                 &[
                     0x06, 0x32, 0x9c, 0x2c, 0x99, 0xc2, 0xb1, 0x62, 0x6a, 0x02, 0x0e, 0x56, 0x46, 0xf6, 0x0e, 0x97,
                 ],
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
             .unwrap();
 
         pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut pairing_ops, &mut rng)
+            .handle_event(
+                Event::LinkEncryptedResult(true),
+                &mut pairing_data,
+                &mut pairing_ops,
+                &mut rng,
+            )
             .unwrap();
 
         // Waiting identity information check
-        assert!(matches!(&pairing.current_step, Step::WaitingIdentitityInformation));
+        assert!(pairing.is_encrypted());
 
         // Central sends identity information(IRK)
         let irk_data: [u8; 16] = [
@@ -965,6 +950,7 @@ mod tests {
             .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::IdentityInformation,
                 &irk_data,
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
@@ -979,17 +965,17 @@ mod tests {
             .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::IdentityAddressInformation,
                 &addr_data,
+                &mut pairing_data,
                 &mut pairing_ops,
                 &mut rng,
             )
             .unwrap();
 
         // The step should be `Success` after `IdentityAddressInformation` command
-        assert!(matches!(&pairing.current_step, Step::Success));
+        assert!(pairing.result().is_some());
 
         // Verify identity and address
         {
-            let pairing_data = &pairing.pairing_data;
             let bond = pairing_data.bond_information.as_ref().unwrap();
 
             assert!(bond.identity.irk.is_some());

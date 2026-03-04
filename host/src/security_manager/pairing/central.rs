@@ -1,4 +1,3 @@
-use embassy_time::Instant;
 use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 
@@ -12,7 +11,7 @@ use crate::security_manager::pairing::util::{
 use crate::security_manager::pairing::{Event, PairingData, PairingOps};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures};
 use crate::security_manager::{PassKey, Reason};
-use crate::{Address, Error, IoCapabilities, LongTermKey, PacketPool};
+use crate::{Error, IoCapabilities, LongTermKey, PacketPool};
 
 /// EC key and comparison phase data carried through LESC step variants.
 #[derive(Debug, Clone)]
@@ -79,7 +78,6 @@ enum Step {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Pairing {
     current_step: Step,
-    pairing_data: PairingData,
     user_initiated: bool,
 }
 
@@ -92,18 +90,6 @@ impl Pairing {
         }
     }
 
-    pub fn timeout_at(&self) -> Instant {
-        if matches!(&self.current_step, Step::Success | Step::Error(_)) {
-            Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE
-        } else {
-            self.pairing_data.timeout_at
-        }
-    }
-
-    pub fn reset_timeout(&mut self) {
-        self.pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
-    }
-
     pub(crate) fn mark_timeout(&mut self) {
         if matches!(&self.current_step, Step::Idle | Step::Success | Step::Error(_)) {
             return;
@@ -111,21 +97,8 @@ impl Pairing {
         self.current_step = Step::Error(Error::Timeout);
     }
 
-    pub(crate) fn new_idle(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
-        let pairing_data = PairingData {
-            pairing_method: PairingMethod::JustWorks,
-            local_address,
-            peer_address,
-            peer_features: PairingFeatures::default(),
-            local_features: PairingFeatures {
-                io_capabilities: local_io,
-                ..Default::default()
-            },
-            timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE,
-            bond_information: None,
-        };
+    pub(crate) fn new_idle() -> Pairing {
         Self {
-            pairing_data,
             current_step: Step::Idle,
             user_initiated: false,
         }
@@ -145,86 +118,58 @@ impl Pairing {
     }
 
     pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
-        local_address: Address,
-        peer_address: Address,
+        pairing_data: &mut PairingData,
         ops: &mut OPS,
-        local_io: IoCapabilities,
         user_initiated: bool,
     ) -> Result<Pairing, Error> {
-        let mut ret = Self::new_idle(local_address, peer_address, local_io);
-        ret.user_initiated = user_initiated;
-        {
-            let mut auth_req = AuthReq::new(ops.bonding_flag());
-            if local_io != IoCapabilities::NoInputNoOutput {
-                auth_req = auth_req.with_mitm();
-            }
-            ret.pairing_data.local_features.security_properties = auth_req;
-            if matches!(ops.bonding_flag(), BondingFlag::Bonding) {
-                ret.pairing_data
-                    .local_features
-                    .initiator_key_distribution
-                    .set_encryption_key();
-                ret.pairing_data
-                    .local_features
-                    .responder_key_distribution
-                    .set_encryption_key();
-            }
-            ret.current_step = if let Some(bond) = ops.try_enable_bonded_encryption()? {
-                ret.pairing_data.bond_information = Some(bond);
-                Step::WaitingBondedLinkEncryption
-            } else {
-                Self::send_pairing_request(&ret.pairing_data, ops)?;
-                Step::WaitingPairingResponse
-            };
+        let mut auth_req = AuthReq::new(ops.bonding_flag());
+        if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
+            auth_req = auth_req.with_mitm();
         }
-        ret.reset_timeout();
-        Ok(ret)
-    }
-
-    pub fn peer_address(&self) -> Address {
-        self.pairing_data.peer_address
+        pairing_data.local_features.security_properties = auth_req;
+        if matches!(ops.bonding_flag(), BondingFlag::Bonding) {
+            pairing_data
+                .local_features
+                .initiator_key_distribution
+                .set_encryption_key();
+            pairing_data
+                .local_features
+                .responder_key_distribution
+                .set_encryption_key();
+        }
+        let current_step = if let Some(bond) = ops.try_enable_bonded_encryption()? {
+            pairing_data.bond_information = Some(bond);
+            Step::WaitingBondedLinkEncryption
+        } else {
+            Self::send_pairing_request(pairing_data, ops)?;
+            Step::WaitingPairingResponse
+        };
+        Ok(Self {
+            current_step,
+            user_initiated,
+        })
     }
 
     pub(crate) fn is_waiting_bonded_encryption(&self) -> bool {
         matches!(self.current_step, Step::WaitingBondedLinkEncryption)
     }
 
-    #[cfg(feature = "legacy-pairing")]
-    pub(crate) fn into_legacy(self) -> super::legacy_central::Pairing {
-        let PairingData {
-            local_address,
-            local_features,
-            peer_address,
-            ..
-        } = self.pairing_data;
-
-        let mut preq = [0u8; 7];
-        preq[0] = u8::from(Command::PairingRequest);
-        local_features.encode(&mut preq[1..]).unwrap();
-
-        super::legacy_central::Pairing::from_lesc_switch(local_address, peer_address, local_features, preq)
-    }
-
-    pub fn security_level(&self) -> SecurityLevel {
-        match &self.current_step {
-            Step::SendingKeys(_) | Step::ReceivingKeys(_) | Step::Success => self
-                .pairing_data
-                .bond_information
-                .as_ref()
-                .map(|x| x.security_level)
-                .unwrap_or(SecurityLevel::NoEncryption),
-            _ => SecurityLevel::NoEncryption,
-        }
+    pub(crate) fn is_encrypted(&self) -> bool {
+        matches!(
+            &self.current_step,
+            Step::SendingKeys(_) | Step::ReceivingKeys(_) | Step::Success
+        )
     }
 
     pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         command: Command,
         payload: &[u8],
+        pairing_data: &mut PairingData,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        match self.handle_impl(CommandAndPayload { payload, command }, ops, rng) {
+        match self.handle_impl(CommandAndPayload { payload, command }, pairing_data, ops, rng) {
             Ok(()) => Ok(()),
             Err(error) => {
                 error!("[smp] Failed to handle command {:?}, {:?}", command, error);
@@ -237,6 +182,7 @@ impl Pairing {
     pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         event: Event,
+        pairing_data: &mut PairingData,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
@@ -261,7 +207,7 @@ impl Pairing {
                     } else if self.user_initiated {
                         warn!("Link encryption with bonded key failed, initiating fresh pairing");
                         ops.try_send_connection_event(ConnectionEvent::BondLost)?;
-                        Self::send_pairing_request(&self.pairing_data, ops)?;
+                        Self::send_pairing_request(pairing_data, ops)?;
                         Step::WaitingPairingResponse
                     } else {
                         error!("Link encryption with bonded key failed!");
@@ -270,7 +216,7 @@ impl Pairing {
                     }
                 }
                 (Step::WaitingNumericComparisonResult(phase_data), Event::PassKeyConfirm) => {
-                    Self::send_dhkey_ea_and_transition(ops, &self.pairing_data, &phase_data)?
+                    Self::send_dhkey_ea_and_transition(ops, pairing_data, &phase_data)?
                 }
                 (Step::WaitingNumericComparisonResult(_), Event::PassKeyCancel) => {
                     Step::Error(Error::Security(Reason::NumericComparisonFailed))
@@ -315,8 +261,8 @@ impl Pairing {
                 let is_success = matches!(x, Step::Success);
                 self.current_step = x;
                 if is_success {
-                    if let Some(bond) = self.pairing_data.bond_information.as_ref() {
-                        let pairing_bond = if self.pairing_data.want_bonding() {
+                    if let Some(bond) = pairing_data.bond_information.as_ref() {
+                        let pairing_bond = if pairing_data.want_bonding() {
                             ops.try_update_bond_information(bond)?;
                             Some(bond.clone())
                         } else {
@@ -338,11 +284,11 @@ impl Pairing {
     fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &mut self,
         command: CommandAndPayload,
+        pairing_data: &mut PairingData,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
         let current_step = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
-        let pairing_data = &mut self.pairing_data;
         let next_step = {
             trace!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
