@@ -10,18 +10,18 @@ use crate::{Address, BondInformation, Error, IoCapabilities, LongTermKey, Packet
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(super) struct PairingData {
-    pub(super) local_address: Address,
-    pub(super) peer_address: Address,
-    pub(super) local_features: PairingFeatures,
-    pub(super) peer_features: PairingFeatures,
-    pub(super) pairing_method: PairingMethod,
-    pub(super) timeout_at: Instant,
-    pub(super) bond_information: Option<BondInformation>,
+struct PairingData {
+    local_address: Address,
+    peer_address: Address,
+    local_features: PairingFeatures,
+    peer_features: PairingFeatures,
+    pairing_method: PairingMethod,
+    timeout_at: Instant,
+    bond_information: Option<BondInformation>,
 }
 
 impl PairingData {
-    pub(super) fn new(
+    fn new(
         local_address: Address,
         peer_address: Address,
         local_io: IoCapabilities,
@@ -41,7 +41,7 @@ impl PairingData {
         }
     }
 
-    pub(super) fn want_bonding(&self) -> bool {
+    fn want_bonding(&self) -> bool {
         matches!(self.local_features.security_properties.bond(), BondingFlag::Bonding)
             && matches!(self.peer_features.security_properties.bond(), BondingFlag::Bonding)
     }

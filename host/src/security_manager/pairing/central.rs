@@ -76,7 +76,7 @@ enum Step {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Pairing {
+pub(super) struct Pairing {
     current_step: Step,
     user_initiated: bool,
 }

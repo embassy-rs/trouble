@@ -17,7 +17,7 @@ use crate::{Address, Error, IdentityResolvingKey, LongTermKey, PacketPool};
 /// Data needed during the confirm/random exchange phase of legacy pairing.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct ConfirmPhaseData {
+pub(super) struct ConfirmPhaseData {
     /// TK: 0 for JustWorks, passkey value for PassKey Entry
     tk: u128,
     /// Pairing Request command bytes (opcode + 6 feature bytes)
@@ -31,7 +31,7 @@ struct ConfirmPhaseData {
 /// Key distribution data generated for bonding.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct KeyDistData {
+pub(super) struct KeyDistData {
     long_term_key: LongTermKey,
     ediv: u16,
     rand: [u8; 8],
@@ -39,7 +39,7 @@ struct KeyDistData {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum Step {
+pub(super) enum Pairing {
     WaitingPairingResponse {
         preq: [u8; 7],
     },
@@ -84,40 +84,32 @@ fn addr_bytes_mso(addr: &Address) -> [u8; 6] {
     bytes
 }
 
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Pairing {
-    current_step: Step,
-}
-
 impl Pairing {
     pub fn result(&self) -> Option<Result<(), Error>> {
-        match &self.current_step {
-            Step::Success => Some(Ok(())),
-            Step::Error(e) => Some(Err(e.clone())),
+        match self {
+            Self::Success => Some(Ok(())),
+            Self::Error(e) => Some(Err(e.clone())),
             _ => None,
         }
     }
 
     pub(crate) fn mark_timeout(&mut self) {
-        if matches!(&self.current_step, Step::Success | Step::Error(_)) {
+        if matches!(self, Self::Success | Self::Error(_)) {
             return;
         }
-        self.current_step = Step::Error(Error::Timeout);
+        *self = Self::Error(Error::Timeout);
     }
 
     /// Create a legacy central state machine from an already-sent PairingRequest.
     /// The LESC central already sent the PairingRequest before discovering the peer doesn't support SC.
     pub(crate) fn from_lesc_switch(preq: [u8; 7]) -> Self {
-        Self {
-            current_step: Step::WaitingPairingResponse { preq },
-        }
+        Self::WaitingPairingResponse { preq }
     }
 
     pub(crate) fn is_encrypted(&self) -> bool {
         matches!(
-            &self.current_step,
-            Step::SendingKeys { .. } | Step::ReceivingKeys { .. } | Step::Success
+            self,
+            Self::SendingKeys { .. } | Self::ReceivingKeys { .. } | Self::Success
         )
     }
 
@@ -136,7 +128,7 @@ impl Pairing {
                     "[smp legacy central] Failed to handle command {:?}, {:?}",
                     command, error
                 );
-                self.current_step = Step::Error(error.clone());
+                *self = Self::Error(error.clone());
                 Err(error)
             }
         }
@@ -149,37 +141,37 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        let current_state = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
+        let current_state = core::mem::replace(self, Self::Error(Error::InvalidState));
         let next_state = match (current_state, event) {
-            (Step::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
+            (Self::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
                 if res {
                     info!("[smp legacy central] Link encrypted!");
                     if pairing_data.want_bonding() {
                         // Receive keys from peripheral first, then send ours
                         if pairing_data.peer_features.responder_key_distribution.encryption_key() {
-                            Step::ReceivingKeys {
+                            Self::ReceivingKeys {
                                 phase: 0,
                                 received_ltk: LongTermKey(0),
                             }
                         } else if pairing_data.peer_features.responder_key_distribution.identity_key() {
-                            Step::WaitingIdentitityInformation
+                            Self::WaitingIdentitityInformation
                         } else if pairing_data.local_features.initiator_key_distribution.encryption_key() {
                             Self::make_sending_keys_step(0, rng)
                         } else if pairing_data.local_features.initiator_key_distribution.identity_key() {
                             Self::make_sending_keys_step(2, rng)
                         } else {
-                            Step::Success
+                            Self::Success
                         }
                     } else {
-                        Step::Success
+                        Self::Success
                     }
                 } else {
                     error!("[smp legacy central] Link encryption failed!");
-                    Step::Error(Error::Security(Reason::KeyRejected))
+                    Self::Error(Error::Security(Reason::ConfirmValueFailed))
                 }
             }
             (
-                Step::WaitingPassKeyInput {
+                Self::WaitingPassKeyInput {
                     confirm_bytes,
                     preq,
                     pres,
@@ -198,19 +190,19 @@ impl Pairing {
                     Some(payload) => {
                         let peer_confirm = u128::from_le_bytes(payload);
                         Self::send_mrand(ops, &confirm_data)?;
-                        Step::WaitingPairingRandom {
+                        Self::WaitingPairingRandom {
                             confirm_data,
                             peer_confirm,
                         }
                     }
-                    None => Step::WaitingPairingConfirm(confirm_data),
+                    None => Self::WaitingPairingConfirm(confirm_data),
                 }
             }
-            (Step::WaitingPassKeyInput { .. }, Event::PassKeyCancel) => {
-                Step::Error(Error::Security(Reason::PasskeyEntryFailed))
+            (Self::WaitingPassKeyInput { .. }, Event::PassKeyCancel) => {
+                Self::Error(Error::Security(Reason::PasskeyEntryFailed))
             }
             (x, Event::PassKeyConfirm | Event::PassKeyCancel | Event::PassKeyInput(_)) => x,
-            _ => Step::Error(Error::InvalidState),
+            _ => Self::Error(Error::InvalidState),
         };
 
         self.handle_step_result(next_state, pairing_data, ops)
@@ -229,7 +221,7 @@ impl Pairing {
         }
     }
 
-    fn make_sending_keys_step<RNG: RngCore>(phase: u8, rng: &mut RNG) -> Step {
+    fn make_sending_keys_step<RNG: RngCore>(phase: u8, rng: &mut RNG) -> Pairing {
         let keys = if phase == 0 {
             Self::generate_key_dist_data(rng)
         } else {
@@ -240,28 +232,28 @@ impl Pairing {
                 rand: [0; 8],
             }
         };
-        Step::SendingKeys { phase, keys }
+        Self::SendingKeys { phase, keys }
     }
 
     fn handle_step_result<P: PacketPool, OPS: PairingOps<P>>(
         &mut self,
-        next_step: Step,
+        next_step: Pairing,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
     ) -> Result<(), Error> {
         match next_step {
-            Step::Error(x) => {
-                self.current_step = Step::Error(x.clone());
+            Self::Error(x) => {
+                *self = Self::Error(x.clone());
                 ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
                 Err(x)
             }
-            Step::SendingKeys { phase, keys } => {
-                self.current_step = Step::SendingKeys { phase, keys };
+            Self::SendingKeys { phase, keys } => {
+                *self = Self::SendingKeys { phase, keys };
                 self.send_keys(pairing_data, ops, phase, keys)
             }
             x => {
-                let is_success = matches!(x, Step::Success);
-                self.current_step = x;
+                let is_success = matches!(x, Self::Success);
+                *self = x;
                 if is_success {
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
                         let pairing_bond = if pairing_data.want_bonding() {
@@ -295,16 +287,16 @@ impl Pairing {
             0 => {
                 let packet = make_encryption_information_packet(&keys.long_term_key)?;
                 ops.try_send_packet(packet)?;
-                Step::SendingKeys { phase: 1, keys }
+                Self::SendingKeys { phase: 1, keys }
             }
             // Phase 1: send CentralIdentification (EDIV + Rand)
             1 => {
                 let packet = make_central_identification_packet(keys.ediv, &keys.rand)?;
                 ops.try_send_packet(packet)?;
                 if pairing_data.local_features.initiator_key_distribution.identity_key() {
-                    Step::SendingKeys { phase: 2, keys }
+                    Self::SendingKeys { phase: 2, keys }
                 } else {
-                    Step::Success
+                    Self::Success
                 }
             }
             // Phase 2: send IdentityInformation (IRK)
@@ -312,15 +304,15 @@ impl Pairing {
                 let irk = IdentityResolvingKey::new(0);
                 let packet = make_identity_information_packet(&irk)?;
                 ops.try_send_packet(packet)?;
-                Step::SendingKeys { phase: 3, keys }
+                Self::SendingKeys { phase: 3, keys }
             }
             // Phase 3: send IdentityAddressInformation
             3 => {
                 let packet = make_identity_address_information_packet(&pairing_data.local_address)?;
                 ops.try_send_packet(packet)?;
-                Step::Success
+                Self::Success
             }
-            _ => Step::Success,
+            _ => Self::Success,
         };
         self.handle_step_result(next, pairing_data, ops)
     }
@@ -332,7 +324,7 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        let current_step = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
+        let current_step = core::mem::replace(self, Self::Error(Error::InvalidState));
         let next_step = {
             trace!(
                 "[smp legacy central] Handling {:?}, step {:?}",
@@ -340,19 +332,19 @@ impl Pairing {
                 current_step
             );
             match (current_step, command.command) {
-                (Step::WaitingPairingResponse { preq }, Command::PairingResponse) => {
+                (Self::WaitingPairingResponse { preq }, Command::PairingResponse) => {
                     Self::handle_pairing_response(command.payload, ops, pairing_data, rng, preq)?
                 }
-                (Step::WaitingPassKeyInput { preq, pres, .. }, Command::PairingConfirm) => {
+                (Self::WaitingPassKeyInput { preq, pres, .. }, Command::PairingConfirm) => {
                     let confirm_bytes: [u8; size_of::<u128>()] =
                         command.payload.try_into().map_err(|_| Error::InvalidValue)?;
-                    Step::WaitingPassKeyInput {
+                    Self::WaitingPassKeyInput {
                         confirm_bytes: Some(confirm_bytes),
                         preq,
                         pres,
                     }
                 }
-                (Step::WaitingPairingConfirm(confirm_data), Command::PairingConfirm) => {
+                (Self::WaitingPairingConfirm(confirm_data), Command::PairingConfirm) => {
                     let peer_confirm = u128::from_le_bytes(
                         command
                             .payload
@@ -361,28 +353,28 @@ impl Pairing {
                     );
                     // Send Mrand after receiving Sconfirm
                     Self::send_mrand(ops, &confirm_data)?;
-                    Step::WaitingPairingRandom {
+                    Self::WaitingPairingRandom {
                         confirm_data,
                         peer_confirm,
                     }
                 }
                 (
-                    Step::WaitingPairingRandom {
+                    Self::WaitingPairingRandom {
                         confirm_data,
                         peer_confirm,
                     },
                     Command::PairingRandom,
                 ) => Self::handle_pairing_random(command.payload, ops, pairing_data, &confirm_data, peer_confirm)?,
-                (Step::ReceivingKeys { phase: 0, .. }, Command::EncryptionInformation) => {
+                (Self::ReceivingKeys { phase: 0, .. }, Command::EncryptionInformation) => {
                     Self::handle_encryption_information(command.payload)?
                 }
-                (Step::ReceivingKeys { phase: 1, received_ltk }, Command::CentralIdentification) => {
+                (Self::ReceivingKeys { phase: 1, received_ltk }, Command::CentralIdentification) => {
                     Self::handle_central_identification(command.payload, pairing_data, received_ltk, rng)?
                 }
-                (Step::WaitingIdentitityInformation, Command::IdentityInformation) => {
+                (Self::WaitingIdentitityInformation, Command::IdentityInformation) => {
                     Self::handle_identity_information(command.payload, pairing_data)?
                 }
-                (Step::WaitingIdentitityAddressInformation, Command::IdentityAddressInformation) => {
+                (Self::WaitingIdentitityAddressInformation, Command::IdentityAddressInformation) => {
                     Self::handle_identity_address_information(command.payload, pairing_data, rng)?
                 }
                 (x, Command::KeypressNotification) => x,
@@ -399,7 +391,7 @@ impl Pairing {
         pairing_data: &mut PairingData,
         rng: &mut RNG,
         preq: [u8; 7],
-    ) -> Result<Step, Error> {
+    ) -> Result<Pairing, Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
         // Key size validation (7-16 range) is done in PairingFeatures::decode
 
@@ -426,10 +418,10 @@ impl Pairing {
                         local_nonce: 0,
                     };
                     Self::send_mconfirm(ops, pairing_data, &mut confirm_data, rng)?;
-                    Ok(Step::WaitingPairingConfirm(confirm_data))
+                    Ok(Self::WaitingPairingConfirm(confirm_data))
                 } else {
                     ops.try_send_connection_event(ConnectionEvent::PassKeyInput)?;
-                    Ok(Step::WaitingPassKeyInput {
+                    Ok(Self::WaitingPassKeyInput {
                         confirm_bytes: None,
                         preq,
                         pres,
@@ -444,7 +436,7 @@ impl Pairing {
                     local_nonce: 0,
                 };
                 Self::send_mconfirm(ops, pairing_data, &mut confirm_data, rng)?;
-                Ok(Step::WaitingPairingConfirm(confirm_data))
+                Ok(Self::WaitingPairingConfirm(confirm_data))
             }
             PairingMethod::NumericComparison => {
                 // Should not happen in legacy pairing
@@ -500,7 +492,7 @@ impl Pairing {
         pairing_data: &mut PairingData,
         confirm_data: &ConfirmPhaseData,
         peer_confirm: u128,
-    ) -> Result<Step, Error> {
+    ) -> Result<Pairing, Error> {
         // Parse Srand from peripheral
         let srand_le: [u8; 16] = payload
             .try_into()
@@ -544,13 +536,13 @@ impl Pairing {
         let bond = ops.try_enable_encryption(&stk, pairing_data.pairing_method.security_level(), false, 0, [0; 8])?;
         pairing_data.bond_information = Some(bond);
 
-        Ok(Step::WaitingLinkEncrypted)
+        Ok(Self::WaitingLinkEncrypted)
     }
 
-    fn handle_encryption_information(payload: &[u8]) -> Result<Step, Error> {
+    fn handle_encryption_information(payload: &[u8]) -> Result<Pairing, Error> {
         let ltk = LongTermKey::from_le_bytes(payload.try_into().map_err(|_| Error::InvalidValue)?);
         trace!("[smp legacy central] Received LTK from peripheral");
-        Ok(Step::ReceivingKeys {
+        Ok(Self::ReceivingKeys {
             phase: 1,
             received_ltk: ltk,
         })
@@ -561,7 +553,7 @@ impl Pairing {
         pairing_data: &mut PairingData,
         received_ltk: LongTermKey,
         rng: &mut RNG,
-    ) -> Result<Step, Error> {
+    ) -> Result<Pairing, Error> {
         if payload.len() < 10 {
             return Err(Error::Security(Reason::InvalidParameters));
         }
@@ -589,17 +581,17 @@ impl Pairing {
 
         trace!("[smp legacy central] Received EDIV/Rand from peripheral");
         if pairing_data.peer_features.responder_key_distribution.identity_key() {
-            Ok(Step::WaitingIdentitityInformation)
+            Ok(Self::WaitingIdentitityInformation)
         } else if pairing_data.local_features.initiator_key_distribution.encryption_key() {
             Ok(Self::make_sending_keys_step(0, rng))
         } else if pairing_data.local_features.initiator_key_distribution.identity_key() {
             Ok(Self::make_sending_keys_step(2, rng))
         } else {
-            Ok(Step::Success)
+            Ok(Self::Success)
         }
     }
 
-    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
+    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Pairing, Error> {
         let irk = IdentityResolvingKey::new(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
@@ -607,14 +599,14 @@ impl Pairing {
             bond.identity.irk = Some(irk);
         }
         trace!("[smp legacy central] Received IRK");
-        Ok(Step::WaitingIdentitityAddressInformation)
+        Ok(Self::WaitingIdentitityAddressInformation)
     }
 
     fn handle_identity_address_information<RNG: RngCore>(
         payload: &[u8],
         pairing_data: &mut PairingData,
         rng: &mut RNG,
-    ) -> Result<Step, Error> {
+    ) -> Result<Pairing, Error> {
         let addr_type = payload[0];
         let kind = if addr_type == 0 {
             AddrKind::PUBLIC
@@ -639,17 +631,17 @@ impl Pairing {
             } else if pairing_data.local_features.initiator_key_distribution.identity_key() {
                 Ok(Self::make_sending_keys_step(2, rng))
             } else {
-                Ok(Step::Success)
+                Ok(Self::Success)
             }
         } else {
-            Ok(Step::Success)
+            Ok(Self::Success)
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Pairing, Step};
+    use super::Pairing;
     use crate::codec::Encode;
     use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures};
     use crate::{Address, IoCapabilities};
@@ -669,6 +661,6 @@ mod tests {
         local_features.encode(&mut preq[1..]).unwrap();
 
         let pairing = Pairing::from_lesc_switch(preq);
-        assert!(matches!(&pairing.current_step, Step::WaitingPairingResponse { .. }));
+        assert!(matches!(pairing, Pairing::WaitingPairingResponse { .. }));
     }
 }

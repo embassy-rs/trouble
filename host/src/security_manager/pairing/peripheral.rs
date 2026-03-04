@@ -17,7 +17,7 @@ use crate::{Address, Error, IdentityResolvingKey, IoCapabilities, PacketPool};
 /// EC key and comparison phase data carried through LESC step variants.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct LescPhaseData {
+pub(super) struct LescPhaseData {
     local_public_key_x: PublicKeyX,
     peer_public_key_x: PublicKeyX,
     dh_key: DHKey,
@@ -30,7 +30,7 @@ struct LescPhaseData {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum Step {
+pub(super) enum Pairing {
     WaitingPairingRequest,
     WaitingPublicKey,
     // Numeric comparison
@@ -65,42 +65,34 @@ enum Step {
     Error(Error),
 }
 
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Pairing {
-    current_step: Step,
-}
-
 impl Pairing {
     pub fn result(&self) -> Option<Result<(), Error>> {
-        match &self.current_step {
-            Step::Success => Some(Ok(())),
-            Step::Error(e) => Some(Err(e.clone())),
+        match self {
+            Self::Success => Some(Ok(())),
+            Self::Error(e) => Some(Err(e.clone())),
             _ => None,
         }
     }
 
     pub(crate) fn mark_timeout(&mut self) {
-        if matches!(&self.current_step, Step::Success | Step::Error(_)) {
+        if matches!(self, Self::Success | Self::Error(_)) {
             return;
         }
-        self.current_step = Step::Error(Error::Timeout);
+        *self = Self::Error(Error::Timeout);
     }
 
     pub fn new() -> Self {
-        Self {
-            current_step: Step::WaitingPairingRequest,
-        }
+        Self::WaitingPairingRequest
     }
 
     pub(crate) fn is_encrypted(&self) -> bool {
         matches!(
-            &self.current_step,
-            Step::WaitingIdentitityInformation
-                | Step::WaitingIdentitityAddressInformation
-                | Step::SendingKeys(_)
-                | Step::ReceivingKeys(_)
-                | Step::Success
+            self,
+            Self::WaitingIdentitityInformation
+                | Self::WaitingIdentitityAddressInformation
+                | Self::SendingKeys(_)
+                | Self::ReceivingKeys(_)
+                | Self::Success
         )
     }
 
@@ -134,7 +126,7 @@ impl Pairing {
             Ok(()) => Ok(()),
             Err(error) => {
                 error!("[smp] Failed to handle command {:?}, {:?}", command, error);
-                self.current_step = Step::Error(error.clone());
+                *self = Self::Error(error.clone());
                 Err(error)
             }
         }
@@ -147,13 +139,13 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        let current_state = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
-        let next_step = (|| -> Result<Step, Error> {
+        let current_state = core::mem::replace(self, Self::Error(Error::InvalidState));
+        let next_step = (|| -> Result<Pairing, Error> {
             Ok(match (current_state, event) {
-                x @ (Step::WaitingPairingRequest | Step::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
+                x @ (Self::WaitingPairingRequest | Self::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
                     if res {
                         info!("Link encrypted!");
-                        if matches!(x.0, Step::WaitingLinkEncrypted) {
+                        if matches!(x.0, Self::WaitingLinkEncrypted) {
                             // TODO send key data
                         } else {
                             pairing_data.bond_information = ops.try_enable_bonded_encryption()?;
@@ -161,30 +153,30 @@ impl Pairing {
 
                         if pairing_data.peer_features.initiator_key_distribution.identity_key() {
                             // Remote will share identity key
-                            Step::WaitingIdentitityInformation
+                            Self::WaitingIdentitityInformation
                         } else {
-                            Step::Success
+                            Self::Success
                         }
                     } else {
                         error!("Failed to enable encryption!");
-                        Step::Error(Error::Security(Reason::KeyRejected))
+                        Self::Error(Error::Security(Reason::KeyRejected))
                     }
                 }
                 (
-                    Step::WaitingNumericComparisonResult {
+                    Self::WaitingNumericComparisonResult {
                         phase_data,
                         ea: Some(ea),
                     },
                     Event::PassKeyConfirm,
                 ) => Self::handle_dhkey_ea(&ea, ops, pairing_data, &phase_data)?,
-                (Step::WaitingNumericComparisonResult { phase_data, ea: None }, Event::PassKeyConfirm) => {
-                    Step::WaitingDHKeyEa(phase_data)
+                (Self::WaitingNumericComparisonResult { phase_data, ea: None }, Event::PassKeyConfirm) => {
+                    Self::WaitingDHKeyEa(phase_data)
                 }
-                (Step::WaitingNumericComparisonResult { .. }, Event::PassKeyCancel) => {
-                    Step::Error(Error::Security(Reason::NumericComparisonFailed))
+                (Self::WaitingNumericComparisonResult { .. }, Event::PassKeyCancel) => {
+                    Self::Error(Error::Security(Reason::NumericComparisonFailed))
                 }
                 (
-                    Step::WaitingPassKeyInput {
+                    Self::WaitingPassKeyInput {
                         mut phase_data,
                         confirm_bytes,
                     },
@@ -196,24 +188,24 @@ impl Pairing {
                         Some(payload) => {
                             Self::handle_pass_key_confirm(0, &payload, ops, pairing_data, phase_data, rng)?
                         }
-                        None => Step::WaitingPassKeyEntryConfirm { phase_data, round: 0 },
+                        None => Self::WaitingPassKeyEntryConfirm { phase_data, round: 0 },
                     }
                 }
                 (x, Event::PassKeyConfirm | Event::PassKeyCancel | Event::PassKeyInput(_)) => x,
-                _ => Step::Error(Error::InvalidState),
+                _ => Self::Error(Error::InvalidState),
             })
         })()
-        .unwrap_or_else(Step::Error);
+        .unwrap_or_else(Self::Error);
 
         match next_step {
-            Step::Error(x) => {
-                self.current_step = Step::Error(x.clone());
+            Self::Error(x) => {
+                *self = Self::Error(x.clone());
                 ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
                 Err(x)
             }
             x => {
-                let is_success = matches!(x, Step::Success);
-                self.current_step = x;
+                let is_success = matches!(x, Self::Success);
+                *self = x;
                 if is_success {
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
                         debug!("bond info: {:?}", bond);
@@ -241,19 +233,19 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        let current_step = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
+        let current_step = core::mem::replace(self, Self::Error(Error::InvalidState));
         let next_step = {
             trace!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
-                (Step::WaitingPairingRequest, Command::PairingRequest) => {
+                (Self::WaitingPairingRequest, Command::PairingRequest) => {
                     if ops.find_bond().is_some() {
                         ops.try_send_connection_event(ConnectionEvent::BondLost)?;
                     }
                     Self::handle_pairing_request(command.payload, ops, pairing_data)?;
                     Self::send_pairing_response(ops, pairing_data)?;
-                    Step::WaitingPublicKey
+                    Self::WaitingPublicKey
                 }
-                (Step::WaitingPublicKey, Command::PairingPublicKey) => {
+                (Self::WaitingPublicKey, Command::PairingPublicKey) => {
                     let peer_public_key = PublicKey::from_bytes(command.payload);
                     let secret_key = SecretKey::new(rng);
                     let local_public_key = secret_key.public_key();
@@ -284,10 +276,10 @@ impl Pairing {
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                                     phase_data.local_secret_rb as u32,
                                 )))?;
-                                Step::WaitingPassKeyEntryConfirm { phase_data, round: 0 }
+                                Self::WaitingPassKeyEntryConfirm { phase_data, round: 0 }
                             } else {
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyInput)?;
-                                Step::WaitingPassKeyInput {
+                                Self::WaitingPassKeyInput {
                                     phase_data,
                                     confirm_bytes: None,
                                 }
@@ -296,25 +288,25 @@ impl Pairing {
                         _ => {
                             // Numeric comparison / Just Works: send confirm
                             Self::send_numeric_compare_confirm(&mut phase_data, ops, rng)?;
-                            Step::WaitingNumericComparisonRandom(phase_data)
+                            Self::WaitingNumericComparisonRandom(phase_data)
                         }
                     }
                 }
-                (Step::WaitingNumericComparisonRandom(mut phase_data), Command::PairingRandom) => {
+                (Self::WaitingNumericComparisonRandom(mut phase_data), Command::PairingRandom) => {
                     Self::handle_numeric_compare_random(command.payload, &mut phase_data)?;
                     Self::send_nonce(ops, &phase_data.local_nonce)?;
                     Self::numeric_compare_confirm(ops, pairing_data, phase_data)?
                 }
-                (Step::WaitingNumericComparisonResult { phase_data, ea: None }, Command::PairingDhKeyCheck) => {
+                (Self::WaitingNumericComparisonResult { phase_data, ea: None }, Command::PairingDhKeyCheck) => {
                     let ea: [u8; size_of::<u128>()] = command.payload.try_into().map_err(|_| Error::InvalidValue)?;
-                    Step::WaitingNumericComparisonResult {
+                    Self::WaitingNumericComparisonResult {
                         phase_data,
                         ea: Some(ea),
                     }
                 }
 
                 (
-                    Step::WaitingPassKeyInput {
+                    Self::WaitingPassKeyInput {
                         phase_data,
                         confirm_bytes: _,
                     },
@@ -322,30 +314,30 @@ impl Pairing {
                 ) => {
                     let confirm: [u8; size_of::<u128>()] =
                         command.payload.try_into().map_err(|_| Error::InvalidValue)?;
-                    Step::WaitingPassKeyInput {
+                    Self::WaitingPassKeyInput {
                         phase_data,
                         confirm_bytes: Some(confirm),
                     }
                 }
-                (Step::WaitingPassKeyEntryConfirm { phase_data, round }, Command::PairingConfirm) => {
+                (Self::WaitingPassKeyEntryConfirm { phase_data, round }, Command::PairingConfirm) => {
                     Self::handle_pass_key_confirm(round, command.payload, ops, pairing_data, phase_data, rng)?
                 }
 
-                (Step::WaitingPassKeyEntryRandom { phase_data, round }, Command::PairingRandom) => {
+                (Self::WaitingPassKeyEntryRandom { phase_data, round }, Command::PairingRandom) => {
                     Self::handle_pass_key_random(round, command.payload, ops, pairing_data, phase_data)?
                 }
 
-                (Step::WaitingDHKeyEa(phase_data), Command::PairingDhKeyCheck) => {
+                (Self::WaitingDHKeyEa(phase_data), Command::PairingDhKeyCheck) => {
                     Self::handle_dhkey_ea(command.payload, ops, pairing_data, &phase_data)?
                 }
 
                 (x, Command::KeypressNotification) => x,
 
-                (Step::WaitingIdentitityInformation, Command::IdentityInformation) => {
+                (Self::WaitingIdentitityInformation, Command::IdentityInformation) => {
                     Self::handle_identity_information(command.payload, pairing_data)?
                 }
 
-                (Step::WaitingIdentitityAddressInformation, Command::IdentityAddressInformation) => {
+                (Self::WaitingIdentitityAddressInformation, Command::IdentityAddressInformation) => {
                     Self::handle_identity_address_information(command.payload, pairing_data)?
                 }
 
@@ -354,16 +346,16 @@ impl Pairing {
         };
 
         match next_step {
-            Step::Error(x) => {
-                self.current_step = Step::Error(x.clone());
+            Self::Error(x) => {
+                *self = Self::Error(x.clone());
                 ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
                 Err(x)
             }
             x => {
-                let is_success = matches!(x, Step::Success);
-                self.current_step = x;
+                let is_success = matches!(x, Self::Success);
+                *self = x;
                 if is_success {
-                    debug!("Step::Success");
+                    debug!("Pairing::Success");
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
                         debug!("bond info: {:?}", bond);
                         let pairing_bond = if pairing_data.want_bonding() {
@@ -442,7 +434,7 @@ impl Pairing {
         Ok(())
     }
 
-    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
+    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Pairing, Error> {
         let irk = IdentityResolvingKey::new(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
@@ -451,10 +443,10 @@ impl Pairing {
         }
 
         trace!("Identity information: IRK: {:?}", irk);
-        Ok(Step::WaitingIdentitityAddressInformation)
+        Ok(Self::WaitingIdentitityAddressInformation)
     }
 
-    fn handle_identity_address_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
+    fn handle_identity_address_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Pairing, Error> {
         let addr_type = payload[0];
         let kind = if addr_type == 0 {
             AddrKind::PUBLIC
@@ -477,7 +469,7 @@ impl Pairing {
             addr_type,
             addr
         );
-        Ok(Step::Success)
+        Ok(Self::Success)
     }
 
     fn send_public_key<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, public_key: &PublicKey) -> Result<(), Error> {
@@ -545,7 +537,7 @@ impl Pairing {
         ops: &mut OPS,
         pairing_data: &PairingData,
         phase_data: LescPhaseData,
-    ) -> Result<Step, Error> {
+    ) -> Result<Pairing, Error> {
         let vb = phase_data.peer_nonce.g2(
             &phase_data.peer_public_key_x,
             &phase_data.local_public_key_x,
@@ -554,11 +546,11 @@ impl Pairing {
 
         if pairing_data.pairing_method == PairingMethod::JustWorks {
             info!("[smp] Just works pairing with compare {}", vb.0);
-            Ok(Step::WaitingDHKeyEa(phase_data))
+            Ok(Self::WaitingDHKeyEa(phase_data))
         } else {
             info!("[smp] Numeric comparison pairing with compare {}", vb.0);
             ops.try_send_connection_event(ConnectionEvent::PassKeyConfirm(PassKey(vb.0)))?;
-            Ok(Step::WaitingNumericComparisonResult { phase_data, ea: None })
+            Ok(Self::WaitingNumericComparisonResult { phase_data, ea: None })
         }
     }
 
@@ -567,7 +559,7 @@ impl Pairing {
         ops: &mut OPS,
         pairing_data: &mut PairingData,
         phase_data: &LescPhaseData,
-    ) -> Result<Step, Error> {
+    ) -> Result<Pairing, Error> {
         // Compute LTK and MAC key using f5
         let (mac_key, ltk) = phase_data.dh_key.f5(
             phase_data.peer_nonce,
@@ -616,7 +608,7 @@ impl Pairing {
             [0; 8],
         )?;
         pairing_data.bond_information = Some(bond);
-        Ok(Step::WaitingLinkEncrypted)
+        Ok(Self::WaitingLinkEncrypted)
     }
 
     #[inline]
@@ -627,7 +619,7 @@ impl Pairing {
         _pairing_data: &mut PairingData,
         mut phase_data: LescPhaseData,
         rng: &mut RNG,
-    ) -> Result<Step, Error> {
+    ) -> Result<Pairing, Error> {
         phase_data.confirm = Confirm(u128::from_le_bytes(
             payload
                 .try_into()
@@ -641,7 +633,7 @@ impl Pairing {
                 .f4(&phase_data.local_public_key_x, &phase_data.peer_public_key_x, z as u8);
         let packet = make_confirm_packet(&confirm_to_send)?;
         ops.try_send_packet(packet)?;
-        Ok(Step::WaitingPassKeyEntryRandom { phase_data, round })
+        Ok(Self::WaitingPassKeyEntryRandom { phase_data, round })
     }
 
     #[inline]
@@ -651,7 +643,7 @@ impl Pairing {
         ops: &mut OPS,
         pairing_data: &mut PairingData,
         mut phase_data: LescPhaseData,
-    ) -> Result<Step, Error> {
+    ) -> Result<Pairing, Error> {
         phase_data.peer_nonce = Nonce(u128::from_le_bytes(
             payload
                 .try_into()
@@ -674,9 +666,9 @@ impl Pairing {
             let nonce_packet = make_pairing_random(&phase_data.local_nonce)?;
             ops.try_send_packet(nonce_packet)?;
             if round == 19 {
-                Ok(Step::WaitingDHKeyEa(phase_data))
+                Ok(Self::WaitingDHKeyEa(phase_data))
             } else {
-                Ok(Step::WaitingPassKeyEntryConfirm {
+                Ok(Self::WaitingPassKeyEntryConfirm {
                     phase_data,
                     round: round + 1,
                 })
