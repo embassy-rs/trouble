@@ -1,6 +1,3 @@
-use core::cell::RefCell;
-use core::ops::{Deref, DerefMut};
-
 use bt_hci::param::{AddrKind, BdAddr};
 use embassy_time::Instant;
 use rand::Rng;
@@ -91,14 +88,13 @@ fn addr_bytes_mso(addr: &Address) -> [u8; 6] {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Pairing {
-    current_step: RefCell<Step>,
-    pairing_data: RefCell<PairingData>,
+    current_step: Step,
+    pairing_data: PairingData,
 }
 
 impl Pairing {
     pub fn result(&self) -> Option<Result<(), Error>> {
-        let step = self.current_step.borrow();
-        match step.deref() {
+        match &self.current_step {
             Step::Success => Some(Ok(())),
             Step::Error(e) => Some(Err(e.clone())),
             _ => None,
@@ -106,25 +102,22 @@ impl Pairing {
     }
 
     pub fn timeout_at(&self) -> Instant {
-        let step = self.current_step.borrow();
-        if matches!(step.deref(), Step::Success | Step::Error(_)) {
+        if matches!(&self.current_step, Step::Success | Step::Error(_)) {
             Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE
         } else {
-            self.pairing_data.borrow().timeout_at
+            self.pairing_data.timeout_at
         }
     }
 
-    pub fn reset_timeout(&self) {
-        let mut pairing_data = self.pairing_data.borrow_mut();
-        pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
+    pub fn reset_timeout(&mut self) {
+        self.pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
     }
 
-    pub(crate) fn mark_timeout(&self) {
-        let mut current_step = self.current_step.borrow_mut();
-        if matches!(current_step.deref(), Step::Success | Step::Error(_)) {
+    pub(crate) fn mark_timeout(&mut self) {
+        if matches!(&self.current_step, Step::Success | Step::Error(_)) {
             return;
         }
-        *current_step = Step::Error(Error::Timeout);
+        self.current_step = Step::Error(Error::Timeout);
     }
 
     /// Create a legacy central state machine from an already-sent PairingRequest.
@@ -136,8 +129,8 @@ impl Pairing {
         preq: [u8; 7],
     ) -> Self {
         Self {
-            current_step: RefCell::new(Step::WaitingPairingResponse { preq }),
-            pairing_data: RefCell::new(PairingData {
+            current_step: Step::WaitingPairingResponse { preq },
+            pairing_data: PairingData {
                 local_address,
                 peer_address,
                 local_features,
@@ -145,20 +138,18 @@ impl Pairing {
                 pairing_method: PairingMethod::JustWorks,
                 timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT,
                 bond_information: None,
-            }),
+            },
         }
     }
 
     pub fn peer_address(&self) -> Address {
-        self.pairing_data.borrow().peer_address
+        self.pairing_data.peer_address
     }
 
     pub fn security_level(&self) -> SecurityLevel {
-        let step = self.current_step.borrow();
-        match step.deref() {
+        match &self.current_step {
             Step::SendingKeys { .. } | Step::ReceivingKeys { .. } | Step::Success => self
                 .pairing_data
-                .borrow()
                 .bond_information
                 .as_ref()
                 .map(|x| x.security_level)
@@ -168,7 +159,7 @@ impl Pairing {
     }
 
     pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
-        &self,
+        &mut self,
         command: Command,
         payload: &[u8],
         ops: &mut OPS,
@@ -181,24 +172,24 @@ impl Pairing {
                     "[smp legacy central] Failed to handle command {:?}, {:?}",
                     command, error
                 );
-                self.current_step.replace(Step::Error(error.clone()));
+                self.current_step = Step::Error(error.clone());
                 Err(error)
             }
         }
     }
 
     pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
-        &self,
+        &mut self,
         event: Event,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        let current_state = self.current_step.borrow().clone();
+        let current_state = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
         let next_state = match (current_state, event) {
             (Step::WaitingLinkEncrypted, Event::LinkEncryptedResult(res)) => {
                 if res {
                     info!("[smp legacy central] Link encrypted!");
-                    let pairing_data = self.pairing_data.borrow();
+                    let pairing_data = &self.pairing_data;
                     if pairing_data.want_bonding() {
                         // Receive keys from peripheral first, then send ours
                         if pairing_data.peer_features.responder_key_distribution.encryption_key() {
@@ -231,7 +222,7 @@ impl Pairing {
                 },
                 Event::PassKeyInput(input),
             ) => {
-                let pairing_data = self.pairing_data.borrow();
+                let pairing_data = &self.pairing_data;
                 let tk = input as u128;
                 let mut confirm_data = ConfirmPhaseData {
                     tk,
@@ -239,7 +230,7 @@ impl Pairing {
                     pres,
                     local_nonce: 0,
                 };
-                Self::send_mconfirm(ops, &pairing_data, &mut confirm_data, rng)?;
+                Self::send_mconfirm(ops, pairing_data, &mut confirm_data, rng)?;
                 match confirm_bytes {
                     Some(payload) => {
                         let peer_confirm = u128::from_le_bytes(payload);
@@ -290,25 +281,25 @@ impl Pairing {
     }
 
     fn handle_step_result<P: PacketPool, OPS: PairingOps<P>>(
-        &self,
+        &mut self,
         next_step: Step,
         ops: &mut OPS,
     ) -> Result<(), Error> {
         match next_step {
             Step::Error(x) => {
-                self.current_step.replace(Step::Error(x.clone()));
+                self.current_step = Step::Error(x.clone());
                 ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
                 Err(x)
             }
             Step::SendingKeys { phase, keys } => {
-                self.current_step.replace(Step::SendingKeys { phase, keys });
+                self.current_step = Step::SendingKeys { phase, keys };
                 self.send_keys(ops, phase, keys)
             }
             x => {
                 let is_success = matches!(x, Step::Success);
-                self.current_step.replace(x);
+                self.current_step = x;
                 if is_success {
-                    let pairing_data = self.pairing_data.borrow();
+                    let pairing_data = &self.pairing_data;
                     if let Some(bond) = pairing_data.bond_information.as_ref() {
                         let pairing_bond = if pairing_data.want_bonding() {
                             ops.try_update_bond_information(bond)?;
@@ -330,13 +321,11 @@ impl Pairing {
     }
 
     fn send_keys<P: PacketPool, OPS: PairingOps<P>>(
-        &self,
+        &mut self,
         ops: &mut OPS,
         phase: u8,
         keys: KeyDistData,
     ) -> Result<(), Error> {
-        let pairing_data = self.pairing_data.borrow();
-
         let next = match phase {
             // Phase 0: send EncryptionInformation (LTK)
             0 => {
@@ -348,7 +337,12 @@ impl Pairing {
             1 => {
                 let packet = make_central_identification_packet(keys.ediv, &keys.rand)?;
                 ops.try_send_packet(packet)?;
-                if pairing_data.local_features.initiator_key_distribution.identity_key() {
+                if self
+                    .pairing_data
+                    .local_features
+                    .initiator_key_distribution
+                    .identity_key()
+                {
                     Step::SendingKeys { phase: 2, keys }
                 } else {
                     Step::Success
@@ -363,26 +357,24 @@ impl Pairing {
             }
             // Phase 3: send IdentityAddressInformation
             3 => {
-                let packet = make_identity_address_information_packet(&pairing_data.local_address)?;
+                let packet = make_identity_address_information_packet(&self.pairing_data.local_address)?;
                 ops.try_send_packet(packet)?;
                 Step::Success
             }
             _ => Step::Success,
         };
-        drop(pairing_data);
         self.handle_step_result(next, ops)
     }
 
     fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
-        &self,
+        &mut self,
         command: CommandAndPayload,
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<(), Error> {
-        let current_step = self.current_step.borrow().clone();
+        let current_step = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
         let next_step = {
-            let mut pairing_data = self.pairing_data.borrow_mut();
-            let pairing_data = pairing_data.deref_mut();
+            let pairing_data = &mut self.pairing_data;
             trace!(
                 "[smp legacy central] Handling {:?}, step {:?}",
                 command.command,
@@ -698,8 +690,6 @@ impl Pairing {
 
 #[cfg(test)]
 mod tests {
-    use core::ops::Deref;
-
     use super::{Pairing, Step};
     use crate::codec::Encode;
     use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures};
@@ -720,9 +710,6 @@ mod tests {
         local_features.encode(&mut preq[1..]).unwrap();
 
         let pairing = Pairing::from_lesc_switch(central, peripheral, local_features, preq);
-        assert!(matches!(
-            pairing.current_step.borrow().deref(),
-            Step::WaitingPairingResponse { .. }
-        ));
+        assert!(matches!(&pairing.current_step, Step::WaitingPairingResponse { .. }));
     }
 }

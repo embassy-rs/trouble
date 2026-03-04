@@ -432,7 +432,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             return Err(Error::InvalidValue);
         }
 
-        let sm = self.pairing_sm.borrow();
+        let mut sm = self.pairing_sm.borrow_mut();
         let mut ops = PairingOpsImpl {
             security_manager: self,
             conn_handle: handle,
@@ -441,7 +441,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             peer_identity,
         };
         let mut rng_borrow = self.rng.borrow_mut();
-        sm.as_ref()
+        sm.as_mut()
             .unwrap()
             .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut())
     }
@@ -522,7 +522,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             return Err(Error::InvalidValue);
         }
 
-        let sm = { self.pairing_sm.borrow() };
+        let mut sm = { self.pairing_sm.borrow_mut() };
         let mut ops = PairingOpsImpl {
             security_manager: self,
             conn_handle: handle,
@@ -531,7 +531,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             peer_identity,
         };
         let mut rng_borrow = self.rng.borrow_mut();
-        sm.as_ref()
+        sm.as_mut()
             .unwrap()
             .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut())
     }
@@ -556,7 +556,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         }
 
         if result.is_ok() {
-            if let Some(sm) = self.pairing_sm.borrow().as_ref() {
+            if let Some(sm) = self.pairing_sm.borrow_mut().as_mut() {
                 sm.reset_timeout();
                 let _ = self.events.try_send(SecurityEventData::TimerChange);
             }
@@ -665,7 +665,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     /// Cancel pairing after timeout
     pub(crate) fn cancel_timeout(&self) {
-        if let Some(pairing) = self.pairing_sm.borrow().as_ref() {
+        if let Some(pairing) = self.pairing_sm.borrow_mut().as_mut() {
             pairing.mark_timeout();
             self.finished_waker.borrow_mut().wake();
         }
@@ -734,8 +734,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 Ok(()) => {
                     trace!("[smp] Encryption event (encrypted={})", encrypted);
                     connections.with_connected_handle(handle, |storage| {
-                        let sm = self.pairing_sm.borrow();
-                        if let Some(sm) = &*sm {
+                        let mut sm = self.pairing_sm.borrow_mut();
+                        if let Some(sm) = &mut *sm {
                             let mut rng = self.rng.borrow_mut();
                             let res = sm.handle_event(
                                 pairing::Event::LinkEncryptedResult(encrypted),
@@ -779,8 +779,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 Err(error) => {
                     error!("[security manager] Encryption event error {:?}", error);
                     connections.with_connected_handle(handle, |storage| {
-                        let sm = self.pairing_sm.borrow();
-                        if let Some(sm) = &*sm {
+                        let mut sm = self.pairing_sm.borrow_mut();
+                        if let Some(sm) = &mut *sm {
                             // If we were waiting for bonded encryption, mark the bond as
                             // rejected on this connection so the next pairing attempt will
                             // skip bonded encryption and initiate fresh pairing instead.
@@ -821,8 +821,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
-        let sm = self.pairing_sm.borrow();
-        if let Some(sm) = &*sm {
+        let mut sm = self.pairing_sm.borrow_mut();
+        if let Some(sm) = &mut *sm {
             let mut ops = PairingOpsImpl {
                 peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
                 security_manager: self,

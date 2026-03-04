@@ -85,7 +85,7 @@ impl Pairing {
         }
     }
     pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
-        &self,
+        &mut self,
         command: Command,
         payload: &[u8],
         ops: &mut OPS,
@@ -102,7 +102,7 @@ impl Pairing {
     }
 
     pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
-        &self,
+        &mut self,
         event: Event,
         ops: &mut OPS,
         rng: &mut RNG,
@@ -223,7 +223,7 @@ impl Pairing {
         }
     }
 
-    pub(crate) fn reset_timeout(&self) {
+    pub(crate) fn reset_timeout(&mut self) {
         match self {
             Pairing::Central(c) => c.reset_timeout(),
             Pairing::Peripheral(p) => p.reset_timeout(),
@@ -234,7 +234,7 @@ impl Pairing {
         }
     }
 
-    pub(crate) fn mark_timeout(&self) {
+    pub(crate) fn mark_timeout(&mut self) {
         match self {
             Pairing::Central(c) => c.mark_timeout(),
             Pairing::Peripheral(p) => p.mark_timeout(),
@@ -374,8 +374,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<10>::default();
         let mut central_ops = TestOps::<10>::default();
 
-        let peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
-        let central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = central::Pairing::initiate(
             central,
             peripheral,
             &mut central_ops,
@@ -391,8 +391,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -431,8 +431,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<10>::default();
         let mut central_ops = TestOps::<10>::default();
 
-        let peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::DisplayYesNo);
-        let central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::DisplayYesNo);
+        let mut central_pairing = central::Pairing::initiate(
             central,
             peripheral,
             &mut central_ops,
@@ -448,8 +448,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -480,8 +480,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -523,8 +523,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<80>::default();
         let mut central_ops = TestOps::<80>::default();
 
-        let peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::KeyboardOnly);
-        let central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::KeyboardOnly);
+        let mut central_pairing = central::Pairing::initiate(
             central,
             peripheral,
             &mut central_ops,
@@ -540,8 +540,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -566,8 +566,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -609,8 +609,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<80>::default();
         let mut central_ops = TestOps::<80>::default();
 
-        let peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::DisplayOnly);
-        let central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::DisplayOnly);
+        let mut central_pairing = central::Pairing::initiate(
             central,
             peripheral,
             &mut central_ops,
@@ -626,8 +626,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -650,8 +650,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -693,8 +693,8 @@ mod tests {
         let mut peripheral_ops = TestOps::<80>::default();
         let mut central_ops = TestOps::<80>::default();
 
-        let peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::KeyboardOnly);
-        let central_pairing =
+        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::KeyboardOnly);
+        let mut central_pairing =
             central::Pairing::initiate(central, peripheral, &mut central_ops, IoCapabilities::DisplayOnly, true)
                 .unwrap();
 
@@ -705,8 +705,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -729,8 +729,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -774,8 +774,8 @@ mod tests {
         peripheral_ops.bondable = true;
         central_ops.bondable = true;
 
-        let peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
-        let central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = central::Pairing::initiate(
             central,
             peripheral,
             &mut central_ops,
@@ -791,8 +791,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -868,8 +868,8 @@ mod tests {
 
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
-        let peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
-        let central_pairing = central::Pairing::initiate(
+        let mut peripheral_pairing = peripheral::Pairing::new(peripheral, central, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = central::Pairing::initiate(
             central,
             peripheral,
             &mut central_ops,
@@ -949,14 +949,14 @@ mod tests {
 
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
-        let peripheral_pairing = peripheral::Pairing::initiate(
+        let mut peripheral_pairing = peripheral::Pairing::initiate(
             peripheral,
             central,
             &mut peripheral_ops,
             IoCapabilities::NoInputNoOutput,
         )
         .unwrap();
-        let central_pairing = central::Pairing::new_idle(central, peripheral, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = central::Pairing::new_idle(central, peripheral, IoCapabilities::NoInputNoOutput);
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
@@ -964,8 +964,8 @@ mod tests {
             &mut peripheral_ops,
             &mut central_ops,
             &mut rng,
-            &peripheral_pairing,
-            &central_pairing,
+            &mut peripheral_pairing,
+            &mut central_pairing,
             &mut num_central_data_sent,
             &mut num_peripheral_data_sent,
         );
@@ -1009,8 +1009,8 @@ mod tests {
         peripheral_ops: &mut TestOps<N>,
         central_ops: &mut TestOps<N>,
         rng: &mut ChaCha12Rng,
-        peripheral_pairing: &peripheral::Pairing,
-        central_pairing: &central::Pairing,
+        peripheral_pairing: &mut peripheral::Pairing,
+        central_pairing: &mut central::Pairing,
         num_central_data_sent: &mut usize,
         num_peripheral_data_sent: &mut usize,
     ) {
