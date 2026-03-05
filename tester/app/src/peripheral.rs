@@ -155,6 +155,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     server: &Server<'_, P>,
     events: DynamicSender<'_, Event>,
     gatt_client_signal: &crate::gatt_client::ConnectionSignal,
+    l2cap_signal: &crate::l2cap::ConnectionSignal<'stack, P>,
 ) -> ! {
     trace!("peripheral::run");
     let mut cmd = commands.receive().await;
@@ -238,6 +239,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 let conn_params = conn.params();
 
                 events.send(Event::DeviceConnected { address, conn_params }).await;
+                l2cap_signal.signal(conn.clone());
 
                 // Enter GATT connection event loop
                 info!("Entering GATT connection loop");

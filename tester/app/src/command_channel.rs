@@ -3,13 +3,14 @@ use core::ops::Deref;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 
-use crate::{central, gatt_client, peripheral};
+use crate::{central, gatt_client, l2cap, peripheral};
 
 /// Senders for dispatching commands to role tasks and receiving their responses.
 pub(crate) struct CommandChannels<'a> {
     pub peripheral: Sender<'a, NoopRawMutex, peripheral::Command, 1>,
     pub central: Sender<'a, NoopRawMutex, central::Command, 1>,
     pub gatt_client: Sender<'a, NoopRawMutex, gatt_client::Command, 1>,
+    pub l2cap: Sender<'a, NoopRawMutex, l2cap::Command, 1>,
     pub response: Receiver<'a, NoopRawMutex, Response, 1>,
 }
 
@@ -20,6 +21,7 @@ pub enum Response {
     Peripheral(peripheral::Response),
     Central(central::Response),
     GattClient(gatt_client::Response),
+    L2cap(l2cap::Response),
     Unhandled,
 }
 

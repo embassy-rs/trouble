@@ -58,7 +58,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::LeAdvEventKind;
-use embassy_futures::select::{Either5, select5};
+use embassy_futures::select::{Either, Either5, select, select5};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, DynamicSender};
 use embassy_sync::signal::Signal;
@@ -79,6 +79,7 @@ mod central;
 mod command_channel;
 mod connection;
 mod gatt_client;
+mod l2cap;
 mod peripheral;
 
 /// Conditional error formatting bound: requires `defmt::Format` under `defmt`,
@@ -192,12 +193,30 @@ pub(crate) enum Event {
         handle: u16,
         data: alloc::boxed::Box<[u8]>,
     },
+    L2capConnected {
+        chan_id: u8,
+        psm: u16,
+        peer_mtu: u16,
+        peer_mps: u16,
+        our_mtu: u16,
+        our_mps: u16,
+        address: Address,
+    },
+    L2capDisconnected {
+        chan_id: u8,
+        psm: u16,
+        address: Address,
+    },
+    L2capDataReceived {
+        chan_id: u8,
+        data: alloc::boxed::Box<[u8]>,
+    },
 }
 
 /// Maximum number of concurrent BLE connections.
 const CONNECTIONS_MAX: usize = 3;
-/// Maximum number of L2CAP channels (Signal + ATT + SMP).
-const L2CAP_CHANNELS_MAX: usize = 9;
+/// Maximum number of L2CAP channels (Signal + ATT + SMP + 5 CoC).
+const L2CAP_CHANNELS_MAX: usize = 14;
 /// Maximum number of attributes in the GATT attribute table.
 const ATTRIBUTE_TABLE_SIZE: usize = 64;
 /// Maximum number of CCCD (Client Characteristic Configuration Descriptor) entries.
@@ -332,56 +351,70 @@ where
     let peripheral_command = Channel::<NoopRawMutex, peripheral::Command, 1>::new();
     let central_command = Channel::<NoopRawMutex, central::Command, 1>::new();
     let gatt_client_command = Channel::<NoopRawMutex, gatt_client::Command, 1>::new();
+    let l2cap_command = Channel::<NoopRawMutex, l2cap::Command, 1>::new();
     let gatt_client_signal = Signal::<NoopRawMutex, Address>::new();
+    let l2cap_conn_signal: l2cap::ConnectionSignal<'_, DefaultPacketPool> = Signal::new();
 
     let channels = command_channel::CommandChannels {
         peripheral: peripheral_command.sender(),
         central: central_command.sender(),
         gatt_client: gatt_client_command.sender(),
+        l2cap: l2cap_command.sender(),
         response: response.receiver(),
     };
 
-    match select5(
-        ble_task(runner, events.dyn_sender(), &scan_mode),
-        peripheral::run(
+    match select(
+        l2cap::run(
             &stack,
-            peripheral,
-            CommandReceiver::new(peripheral_command.receiver(), response.sender()),
-            &server,
+            CommandReceiver::new(l2cap_command.receiver(), response.sender()),
             events.dyn_sender(),
-            &gatt_client_signal,
+            &l2cap_conn_signal,
         ),
-        central::run(
-            &stack,
-            central,
-            CommandReceiver::new(central_command.receiver(), response.sender()),
-            &server,
-            events.dyn_sender(),
-            &gatt_client_signal,
-        ),
-        gatt_client::run(
-            &stack,
-            CommandReceiver::new(gatt_client_command.receiver(), response.sender()),
-            events.dyn_sender(),
-            &gatt_client_signal,
-        ),
-        btp::run(
-            pre,
-            &config,
-            &server,
-            &stack,
-            events.dyn_receiver(),
-            &channels,
-            &mut packet,
+        select5(
+            ble_task(runner, events.dyn_sender(), &scan_mode),
+            peripheral::run(
+                &stack,
+                peripheral,
+                CommandReceiver::new(peripheral_command.receiver(), response.sender()),
+                &server,
+                events.dyn_sender(),
+                &gatt_client_signal,
+                &l2cap_conn_signal,
+            ),
+            central::run(
+                &stack,
+                central,
+                CommandReceiver::new(central_command.receiver(), response.sender()),
+                &server,
+                events.dyn_sender(),
+                &gatt_client_signal,
+                &l2cap_conn_signal,
+            ),
+            gatt_client::run(
+                &stack,
+                CommandReceiver::new(gatt_client_command.receiver(), response.sender()),
+                events.dyn_sender(),
+                &gatt_client_signal,
+            ),
+            btp::run(
+                pre,
+                &config,
+                &server,
+                &stack,
+                events.dyn_receiver(),
+                &channels,
+                &mut packet,
+            ),
         ),
     )
     .await
     {
-        Either5::First(result) => result?,
-        Either5::Second(never) => match never {},
-        Either5::Third(never) => match never {},
-        Either5::Fourth(never) => match never {},
-        Either5::Fifth(result) => result?,
+        Either::First(never) => match never {},
+        Either::Second(Either5::First(result)) => result?,
+        Either::Second(Either5::Second(never)) => match never {},
+        Either::Second(Either5::Third(never)) => match never {},
+        Either::Second(Either5::Fourth(never)) => match never {},
+        Either::Second(Either5::Fifth(result)) => result?,
     }
 
     Ok(())

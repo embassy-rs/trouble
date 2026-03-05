@@ -56,6 +56,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     server: &Server<'_, P>,
     events: DynamicSender<'_, Event>,
     gatt_client_signal: &crate::gatt_client::ConnectionSignal,
+    l2cap_signal: &crate::l2cap::ConnectionSignal<'stack, P>,
 ) -> ! {
     trace!("central::run");
 
@@ -156,6 +157,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                 conn_params,
                             })
                             .await;
+                        l2cap_signal.signal(conn.clone());
 
                         match conn.with_attribute_server(server) {
                             Ok(gatt_conn) => {

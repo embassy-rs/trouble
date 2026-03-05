@@ -19,13 +19,13 @@ use self::protocol::gap::{
 use self::protocol::gatt::{
     AttrValueChangedEvent, GattCommand, GattEvent as BtpGattEvent, GattResponse, ServerStartedResponse,
 };
-use self::protocol::l2cap::{L2capCommand, L2capResponse};
+use self::protocol::l2cap::{L2capCommand, L2capEvent, L2capResponse};
 use self::protocol::{BtpCommand, BtpEvent, BtpHeader, BtpPacket, BtpResponse, BtpStatus};
 use self::service_builder::{AttValue, ServiceBuilder};
 use crate::command_channel::CommandChannels;
 use crate::{
     ATTRIBUTE_TABLE_SIZE, BtpConfig, Event, GAP_ATTRIBUTE_COUNT, GATT_ATTRIBUTE_COUNT, ScanMode, central,
-    command_channel, gatt_client, peripheral,
+    command_channel, gatt_client, l2cap, peripheral,
 };
 
 pub(crate) mod error;
@@ -153,10 +153,11 @@ where
             BtpCommand::Gatt(gatt_command) => {
                 handle_gatt_pre_server(gatt_command, service_builder, table).map(BtpResponse::Gatt)
             }
-            BtpCommand::L2cap(l2cap_command) => match handle_l2cap(l2cap_command) {
-                HandlerResult::Ready(resp) => Ok(BtpResponse::L2cap(resp)),
-                HandlerResult::Error(err) => Err(err),
-                HandlerResult::Forwarded => unreachable!(),
+            BtpCommand::L2cap(l2cap_command) => match l2cap_command {
+                L2capCommand::ReadSupportedCommands => Ok(BtpResponse::L2cap(L2capResponse::SupportedCommands(
+                    protocol::l2cap::SUPPORTED_COMMANDS,
+                ))),
+                _ => Err(BtpStatus::NotReady),
             },
         };
 
@@ -316,7 +317,7 @@ where
             BtpCommand::Gatt(gatt_command) => handle_gatt(gatt_command, server, stack, channels)
                 .await
                 .map(BtpResponse::Gatt),
-            BtpCommand::L2cap(l2cap_command) => handle_l2cap(l2cap_command).map(BtpResponse::L2cap),
+            BtpCommand::L2cap(l2cap_command) => handle_l2cap(l2cap_command, channels).await.map(BtpResponse::L2cap),
         };
 
         // 2. Write response
@@ -370,6 +371,16 @@ where
                                 GR::WriteWithoutRspDone => Ok(BtpResponse::Gatt(GattResponse::WriteWithoutRspDone)),
                                 GR::CfgDone => Ok(BtpResponse::Gatt(GattResponse::CfgDone)),
                                 GR::Fail => Err(BtpStatus::Fail),
+                            }
+                        }
+                        command_channel::Response::L2cap(response) => {
+                            use l2cap::Response as LR;
+                            match response {
+                                LR::Listening => Ok(BtpResponse::L2cap(L2capResponse::Empty)),
+                                LR::Connecting(rsp) => Ok(BtpResponse::L2cap(L2capResponse::Connecting(rsp))),
+                                LR::Disconnected => Ok(BtpResponse::L2cap(L2capResponse::Empty)),
+                                LR::DataSent => Ok(BtpResponse::L2cap(L2capResponse::Empty)),
+                                LR::Fail => Err(BtpStatus::Fail),
                             }
                         }
                         command_channel::Response::Unhandled => {
@@ -547,6 +558,37 @@ fn convert_event<'a>(event: &'a Event, current_settings: &mut GapSettings) -> Bt
                     data,
                 },
             ))
+        }
+        Event::L2capConnected {
+            chan_id,
+            psm,
+            peer_mtu,
+            peer_mps,
+            our_mtu,
+            our_mps,
+            address,
+        } => BtpEvent::L2cap(L2capEvent::Connected(protocol::l2cap::ConnectedEvent {
+            chan_id: *chan_id,
+            psm: *psm,
+            peer_mtu: *peer_mtu,
+            peer_mps: *peer_mps,
+            our_mtu: *our_mtu,
+            our_mps: *our_mps,
+            address: *address,
+        })),
+        Event::L2capDisconnected { chan_id, psm, address } => {
+            BtpEvent::L2cap(L2capEvent::Disconnected(protocol::l2cap::DisconnectedEvent {
+                result: 0,
+                chan_id: *chan_id,
+                psm: *psm,
+                address: *address,
+            }))
+        }
+        Event::L2capDataReceived { chan_id, data } => {
+            BtpEvent::L2cap(L2capEvent::DataReceived(protocol::l2cap::DataReceivedEvent {
+                chan_id: *chan_id,
+                data,
+            }))
         }
     }
 }
@@ -1088,9 +1130,56 @@ async fn handle_gatt<'a, 's, C: crate::Controller, P: PacketPool>(
 }
 
 /// Handle an L2CAP Service (ID 3) command. Currently all commands are unimplemented.
-fn handle_l2cap(cmd: L2capCommand<'_>) -> HandlerResult<L2capResponse> {
+async fn handle_l2cap(cmd: L2capCommand<'_>, channels: &CommandChannels<'_>) -> HandlerResult<L2capResponse> {
+    use protocol::l2cap::SUPPORTED_COMMANDS;
+
     trace!("handle_l2cap: {:?}", cmd);
-    HandlerResult::Error(BtpStatus::UnknownCommand)
+
+    match cmd {
+        L2capCommand::ReadSupportedCommands => {
+            HandlerResult::Ready(L2capResponse::SupportedCommands(SUPPORTED_COMMANDS))
+        }
+        L2capCommand::Listen(listen) => {
+            channels
+                .l2cap
+                .send(l2cap::Command::Listen {
+                    psm: listen.psm,
+                    mtu: listen.mtu,
+                    response: listen.response,
+                })
+                .await;
+            HandlerResult::Forwarded
+        }
+        L2capCommand::Connect(connect) => {
+            channels
+                .l2cap
+                .send(l2cap::Command::Connect {
+                    address: connect.address,
+                    psm: connect.psm,
+                    mtu: connect.mtu,
+                    num: connect.num,
+                })
+                .await;
+            HandlerResult::Forwarded
+        }
+        L2capCommand::Disconnect(chan_id) => {
+            channels.l2cap.send(l2cap::Command::Disconnect { chan_id }).await;
+            HandlerResult::Forwarded
+        }
+        L2capCommand::SendData(send_data) => {
+            channels
+                .l2cap
+                .send(l2cap::Command::SendData {
+                    chan_id: send_data.chan_id,
+                    data: alloc::boxed::Box::from(send_data.data),
+                })
+                .await;
+            HandlerResult::Forwarded
+        }
+        L2capCommand::Credits(_) | L2capCommand::Reconfigure(_) | L2capCommand::DisconnectEattChans(_) => {
+            HandlerResult::Error(BtpStatus::Fail)
+        }
+    }
 }
 
 #[cfg(test)]

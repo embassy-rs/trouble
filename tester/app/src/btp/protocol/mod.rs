@@ -279,7 +279,6 @@ pub enum BtpEvent<'a> {
     /// GATT service event.
     Gatt(gatt::GattEvent<'a>),
     /// L2CAP service event.
-    #[allow(unused)]
     L2cap(l2cap::L2capEvent<'a>),
 }
 
