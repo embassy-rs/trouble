@@ -1,5 +1,6 @@
 //! L2CAP channels.
 use bt_hci::controller::{blocking, Controller};
+use bt_hci::param::ConnHandle;
 
 pub use crate::channel_manager::CreditFlowPolicy;
 #[cfg(feature = "channel-metrics")]
@@ -7,6 +8,7 @@ pub use crate::channel_manager::Metrics as ChannelMetrics;
 use crate::channel_manager::{ChannelIndex, ChannelManager};
 use crate::connection::Connection;
 use crate::pdu::Sdu;
+pub use crate::types::l2cap::LeCreditConnResultCode;
 use crate::{BleHostError, Error, PacketPool, Stack};
 
 pub(crate) mod sar;
@@ -80,6 +82,70 @@ impl<P: PacketPool> defmt::Format for L2capChannelReader<'_, P> {
 impl<P: PacketPool> Drop for L2capChannelReader<'_, P> {
     fn drop(&mut self) {
         self.manager.dec_ref(self.index);
+    }
+}
+
+/// A pending incoming L2CAP connection that can be inspected, then accepted or rejected.
+///
+/// Dropping this without calling [`accept`](Self::accept) or [`reject`](Self::reject) will
+/// silently free the channel slot (the peer will time out).
+pub struct L2capPendingConnection<'d, P: PacketPool> {
+    index: Option<ChannelIndex>,
+    manager: &'d ChannelManager<'d, P>,
+    conn: ConnHandle,
+}
+
+impl<'d, P: PacketPool> L2capPendingConnection<'d, P> {
+    pub(crate) fn new(index: ChannelIndex, manager: &'d ChannelManager<'d, P>, conn: ConnHandle) -> Self {
+        Self {
+            index: Some(index),
+            manager,
+            conn,
+        }
+    }
+
+    /// Consume the pending connection and return the channel index, preventing the Drop cleanup.
+    pub(crate) fn into_index(mut self) -> ChannelIndex {
+        self.index.take().unwrap()
+    }
+
+    /// Get the PSM of the incoming connection request.
+    pub fn psm(&self) -> u16 {
+        self.manager.psm(self.index.unwrap())
+    }
+
+    /// Get the peer's requested MTU.
+    pub fn mtu(&self) -> u16 {
+        self.manager.mtu(self.index.unwrap())
+    }
+
+    /// Accept the connection, negotiate parameters, and return an established channel.
+    pub async fn accept<T: Controller>(
+        self,
+        stack: &'d Stack<'d, T, P>,
+        config: &L2capChannelConfig,
+    ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
+        let index = self.into_index();
+        stack.host.channels.accept_pending(index, config, &stack.host).await
+    }
+
+    /// Reject the connection with the given result code.
+    pub async fn reject<T: Controller>(
+        mut self,
+        stack: &Stack<'_, T, P>,
+        result: LeCreditConnResultCode,
+    ) -> Result<(), BleHostError<T::Error>> {
+        let index = self.index.take().unwrap();
+        stack.host.channels.reject_pending(index, result, &stack.host).await
+    }
+}
+
+impl<P: PacketPool> Drop for L2capPendingConnection<'_, P> {
+    fn drop(&mut self) {
+        if let Some(index) = self.index.take() {
+            error!("L2capPendingConnection dropped without being accepted or rejected");
+            self.manager.drop_pending(index);
+        }
     }
 }
 
@@ -185,7 +251,18 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         self.manager.metrics(self.index, f)
     }
 
-    /// Await an incoming connection request matching the list of PSM.
+    /// Listen for an incoming connection request matching the list of PSM.
+    ///
+    /// Returns a [`L2capPendingConnection`] that can be inspected, then accepted or rejected.
+    pub async fn listen(
+        stack: &'d Stack<'d, impl Controller, P>,
+        connection: &Connection<'_, P>,
+        psm: &[u16],
+    ) -> L2capPendingConnection<'d, P> {
+        stack.host.channels.listen(connection.handle(), psm).await
+    }
+
+    /// Await an incoming connection request matching the list of PSM and accept it.
     pub async fn accept<T: Controller>(
         stack: &'d Stack<'d, T, P>,
         connection: &Connection<'_, P>,

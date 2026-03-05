@@ -130,18 +130,29 @@ impl L2capSignal for LeCreditConnReq {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
+/// Result code for an LE Credit Based Connection Response.
 pub enum LeCreditConnResultCode {
+    /// Connection successful.
     Success = 0x0000,
+    /// Connection refused — LE_PSM not supported.
     SpsmNotSupported = 0x0002,
+    /// Connection refused — no resources available.
     NoResources = 0x0004,
+    /// Connection refused — insufficient authentication.
     InsufficientAuthentication = 0x0005,
+    /// Connection refused — insufficient authorization.
     InsufficientAuthorization = 0x0006,
+    /// Connection refused — encryption key size too short.
     EncryptionKeyTooShort = 0x0007,
+    /// Connection refused — insufficient encryption.
     InsufficientEncryption = 0x0008,
+    /// Connection refused — invalid Source CID.
     InvalidSourceId = 0x0009,
+    /// Connection refused — Source CID already allocated.
     ScidAlreadyAllocated = 0x000A,
+    /// Connection refused — unacceptable parameters.
     UnacceptableParameters = 0x000B,
 }
 

@@ -14,7 +14,7 @@ use crate::cursor::WriteCursor;
 use crate::host::BleHost;
 #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
 use crate::l2cap::sar::PacketReassembly;
-use crate::l2cap::L2capChannel;
+use crate::l2cap::{L2capChannel, L2capPendingConnection};
 use crate::pdu::{Pdu, Sdu};
 use crate::prelude::{ConnectionEvent, ConnectionParamsRequest, L2capChannelConfig};
 use crate::types::l2cap::{
@@ -183,6 +183,44 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         config: &L2capChannelConfig,
         ble: &BleHost<'d, T, P>,
     ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
+        let pending = self.listen(conn, psm).await;
+        let index = pending.into_index();
+        self.accept_pending(index, config, ble).await
+    }
+
+    /// Wait for an incoming L2CAP connection request matching the connection and PSM list.
+    ///
+    /// Returns a [`L2capPendingConnection`] that can be inspected and then accepted or rejected.
+    pub(crate) async fn listen(&'d self, conn: ConnHandle, psm: &[u16]) -> L2capPendingConnection<'d, P> {
+        poll_fn(|cx| {
+            let mut state = self.state.borrow_mut();
+            state.accept_waker.register(cx.waker());
+            for (idx, chan) in state.channels.iter_mut().enumerate() {
+                match chan.state {
+                    ChannelState::PeerConnecting(_) if chan.conn == Some(conn) && psm.contains(&chan.psm) => {
+                        if chan.refcount != 0 {
+                            state.print(true);
+                            panic!("unexpected refcount");
+                        }
+                        let index = ChannelIndex(idx as u8);
+                        state.inc_ref(index);
+                        return Poll::Ready(L2capPendingConnection::new(index, self, conn));
+                    }
+                    _ => {}
+                }
+            }
+            Poll::Pending
+        })
+        .await
+    }
+
+    /// Accept a pending L2CAP connection: negotiate parameters, transition to Connected, send success response.
+    pub(crate) async fn accept_pending<T: Controller>(
+        &'d self,
+        index: ChannelIndex,
+        config: &L2capChannelConfig,
+        ble: &BleHost<'d, T, P>,
+    ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
         let L2capChannelConfig {
             mtu,
             mps,
@@ -196,43 +234,32 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             return Err(Error::InsufficientSpace.into());
         }
 
-        // Wait until we find a channel for our connection in the connecting state matching our PSM.
-        let (channel, req_id, mps, mtu, cid, credits) = poll_fn(|cx| {
+        let (conn, req_id, mps, mtu, cid, credits) = {
             let mut state = self.state.borrow_mut();
-            state.accept_waker.register(cx.waker());
-            for (idx, chan) in state.channels.iter_mut().enumerate() {
-                match chan.state {
-                    ChannelState::PeerConnecting(req_id) if chan.conn == Some(conn) && psm.contains(&chan.psm) => {
-                        chan.mtu = chan.mtu.min(mtu);
-                        chan.mps = chan.mps.min(mps);
-                        chan.flow_control = CreditFlowControl::new(
-                            *flow_policy,
-                            initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16),
-                        );
-                        chan.state = ChannelState::Connected;
-                        let mps = chan.mps;
-                        let mtu = chan.mtu;
-                        let cid = chan.cid;
-                        let available = chan.flow_control.available();
-                        if chan.refcount != 0 {
-                            state.print(true);
-                            panic!("unexpected refcount");
-                        }
-                        assert_eq!(chan.refcount, 0);
-                        let index = ChannelIndex(idx as u8);
-
-                        state.inc_ref(index);
-                        return Poll::Ready((L2capChannel::new(index, self), req_id, mps, mtu, cid, available));
-                    }
-                    _ => {}
-                }
-            }
-            Poll::Pending
-        })
-        .await;
+            let chan = &mut state.channels[index.0 as usize];
+            let req_id = match chan.state {
+                ChannelState::PeerConnecting(req_id) => req_id,
+                _ => return Err(Error::NotFound.into()),
+            };
+            chan.mtu = chan.mtu.min(mtu);
+            chan.mps = chan.mps.min(mps);
+            chan.flow_control = CreditFlowControl::new(
+                *flow_policy,
+                initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16),
+            );
+            chan.state = ChannelState::Connected;
+            let conn = chan.conn.unwrap();
+            (
+                conn,
+                req_id,
+                chan.mps,
+                chan.mtu,
+                chan.cid,
+                chan.flow_control.available(),
+            )
+        };
 
         let mut tx = [0; 18];
-        // Respond that we accept the channel.
         ble.l2cap_signal(
             conn,
             req_id,
@@ -246,7 +273,54 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             &mut tx[..],
         )
         .await?;
-        Ok(channel)
+        Ok(L2capChannel::new(index, self))
+    }
+
+    /// Reject a pending L2CAP connection: send rejection response and free the channel slot.
+    pub(crate) async fn reject_pending<T: Controller>(
+        &self,
+        index: ChannelIndex,
+        result: LeCreditConnResultCode,
+        ble: &BleHost<'_, T, P>,
+    ) -> Result<(), BleHostError<T::Error>> {
+        let (conn, req_id) = self.with_mut(|state| {
+            let chan = &mut state.channels[index.0 as usize];
+            let req_id = match chan.state {
+                ChannelState::PeerConnecting(req_id) => req_id,
+                _ => return Err(Error::NotFound),
+            };
+            let conn = chan.conn.unwrap();
+            chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
+            chan.close();
+            Ok((conn, req_id))
+        })?;
+
+        let mut tx = [0; 18];
+        ble.l2cap_signal(
+            conn,
+            req_id,
+            &LeCreditConnRes {
+                mps: 0,
+                dcid: 0,
+                mtu: 0,
+                credits: 0,
+                result,
+            },
+            &mut tx[..],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Drop a pending connection without sending a response (peer will time out).
+    pub(crate) fn drop_pending(&self, index: ChannelIndex) {
+        self.with_mut(|state| {
+            let chan = &mut state.channels[index.0 as usize];
+            if matches!(chan.state, ChannelState::PeerConnecting(_)) {
+                chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
+                chan.close();
+            }
+        });
     }
 
     pub(crate) async fn create<T: Controller>(
