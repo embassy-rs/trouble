@@ -120,6 +120,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         })
     }
 
+    pub(crate) fn mtu(&self, index: ChannelIndex) -> u16 {
+        self.with_mut(|state| state.channels[index.0 as usize].mtu)
+    }
+
+    pub(crate) fn mps(&self, index: ChannelIndex) -> u16 {
+        self.with_mut(|state| state.channels[index.0 as usize].mps)
+    }
+
     pub(crate) fn disconnect(&self, index: ChannelIndex) {
         self.with_mut(|state| {
             let chan = &mut state.channels[index.0 as usize];

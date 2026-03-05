@@ -111,6 +111,16 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         self.manager.psm(self.index)
     }
 
+    /// Get the negotiated MTU for this channel.
+    pub fn mtu(&self) -> u16 {
+        self.manager.mtu(self.index)
+    }
+
+    /// Get the negotiated MPS for this channel.
+    pub fn mps(&self) -> u16 {
+        self.manager.mps(self.index)
+    }
+
     /// Send the provided buffer over this l2cap channel.
     ///
     /// The buffer must be equal to or smaller than the MTU agreed for the channel.
@@ -239,6 +249,16 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
         self.manager.disconnect(self.index);
     }
 
+    /// Get the negotiated MTU for this channel.
+    pub fn mtu(&self) -> u16 {
+        self.manager.mtu(self.index)
+    }
+
+    /// Get the negotiated MPS for this channel.
+    pub fn mps(&self) -> u16 {
+        self.manager.mps(self.index)
+    }
+
     /// Receive data on this channel and copy it into the buffer.
     ///
     /// The length provided buffer slice must be equal or greater to the agreed MTU.
@@ -288,6 +308,16 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
     /// Disconnect this channel.
     pub fn disconnect(&mut self) {
         self.manager.disconnect(self.index);
+    }
+
+    /// Get the negotiated MTU for this channel.
+    pub fn mtu(&self) -> u16 {
+        self.manager.mtu(self.index)
+    }
+
+    /// Get the negotiated MPS for this channel.
+    pub fn mps(&self) -> u16 {
+        self.manager.mps(self.index)
     }
 
     /// Send the provided buffer over this l2cap channel.
