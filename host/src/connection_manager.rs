@@ -317,6 +317,14 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         None
     }
 
+    pub(crate) fn connections(&'d self) -> ConnectedIter<'d, P> {
+        ConnectedIter {
+            manager: self,
+            index: 0,
+            len: self.state.borrow().connections.len(),
+        }
+    }
+
     pub(crate) fn get_connection_by_peer_address(&'d self, peer_address: Address) -> Option<Connection<'d, P>> {
         let mut state = self.state.borrow_mut();
         for (index, storage) in state.connections.iter().enumerate() {
@@ -986,6 +994,29 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "att-queued-writes")]
     pub(crate) fn clear_prepare_write(&self, index: u8) {
         self.with_mut(|state| state.connections[index as usize].prepare_write.clear())
+    }
+}
+
+/// Iterator over currently connected connections.
+pub struct ConnectedIter<'d, P: PacketPool> {
+    manager: &'d ConnectionManager<'d, P>,
+    index: usize,
+    len: usize,
+}
+
+impl<'d, P: PacketPool> Iterator for ConnectedIter<'d, P> {
+    type Item = Connection<'d, P>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index < self.len {
+            let idx = self.index;
+            self.index += 1;
+            if self.manager.is_connected(idx as u8) {
+                self.manager.inc_ref(idx as u8);
+                return Some(Connection::new(idx as u8, self.manager));
+            }
+        }
+        None
     }
 }
 
