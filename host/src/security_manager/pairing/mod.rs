@@ -249,6 +249,7 @@ impl Pairing {
         peer_address: Address,
         ops: &mut OPS,
         local_io: IoCapabilities,
+        user_initiated: bool,
     ) -> Result<Self, Error> {
         let pairing_data = PairingData::new(
             local_address,
@@ -256,7 +257,7 @@ impl Pairing {
             local_io,
             crate::security_manager::constants::TIMEOUT,
         );
-        let state = peripheral::Pairing::initiate(&pairing_data, ops)?;
+        let state = peripheral::Pairing::initiate(&pairing_data, ops, user_initiated)?;
         Ok(Pairing {
             pairing_data,
             state: State::Peripheral(state),
@@ -1039,6 +1040,7 @@ mod tests {
             central,
             &mut peripheral_ops,
             IoCapabilities::NoInputNoOutput,
+            false,
         )
         .unwrap();
         let mut central_pairing = Pairing::new_central(central, peripheral, IoCapabilities::NoInputNoOutput);

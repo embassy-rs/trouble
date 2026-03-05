@@ -99,13 +99,20 @@ impl Pairing {
     pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
         pairing_data: &PairingData,
         ops: &mut OPS,
+        user_initiated: bool,
     ) -> Result<Self, Error> {
         let ret = Self::new();
         {
             let mut security_request = prepare_packet(Command::SecurityRequest)?;
             let payload = security_request.payload_mut();
             let mut auth_req = AuthReq::new(ops.bonding_flag());
-            if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
+            let mut request_mitm = pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput;
+            if !user_initiated {
+                if let Some(bond) = ops.find_bond() {
+                    request_mitm = bond.security_level == crate::connection::SecurityLevel::EncryptedAuthenticated;
+                }
+            }
+            if request_mitm {
                 auth_req = auth_req.with_mitm();
             }
             payload[0] = auth_req.into();

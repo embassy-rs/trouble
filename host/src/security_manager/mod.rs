@@ -514,6 +514,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
                 peer_address,
                 &mut ops,
                 local_io,
+                user_initiated,
             )?);
         } else {
             self.pairing_sm = Some(Pairing::initiate_central(
