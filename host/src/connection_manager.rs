@@ -418,6 +418,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 #[cfg(feature = "security")]
                 {
                     storage.bond_rejected = false;
+                    storage.smp_timeout = false;
                 }
 
                 match role {
@@ -784,7 +785,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             for storage in state.connections.iter() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if let Err(error) = self.security_manager.handle_l2cap_command(pdu, self, storage) {
+                        if storage.smp_timeout {
+                            warn!("Ignoring security channel packet after SMP timeout");
+                            return Ok(());
+                        } else if let Err(error) = self.security_manager.handle_l2cap_command(pdu, self, storage) {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
                         }
@@ -893,6 +897,22 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             }
             crate::security_manager::SecurityEventData::Timeout => {
                 warn!("[host] Pairing timeout");
+                if let Some(peer_address) = self.security_manager.peer_address() {
+                    self.with_mut(|state| {
+                        for (index, storage) in state.connections.iter_mut().enumerate() {
+                            if storage.state == ConnectionState::Connected
+                                && storage.peer_addr_kind == Some(peer_address.kind)
+                            {
+                                if let Some(peer) = &storage.peer_identity {
+                                    if peer.match_address(&peer_address.addr) {
+                                        storage.smp_timeout = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
                 self.security_manager.cancel_timeout();
             }
             crate::security_manager::SecurityEventData::TimerChange => (),
@@ -984,6 +1004,8 @@ pub struct ConnectionStorage<P> {
     pub bondable: bool,
     #[cfg(feature = "security")]
     pub bond_rejected: bool,
+    #[cfg(feature = "security")]
+    pub smp_timeout: bool,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -1075,6 +1097,8 @@ impl<P> ConnectionStorage<P> {
             security_level: SecurityLevel::NoEncryption,
             #[cfg(feature = "security")]
             bond_rejected: false,
+            #[cfg(feature = "security")]
+            smp_timeout: false,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),
