@@ -2,6 +2,7 @@
 use core::cell::RefCell;
 use core::future::Future;
 use core::marker::PhantomData;
+use core::ops::ControlFlow;
 
 use bt_hci::controller::Controller;
 use bt_hci::param::{ConnHandle, FrameSpaceInitiator, PhyKind, PhyMask, SpacingTypes, Status};
@@ -18,7 +19,7 @@ use crate::att::{
     self, Att, AttCfm, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_IND,
     ATT_HANDLE_VALUE_NTF,
 };
-use crate::attribute::{AttributeData, Characteristic, Uuid};
+use crate::attribute::{AttributeData, Characteristic, CharacteristicProps, Descriptor, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 #[cfg(feature = "security")]
@@ -766,7 +767,7 @@ impl<P: PacketPool> Drop for Reply<'_, P> {
 
 /// Notification listener for GATT client.
 pub struct NotificationListener<'lst, const MTU: usize> {
-    handle: u16,
+    handle: Option<u16>,
     listener: pubsub::DynSubscriber<'lst, Notification<MTU>>,
 }
 
@@ -776,7 +777,7 @@ impl<'lst, const MTU: usize> NotificationListener<'lst, MTU> {
     pub async fn next(&mut self) -> Notification<MTU> {
         loop {
             if let WaitResult::Message(m) = self.listener.next_message().await {
-                if m.handle == self.handle {
+                if self.handle.is_none() || self.handle == Some(m.handle) {
                     return m;
                 }
             }
@@ -805,6 +806,19 @@ pub struct Notification<const MTU: usize> {
     handle: u16,
     data: [u8; MTU],
     len: usize,
+    indication: bool,
+}
+
+impl<const MTU: usize> Notification<MTU> {
+    /// The characteristic value handle this notification is for.
+    pub fn handle(&self) -> u16 {
+        self.handle
+    }
+
+    /// Whether this notification was received as an indication.
+    pub fn is_indication(&self) -> bool {
+        self.indication
+    }
 }
 
 impl<const MTU: usize> AsRef<[u8]> for Notification<MTU> {
@@ -830,7 +844,7 @@ impl ServiceHandle {
 
     /// Get the UUID of this service
     pub fn uuid(&self) -> Uuid {
-        self.uuid.clone()
+        self.uuid
     }
 }
 
@@ -906,7 +920,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
         loop {
-            let pdu = connection.next_gatt_client().await;
+            let pdu = connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
             match pdu.as_ref()[0] {
                 att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => break,
                 _ => {
@@ -1029,7 +1043,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         let svc = ServiceHandle {
                             start: handle,
                             end,
-                            uuid: uuid.clone(),
+                            uuid: *uuid,
                         };
                         result.push(svc.clone()).map_err(|_| Error::InsufficientSpace)?;
                         let mut known = self.known_services.borrow_mut();
@@ -1099,8 +1113,10 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         characteristics
                             .push(Characteristic {
                                 handle,
+                                end_handle: 0, // Populated below after all characteristics are discovered
                                 props,
                                 cccd_handle: None,
+                                uuid: decl_uuid,
                                 phantom: PhantomData,
                             })
                             .map_err(|_| Error::InsufficientSpace)?;
@@ -1118,8 +1134,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         let mut iter = characteristics.iter_mut().peekable();
         while let Some(characteristic) = iter.next() {
+            let end = iter.peek().map(|x| x.handle - 2).unwrap_or(service.end);
+            characteristic.end_handle = end;
             if characteristic.props.has_cccd() {
-                let end = iter.peek().map(|x| x.handle - 2).unwrap_or(service.end);
                 characteristic.cccd_handle = match self.get_characteristic_cccd(characteristic.handle + 1, end).await {
                     Ok(handle) => Some(handle),
                     Err(BleHostError::BleHost(Error::NotFound)) => None,
@@ -1138,7 +1155,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         uuid: &Uuid,
     ) -> Result<Characteristic<T>, BleHostError<C::Error>> {
         let mut start: u16 = service.start;
-        let mut found_indicate_or_notify_uuid = Option::None;
+        // Once we find the matching UUID, we store (value_handle, props) and continue
+        // iterating to find the next characteristic declaration to determine end_handle.
+        let mut found: Option<(u16, CharacteristicProps)> = None;
 
         loop {
             let data = att::AttReq::ReadByType {
@@ -1151,7 +1170,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             match Self::response(response.pdu.as_ref())? {
                 AttRsp::ReadByType { mut it } => {
                     while let Some(res) = it.next() {
-                        let (handle, item) = res?;
+                        let (declaration_handle, item) = res?;
                         let expected_items_len = 5;
                         let item_len = item.len();
 
@@ -1164,72 +1183,89 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         }
                         if let AttributeData::Declaration {
                             props,
-                            handle,
+                            handle: value_handle,
                             uuid: decl_uuid,
                         } = AttributeData::decode_declaration(item)?
                         {
-                            if let Some((start_handle, _)) = found_indicate_or_notify_uuid {
+                            if let Some((found_handle, found_props)) = found {
+                                let end = declaration_handle - 1;
+                                let cccd_handle: Option<u16> = if found_props.has_cccd() {
+                                    Some(self.get_characteristic_cccd(found_handle + 1, end).await?)
+                                } else {
+                                    None
+                                };
                                 return Ok(Characteristic {
-                                    handle: start_handle,
-                                    cccd_handle: Some(self.get_characteristic_cccd(start_handle, handle).await?),
-                                    props,
+                                    handle: found_handle,
+                                    end_handle: end,
+                                    cccd_handle,
+                                    props: found_props,
+                                    uuid: *uuid,
                                     phantom: PhantomData,
                                 });
                             }
 
                             if *uuid == decl_uuid {
-                                // If there are "notify" and "indicate" characteristic properties we need to find the
-                                // next characteristic so we can determine the search space for the CCCD
-                                if !props.has_cccd() {
-                                    return Ok(Characteristic {
-                                        handle,
-                                        cccd_handle: None,
-                                        props,
-                                        phantom: PhantomData,
-                                    });
-                                }
-                                found_indicate_or_notify_uuid = Some((handle, props));
+                                found = Some((value_handle, props));
                             }
 
-                            if handle == 0xFFFF {
+                            if value_handle == 0xFFFF {
+                                if found.is_some() {
+                                    break; // Will be handled below as last characteristic
+                                }
                                 return Err(Error::NotFound.into());
                             }
-                            start = handle + 1;
+                            start = value_handle + 1;
                         } else {
                             return Err(Error::InvalidCharacteristicDeclarationData.into());
                         }
                     }
                 }
-                AttRsp::Error { request, handle, code } => match code {
-                    att::AttErrorCode::ATTRIBUTE_NOT_FOUND => match found_indicate_or_notify_uuid {
-                        Some((handle, props)) => {
-                            return Ok(Characteristic {
-                                handle,
-                                cccd_handle: Some(self.get_characteristic_cccd(handle, service.end).await?),
-                                props,
-                                phantom: PhantomData,
-                            });
-                        }
-                        None => return Err(Error::NotFound.into()),
-                    },
+                AttRsp::Error { code, .. } => match code {
+                    att::AttErrorCode::ATTRIBUTE_NOT_FOUND => break,
                     _ => return Err(Error::Att(code).into()),
                 },
                 _ => return Err(Error::UnexpectedGattResponse.into()),
             }
         }
+
+        // If we found the characteristic but it was the last one in the service
+        match found {
+            Some((handle, props)) => {
+                let end = service.end;
+                let cccd_handle: Option<u16> = if props.has_cccd() {
+                    Some(self.get_characteristic_cccd(handle + 1, end).await?)
+                } else {
+                    None
+                };
+                Ok(Characteristic {
+                    handle,
+                    end_handle: end,
+                    cccd_handle,
+                    props,
+                    uuid: *uuid,
+                    phantom: PhantomData,
+                })
+            }
+            None => Err(Error::NotFound.into()),
+        }
     }
 
-    async fn get_characteristic_cccd(
+    /// Discover descriptors in a handle range, calling `callback` for each discovered handle/UUID pair.
+    ///
+    /// Returns `Ok(Some(val))` if `callback` returns `ControlFlow::Break(val)`, or `Ok(None)` if
+    /// the entire range was iterated without breaking.
+    async fn find_descriptors<R>(
         &self,
-        char_start_handle: u16,
-        char_end_handle: u16,
-    ) -> Result<u16, BleHostError<C::Error>> {
-        let mut start_handle = char_start_handle;
+        start: u16,
+        end: u16,
+        mut callback: impl FnMut(u16, Uuid) -> ControlFlow<R>,
+    ) -> Result<Option<R>, BleHostError<C::Error>> {
+        let mut start_handle = start;
 
-        while start_handle <= char_end_handle {
+        while start_handle <= end {
             let data = att::AttReq::FindInformation {
                 start_handle,
-                end_handle: char_end_handle,
+                end_handle: end,
             };
 
             let response = self.request(data).await?;
@@ -1237,17 +1273,90 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             match Self::response(response.pdu.as_ref())? {
                 AttRsp::FindInformation { mut it } => {
                     while let Some(Ok((handle, uuid))) = it.next() {
-                        if uuid == CLIENT_CHARACTERISTIC_CONFIGURATION.into() {
-                            return Ok(handle);
+                        if let ControlFlow::Break(val) = callback(handle, uuid) {
+                            return Ok(Some(val));
                         }
                         start_handle = handle + 1;
                     }
                 }
-                AttRsp::Error { request, handle, code } => return Err(Error::Att(code).into()),
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND => {
+                    return Ok(None);
+                }
+                AttRsp::Error { code, .. } => return Err(Error::Att(code).into()),
                 _ => return Err(Error::UnexpectedGattResponse.into()),
             }
         }
-        Err(Error::NotFound.into())
+        Ok(None)
+    }
+
+    async fn get_characteristic_cccd(
+        &self,
+        char_start_handle: u16,
+        char_end_handle: u16,
+    ) -> Result<u16, BleHostError<C::Error>> {
+        self.find_descriptors(char_start_handle, char_end_handle, |handle, uuid| {
+            if uuid == CLIENT_CHARACTERISTIC_CONFIGURATION.into() {
+                ControlFlow::Break(handle)
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .await?
+        .ok_or(Error::NotFound.into())
+    }
+
+    /// Discover all descriptors for a characteristic.
+    ///
+    /// Returns a list of descriptors found in the handle range belonging to the characteristic.
+    pub async fn descriptors<T: AsGatt + ?Sized, const N: usize>(
+        &self,
+        characteristic: &Characteristic<T>,
+    ) -> Result<Vec<Descriptor<[u8]>, N>, BleHostError<C::Error>> {
+        let start = characteristic.handle + 1;
+        let end = characteristic.end_handle;
+        if start > end {
+            return Ok(Vec::new());
+        }
+        let mut result = Vec::new();
+        self.find_descriptors(start, end, |handle, uuid| {
+            let desc = Descriptor {
+                handle,
+                uuid,
+                phantom: PhantomData,
+            };
+            if result.push(desc).is_err() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .await?;
+        Ok(result)
+    }
+
+    /// Find a specific descriptor by UUID for a characteristic.
+    ///
+    /// Returns the first descriptor matching the given UUID.
+    pub async fn descriptor_by_uuid<T: AsGatt + ?Sized, DT: AsGatt + ?Sized>(
+        &self,
+        characteristic: &Characteristic<T>,
+        uuid: &Uuid,
+    ) -> Result<Descriptor<DT>, BleHostError<C::Error>> {
+        let start = characteristic.handle + 1;
+        let end = characteristic.end_handle;
+        self.find_descriptors(start, end, |handle, desc_uuid| {
+            if desc_uuid == *uuid {
+                ControlFlow::Break(Descriptor {
+                    handle,
+                    uuid: desc_uuid,
+                    phantom: PhantomData,
+                })
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .await?
+        .ok_or(Error::NotFound.into())
     }
 
     /// Read a characteristic described by a handle.
@@ -1354,7 +1463,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         let data = att::AttReq::ReadByType {
             start: service.start,
             end: service.end,
-            attribute_type: uuid.clone(),
+            attribute_type: *uuid,
         };
 
         let response = self.request(data).await?;
@@ -1409,6 +1518,109 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         Ok(())
     }
 
+    /// Read a descriptor value.
+    ///
+    /// The number of bytes copied into the provided buffer is returned.
+    pub async fn read_descriptor<T: AsGatt + ?Sized>(
+        &self,
+        descriptor: &Descriptor<T>,
+        dest: &mut [u8],
+    ) -> Result<usize, BleHostError<C::Error>> {
+        let response = self
+            .request(att::AttReq::Read {
+                handle: descriptor.handle,
+            })
+            .await?;
+
+        match Self::response(response.pdu.as_ref())? {
+            AttRsp::Read { data } => {
+                let to_copy = data.len().min(dest.len());
+                dest[..to_copy].copy_from_slice(&data[..to_copy]);
+                Ok(to_copy)
+            }
+            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
+        }
+    }
+
+    /// Write a descriptor value.
+    pub async fn write_descriptor<T: AsGatt + ?Sized>(
+        &self,
+        descriptor: &Descriptor<T>,
+        buf: &[u8],
+    ) -> Result<(), BleHostError<C::Error>> {
+        let data = att::AttReq::Write {
+            handle: descriptor.handle,
+            data: buf,
+        };
+
+        let response = self.request(data).await?;
+        match Self::response(response.pdu.as_ref())? {
+            AttRsp::Write => Ok(()),
+            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
+        }
+    }
+
+    /// Read a long descriptor value using blob reads if necessary.
+    ///
+    /// This method automatically handles descriptors longer than ATT MTU
+    /// by using Read Blob requests to fetch the complete value.
+    pub async fn read_descriptor_long<T: AsGatt + ?Sized>(
+        &self,
+        descriptor: &Descriptor<T>,
+        dest: &mut [u8],
+    ) -> Result<usize, BleHostError<C::Error>> {
+        let first_read_len = self.read_descriptor(descriptor, dest).await?;
+        let att_mtu = self.connection.att_mtu() as usize;
+
+        if first_read_len != att_mtu - 1 {
+            return Ok(first_read_len);
+        }
+
+        let mut offset = first_read_len;
+        loop {
+            let response = self
+                .request(att::AttReq::ReadBlob {
+                    handle: descriptor.handle,
+                    offset: offset as u16,
+                })
+                .await?;
+
+            match Self::response(response.pdu.as_ref())? {
+                AttRsp::ReadBlob { data } => {
+                    debug!("[read_descriptor_long] Blob read returned {} bytes", data.len());
+                    if data.is_empty() {
+                        break;
+                    }
+
+                    let blob_read_len = data.len();
+                    let len_to_copy = blob_read_len.min(dest.len() - offset);
+                    dest[offset..offset + len_to_copy].copy_from_slice(&data[..len_to_copy]);
+                    offset += len_to_copy;
+
+                    if blob_read_len < att_mtu - 1 || len_to_copy < blob_read_len {
+                        break;
+                    }
+                }
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::INVALID_OFFSET => {
+                    trace!("[read_descriptor_long] Got INVALID_OFFSET, no more data");
+                    break;
+                }
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_LONG => {
+                    trace!("[read_descriptor_long] Attribute not long, no blob reads needed");
+                    break;
+                }
+                AttRsp::Error { code, .. } => {
+                    trace!("[read_descriptor_long] Got error: {:?}", code);
+                    return Err(Error::Att(code).into());
+                }
+                _ => return Err(Error::UnexpectedGattResponse.into()),
+            }
+        }
+        Ok(offset)
+    }
+
     /// Subscribe to indication/notification of a given Characteristic
     ///
     /// A listener is returned, which has a `next()` method
@@ -1431,7 +1643,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             AttRsp::Write => match self.notifications.dyn_subscriber() {
                 Ok(listener) => Ok(NotificationListener {
                     listener,
-                    handle: characteristic.handle,
+                    handle: Some(characteristic.handle),
                 }),
                 Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
                     Err(Error::GattSubscriberLimitReached.into())
@@ -1440,6 +1652,40 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             },
             AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
             _ => Err(Error::UnexpectedGattResponse.into()),
+        }
+    }
+
+    /// Listen for notifications/indications on a given Characteristic without writing the CCCD.
+    ///
+    /// Use this for reconnection scenarios where the server remembers the subscription
+    /// (per BLE spec 10.3.2.2, CCCD values persist across disconnections for bonded devices).
+    pub fn listen<T: AsGatt + ?Sized>(
+        &self,
+        characteristic: &Characteristic<T>,
+    ) -> Result<NotificationListener<'_, 512>, BleHostError<C::Error>> {
+        match self.notifications.dyn_subscriber() {
+            Ok(listener) => Ok(NotificationListener {
+                listener,
+                handle: Some(characteristic.handle),
+            }),
+            Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
+                Err(Error::GattSubscriberLimitReached.into())
+            }
+            Err(_) => Err(Error::Other.into()),
+        }
+    }
+
+    /// Listen for notifications/indications on all characteristics without writing the CCCD.
+    ///
+    /// Returns a catch-all listener that receives notifications for ALL handles.
+    /// Use [`Notification::handle()`] to determine which characteristic the notification is for.
+    pub fn listen_all(&self) -> Result<NotificationListener<'_, 512>, BleHostError<C::Error>> {
+        match self.notifications.dyn_subscriber() {
+            Ok(listener) => Ok(NotificationListener { listener, handle: None }),
+            Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
+                Err(Error::GattSubscriberLimitReached.into())
+            }
+            Err(_) => Err(Error::Other.into()),
         }
     }
 
@@ -1470,8 +1716,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             .await
     }
 
-    /// Handle a notification that was received.
-    async fn handle_notification_packet(&self, data: &[u8]) -> Result<(), BleHostError<C::Error>> {
+    /// Handle a notification or indication that was received.
+    async fn handle_notification_packet(&self, data: &[u8], indication: bool) -> Result<(), BleHostError<C::Error>> {
         let mut r = ReadCursor::new(data);
         let value_handle: u16 = r.read()?;
         let value_attr = r.remaining();
@@ -1486,6 +1732,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             handle,
             data,
             len: to_copy,
+            indication,
         };
         self.notifications.immediate_publisher().publish_immediate(n);
         Ok(())
@@ -1495,11 +1742,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     pub async fn task(&self) -> Result<(), BleHostError<C::Error>> {
         loop {
             let handle = self.connection.handle();
-            let pdu = self.connection.next_gatt_client().await;
-            let data = pdu.as_ref();
+            let pdu = self.connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
             // handle notifications
             if matches!(pdu.as_ref()[0], ATT_HANDLE_VALUE_IND | ATT_HANDLE_VALUE_NTF) {
-                self.handle_notification_packet(&pdu.as_ref()[1..]).await?;
+                let indication = pdu.as_ref()[0] == ATT_HANDLE_VALUE_IND;
+                self.handle_notification_packet(&pdu.as_ref()[1..], indication).await?;
             } else {
                 self.response_channel.send((handle, pdu)).await;
             }
@@ -1539,7 +1786,7 @@ mod tests {
         let att = Att::Client(AttClient::Request(AttReq::ReadByType {
             start,
             end,
-            attribute_type: uuid.clone(),
+            attribute_type: *uuid,
         }));
 
         let mut packet = DefaultPacketPool::allocate().unwrap();

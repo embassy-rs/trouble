@@ -523,7 +523,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 
     #[cfg(feature = "gatt")]
-    pub(crate) async fn next_gatt_client(&self) -> Pdu<P::Packet> {
+    pub(crate) async fn next_gatt_client(&self) -> Option<Pdu<P::Packet>> {
         self.manager.next_gatt_client(self.index).await
     }
 
