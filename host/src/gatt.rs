@@ -975,13 +975,14 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
     /// Discover primary services associated with a UUID.
     pub async fn services(&self) -> Result<Vec<ServiceHandle, MAX_SERVICES>, BleHostError<C::Error>> {
-        let mut start: u16 = 0x0001;
         let mut result = Vec::new();
+        let mut pending: Vec<(u16, u16), MAX_SERVICES> = Vec::new();
+        let _ = pending.push((0x0001, u16::MAX));
 
-        loop {
+        while let Some((start, range_end)) = pending.pop() {
             let data = att::AttReq::ReadByGroupType {
                 start,
-                end: u16::MAX,
+                end: range_end,
                 group_type: PRIMARY_SERVICE.into(),
             };
 
@@ -990,14 +991,23 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             match res {
                 AttRsp::Error { request, handle, code } => {
                     if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND {
-                        break;
+                        continue;
                     }
                     return Err(Error::Att(code).into());
                 }
                 AttRsp::ReadByGroupType { mut it } => {
-                    let mut end: u16 = 0;
+                    let mut end: u16 = start.saturating_sub(1);
                     while let Some(res) = it.next() {
                         let (handle, data) = res?;
+
+                        // ReadByGroupType responses have uniform-length attribute
+                        // data, so services with a different UUID size are skipped.
+                        // Push any gaps onto the pending stack to discover them.
+                        if handle > end + 1 {
+                            pending
+                                .push((end + 1, handle - 1))
+                                .map_err(|_| Error::InsufficientSpace)?;
+                        }
 
                         let mut r = ReadCursor::new(data);
                         end = r.read()?;
@@ -1015,10 +1025,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             known.push(svc).map_err(|_| Error::InsufficientSpace)?;
                         }
                     }
-                    if end == 0xFFFF {
-                        break;
+                    if end < range_end {
+                        pending
+                            .push((end + 1, range_end))
+                            .map_err(|_| Error::InsufficientSpace)?;
                     }
-                    start = end + 1;
                 }
                 res => {
                     trace!("[gatt client] response: {:?}", res);
