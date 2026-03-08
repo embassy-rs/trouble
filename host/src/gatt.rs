@@ -1270,43 +1270,65 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         }
     }
 
+    async fn paginated_request<R>(
+        &self,
+        start: u16,
+        end: u16,
+        mut make_req: impl FnMut(u16, u16) -> AttReq<'static>,
+        mut handle_rsp: impl for<'a> FnMut(AttRsp<'a>) -> Result<ControlFlow<R, u16>, Error>,
+    ) -> Result<Option<R>, BleHostError<C::Error>> {
+        let mut start_handle = start;
+        while start_handle <= end {
+            let data = make_req(start_handle, end);
+            let response = self.request(data).await?;
+            match Self::response(response.pdu.as_ref())? {
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND => {
+                    return Ok(None);
+                }
+                AttRsp::Error { code, .. } => return Err(Error::Att(code).into()),
+                rsp => match handle_rsp(rsp)? {
+                    ControlFlow::Break(val) => return Ok(Some(val)),
+                    ControlFlow::Continue(next) => start_handle = next,
+                },
+            }
+        }
+        Ok(None)
+    }
+
     /// Discover descriptors in a handle range, calling `callback` for each discovered handle/UUID pair.
     ///
     /// Returns `Ok(Some(val))` if `callback` returns `ControlFlow::Break(val)`, or `Ok(None)` if
     /// the entire range was iterated without breaking.
-    async fn find_descriptors<R>(
+    pub async fn find_information<R>(
         &self,
         start: u16,
         end: u16,
         mut callback: impl FnMut(u16, Uuid) -> ControlFlow<R>,
     ) -> Result<Option<R>, BleHostError<C::Error>> {
-        let mut start_handle = start;
-
-        while start_handle <= end {
-            let data = att::AttReq::FindInformation {
+        self.paginated_request(
+            start,
+            end,
+            |start_handle, end_handle| AttReq::FindInformation {
                 start_handle,
-                end_handle: end,
-            };
-
-            let response = self.request(data).await?;
-
-            match Self::response(response.pdu.as_ref())? {
+                end_handle,
+            },
+            |rsp| match rsp {
                 AttRsp::FindInformation { mut it } => {
+                    let mut next_handle = None;
                     while let Some(Ok((handle, uuid))) = it.next() {
+                        next_handle = Some(handle + 1);
                         if let ControlFlow::Break(val) = callback(handle, uuid) {
-                            return Ok(Some(val));
+                            return Ok(ControlFlow::Break(val));
                         }
-                        start_handle = handle + 1;
                     }
+                    next_handle
+                        .map(ControlFlow::Continue)
+                        .ok_or(Error::UnexpectedGattResponse)
                 }
-                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND => {
-                    return Ok(None);
-                }
-                AttRsp::Error { code, .. } => return Err(Error::Att(code).into()),
-                _ => return Err(Error::UnexpectedGattResponse.into()),
-            }
-        }
-        Ok(None)
+                _ => Err(Error::UnexpectedGattResponse),
+            },
+        )
+        .await
     }
 
     async fn get_characteristic_cccd(
@@ -1314,7 +1336,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         char_start_handle: u16,
         char_end_handle: u16,
     ) -> Result<u16, BleHostError<C::Error>> {
-        self.find_descriptors(char_start_handle, char_end_handle, |handle, uuid| {
+        self.find_information(char_start_handle, char_end_handle, |handle, uuid| {
             if uuid == CLIENT_CHARACTERISTIC_CONFIGURATION.into() {
                 ControlFlow::Break(handle)
             } else {
@@ -1338,7 +1360,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             return Ok(Vec::new());
         }
         let mut result = Vec::new();
-        self.find_descriptors(start, end, |handle, uuid| {
+        self.find_information(start, end, |handle, uuid| {
             let desc = Descriptor {
                 handle,
                 uuid,
@@ -1364,7 +1386,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     ) -> Result<Descriptor<DT>, BleHostError<C::Error>> {
         let start = characteristic.handle + 1;
         let end = characteristic.end_handle;
-        self.find_descriptors(start, end, |handle, desc_uuid| {
+        self.find_information(start, end, |handle, desc_uuid| {
             if desc_uuid == *uuid {
                 ControlFlow::Break(Descriptor {
                     handle,
