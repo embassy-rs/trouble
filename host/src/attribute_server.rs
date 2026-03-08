@@ -998,6 +998,52 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         &self.att_table
     }
 
+    /// Write a value to the attribute table and send notifications/indications
+    /// to all connected peers that have subscribed via the CCCD.
+    ///
+    /// If the attribute at `value_handle + 1` is a CCCD (UUID 0x2902), each
+    /// connection is checked for notification/indication subscriptions and
+    /// sent the appropriate PDU.
+    #[cfg(feature = "gatt")]
+    pub async fn write_and_notify<'s, C: crate::Controller>(
+        &self,
+        stack: &'s crate::Stack<'s, C, P>,
+        value_handle: u16,
+        data: &[u8],
+    ) -> Result<(), Error> {
+        self.att_table.write(value_handle, 0, data)?;
+
+        // Check if the next handle is a CCCD
+        let cccd_handle = value_handle + 1;
+        if self.att_table.uuid(cccd_handle)
+            != Some(bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.into())
+        {
+            return Ok(());
+        }
+
+        for conn in stack.connections() {
+            if self.should_notify(&conn, cccd_handle) {
+                let uns = att::AttUns::Notify {
+                    handle: value_handle,
+                    data,
+                };
+                if let Ok(pdu) = crate::gatt::assemble(&conn, att::AttServer::Unsolicited(uns)) {
+                    conn.send(pdu).await;
+                }
+            }
+            if self.should_indicate(&conn, cccd_handle) {
+                let uns = att::AttUns::Indicate {
+                    handle: value_handle,
+                    data,
+                };
+                if let Ok(pdu) = crate::gatt::assemble(&conn, att::AttServer::Unsolicited(uns)) {
+                    conn.send(pdu).await;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Get the CCCD table for a connection
     pub fn get_cccd_table(&self, connection: &Connection<'_, P>) -> Option<CccdTable<CCCD_MAX>> {
         self.cccd_tables.get_cccd_table(&connection.peer_identity())
