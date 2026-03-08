@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use core::ops::ControlFlow;
 
 use bt_hci::param::{AddrKind, BdAddr};
 use embassy_futures::select::{Either, select};
@@ -19,8 +20,6 @@ pub type ConnectionSignal = Signal<NoopRawMutex, Address>;
 const MAX_SERVICES: usize = 32;
 /// Maximum number of discovered characteristics cached per connection.
 const MAX_CHARACTERISTICS: usize = 64;
-/// Maximum number of discovered descriptors cached per connection.
-const MAX_DESCRIPTORS: usize = 64;
 
 /// Commands forwarded from btp::run to the gatt_client task.
 ///
@@ -287,27 +286,48 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
             }
         };
 
-        let result = select(client.task(), async {
-            loop {
-                let c = match cmd.take() {
-                    Some(c) => c,
-                    None => next_command(&commands, &mut listener, &conn_address, &events).await,
-                };
-                if c.address() != conn_address {
-                    warn!("Command address doesn't match connection");
-                    c.reply(Response::Fail).await;
-                    continue;
+        let mut c = cmd.take();
+        loop {
+            let command = match c.take() {
+                Some(c) => c,
+                None => {
+                    match select(
+                        client.task(),
+                        next_command(&commands, &mut listener, &conn_address, &events),
+                    )
+                    .await
+                    {
+                        Either::First(_) => {
+                            info!("GattClient disconnected");
+                            break;
+                        }
+                        Either::Second(c) => c,
+                    }
                 }
-                let response = execute_command(&client, &c, &mut cache, &mut had_subscriptions).await;
-                c.reply(response).await;
-            }
-        })
-        .await;
+            };
 
-        match result {
-            Either::First(Err(BleHostError::BleHost(Error::Disconnected))) => info!("GattClient disconnected"),
-            Either::First(Err(e)) => error!("GattClient task failed: {:?}", e),
-            _ => (),
+            if command.address() != conn_address {
+                warn!("Command address doesn't match connection");
+                command.reply(Response::Fail).await;
+                continue;
+            }
+
+            match select(
+                client.task(),
+                execute_command(&client, &command, &mut cache, &mut had_subscriptions),
+            )
+            .await
+            {
+                Either::First(_) => {
+                    info!("GattClient disconnected during command");
+                    let response = disconnect_response(&command);
+                    command.reply(response).await;
+                    break;
+                }
+                Either::Second(response) => {
+                    command.reply(response).await;
+                }
+            }
         }
     }
 }
@@ -344,21 +364,57 @@ async fn next_command<'a>(
 
 /// Cached discovery state for the current connection.
 ///
-/// Populated by DiscoverPrimaryUuid and DiscoverChrcUuid, consumed by
-/// subsequent commands that need a ServiceHandle or Characteristic.
+/// Populated by DiscoverPrimaryUuid, consumed by subsequent commands
+/// that need a ServiceHandle.
 struct DiscoveryCache {
     services: heapless::Vec<ServiceHandle, MAX_SERVICES>,
-    characteristics: heapless::Vec<Characteristic<[u8]>, MAX_CHARACTERISTICS>,
-    descriptors: heapless::Vec<Descriptor<[u8]>, MAX_DESCRIPTORS>,
 }
 
 impl DiscoveryCache {
     fn new() -> Self {
         Self {
             services: heapless::Vec::new(),
-            characteristics: heapless::Vec::new(),
-            descriptors: heapless::Vec::new(),
         }
+    }
+
+    /// Find indices of all cached services whose handle ranges overlap with the given range.
+    async fn find_services_overlapping<C: crate::Controller, P: PacketPool>(
+        &mut self,
+        start: u16,
+        end: u16,
+        client: &GattClient<'_, C, P, MAX_SERVICES>,
+    ) -> heapless::Vec<usize, MAX_SERVICES> {
+        // Ensure services are discovered
+        if self.services.is_empty() {
+            debug!("Cached service not found, starting discovery");
+            match client.services().await {
+                Ok(services) => {
+                    debug!("Found {} services", services.len());
+                    for svc in services.iter() {
+                        debug!(
+                            "  service: start={}, end={}, uuid={:?}",
+                            svc.handle_range().start(),
+                            svc.handle_range().end(),
+                            svc.uuid(),
+                        );
+                    }
+                    self.services = services;
+                }
+                Err(e) => {
+                    error!("Auto-discover services failed: {:?}", e);
+                }
+            }
+        }
+        let mut result = heapless::Vec::new();
+        for (i, svc) in self.services.iter().enumerate() {
+            let svc_start = *svc.handle_range().start();
+            let svc_end = *svc.handle_range().end();
+            // Ranges overlap if one starts before the other ends
+            if svc_start <= end && svc_end >= start {
+                let _ = result.push(i);
+            }
+        }
+        result
     }
 
     /// Find a cached service by its handle range.
@@ -370,49 +426,6 @@ impl DiscoveryCache {
     ) -> Option<&ServiceHandle> {
         let service = self.find_service_containing(start, client).await?;
         (service.handle_range() == (start..=end)).then_some(service)
-    }
-
-    /// Find a cached characteristic by its handle.
-    async fn find_characteristic<C: crate::Controller, P: PacketPool>(
-        &mut self,
-        handle: u16,
-        client: &GattClient<'_, C, P, MAX_SERVICES>,
-    ) -> Option<&Characteristic<[u8]>> {
-        self.find_characteristic_by(handle, |c| c.handle == handle, client)
-            .await
-    }
-
-    /// Find a cached characteristic by its CCCD handle.
-    async fn find_characteristic_by_cccd<C: crate::Controller, P: PacketPool>(
-        &mut self,
-        cccd_handle: u16,
-        client: &GattClient<'_, C, P, MAX_SERVICES>,
-    ) -> Option<&Characteristic<[u8]>> {
-        self.find_characteristic_by(cccd_handle, |c| c.cccd_handle == Some(cccd_handle), client)
-            .await
-    }
-
-    async fn find_characteristic_by<C: crate::Controller, P: PacketPool, F: FnMut(&Characteristic<[u8]>) -> bool>(
-        &mut self,
-        handle: u16,
-        mut predicate: F,
-        client: &GattClient<'_, C, P, MAX_SERVICES>,
-    ) -> Option<&Characteristic<[u8]>> {
-        if let Some(i) = self.characteristics.iter().position(&mut predicate) {
-            return Some(&self.characteristics[i]);
-        }
-
-        let service = self.find_service_containing(handle, client).await?;
-        match client.characteristics::<MAX_CHARACTERISTICS>(service).await {
-            Ok(chars) => {
-                self.characteristics.extend(chars.into_iter());
-                self.characteristics.iter().find(|c| predicate(c))
-            }
-            Err(e) => {
-                error!("Auto-discover characteristics failed: {:?}", e);
-                None
-            }
-        }
     }
 
     /// Find the cached service whose handle range contains the given handle.
@@ -429,6 +442,14 @@ impl DiscoveryCache {
         match client.services().await {
             Ok(services) => {
                 debug!("Found {} services", services.len());
+                for svc in services.iter() {
+                    debug!(
+                        "  service: start={}, end={}, uuid={:?}",
+                        svc.handle_range().start(),
+                        svc.handle_range().end(),
+                        svc.uuid(),
+                    );
+                }
                 self.services = services;
                 self.services.iter().find(|s| s.handle_range().contains(&handle))
             }
@@ -438,94 +459,38 @@ impl DiscoveryCache {
             }
         }
     }
-
-    /// Find a cached descriptor by its handle, with auto-discovery fallback.
-    async fn find_descriptor<C: crate::Controller, P: PacketPool>(
-        &mut self,
-        handle: u16,
-        client: &GattClient<'_, C, P, MAX_SERVICES>,
-    ) -> Option<&Descriptor<[u8]>> {
-        if let Some(i) = self.descriptors.iter().position(|d| d.handle() == handle) {
-            return Some(&self.descriptors[i]);
-        }
-
-        // Find the characteristic whose handle range contains this descriptor handle.
-        // A descriptor handle is between char.handle (exclusive) and char.end_handle (inclusive).
-        let chrc_idx = self
-            .characteristics
-            .iter()
-            .position(|c| c.handle < handle && handle <= c.end_handle);
-        let chrc = if let Some(i) = chrc_idx {
-            &self.characteristics[i]
-        } else {
-            // Auto-discover services, then characteristics for the containing service.
-            let service = self.find_service_containing(handle, client).await?;
-            match client.characteristics::<MAX_CHARACTERISTICS>(service).await {
-                Ok(chars) => {
-                    self.characteristics.extend(chars.into_iter());
-                }
-                Err(e) => {
-                    error!("Auto-discover characteristics for descriptor lookup failed: {:?}", e);
-                    return None;
-                }
-            }
-            let i = self
-                .characteristics
-                .iter()
-                .position(|c| c.handle < handle && handle <= c.end_handle)?;
-            &self.characteristics[i]
-        };
-
-        // Discover descriptors for the containing characteristic.
-        match client.descriptors::<[u8], MAX_DESCRIPTORS>(chrc).await {
-            Ok(descs) => {
-                self.descriptors.extend(descs.into_iter());
-                self.descriptors.iter().find(|d| d.handle() == handle)
-            }
-            Err(e) => {
-                error!("Auto-discover descriptors failed: {:?}", e);
-                None
-            }
-        }
-    }
-
-    /// Ensure services have been discovered (populates cache if empty).
-    async fn ensure_discovered<C: crate::Controller, P: PacketPool>(
-        &mut self,
-        client: &GattClient<'_, C, P, MAX_SERVICES>,
-    ) {
-        if self.services.is_empty() {
-            debug!("Discovery cache empty, discovering services");
-            match client.services().await {
-                Ok(services) => {
-                    debug!("Found {} services", services.len());
-                    self.services = services;
-                }
-                Err(e) => {
-                    error!("Auto-discover services failed: {:?}", e);
-                }
-            }
-        }
-    }
-
-    /// Return all cached services whose handle range overlaps [start, end].
-    fn services_in_range(&self, start: u16, end: u16) -> &[ServiceHandle] {
-        // Since services are typically sorted and we usually want all of them
-        // when start=1 end=0xFFFF, just return all services.
-        // A more precise filter would check overlap, but this covers the common case.
-        if start <= 1 && end >= 0xFFFE {
-            return self.services.as_slice();
-        }
-        // For narrower ranges, return all (the caller will handle mismatches).
-        self.services.as_slice()
-    }
 }
 
-/// Extract the ATT error code from a `BleHostError`, if the error is an ATT error.
+/// Extract a BTP-suitable ATT response code from a `BleHostError`.
+///
+/// Returns the ATT error code for ATT errors, or maps Timeout/Disconnected
+/// to a non-zero code so BTP responses carry a valid ATT_Response value
+/// instead of falling through to a generic Fail.
 fn att_error_code<E>(err: &BleHostError<E>) -> Option<u8> {
     match err {
         BleHostError::BleHost(Error::Att(code)) => Some(code.to_u8()),
+        BleHostError::BleHost(Error::Timeout) | BleHostError::BleHost(Error::Disconnected) => Some(0x0e),
         _ => None,
+    }
+}
+
+/// Response to send when disconnection interrupts a command.
+///
+/// Uses ATT Unlikely Error (0x0e) for commands that carry an ATT response code,
+/// matching what `att_error_code()` returns for `Error::Disconnected`.
+fn disconnect_response(cmd: &command_channel::Command<'_, Command>) -> Response {
+    const UNLIKELY_ERROR: u8 = 0x0e;
+    match &**cmd {
+        Command::Read { .. } | Command::ReadLong { .. } => Response::ReadData(gatt::ReadDataResponse {
+            att_response: UNLIKELY_ERROR,
+            data: Box::from([]),
+        }),
+        Command::ReadUuid { .. } => Response::ReadUuidData(gatt::ReadUuidDataResponse {
+            att_response: UNLIKELY_ERROR,
+            values: Box::from([]),
+        }),
+        Command::Write { .. } => Response::WriteResult(UNLIKELY_ERROR),
+        _ => Response::Fail,
     }
 }
 
@@ -582,42 +547,39 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             uuid,
             ..
         } => {
-            let Some(service) = cache.find_service(*start_handle, *end_handle, client).await else {
-                error!("No cached service for handle range {}..={}", start_handle, end_handle);
-                return Response::Fail;
-            };
-            match client.characteristic_by_uuid::<[u8]>(service, uuid).await {
-                Ok(chrc) => {
-                    if cache.characteristics.is_full() {
-                        warn!("Characteristic cache full (max {})", MAX_CHARACTERISTICS);
+            let service_indices = cache
+                .find_services_overlapping(*start_handle, *end_handle, client)
+                .await;
+            if service_indices.is_empty() {
+                return Response::Characteristics(alloc::vec![].into_boxed_slice());
+            }
+            for idx in service_indices {
+                match client.characteristic_by_uuid::<[u8]>(&cache.services[idx], uuid).await {
+                    Ok(chrc) => {
+                        // Filter: only return characteristics within the requested range
+                        if chrc.handle < *start_handle || chrc.handle > *end_handle {
+                            continue;
+                        }
+                        let info = gatt::CharacteristicInfo {
+                            char_handle: chrc.handle,
+                            value_handle: chrc.handle,
+                            properties: chrc.props.to_raw(),
+                            uuid: *uuid,
+                        };
+                        return Response::Characteristics(alloc::vec![info].into_boxed_slice());
+                    }
+                    Err(BleHostError::BleHost(Error::NotFound)) => continue,
+                    Err(e) => {
+                        error!("DiscoverChrcUuid failed: {:?}", e);
                         return Response::Fail;
                     }
-                    let info = gatt::CharacteristicInfo {
-                        char_handle: chrc.handle,
-                        value_handle: chrc.handle,
-                        properties: chrc.props.to_raw(),
-                        uuid: uuid.clone(),
-                    };
-                    // Cache for later Read/Write/CfgNotify lookups
-                    let _ = cache.characteristics.push(chrc);
-                    Response::Characteristics(alloc::vec![info].into_boxed_slice())
-                }
-                Err(e) => {
-                    error!("DiscoverChrcUuid failed: {:?}", e);
-                    Response::Fail
                 }
             }
+            Response::Characteristics(alloc::vec![].into_boxed_slice())
         }
         Command::Read { handle, .. } => {
             let mut buf = alloc::vec![0u8; 512];
-            let result = if let Some(chrc) = cache.find_characteristic(*handle, client).await {
-                client.read_characteristic(chrc, &mut buf).await
-            } else if let Some(desc) = cache.find_descriptor(*handle, client).await {
-                client.read_descriptor(desc, &mut buf).await
-            } else {
-                error!("No cached characteristic or descriptor for handle {}", handle);
-                return Response::Fail;
-            };
+            let result = client.read_handle(*handle, &mut buf).await;
             match result {
                 Ok(len) => {
                     buf.truncate(len);
@@ -641,19 +603,8 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             }
         }
         Command::ReadLong { handle, offset, .. } => {
-            if *offset != 0 {
-                error!("Trouble does not support read long with offset {}", offset);
-                return Response::Fail;
-            }
             let mut buf = alloc::vec![0u8; 512];
-            let result = if let Some(chrc) = cache.find_characteristic(*handle, client).await {
-                client.read_characteristic(chrc, &mut buf).await
-            } else if let Some(desc) = cache.find_descriptor(*handle, client).await {
-                client.read_descriptor(desc, &mut buf).await
-            } else {
-                error!("No cached characteristic or descriptor for handle {}", handle);
-                return Response::Fail;
-            };
+            let result = client.read_handle_blob(*handle, *offset, &mut buf).await;
             match result {
                 Ok(len) => {
                     buf.truncate(len);
@@ -682,60 +633,47 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             uuid,
             ..
         } => {
-            // Try exact service match first, then fall back to searching all services
-            // overlapping the requested handle range (e.g. 0x0001..=0xFFFF).
-            let services = if let Some(service) = cache.find_service(*start_handle, *end_handle, client).await {
-                core::slice::from_ref(service) as &[ServiceHandle]
-            } else {
-                cache.ensure_discovered(client).await;
-                cache.services_in_range(*start_handle, *end_handle)
-            };
-            let mut buf = alloc::vec![0u8; 512];
-            let mut last_att_error = None;
-            for service in services {
-                match client.read_characteristic_by_uuid(service, uuid, &mut buf).await {
-                    Ok(len) => {
-                        buf.truncate(len);
-                        // TODO: This is wrong. We need to return the characteristic handle which is not exposed by trouble.
-                        let value = gatt::CharacteristicValue {
-                            handle: 0,
-                            data: buf.into_boxed_slice(),
-                        };
-                        return Response::ReadUuidData(gatt::ReadUuidDataResponse {
-                            att_response: 0x00,
-                            values: alloc::vec![value].into_boxed_slice(),
-                        });
-                    }
-                    Err(ref e) => {
-                        if let Some(code) = att_error_code(e) {
-                            last_att_error = Some(code);
-                        }
-                        continue;
-                    }
+            let mut values: alloc::vec::Vec<gatt::CharacteristicValue> = alloc::vec::Vec::new();
+
+            let result = client
+                .read_by_type(*start_handle, *end_handle, uuid, |handle, data| {
+                    values.push(gatt::CharacteristicValue {
+                        handle,
+                        data: data.into(),
+                    });
+                    ControlFlow::<()>::Continue(())
+                })
+                .await;
+
+            match result {
+                Ok(_) if !values.is_empty() => Response::ReadUuidData(gatt::ReadUuidDataResponse {
+                    att_response: 0x00,
+                    values: values.into_boxed_slice(),
+                }),
+                Ok(_) => {
+                    // No values found and no ATT error — shouldn't normally happen
+                    // since ATTRIBUTE_NOT_FOUND would be returned, but handle gracefully.
+                    Response::ReadUuidData(gatt::ReadUuidDataResponse {
+                        att_response: 0x0a, // ATTRIBUTE_NOT_FOUND
+                        values: Box::from([]),
+                    })
+                }
+                Err(ref e) if att_error_code(e).is_some() => {
+                    let code = att_error_code(e).unwrap();
+                    warn!("ReadUuid returned ATT error: {:#x}", code);
+                    Response::ReadUuidData(gatt::ReadUuidDataResponse {
+                        att_response: code,
+                        values: Box::from([]),
+                    })
+                }
+                Err(e) => {
+                    error!("ReadUuid failed: {:?}", e);
+                    Response::Fail
                 }
             }
-            if let Some(code) = last_att_error {
-                warn!("ReadUuid returned ATT error: {:#x}", code);
-                return Response::ReadUuidData(gatt::ReadUuidDataResponse {
-                    att_response: code,
-                    values: Box::from([]),
-                });
-            }
-            error!(
-                "ReadUuid: no service with UUID {:?} in range {}..={}",
-                uuid, start_handle, end_handle
-            );
-            Response::Fail
         }
         Command::Write { handle, data, .. } => {
-            let result = if let Some(chrc) = cache.find_characteristic(*handle, client).await {
-                client.write_characteristic(chrc, data).await
-            } else if let Some(desc) = cache.find_descriptor(*handle, client).await {
-                client.write_descriptor(desc, data).await
-            } else {
-                error!("No cached characteristic or descriptor for handle {}", handle);
-                return Response::Fail;
-            };
+            let result = client.write_handle(*handle, data).await;
             match result {
                 Ok(()) => Response::WriteResult(0x00),
                 Err(ref e) if att_error_code(e).is_some() => {
@@ -750,11 +688,8 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             }
         }
         Command::WriteWithoutRsp { handle, data, .. } => {
-            let Some(chrc) = cache.find_characteristic(*handle, client).await else {
-                error!("No cached characteristic for handle {}", handle);
-                return Response::Fail;
-            };
-            match client.write_characteristic_without_response(chrc, data).await {
+            let result = client.write_handle_without_response(*handle, data).await;
+            match result {
                 Ok(()) => Response::WriteWithoutRspDone,
                 Err(e) => {
                     error!("WriteWithoutRsp failed: {:?}", e);
@@ -803,7 +738,6 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                             uuid: c.uuid.clone(),
                         })
                         .collect();
-                    cache.characteristics.extend(chars.into_iter());
                     Response::Characteristics(infos.into_boxed_slice())
                 }
                 Err(e) => {
@@ -817,26 +751,15 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             end_handle,
             ..
         } => {
-            // start_handle is the characteristic value handle + 1, so the characteristic
-            // declaration handle is start_handle - 2 and its value handle is start_handle - 1.
-            let char_handle = start_handle - 1;
-            let Some(chrc) = cache.find_characteristic(char_handle, client).await else {
-                error!("No cached characteristic for handle {}", char_handle);
-                return Response::Fail;
-            };
-            match client.descriptors::<[u8], MAX_DESCRIPTORS>(chrc).await {
-                Ok(descs) => {
-                    let infos: alloc::vec::Vec<gatt::DescriptorInfo> = descs
-                        .iter()
-                        .filter(|d| d.handle() <= *end_handle)
-                        .map(|d| gatt::DescriptorInfo {
-                            handle: d.handle(),
-                            uuid: d.uuid().clone(),
-                        })
-                        .collect();
-                    cache.descriptors.extend(descs.into_iter());
-                    Response::Descriptors(infos.into_boxed_slice())
-                }
+            let mut infos: alloc::vec::Vec<gatt::DescriptorInfo> = alloc::vec::Vec::new();
+            let result = client
+                .find_information(*start_handle, *end_handle, |handle, uuid| {
+                    infos.push(gatt::DescriptorInfo { handle, uuid });
+                    ControlFlow::<()>::Continue(())
+                })
+                .await;
+            match result {
+                Ok(_) => Response::Descriptors(infos.into_boxed_slice()),
                 Err(e) => {
                     error!("DiscoverAllDesc failed: {:?}", e);
                     Response::Fail
@@ -844,24 +767,19 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             }
         }
         Command::CfgNotify { enable, ccc_handle, .. } => {
-            subscribe_cfg(client, cache, *ccc_handle, *enable, false, had_subscriptions).await
+            subscribe_cfg(client, *ccc_handle, *enable, false, had_subscriptions).await
         }
         Command::CfgIndicate { enable, ccc_handle, .. } => {
-            subscribe_cfg(client, cache, *ccc_handle, *enable, true, had_subscriptions).await
+            subscribe_cfg(client, *ccc_handle, *enable, true, had_subscriptions).await
         }
     }
 }
 
-/// Handle CfgNotify/CfgIndicate: subscribe or unsubscribe.
+/// Handle CfgNotify/CfgIndicate: write the CCCD to enable or disable.
 ///
-/// If the characteristic owning `ccc_handle` is not yet cached, this will
-/// auto-discover services and characteristics to find it.
-///
-/// The returned `NotificationListener` from `subscribe()` is dropped immediately;
-/// the single `listen_all()` listener in the caller catches all notifications.
+/// Uses a raw handle write since the BTP command provides the CCCD handle directly.
 async fn subscribe_cfg<C: crate::Controller, P: PacketPool>(
     client: &GattClient<'_, C, P, MAX_SERVICES>,
-    cache: &mut DiscoveryCache,
     ccc_handle: u16,
     enable: bool,
     is_indication: bool,
@@ -872,35 +790,23 @@ async fn subscribe_cfg<C: crate::Controller, P: PacketPool>(
         ccc_handle, enable, is_indication
     );
 
-    let Some(chrc) = cache.find_characteristic_by_cccd(ccc_handle, client).await else {
-        error!("No cached characteristic for CCCD handle {}", ccc_handle);
-        return Response::Fail;
+    let value: u16 = if enable {
+        if is_indication { 0x02 } else { 0x01 }
+    } else {
+        0x00
     };
 
-    if enable {
-        // Write the CCCD to enable notifications/indications on the remote peer.
-        // The returned listener is dropped immediately — the listen_all() listener catches everything.
-        match client.subscribe(chrc, is_indication).await {
-            Ok(_listener) => {
-                info!("Subscribed handle={}", chrc.handle);
+    match client.write_handle(ccc_handle, &value.to_le_bytes()).await {
+        Ok(()) => {
+            info!("CCCD write handle={} value={:#04x}", ccc_handle, value);
+            if enable {
                 *had_subscriptions = true;
-                Response::CfgDone
             }
-            Err(e) => {
-                error!("Subscribe failed: {:?}", e);
-                Response::Fail
-            }
+            Response::CfgDone
         }
-    } else {
-        match client.unsubscribe(chrc).await {
-            Ok(()) => {
-                info!("Unsubscribed handle={}", chrc.handle);
-                Response::CfgDone
-            }
-            Err(e) => {
-                error!("Unsubscribe failed: {:?}", e);
-                Response::Fail
-            }
+        Err(e) => {
+            error!("CCCD write failed: {:?}", e);
+            Response::Fail
         }
     }
 }
