@@ -25,6 +25,7 @@ embedded-io-async = { version = "0.7" }
 embedded-io = { version = "0.7" }
 critical-section = { version = "1", features = ["std"] }
 embassy-sync = "0.7"
+embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 tokio-serial = "5.4"
 tokio-util = "0.7"
 rand = "0.8.5"

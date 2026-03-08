@@ -12,7 +12,7 @@ use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::pubsub::{self, PubSubChannel, WaitResult};
-use embassy_time::Duration;
+use embassy_time::{with_timeout, Duration};
 use heapless::Vec;
 
 use crate::att::{
@@ -788,6 +788,9 @@ impl<'lst, const MTU: usize> NotificationListener<'lst, MTU> {
 const MAX_NOTIF: usize = config::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
 const NOTIF_QSIZE: usize = config::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
 
+/// BT Core Spec Vol 3, Part F, Section 3.3.3: ATT transaction timeout.
+const ATT_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// A GATT client capable of using the GATT protocol.
 pub struct GattClient<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> {
     known_services: RefCell<Vec<ServiceHandle, MAX_SERVICES>>,
@@ -868,7 +871,16 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client
 
         self.send_att_data(data).await?;
 
-        let (h, pdu) = self.response_channel.receive().await;
+        // BT Core Spec Vol 3, Part F, Section 3.3.3: 30-second ATT transaction timeout.
+        // If the server does not respond within 30 seconds, the client shall close the
+        // ATT bearer (disconnect).
+        let (h, pdu) = with_timeout(ATT_TRANSACTION_TIMEOUT, self.response_channel.receive())
+            .await
+            .map_err(|_| {
+                warn!("[gatt] ATT transaction timeout (30s), disconnecting");
+                self.connection.disconnect();
+                BleHostError::BleHost(Error::Timeout)
+            })?;
 
         assert_eq!(h, self.connection.handle());
         Ok(Response { handle: h, pdu })
@@ -919,15 +931,23 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         connection.send(Pdu::new(buf, len)).await;
 
         // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
-        loop {
-            let pdu = connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
-            match pdu.as_ref()[0] {
-                att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => break,
-                _ => {
-                    warn!("[gatt] unexpected PDU during MTU exchange, discarding");
+        with_timeout(ATT_TRANSACTION_TIMEOUT, async {
+            loop {
+                let pdu = connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
+                match pdu.as_ref()[0] {
+                    att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => break Ok::<_, BleHostError<C::Error>>(()),
+                    _ => {
+                        warn!("[gatt] unexpected PDU during MTU exchange, discarding");
+                    }
                 }
             }
-        }
+        })
+        .await
+        .map_err(|_| {
+            warn!("[gatt] MTU exchange timeout (30s), disconnecting");
+            connection.disconnect();
+            BleHostError::BleHost(Error::Timeout)
+        })??;
 
         // Enable encryption with bonded peers before starting GATT operations
         // (BT Core Spec Vol 3, Part C, Section 10.3.2: client "should" enable encryption on reconnection)
