@@ -173,12 +173,17 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn disconnect(&self, peer_identity: &Identity) {
+    fn disconnect(&self, peer_identity: &Identity, bonded: bool) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
-            for (client, _) in n.iter_mut() {
+            for (client, table) in n.iter_mut() {
                 if client.identity.match_identity(peer_identity) {
-                    client.is_connected = false;
+                    if !bonded {
+                        *client = Client::default();
+                        table.disable_all();
+                    } else {
+                        client.is_connected = false;
+                    }
                     break;
                 }
             }
@@ -335,7 +340,12 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
     }
 
     fn disconnect(&self, connection: &Connection<'_, P>) {
-        self.cccd_tables.disconnect(&connection.peer_identity());
+        #[cfg(feature = "security")]
+        let bonded = connection.is_bonded_peer();
+        #[cfg(not(feature = "security"))]
+        let bonded = false;
+
+        self.cccd_tables.disconnect(&connection.peer_identity(), bonded);
     }
 
     fn process(
