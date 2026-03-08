@@ -368,7 +368,8 @@ where
         btp::run(
             pre,
             &config,
-            server.table(),
+            &server,
+            &stack,
             events.dyn_receiver(),
             &channels,
             &mut packet,
