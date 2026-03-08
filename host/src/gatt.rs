@@ -1091,65 +1091,67 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         &self,
         service: &ServiceHandle,
     ) -> Result<Vec<Characteristic<[u8]>, N>, BleHostError<C::Error>> {
-        let mut start: u16 = service.start;
-        let mut characteristics = Vec::new();
+        let mut characteristics: Vec<Characteristic<[u8]>, N> = Vec::new();
+        let mut err: Option<BleHostError<C::Error>> = None;
 
-        loop {
-            let data = att::AttReq::ReadByType {
-                start,
-                end: service.end,
-                attribute_type: CHARACTERISTIC.into(),
-            };
-            let response = self.request(data).await?;
+        self.read_by_type(
+            service.start,
+            service.end,
+            &CHARACTERISTIC.into(),
+            |declaration_handle, item| {
+                if declaration_handle == 0xffff {
+                    err = Some(Error::Att(AttErrorCode::INVALID_HANDLE).into());
+                    return ControlFlow::Break(());
+                }
 
-            match Self::response(response.pdu.as_ref())? {
-                AttRsp::ReadByType { mut it } => {
-                    while let Some(res) = it.next() {
-                        let (declaration_handle, item) = res?;
-                        if declaration_handle == 0xffff {
-                            return Err(Error::Att(AttErrorCode::INVALID_HANDLE).into());
+                let expected_items_len = 5;
+                let item_len = item.len();
+
+                if item_len < expected_items_len {
+                    err = Some(
+                        Error::MalformedCharacteristicDeclaration {
+                            expected: expected_items_len,
+                            actual: item_len,
                         }
+                        .into(),
+                    );
+                    return ControlFlow::Break(());
+                }
 
-                        let expected_items_len = 5;
-                        let item_len = item.len();
-
-                        if item_len < expected_items_len {
-                            return Err(Error::MalformedCharacteristicDeclaration {
-                                expected: expected_items_len,
-                                actual: item_len,
-                            }
-                            .into());
-                        }
-
-                        let AttributeData::Declaration {
-                            props,
-                            handle,
-                            uuid: decl_uuid,
-                        } = AttributeData::decode_declaration(item)?
-                        else {
-                            unreachable!()
-                        };
-
-                        characteristics
+                match AttributeData::decode_declaration(item) {
+                    Ok(AttributeData::Declaration {
+                        props,
+                        handle,
+                        uuid: decl_uuid,
+                    }) => {
+                        if characteristics
                             .push(Characteristic {
                                 handle,
-                                end_handle: 0, // Populated below after all characteristics are discovered
+                                end_handle: 0,
                                 props,
                                 cccd_handle: None,
                                 uuid: decl_uuid,
                                 phantom: PhantomData,
                             })
-                            .map_err(|_| Error::InsufficientSpace)?;
-
-                        start = declaration_handle + 1;
+                            .is_err()
+                        {
+                            err = Some(Error::InsufficientSpace.into());
+                            return ControlFlow::Break(());
+                        }
+                        ControlFlow::Continue(())
+                    }
+                    Ok(_) => unreachable!(),
+                    Err(e) => {
+                        err = Some(e.into());
+                        ControlFlow::Break(())
                     }
                 }
-                AttRsp::Error { request, handle, code } => match code {
-                    att::AttErrorCode::ATTRIBUTE_NOT_FOUND => break,
-                    _ => return Err(Error::Att(code).into()),
-                },
-                _ => return Err(Error::UnexpectedGattResponse.into()),
-            }
+            },
+        )
+        .await?;
+
+        if let Some(e) = err {
+            return Err(e);
         }
 
         let mut iter = characteristics.iter_mut().peekable();
@@ -1174,84 +1176,68 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         service: &ServiceHandle,
         uuid: &Uuid,
     ) -> Result<Characteristic<T>, BleHostError<C::Error>> {
-        let mut start: u16 = service.start;
-        // Once we find the matching UUID, we store (value_handle, props) and continue
-        // iterating to find the next characteristic declaration to determine end_handle.
         let mut found: Option<(u16, CharacteristicProps)> = None;
 
-        loop {
-            let data = att::AttReq::ReadByType {
-                start,
-                end: service.end,
-                attribute_type: CHARACTERISTIC.into(),
-            };
-            let response = self.request(data).await?;
+        trace!(
+            "[characteristic_by_uuid] service start={}, end={}, uuid={:?}",
+            service.start,
+            service.end,
+            uuid
+        );
 
-            match Self::response(response.pdu.as_ref())? {
-                AttRsp::ReadByType { mut it } => {
-                    while let Some(res) = it.next() {
-                        let (declaration_handle, item) = res?;
-                        let expected_items_len = 5;
-                        let item_len = item.len();
+        // Iterate through characteristic declarations. When we find the matching UUID,
+        // we store (value_handle, props) and continue to find the next declaration
+        // to determine end_handle.
+        let end = self
+            .read_by_type(
+                service.start,
+                service.end,
+                &CHARACTERISTIC.into(),
+                |declaration_handle, item| {
+                    let expected_items_len = 5;
+                    let item_len = item.len();
 
-                        if item_len < expected_items_len {
-                            return Err(Error::MalformedCharacteristicDeclaration {
-                                expected: expected_items_len,
-                                actual: item_len,
-                            }
-                            .into());
-                        }
-                        if let AttributeData::Declaration {
+                    if item_len < expected_items_len {
+                        return ControlFlow::Break(Err(Error::MalformedCharacteristicDeclaration {
+                            expected: expected_items_len,
+                            actual: item_len,
+                        }));
+                    }
+
+                    match AttributeData::decode_declaration(item) {
+                        Ok(AttributeData::Declaration {
                             props,
                             handle: value_handle,
                             uuid: decl_uuid,
-                        } = AttributeData::decode_declaration(item)?
-                        {
-                            if let Some((found_handle, found_props)) = found {
-                                let end = declaration_handle - 1;
-                                let cccd_handle: Option<u16> = if found_props.has_cccd() {
-                                    Some(self.get_characteristic_cccd(found_handle + 1, end).await?)
-                                } else {
-                                    None
-                                };
-                                return Ok(Characteristic {
-                                    handle: found_handle,
-                                    end_handle: end,
-                                    cccd_handle,
-                                    props: found_props,
-                                    uuid: *uuid,
-                                    phantom: PhantomData,
-                                });
+                        }) => {
+                            if found.is_some() {
+                                // We already found our match; this is the next declaration,
+                                // so we can determine end_handle.
+                                return ControlFlow::Break(Ok(declaration_handle));
                             }
 
                             if *uuid == decl_uuid {
                                 found = Some((value_handle, props));
                             }
 
-                            if value_handle == 0xFFFF {
-                                if found.is_some() {
-                                    break; // Will be handled below as last characteristic
-                                }
-                                return Err(Error::NotFound.into());
+                            if value_handle == 0xFFFF && found.is_some() {
+                                return ControlFlow::Break(Ok(declaration_handle));
                             }
-                            start = value_handle + 1;
-                        } else {
-                            return Err(Error::InvalidCharacteristicDeclarationData.into());
-                        }
-                    }
-                }
-                AttRsp::Error { code, .. } => match code {
-                    att::AttErrorCode::ATTRIBUTE_NOT_FOUND => break,
-                    _ => return Err(Error::Att(code).into()),
-                },
-                _ => return Err(Error::UnexpectedGattResponse.into()),
-            }
-        }
 
-        // If we found the characteristic but it was the last one in the service
+                            ControlFlow::Continue(())
+                        }
+                        Ok(_) => ControlFlow::Break(Err(Error::InvalidCharacteristicDeclarationData)),
+                        Err(e) => ControlFlow::Break(Err(e)),
+                    }
+                },
+            )
+            .await?
+            .unwrap_or(Ok(service.end))?;
+
         match found {
             Some((handle, props)) => {
-                let end = service.end;
+                // If we broke early, the next declaration_handle gives us the end.
+                // If we exhausted the range, use service.end.
                 let cccd_handle: Option<u16> = if props.has_cccd() {
                     Some(self.get_characteristic_cccd(handle + 1, end).await?)
                 } else {
@@ -1401,6 +1387,46 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         .ok_or(Error::NotFound.into())
     }
 
+    /// Read attributes by type in a handle range, calling `callback` for each discovered handle/data pair.
+    ///
+    /// Paginates automatically using successive ATT ReadByType requests.
+    /// Returns `Ok(Some(val))` if `callback` returns `ControlFlow::Break(val)`, or `Ok(None)` if
+    /// the entire range was iterated without breaking (i.e. ATTRIBUTE_NOT_FOUND was received).
+    pub async fn read_by_type<R>(
+        &self,
+        start: u16,
+        end: u16,
+        attribute_type: &Uuid,
+        mut callback: impl FnMut(u16, &[u8]) -> ControlFlow<R>,
+    ) -> Result<Option<R>, BleHostError<C::Error>> {
+        self.paginated_request(
+            start,
+            end,
+            |start, end| AttReq::ReadByType {
+                start,
+                end,
+                attribute_type: *attribute_type,
+            },
+            |rsp| match rsp {
+                AttRsp::ReadByType { mut it } => {
+                    let mut next_handle = None;
+                    while let Some(res) = it.next() {
+                        let (handle, data) = res?;
+                        next_handle = Some(handle + 1);
+                        if let ControlFlow::Break(val) = callback(handle, data) {
+                            return Ok(ControlFlow::Break(val));
+                        }
+                    }
+                    next_handle
+                        .map(ControlFlow::Continue)
+                        .ok_or(Error::UnexpectedGattResponse)
+                }
+                _ => Err(Error::UnexpectedGattResponse),
+            },
+        )
+        .await
+    }
+
     /// Read a characteristic described by a handle.
     ///
     /// The number of bytes copied into the provided buffer is returned.
@@ -1502,27 +1528,14 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         uuid: &Uuid,
         dest: &mut [u8],
     ) -> Result<usize, BleHostError<C::Error>> {
-        let data = att::AttReq::ReadByType {
-            start: service.start,
-            end: service.end,
-            attribute_type: *uuid,
-        };
-
-        let response = self.request(data).await?;
-
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::ReadByType { mut it } => {
-                let mut to_copy = 0;
-                if let Some(item) = it.next() {
-                    let (_handle, data) = item?;
-                    to_copy = data.len().min(dest.len());
-                    dest[..to_copy].copy_from_slice(&data[..to_copy]);
-                }
-                Ok(to_copy)
-            }
-            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::UnexpectedGattResponse.into()),
-        }
+        let result = self
+            .read_by_type(service.start, service.end, uuid, |_handle, data| {
+                let to_copy = data.len().min(dest.len());
+                dest[..to_copy].copy_from_slice(&data[..to_copy]);
+                ControlFlow::Break(to_copy)
+            })
+            .await?;
+        result.ok_or(Error::NotFound.into())
     }
 
     /// Write to a characteristic described by a handle.
