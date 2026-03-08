@@ -647,9 +647,9 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             }
             let mut buf = alloc::vec![0u8; 512];
             let result = if let Some(chrc) = cache.find_characteristic(*handle, client).await {
-                client.read_characteristic_long(chrc, &mut buf).await
+                client.read_characteristic(chrc, &mut buf).await
             } else if let Some(desc) = cache.find_descriptor(*handle, client).await {
-                client.read_descriptor_long(desc, &mut buf).await
+                client.read_descriptor(desc, &mut buf).await
             } else {
                 error!("No cached characteristic or descriptor for handle {}", handle);
                 return Response::Fail;

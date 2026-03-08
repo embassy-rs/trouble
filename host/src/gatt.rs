@@ -1446,88 +1446,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         characteristic: &Characteristic<T>,
         dest: &mut [u8],
     ) -> Result<usize, BleHostError<C::Error>> {
-        let response = self
-            .request(att::AttReq::Read {
-                handle: characteristic.handle,
-            })
-            .await?;
-
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::Read { data } => {
-                let to_copy = data.len().min(dest.len());
-                dest[..to_copy].copy_from_slice(&data[..to_copy]);
-                Ok(to_copy)
-            }
-            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::UnexpectedGattResponse.into()),
-        }
-    }
-
-    /// Read a long characteristic value using blob reads if necessary.
-    ///
-    /// This method automatically handles characteristics longer than ATT MTU
-    /// by using Read Blob requests to fetch the complete value.
-    pub async fn read_characteristic_long<T: AsGatt + ?Sized>(
-        &self,
-        characteristic: &Characteristic<T>,
-        dest: &mut [u8],
-    ) -> Result<usize, BleHostError<C::Error>> {
-        // first read, use regular read
-        let first_read_len = self.read_characteristic(characteristic, dest).await?;
-        let att_mtu = self.connection.att_mtu() as usize;
-
-        if first_read_len != att_mtu - 1 {
-            // att_mtu-1 indicates there's more to read
-            return Ok(first_read_len);
-        }
-
-        // Try at least one blob read to see if there's more data
-        let mut offset = first_read_len;
-        loop {
-            let response = self
-                .request(att::AttReq::ReadBlob {
-                    handle: characteristic.handle,
-                    offset: offset as u16,
-                })
-                .await?;
-
-            match Self::response(response.pdu.as_ref())? {
-                AttRsp::ReadBlob { data } => {
-                    debug!("[read_characteristic_long] Blob read returned {} bytes", data.len());
-                    if data.is_empty() {
-                        break; // End of attribute
-                    }
-
-                    let blob_read_len = data.len();
-
-                    // need to limit length to copy b/c copy_from_slice panics if
-                    // the slices' lengths don't match, and `dest` might be too small.
-                    let len_to_copy = blob_read_len.min(dest.len() - offset);
-                    dest[offset..offset + len_to_copy].copy_from_slice(&data[..len_to_copy]);
-                    offset += len_to_copy;
-
-                    // If we got less than MTU-1 bytes, we've read everything
-                    // Or if we've filled the destination buffer
-                    if blob_read_len < att_mtu - 1 || len_to_copy < blob_read_len {
-                        break;
-                    }
-                }
-                AttRsp::Error { code, .. } if code == att::AttErrorCode::INVALID_OFFSET => {
-                    trace!("[read_characteristic_long] Got INVALID_OFFSET, no more data");
-                    break; // Reached end
-                }
-                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_LONG => {
-                    trace!("[read_characteristic_long] read_handle_long] Attribute not long, no blob reads needed");
-                    break; // Attribute fits in single read
-                }
-                AttRsp::Error { code, .. } => {
-                    trace!("[read_characteristic] Got error: {:?}", code);
-                    return Err(Error::Att(code).into());
-                }
-                _ => return Err(Error::UnexpectedGattResponse.into()),
-            }
-        }
-        Ok(offset)
+        self.read_handle(characteristic.handle, dest).await
     }
 
     /// Read a characteristic described by a UUID.
@@ -1555,17 +1474,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         handle: &Characteristic<T>,
         buf: &[u8],
     ) -> Result<(), BleHostError<C::Error>> {
-        let data = att::AttReq::Write {
-            handle: handle.handle,
-            data: buf,
-        };
-
-        let response = self.request(data).await?;
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::Write => Ok(()),
-            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::UnexpectedGattResponse.into()),
-        }
+        self.write_handle(handle.handle, buf).await
     }
 
     /// Write without waiting for a response to a characteristic described by a handle.
@@ -1584,6 +1493,100 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         Ok(())
     }
 
+    /// Read an attribute by raw handle.
+    ///
+    /// The number of bytes copied into the provided buffer is returned.
+    pub async fn read_handle(&self, handle: u16, dest: &mut [u8]) -> Result<usize, BleHostError<C::Error>> {
+        let response = self.request(att::AttReq::Read { handle }).await?;
+
+        match Self::response(response.pdu.as_ref())? {
+            AttRsp::Read { data } => {
+                let to_copy = data.len().min(dest.len());
+                dest[..to_copy].copy_from_slice(&data[..to_copy]);
+
+                let att_mtu = self.connection.att_mtu() as usize;
+                if data.len() == att_mtu - 1 && dest.len() > to_copy {
+                    let remaining = self
+                        .read_handle_blob(handle, to_copy as u16, &mut dest[to_copy..])
+                        .await?;
+                    Ok(to_copy + remaining)
+                } else {
+                    Ok(to_copy)
+                }
+            }
+            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
+        }
+    }
+
+    /// Read an attribute value by raw handle using Read Blob requests.
+    ///
+    /// The `offset` parameter specifies the starting offset within the attribute value.
+    pub async fn read_handle_blob(
+        &self,
+        handle: u16,
+        offset: u16,
+        dest: &mut [u8],
+    ) -> Result<usize, BleHostError<C::Error>> {
+        let att_mtu = self.connection.att_mtu() as usize;
+        let mut pos = 0;
+        let mut blob_offset = offset as usize;
+
+        loop {
+            let response = self
+                .request(att::AttReq::ReadBlob {
+                    handle,
+                    offset: blob_offset as u16,
+                })
+                .await?;
+
+            match Self::response(response.pdu.as_ref())? {
+                AttRsp::ReadBlob { data } => {
+                    if data.is_empty() {
+                        break;
+                    }
+
+                    let blob_read_len = data.len();
+                    let len_to_copy = blob_read_len.min(dest.len() - pos);
+                    dest[pos..pos + len_to_copy].copy_from_slice(&data[..len_to_copy]);
+                    pos += len_to_copy;
+                    blob_offset += blob_read_len;
+
+                    if blob_read_len < att_mtu - 1 || len_to_copy < blob_read_len {
+                        break;
+                    }
+                }
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::INVALID_OFFSET => {
+                    break;
+                }
+                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_LONG => {
+                    break;
+                }
+                AttRsp::Error { code, .. } => {
+                    return Err(Error::Att(code).into());
+                }
+                _ => return Err(Error::UnexpectedGattResponse.into()),
+            }
+        }
+        Ok(pos)
+    }
+
+    /// Write an attribute by raw handle.
+    pub async fn write_handle(&self, handle: u16, buf: &[u8]) -> Result<(), BleHostError<C::Error>> {
+        let response = self.request(att::AttReq::Write { handle, data: buf }).await?;
+
+        match Self::response(response.pdu.as_ref())? {
+            AttRsp::Write => Ok(()),
+            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
+            _ => Err(Error::UnexpectedGattResponse.into()),
+        }
+    }
+
+    /// Write an attribute by raw handle without waiting for a response.
+    pub async fn write_handle_without_response(&self, handle: u16, buf: &[u8]) -> Result<(), BleHostError<C::Error>> {
+        self.command(att::AttCmd::Write { handle, data: buf }).await
+    }
+
     /// Read a descriptor value.
     ///
     /// The number of bytes copied into the provided buffer is returned.
@@ -1592,21 +1595,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         descriptor: &Descriptor<T>,
         dest: &mut [u8],
     ) -> Result<usize, BleHostError<C::Error>> {
-        let response = self
-            .request(att::AttReq::Read {
-                handle: descriptor.handle,
-            })
-            .await?;
-
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::Read { data } => {
-                let to_copy = data.len().min(dest.len());
-                dest[..to_copy].copy_from_slice(&data[..to_copy]);
-                Ok(to_copy)
-            }
-            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
-            _ => Err(Error::UnexpectedGattResponse.into()),
-        }
+        self.read_handle(descriptor.handle, dest).await
     }
 
     /// Write a descriptor value.
@@ -1615,76 +1604,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         descriptor: &Descriptor<T>,
         buf: &[u8],
     ) -> Result<(), BleHostError<C::Error>> {
-        let data = att::AttReq::Write {
-            handle: descriptor.handle,
-            data: buf,
-        };
-
-        let response = self.request(data).await?;
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::Write => Ok(()),
-            AttRsp::Error { code, .. } => Err(Error::Att(code).into()),
-            _ => Err(Error::UnexpectedGattResponse.into()),
-        }
-    }
-
-    /// Read a long descriptor value using blob reads if necessary.
-    ///
-    /// This method automatically handles descriptors longer than ATT MTU
-    /// by using Read Blob requests to fetch the complete value.
-    pub async fn read_descriptor_long<T: AsGatt + ?Sized>(
-        &self,
-        descriptor: &Descriptor<T>,
-        dest: &mut [u8],
-    ) -> Result<usize, BleHostError<C::Error>> {
-        let first_read_len = self.read_descriptor(descriptor, dest).await?;
-        let att_mtu = self.connection.att_mtu() as usize;
-
-        if first_read_len != att_mtu - 1 {
-            return Ok(first_read_len);
-        }
-
-        let mut offset = first_read_len;
-        loop {
-            let response = self
-                .request(att::AttReq::ReadBlob {
-                    handle: descriptor.handle,
-                    offset: offset as u16,
-                })
-                .await?;
-
-            match Self::response(response.pdu.as_ref())? {
-                AttRsp::ReadBlob { data } => {
-                    debug!("[read_descriptor_long] Blob read returned {} bytes", data.len());
-                    if data.is_empty() {
-                        break;
-                    }
-
-                    let blob_read_len = data.len();
-                    let len_to_copy = blob_read_len.min(dest.len() - offset);
-                    dest[offset..offset + len_to_copy].copy_from_slice(&data[..len_to_copy]);
-                    offset += len_to_copy;
-
-                    if blob_read_len < att_mtu - 1 || len_to_copy < blob_read_len {
-                        break;
-                    }
-                }
-                AttRsp::Error { code, .. } if code == att::AttErrorCode::INVALID_OFFSET => {
-                    trace!("[read_descriptor_long] Got INVALID_OFFSET, no more data");
-                    break;
-                }
-                AttRsp::Error { code, .. } if code == att::AttErrorCode::ATTRIBUTE_NOT_LONG => {
-                    trace!("[read_descriptor_long] Attribute not long, no blob reads needed");
-                    break;
-                }
-                AttRsp::Error { code, .. } => {
-                    trace!("[read_descriptor_long] Got error: {:?}", code);
-                    return Err(Error::Att(code).into());
-                }
-                _ => return Err(Error::UnexpectedGattResponse.into()),
-            }
-        }
-        Ok(offset)
+        self.write_handle(descriptor.handle, buf).await
     }
 
     /// Subscribe to indication/notification of a given Characteristic
@@ -1697,27 +1617,19 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     ) -> Result<NotificationListener<'_, 512>, BleHostError<C::Error>> {
         let properties = u16::to_le_bytes(if indication { 0x02 } else { 0x01 });
 
-        let data = att::AttReq::Write {
-            handle: characteristic.cccd_handle.ok_or(Error::NotSupported)?,
-            data: &properties,
-        };
-
         // set the CCCD
-        let response = self.request(data).await?;
+        self.write_handle(characteristic.cccd_handle.ok_or(Error::NotSupported)?, &properties)
+            .await?;
 
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::Write => match self.notifications.dyn_subscriber() {
-                Ok(listener) => Ok(NotificationListener {
-                    listener,
-                    handle: Some(characteristic.handle),
-                }),
-                Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
-                    Err(Error::GattSubscriberLimitReached.into())
-                }
-                Err(_) => Err(Error::Other.into()),
-            },
-            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::UnexpectedGattResponse.into()),
+        match self.notifications.dyn_subscriber() {
+            Ok(listener) => Ok(NotificationListener {
+                listener,
+                handle: Some(characteristic.handle),
+            }),
+            Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
+                Err(Error::GattSubscriberLimitReached.into())
+            }
+            Err(_) => Err(Error::Other.into()),
         }
     }
 
@@ -1760,20 +1672,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         &self,
         characteristic: &Characteristic<T>,
     ) -> Result<(), BleHostError<C::Error>> {
-        let properties = u16::to_le_bytes(0);
-        let data = att::AttReq::Write {
-            handle: characteristic.cccd_handle.ok_or(Error::NotSupported)?,
-            data: &[0, 0],
-        };
-
-        // set the CCCD
-        let response = self.request(data).await?;
-
-        match Self::response(response.pdu.as_ref())? {
-            AttRsp::Write => Ok(()),
-            AttRsp::Error { request, handle, code } => Err(Error::Att(code).into()),
-            _ => Err(Error::UnexpectedGattResponse.into()),
-        }
+        self.write_handle(characteristic.cccd_handle.ok_or(Error::NotSupported)?, &[0, 0])
+            .await
     }
 
     /// Confirm an indication that was received.
