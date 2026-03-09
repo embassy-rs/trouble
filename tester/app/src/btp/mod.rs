@@ -895,17 +895,30 @@ async fn handle_gatt<'a, 's, C: crate::Controller, P: PacketPool>(
             Ready(GattResponse::Attrs(attrs))
         }
         GetAttrValue(cmd) => {
+            let address = Address {
+                kind: cmd.addr_type,
+                addr: cmd.address,
+            };
             let mut buf = alloc::vec![0u8; 512];
-            match server.table().read(cmd.handle, 0, &mut buf) {
+            let result = match stack.get_connection_by_peer_address(address) {
+                Some(conn) => server.read(&conn, cmd.handle, 0, &mut buf),
+                None => server
+                    .table()
+                    .read(cmd.handle, 0, &mut buf)
+                    .map_err(|_| AttErrorCode::INVALID_HANDLE),
+            };
+            match result {
                 Ok(len) => {
                     buf.truncate(len);
-                    let data = buf.into_boxed_slice();
                     Ready(GattResponse::AttrValue(protocol::gatt::AttrValueResponse {
                         att_response: 0x00,
-                        value: data,
+                        value: buf.into_boxed_slice(),
                     }))
                 }
-                Err(_) => Error(BtpStatus::Fail),
+                Err(e) => Ready(GattResponse::AttrValue(protocol::gatt::AttrValueResponse {
+                    att_response: e.to_u8(),
+                    value: alloc::boxed::Box::default(),
+                })),
             }
         }
 
