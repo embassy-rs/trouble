@@ -233,7 +233,9 @@ fn handle_gatt_pre_server<'a>(
                 service_builder.set_value(value).map(|_| GattResponse::ValueSet)
             }
         }
-        SetEncKeySize { .. } => Ok(GattResponse::EncKeySizeSet),
+        SetEncKeySize { attr_id, key_size } => service_builder
+            .set_enc_key_size(attr_id, key_size)
+            .map(|_| GattResponse::EncKeySizeSet),
         StartServer => Err(BtpStatus::NotReady),
         _ => Err(BtpStatus::NotReady),
     }
