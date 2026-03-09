@@ -71,7 +71,7 @@ impl AttPermissions {
             PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
                 if level < SecurityLevel::Encrypted =>
             {
-                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
             }
             PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
                 Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
@@ -86,7 +86,7 @@ impl AttPermissions {
             PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
                 if level < SecurityLevel::Encrypted =>
             {
-                Err(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
             }
             PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
                 Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
@@ -429,11 +429,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
     /// Add a service to the attribute table (group of characteristics)
     pub fn add_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
+        self.close_last_service_group();
         let handle = self.push(Attribute {
             uuid: PRIMARY_SERVICE.into(),
             data: AttributeData::Service {
                 uuid: service.uuid,
-                last_handle_in_group: 0,
+                last_handle_in_group: u16::MAX,
             },
         });
         ServiceBuilder { handle, table: self }
@@ -441,14 +442,31 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
     /// Add a service to the attribute table (group of characteristics)
     pub fn add_secondary_service(&mut self, service: Service) -> ServiceBuilder<'_, 'd, M, MAX> {
+        self.close_last_service_group();
         let handle = self.push(Attribute {
             uuid: SECONDARY_SERVICE.into(),
             data: AttributeData::Service {
                 uuid: service.uuid,
-                last_handle_in_group: 0,
+                last_handle_in_group: u16::MAX,
             },
         });
         ServiceBuilder { handle, table: self }
+    }
+
+    /// Update the last service's `last_handle_in_group` to the current last handle in the table.
+    fn close_last_service_group(&mut self) {
+        self.with_inner(|inner| {
+            let last_handle = inner.next_handle() - 1;
+            for attr in inner.attributes.iter_mut().rev() {
+                if let AttributeData::Service {
+                    last_handle_in_group, ..
+                } = &mut attr.data
+                {
+                    *last_handle_in_group = last_handle;
+                    break;
+                }
+            }
+        });
     }
 
     /// Get the permissions for the attribute
@@ -462,7 +480,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     ///
     /// Returns `None` if the attribute handle is invalid.
     pub fn uuid(&self, attribute: u16) -> Option<Uuid> {
-        self.with_attribute(attribute, |att| att.uuid.clone())
+        self.with_attribute(attribute, |att| att.uuid)
     }
 
     pub(crate) fn set_ro(&self, attribute: u16, new_value: &'d [u8]) -> Result<(), Error> {
@@ -608,16 +626,32 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
         self.iterate_from(handle - 1, |mut it| {
             if let Some((_, att)) = it.next() {
-                if let AttributeData::Declaration { props, .. } = att.data {
+                if let AttributeData::Declaration { props, uuid, .. } = &att.data {
+                    let props = *props;
+                    let uuid = *uuid;
                     if it.next().is_some() {
                         let cccd_handle = it
                             .next()
                             .and_then(|(handle, att)| matches!(att.data, AttributeData::Cccd { .. }).then_some(handle));
 
+                        // Scan forward to find the end of this characteristic's handles
+                        let mut end_handle = cccd_handle.unwrap_or(handle);
+                        while let Some((h, att)) = it.next() {
+                            if matches!(
+                                att.data,
+                                AttributeData::Declaration { .. } | AttributeData::Service { .. }
+                            ) {
+                                break;
+                            }
+                            end_handle = h;
+                        }
+
                         return Ok(Characteristic {
                             handle,
                             cccd_handle,
+                            end_handle,
                             props,
+                            uuid,
                             phantom: PhantomData,
                         });
                     }
@@ -746,6 +780,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         props: CharacteristicProps,
         data: AttributeData<'d>,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
+        let chrc_uuid = uuid;
         // First the characteristic declaration
         let (handle, cccd_handle) = self.table.with_inner(|table| {
             let value_handle = table.next_handle() + 1;
@@ -754,7 +789,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                 data: AttributeData::Declaration {
                     props,
                     handle: value_handle,
-                    uuid: uuid.clone(),
+                    uuid,
                 },
             });
 
@@ -785,7 +820,10 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
             handle: Characteristic {
                 handle,
                 cccd_handle,
+                // Temporarily set to value handle; updated in build() after descriptors are added
+                end_handle: cccd_handle.unwrap_or(handle),
                 props,
+                uuid: chrc_uuid,
                 phantom: PhantomData,
             },
             table: self.table,
@@ -905,24 +943,6 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
     }
 }
 
-impl<M: RawMutex, const MAX: usize> Drop for ServiceBuilder<'_, '_, M, MAX> {
-    fn drop(&mut self) {
-        self.table.with_inner(|inner| {
-            let last_handle = inner.next_handle() - 1;
-
-            let i = usize::from(self.handle - 1);
-            let AttributeData::Service {
-                last_handle_in_group, ..
-            } = &mut inner.attributes[i].data
-            else {
-                unreachable!()
-            };
-
-            *last_handle_in_group = last_handle;
-        });
-    }
-}
-
 /// A characteristic in the attribute table.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -931,8 +951,12 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
     pub cccd_handle: Option<u16>,
     /// Handle value assigned to this characteristic when it is added to the Gatt Attribute Table
     pub handle: u16,
+    /// Last attribute handle belonging to this characteristic (value handle + descriptors)
+    pub end_handle: u16,
     /// Properties of this characteristic
     pub props: CharacteristicProps,
+    /// UUID of this characteristic
+    pub uuid: Uuid,
     pub(crate) phantom: PhantomData<T>,
 }
 
@@ -1046,7 +1070,9 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         Characteristic {
             cccd_handle: self.cccd_handle,
             handle: self.handle,
+            end_handle: self.end_handle,
             props: self.props,
+            uuid: self.uuid,
             phantom: PhantomData,
         }
     }
@@ -1100,6 +1126,7 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
 
         Descriptor {
             handle,
+            uuid,
             phantom: PhantomData,
         }
     }
@@ -1235,7 +1262,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         }
     }
     /// Return the built characteristic.
-    pub fn build(self) -> Characteristic<T> {
+    pub fn build(mut self) -> Characteristic<T> {
+        self.handle.end_handle = self.table.with_inner(|t| t.next_handle() - 1);
         self.handle
     }
 }
@@ -1245,7 +1273,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
 #[derive(Clone, Copy, Debug)]
 pub struct Descriptor<T: AsGatt + ?Sized> {
     pub(crate) handle: u16,
-    phantom: PhantomData<T>,
+    pub(crate) uuid: Uuid,
+    pub(crate) phantom: PhantomData<T>,
 }
 
 impl<T: AsGatt> AttributeHandle for Descriptor<T> {
@@ -1257,6 +1286,16 @@ impl<T: AsGatt> AttributeHandle for Descriptor<T> {
 }
 
 impl<T: AsGatt + ?Sized> Descriptor<T> {
+    /// Get the handle of this descriptor.
+    pub fn handle(&self) -> u16 {
+        self.handle
+    }
+
+    /// Get the UUID of this descriptor.
+    pub fn uuid(&self) -> &Uuid {
+        &self.uuid
+    }
+
     /// Set the value of the descriptor in the provided attribute server.
     pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
         &self,
