@@ -401,6 +401,21 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         }
     }
 
+    /// Read an attribute value with permission checks for the given connection.
+    pub fn read(
+        &self,
+        connection: &Connection<'_, P>,
+        handle: u16,
+        offset: usize,
+        data: &mut [u8],
+    ) -> Result<usize, AttErrorCode> {
+        self.att_table
+            .with_attribute(handle, |att| {
+                self.read_attribute_data(connection, handle, offset, att, data)
+            })
+            .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND))
+    }
+
     pub(crate) fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
         self.cccd_tables.connect(&connection.peer_identity())
     }
