@@ -144,7 +144,11 @@ impl From<AttPermission> for trouble_host::attribute::AttPermissions {
             PermissionLevel::NotAllowed
         };
 
-        trouble_host::attribute::AttPermissions { read, write }
+        trouble_host::attribute::AttPermissions {
+            read,
+            write,
+            min_key_len: 0,
+        }
     }
 }
 

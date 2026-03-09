@@ -406,14 +406,22 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
 
     fn can_read(&self, connection: &Connection<'_, P>, att: &Attribute<'_>) -> Result<(), AttErrorCode> {
         match connection.security_level() {
-            Ok(level) => att.permissions().can_read(level),
+            Ok(level) => att.permissions().can_read(
+                level,
+                #[cfg(feature = "legacy-pairing")]
+                connection.encryption_key_len().unwrap_or(0),
+            ),
             Err(_) => Err(AttErrorCode::INVALID_HANDLE),
         }
     }
 
     fn can_write(&self, connection: &Connection<'_, P>, att: &Attribute<'_>) -> Result<(), AttErrorCode> {
         match connection.security_level() {
-            Ok(level) => att.permissions().can_write(level),
+            Ok(level) => att.permissions().can_write(
+                level,
+                #[cfg(feature = "legacy-pairing")]
+                connection.encryption_key_len().unwrap_or(0),
+            ),
             Err(_) => Err(AttErrorCode::INVALID_HANDLE),
         }
     }

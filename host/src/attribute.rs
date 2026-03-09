@@ -62,10 +62,17 @@ pub struct AttPermissions {
     pub read: PermissionLevel,
     /// Security required for write operations
     pub write: PermissionLevel,
+    /// Minimum encryption key length required (0 = no minimum)
+    #[cfg(feature = "legacy-pairing")]
+    pub min_key_len: u8,
 }
 
 impl AttPermissions {
-    pub(crate) fn can_read(&self, level: SecurityLevel) -> Result<(), AttErrorCode> {
+    pub(crate) fn can_read(
+        &self,
+        level: SecurityLevel,
+        #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
+    ) -> Result<(), AttErrorCode> {
         match self.read {
             PermissionLevel::NotAllowed => Err(AttErrorCode::READ_NOT_PERMITTED),
             PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
@@ -76,11 +83,21 @@ impl AttPermissions {
             PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
                 Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
             }
-            _ => Ok(()),
+            _ => {
+                #[cfg(feature = "legacy-pairing")]
+                if self.min_key_len > 0 && level.encrypted() && encryption_key_len < self.min_key_len {
+                    return Err(AttErrorCode::INSUFFICIENT_ENCRYPTION_KEY_SIZE);
+                }
+                Ok(())
+            }
         }
     }
 
-    pub(crate) fn can_write(&self, level: SecurityLevel) -> Result<(), AttErrorCode> {
+    pub(crate) fn can_write(
+        &self,
+        level: SecurityLevel,
+        #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
+    ) -> Result<(), AttErrorCode> {
         match self.write {
             PermissionLevel::NotAllowed => Err(AttErrorCode::WRITE_NOT_PERMITTED),
             PermissionLevel::EncryptionRequired | PermissionLevel::AuthenticationRequired
@@ -91,7 +108,13 @@ impl AttPermissions {
             PermissionLevel::AuthenticationRequired if level < SecurityLevel::EncryptedAuthenticated => {
                 Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
             }
-            _ => Ok(()),
+            _ => {
+                #[cfg(feature = "legacy-pairing")]
+                if self.min_key_len > 0 && level.encrypted() && encryption_key_len < self.min_key_len {
+                    return Err(AttErrorCode::INSUFFICIENT_ENCRYPTION_KEY_SIZE);
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -166,6 +189,8 @@ impl AttributeData<'_> {
             | AttributeData::Declaration { .. } => AttPermissions {
                 read: PermissionLevel::Allowed,
                 write: PermissionLevel::NotAllowed,
+                #[cfg(feature = "legacy-pairing")]
+                min_key_len: 0,
             },
             AttributeData::ReadOnlyData { permissions, .. }
             | AttributeData::Data { permissions, .. }
@@ -173,6 +198,8 @@ impl AttributeData<'_> {
             AttributeData::Cccd { write_permission, .. } => AttPermissions {
                 read: PermissionLevel::Allowed,
                 write: *write_permission,
+                #[cfg(feature = "legacy-pairing")]
+                min_key_len: 0,
             },
         }
     }
@@ -1192,6 +1219,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         let permissions = AttPermissions {
             write: PermissionLevel::NotAllowed,
             read: read_permission,
+            #[cfg(feature = "legacy-pairing")]
+            min_key_len: 0,
         };
         self.add_descriptor_internal(
             uuid.into(),
@@ -1249,6 +1278,23 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
             };
 
             *permission = write;
+        });
+
+        self
+    }
+
+    /// Set the minimum encryption key length required for this characteristic
+    #[cfg(feature = "legacy-pairing")]
+    pub fn min_key_len(self, len: u8) -> Self {
+        self.table.with_attribute(self.handle.handle, |att| {
+            let permissions = match &mut att.data {
+                AttributeData::Data { permissions, .. }
+                | AttributeData::SmallData { permissions, .. }
+                | AttributeData::ReadOnlyData { permissions, .. } => permissions,
+                _ => unreachable!(),
+            };
+
+            permissions.min_key_len = len;
         });
 
         self
@@ -1425,7 +1471,12 @@ impl CharacteristicProps {
             PermissionLevel::NotAllowed
         };
 
-        AttPermissions { read, write }
+        AttPermissions {
+            read,
+            write,
+            #[cfg(feature = "legacy-pairing")]
+            min_key_len: 0,
+        }
     }
 
     /// Check if the characteristic will have a Client Characteristic Configuration Descriptor
@@ -1619,6 +1670,8 @@ mod tests {
                 permissions: AttPermissions {
                     read: PermissionLevel::Allowed,
                     write: PermissionLevel::NotAllowed,
+                    #[cfg(feature = "legacy-pairing")]
+                    min_key_len: 0,
                 },
                 value: b"",
             },
@@ -1640,6 +1693,8 @@ mod tests {
                 permissions: AttPermissions {
                     read: PermissionLevel::Allowed,
                     write: PermissionLevel::NotAllowed,
+                    #[cfg(feature = "legacy-pairing")]
+                    min_key_len: 0,
                 },
                 value: b"",
             },
@@ -1678,6 +1733,8 @@ mod tests {
                 permissions: AttPermissions {
                     read: PermissionLevel::Allowed,
                     write: PermissionLevel::NotAllowed,
+                    #[cfg(feature = "legacy-pairing")]
+                    min_key_len: 0,
                 },
                 value: b"",
             },
@@ -1708,6 +1765,8 @@ mod tests {
                 permissions: AttPermissions {
                     read: PermissionLevel::Allowed,
                     write: PermissionLevel::NotAllowed,
+                    #[cfg(feature = "legacy-pairing")]
+                    min_key_len: 0,
                 },
                 value: b"",
             },
@@ -1729,6 +1788,8 @@ mod tests {
                 permissions: AttPermissions {
                     read: PermissionLevel::Allowed,
                     write: PermissionLevel::NotAllowed,
+                    #[cfg(feature = "legacy-pairing")]
+                    min_key_len: 0,
                 },
                 value: b"",
             },
@@ -1770,6 +1831,8 @@ mod tests {
                 permissions: AttPermissions {
                     read: PermissionLevel::Allowed,
                     write: PermissionLevel::NotAllowed,
+                    #[cfg(feature = "legacy-pairing")]
+                    min_key_len: 0,
                 },
                 value: b"",
             },
@@ -1790,6 +1853,8 @@ mod tests {
                 permissions: AttPermissions {
                     read: PermissionLevel::Allowed,
                     write: PermissionLevel::NotAllowed,
+                    #[cfg(feature = "legacy-pairing")]
+                    min_key_len: 0,
                 },
                 value: b"Custom Characteristic",
             },
@@ -1801,6 +1866,8 @@ mod tests {
                 permissions: AttPermissions {
                     read: PermissionLevel::Allowed,
                     write: PermissionLevel::NotAllowed,
+                    #[cfg(feature = "legacy-pairing")]
+                    min_key_len: 0,
                 },
                 value: &[4, 0, 0, 0x27, 1, 0, 0],
             },
