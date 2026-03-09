@@ -758,6 +758,15 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         }
     }
 
+    #[cfg(feature = "legacy-pairing")]
+    pub(crate) fn get_encryption_key_len(&self, index: u8) -> Result<u8, Error> {
+        let state = self.state.borrow();
+        match state.connections[index as usize].state {
+            ConnectionState::Connected => Ok(state.connections[index as usize].encryption_key_len),
+            _ => Err(Error::Disconnected),
+        }
+    }
+
     pub(crate) fn get_bondable(&self, index: u8) -> Result<bool, Error> {
         let state = self.state.borrow();
         match state.connections[index as usize].state {
@@ -1022,6 +1031,8 @@ pub struct ConnectionStorage<P> {
     pub bond_rejected: bool,
     #[cfg(feature = "security")]
     pub smp_timeout: bool,
+    #[cfg(feature = "legacy-pairing")]
+    pub encryption_key_len: u8,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -1117,6 +1128,8 @@ impl<P> ConnectionStorage<P> {
             bond_rejected: false,
             #[cfg(feature = "security")]
             smp_timeout: false,
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len: 0,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),

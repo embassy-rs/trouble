@@ -673,6 +673,8 @@ impl Pairing {
             0,
             #[cfg(feature = "legacy-pairing")]
             [0; 8],
+            #[cfg(feature = "legacy-pairing")]
+            16,
         )?;
         pairing_data.bond_information = Some(bond);
         Ok(())

@@ -65,6 +65,9 @@ pub struct BondInformation {
     #[cfg(feature = "legacy-pairing")]
     /// Random Number (all zeros for LESC, non-zero for legacy)
     pub rand: [u8; 8],
+    #[cfg(feature = "legacy-pairing")]
+    /// Negotiated encryption key length in bytes (16 for LESC)
+    pub encryption_key_len: u8,
 }
 
 impl BondInformation {
@@ -79,6 +82,8 @@ impl BondInformation {
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
             rand: [0; 8],
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len: 16,
         }
     }
 }
@@ -412,6 +417,10 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
             if res.is_ok() {
                 storage.security_level = sm.security_level();
                 storage.bond_rejected = false;
+                #[cfg(feature = "legacy-pairing")]
+                if let Some(bond) = sm.bond_information() {
+                    storage.encryption_key_len = bond.encryption_key_len;
+                }
             }
             if sm.result().is_some() {
                 self.finished_waker.wake();
@@ -429,6 +438,10 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
                 Some(bond) if encrypted => {
                     info!("[smp] Encrypted using bond {:?}", bond.identity);
                     storage.security_level = bond.security_level;
+                    #[cfg(feature = "legacy-pairing")]
+                    {
+                        storage.encryption_key_len = bond.encryption_key_len;
+                    }
                 }
                 _ => {
                     warn!(
@@ -1045,6 +1058,7 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         is_bonded: bool,
         #[cfg(feature = "legacy-pairing")] ediv: u16,
         #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
+        #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
     ) -> Result<BondInformation, Error> {
         info!("Enabling encryption for {:?}", self.peer_identity);
         let bond_info = BondInformation {
@@ -1056,6 +1070,8 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
             ediv,
             #[cfg(feature = "legacy-pairing")]
             rand,
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len,
         };
         self.try_update_bond_information(&bond_info)?;
         self.events

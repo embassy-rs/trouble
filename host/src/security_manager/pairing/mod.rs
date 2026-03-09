@@ -71,6 +71,7 @@ pub trait PairingOps<P: PacketPool> {
         is_bonded: bool,
         #[cfg(feature = "legacy-pairing")] ediv: u16,
         #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
+        #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
     ) -> Result<BondInformation, Error>;
     fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error>;
     fn connection_handle(&mut self) -> ConnHandle;
@@ -180,6 +181,10 @@ impl Pairing {
         } else {
             SecurityLevel::NoEncryption
         }
+    }
+
+    pub(crate) fn bond_information(&self) -> Option<&BondInformation> {
+        self.pairing_data.bond_information.as_ref()
     }
 
     pub(crate) fn new_central(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
@@ -403,6 +408,7 @@ mod tests {
             is_bonded: bool,
             #[cfg(feature = "legacy-pairing")] ediv: u16,
             #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
+            #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
         ) -> Result<BondInformation, Error> {
             self.encryptions.push(ltk.clone()).unwrap();
             Ok(BondInformation {
@@ -414,6 +420,8 @@ mod tests {
                 ediv,
                 #[cfg(feature = "legacy-pairing")]
                 rand,
+                #[cfg(feature = "legacy-pairing")]
+                encryption_key_len,
             })
         }
 
@@ -936,6 +944,8 @@ mod tests {
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
             rand: [0; 8],
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len: 16,
         });
 
         peripheral_ops.bond_information = Some(BondInformation {
@@ -950,6 +960,8 @@ mod tests {
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
             rand: [0; 8],
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len: 16,
         });
 
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
@@ -1017,6 +1029,8 @@ mod tests {
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
             rand: [0; 8],
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len: 16,
         });
 
         peripheral_ops.bond_information = Some(BondInformation {
@@ -1031,6 +1045,8 @@ mod tests {
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
             rand: [0; 8],
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len: 16,
         });
 
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
