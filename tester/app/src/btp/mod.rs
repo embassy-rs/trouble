@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::pin::pin;
 
 use embassy_futures::select::{Either, select};
@@ -23,8 +24,8 @@ use self::protocol::{BtpCommand, BtpEvent, BtpHeader, BtpPacket, BtpResponse, Bt
 use self::service_builder::{AttValue, ServiceBuilder};
 use crate::command_channel::CommandChannels;
 use crate::{
-    ATTRIBUTE_TABLE_SIZE, BtpConfig, Event, GAP_ATTRIBUTE_COUNT, GATT_ATTRIBUTE_COUNT, central, command_channel,
-    gatt_client, peripheral,
+    ATTRIBUTE_TABLE_SIZE, BtpConfig, Event, GAP_ATTRIBUTE_COUNT, GATT_ATTRIBUTE_COUNT, ScanMode, central,
+    command_channel, gatt_client, peripheral,
 };
 
 pub(crate) mod error;
@@ -35,6 +36,7 @@ mod types;
 /// Initial GAP current_settings at startup (powered, connectable, bondable, LE).
 const DEFAULT_SETTINGS: GapSettings = GapSettings::POWERED
     .union(GapSettings::CONNECTABLE)
+    .union(GapSettings::BONDABLE)
     .union(GapSettings::LE)
     .union(GapSettings::STATIC_ADDRESS)
     .union(GapSettings::SECURE_CONNECTIONS);
@@ -50,6 +52,9 @@ struct GapState<'stack, C, P: PacketPool> {
     current_settings: GapSettings,
     filter_accept_list: heapless::Vec<Address, 1>,
     stack: &'stack Stack<'stack, C, P>,
+    scan_mode: &'stack Cell<ScanMode>,
+    /// Saved IO capability (for SET_MITM toggling).
+    io_capability: IoCapabilities,
 }
 
 /// Result of a BTP command handler, supporting immediate, error, and forwarded outcomes.
@@ -96,6 +101,7 @@ pub(crate) async fn run_pre_server<'stack, R: Read, W: Write, C, P: PacketPool>(
     transport: BtpTransport<R, W>,
     config: &BtpConfig<'_>,
     stack: &'stack Stack<'stack, C, P>,
+    scan_mode: &'stack Cell<ScanMode>,
     table: &mut AttributeTable<'stack, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
     packet: &mut BtpPacket,
 ) -> Result<Option<PreServerResult<'stack, R, W, C, P>>, Error>
@@ -111,6 +117,8 @@ where
         current_settings: DEFAULT_SETTINGS,
         filter_accept_list: heapless::Vec::new(),
         stack,
+        scan_mode,
+        io_capability: IoCapabilities::NoInputNoOutput,
     };
 
     // Send IUT Ready event before entering the main loop
@@ -256,7 +264,6 @@ where
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run<'stack, R: Read, W: Write, C, P: PacketPool>(
     pre_server_result: PreServerResult<'stack, R, W, C, P>,
     config: &BtpConfig<'_>,
@@ -351,6 +358,7 @@ where
                                 GR::MtuExchanged => Ok(BtpResponse::Gatt(GattResponse::MtuExchanged)),
                                 GR::Services(s) => Ok(BtpResponse::Gatt(GattResponse::Services(s))),
                                 GR::Characteristics(c) => Ok(BtpResponse::Gatt(GattResponse::Characteristics(c))),
+                                GR::Descriptors(d) => Ok(BtpResponse::Gatt(GattResponse::Descriptors(d))),
                                 GR::ReadData(r) => Ok(BtpResponse::Gatt(GattResponse::ReadData(r))),
                                 GR::ReadUuidData(r) => Ok(BtpResponse::Gatt(GattResponse::ReadUuidData(r))),
                                 GR::WriteResult(att_rsp) => Ok(BtpResponse::Gatt(GattResponse::WriteResult(att_rsp))),
@@ -618,7 +626,18 @@ where
             *bondable,
         )),
         SetIoCapability(capability) => {
+            gap.io_capability = *capability;
             gap.stack.set_io_capabilities(*capability);
+            Ok(GapResponse::Success)
+        }
+        SetMitm(mitm) => {
+            if *mitm {
+                // Restore the real IO capability so MITM-based pairing methods are selected.
+                gap.stack.set_io_capabilities(gap.io_capability);
+            } else {
+                // Override to NoInputNoOutput so JustWorks (no MITM) is selected.
+                gap.stack.set_io_capabilities(IoCapabilities::NoInputNoOutput);
+            }
             Ok(GapResponse::Success)
         }
         SetFilterAcceptList(cmd) => {
@@ -629,6 +648,14 @@ where
                 }
             }
             Ok(GapResponse::Success)
+        }
+        SetScOnly(enabled) => {
+            gap.stack.set_secure_connections_only(*enabled);
+            Ok(change_current_settings(
+                &mut gap.current_settings,
+                GapSettings::SC_ONLY,
+                *enabled,
+            ))
         }
         _ => Err(BtpStatus::NotReady),
     }
@@ -662,9 +689,16 @@ where
     match cmd {
         StartAdvertising(..) | StartDirectedAdvertising(..) => {
             if let Some(ad) = cmd.ad(gap.current_settings) {
+                // TGAP(lim_adv_timeout): auto-stop when in Limited Discoverable mode.
+                // TSPX_lim_adv_timeout = 30720 milliseconds (~30 seconds).
+                let timeout = if gap.current_settings.contains(LIMITED_DISCOVERABLE) {
+                    Some(Duration::from_secs(30))
+                } else {
+                    None
+                };
                 channels
                     .peripheral
-                    .send(peripheral::Command::StartAdvertising(ad))
+                    .send(peripheral::Command::StartAdvertising(ad, timeout))
                     .await;
                 Forwarded
             } else {
@@ -681,6 +715,14 @@ where
             } else {
                 heapless::Vec::new()
             };
+            let mode = if flags.contains(protocol::gap::DiscoveryFlags::OBSERVATION) {
+                ScanMode::Observer
+            } else if flags.contains(protocol::gap::DiscoveryFlags::LIMITED) {
+                ScanMode::LimitedDiscovery
+            } else {
+                ScanMode::GeneralDiscovery
+            };
+            gap.scan_mode.set(mode);
             channels
                 .central
                 .send(central::Command::StartDiscovery {
@@ -691,14 +733,23 @@ where
             Forwarded
         }
         StopDiscovery => {
+            gap.scan_mode.set(ScanMode::Disabled);
             channels.central.send(central::Command::StopDiscovery).await;
             Forwarded
         }
         Connect(cmd) => {
+            // All-zeros address means "use the filter accept list" (Auto Connection Establishment)
+            let filter_accept_list = if cmd.address.addr == BdAddr::default() {
+                gap.filter_accept_list.clone()
+            } else {
+                let mut list = heapless::Vec::new();
+                let _ = list.push(cmd.address);
+                list
+            };
             channels
                 .central
                 .send(central::Command::Connect {
-                    address: cmd.address,
+                    filter_accept_list,
                     bondable: gap.current_settings.contains(GapSettings::BONDABLE),
                 })
                 .await;
@@ -707,14 +758,16 @@ where
         Disconnect(address) => {
             if let Some(conn) = gap.stack.get_connection_by_peer_address(*address) {
                 conn.disconnect();
-                Ready(GapResponse::Success)
             } else {
-                warn!("Disconnect: no connection for {:?}", address);
-                Error(BtpStatus::Fail)
+                warn!("Disconnect: no connection for {:?} (already disconnected)", address);
             }
+            Ready(GapResponse::Success)
         }
         Pair(address) => {
             if let Some(conn) = gap.stack.get_connection_by_peer_address(*address) {
+                if let Err(err) = conn.set_bondable(gap.current_settings.contains(GapSettings::BONDABLE)) {
+                    warn!("Pair: failed to set bondable flag for {:?}: {:?}", address, err);
+                }
                 match conn.request_security() {
                     Ok(()) => Ready(GapResponse::Success),
                     Err(_) => {
@@ -737,10 +790,9 @@ where
                     irk: None,
                 }
             };
-            match gap.stack.remove_bond_information(identity) {
-                Ok(()) => Ready(GapResponse::Success),
-                Err(_) => Error(BtpStatus::Fail),
-            }
+            // Treat "not found" as success — the intent is to ensure no bond exists.
+            let _ = gap.stack.remove_bond_information(identity);
+            Ready(GapResponse::Success)
         }
         PasskeyEntry(cmd) => {
             if let Some(conn) = gap.stack.get_connection_by_peer_address(cmd.address) {
@@ -786,7 +838,9 @@ where
         | SetDiscoverable(_)
         | SetBondable(_)
         | SetIoCapability(_)
-        | SetFilterAcceptList(_) => unreachable!(),
+        | SetMitm(_)
+        | SetFilterAcceptList(_)
+        | SetScOnly(_) => unreachable!(),
     }
 }
 
@@ -969,11 +1023,43 @@ async fn handle_gatt<'a>(
             Forwarded
         }
 
+        DiscoverAllPrimary(c) => {
+            channels
+                .gatt_client
+                .send(gatt_client::Command::DiscoverAllPrimary {
+                    addr_type: c.addr_type,
+                    address: c.address,
+                })
+                .await;
+            Forwarded
+        }
+        DiscoverAllChrc(c) => {
+            channels
+                .gatt_client
+                .send(gatt_client::Command::DiscoverAllChrc {
+                    addr_type: c.addr_type,
+                    address: c.address,
+                    start_handle: c.start_handle,
+                    end_handle: c.end_handle,
+                })
+                .await;
+            Forwarded
+        }
+        DiscoverAllDesc(c) => {
+            channels
+                .gatt_client
+                .send(gatt_client::Command::DiscoverAllDesc {
+                    addr_type: c.addr_type,
+                    address: c.address,
+                    start_handle: c.start_handle,
+                    end_handle: c.end_handle,
+                })
+                .await;
+            Forwarded
+        }
+
         // Tier 2/3 commands — not supported by trouble-host
-        DiscoverAllPrimary(..)
-        | FindIncluded(..)
-        | DiscoverAllChrc(..)
-        | DiscoverAllDesc(..)
+        FindIncluded(..)
         | ReadMultiple(..)
         | ReadMultipleVar(..)
         | WriteLong(..)

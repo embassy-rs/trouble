@@ -122,22 +122,24 @@ bitflags::bitflags! {
 
 impl From<AttPermission> for trouble_host::attribute::AttPermissions {
     fn from(value: AttPermission) -> Self {
-        let read = if value.contains(AttPermission::READ) {
-            PermissionLevel::Allowed
+        // Most restrictive security level wins. BTP may set both the bare access bit (e.g. READ)
+        // and a security bit (e.g. READ_AUTHEN) together, meaning "readable with authentication".
+        let read = if value.contains(AttPermission::READ_AUTHEN) {
+            PermissionLevel::AuthenticationRequired
         } else if value.contains(AttPermission::READ_ENC) {
             PermissionLevel::EncryptionRequired
-        } else if value.contains(AttPermission::READ_AUTHEN) {
-            PermissionLevel::AuthenticationRequired
+        } else if value.contains(AttPermission::READ) {
+            PermissionLevel::Allowed
         } else {
             PermissionLevel::NotAllowed
         };
 
-        let write = if value.contains(AttPermission::WRITE) {
-            PermissionLevel::Allowed
+        let write = if value.contains(AttPermission::WRITE_AUTHEN) {
+            PermissionLevel::AuthenticationRequired
         } else if value.contains(AttPermission::WRITE_ENC) {
             PermissionLevel::EncryptionRequired
-        } else if value.contains(AttPermission::WRITE_AUTHEN) {
-            PermissionLevel::AuthenticationRequired
+        } else if value.contains(AttPermission::WRITE) {
+            PermissionLevel::Allowed
         } else {
             PermissionLevel::NotAllowed
         };
@@ -148,35 +150,20 @@ impl From<AttPermission> for trouble_host::attribute::AttPermissions {
 
 impl From<trouble_host::attribute::AttPermissions> for AttPermission {
     fn from(value: trouble_host::attribute::AttPermissions) -> Self {
+        // Always include the bare access bit alongside the security bit so that BTP handlers
+        // checking `perm & Perm.read` can identify accessible attributes, while handlers
+        // checking `perm & Perm.read_authn` can identify the required security level.
         let mut result = AttPermission::empty();
         match value.read {
-            PermissionLevel::Allowed => {
-                result |= AttPermission::READ
-                    | AttPermission::READ_ENC
-                    | AttPermission::READ_AUTHEN
-                    | AttPermission::READ_AUTHOR
-            }
-            PermissionLevel::EncryptionRequired => {
-                result |= AttPermission::READ_ENC | AttPermission::READ_AUTHEN | AttPermission::READ_AUTHOR
-            }
-            PermissionLevel::AuthenticationRequired => {
-                result |= AttPermission::READ_AUTHEN | AttPermission::READ_AUTHOR
-            }
+            PermissionLevel::Allowed => result |= AttPermission::READ,
+            PermissionLevel::EncryptionRequired => result |= AttPermission::READ | AttPermission::READ_ENC,
+            PermissionLevel::AuthenticationRequired => result |= AttPermission::READ | AttPermission::READ_AUTHEN,
             PermissionLevel::NotAllowed => (),
         }
         match value.write {
-            PermissionLevel::Allowed => {
-                result |= AttPermission::WRITE
-                    | AttPermission::WRITE_ENC
-                    | AttPermission::WRITE_AUTHEN
-                    | AttPermission::WRITE_AUTHOR
-            }
-            PermissionLevel::EncryptionRequired => {
-                result |= AttPermission::WRITE_ENC | AttPermission::WRITE_AUTHEN | AttPermission::WRITE_AUTHOR
-            }
-            PermissionLevel::AuthenticationRequired => {
-                result |= AttPermission::WRITE_AUTHEN | AttPermission::WRITE_AUTHOR
-            }
+            PermissionLevel::Allowed => result |= AttPermission::WRITE,
+            PermissionLevel::EncryptionRequired => result |= AttPermission::WRITE | AttPermission::WRITE_ENC,
+            PermissionLevel::AuthenticationRequired => result |= AttPermission::WRITE | AttPermission::WRITE_AUTHEN,
             PermissionLevel::NotAllowed => (),
         }
         result
@@ -379,7 +366,6 @@ pub struct ExchangeMtuCommand {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[allow(unused)]
 pub struct DiscoverAllPrimaryCommand {
     pub addr_type: AddrKind,
     pub address: BdAddr,
@@ -405,7 +391,6 @@ pub struct FindIncludedCommand {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[allow(unused)]
 pub struct DiscoverAllChrcCommand {
     pub addr_type: AddrKind,
     pub address: BdAddr,
@@ -425,7 +410,6 @@ pub struct DiscoverChrcUuidCommand {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[allow(unused)]
 pub struct DiscoverAllDescCommand {
     pub addr_type: AddrKind,
     pub address: BdAddr,
@@ -634,7 +618,7 @@ pub enum GattCommand<'a> {
     ExchangeMtu(ExchangeMtuCommand),
 
     /// Discover all primary services (0x0b).
-    DiscoverAllPrimary(#[allow(unused)] DiscoverAllPrimaryCommand),
+    DiscoverAllPrimary(DiscoverAllPrimaryCommand),
 
     /// Discover primary service by UUID (0x0c).
     DiscoverPrimaryUuid(DiscoverPrimaryUuidCommand),
@@ -643,13 +627,13 @@ pub enum GattCommand<'a> {
     FindIncluded(#[allow(unused)] FindIncludedCommand),
 
     /// Discover all characteristics of a service (0x0e).
-    DiscoverAllChrc(#[allow(unused)] DiscoverAllChrcCommand),
+    DiscoverAllChrc(DiscoverAllChrcCommand),
 
     /// Discover characteristics by UUID (0x0f).
     DiscoverChrcUuid(DiscoverChrcUuidCommand),
 
     /// Discover all characteristic descriptors (0x10).
-    DiscoverAllDesc(#[allow(unused)] DiscoverAllDescCommand),
+    DiscoverAllDesc(DiscoverAllDescCommand),
 
     // === Client Commands - Read (0x11-0x14, 0x20) ===
     /// Read characteristic value/descriptor (0x11).
@@ -1105,7 +1089,6 @@ pub enum GattResponse {
     Characteristics(Box<[CharacteristicInfo]>),
 
     /// Descriptors discovered (response to 0x10).
-    #[allow(unused)]
     Descriptors(Box<[DescriptorInfo]>),
 
     /// Read data (response to 0x11, 0x13, 0x14, 0x20).

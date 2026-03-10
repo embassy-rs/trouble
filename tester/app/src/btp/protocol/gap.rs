@@ -38,7 +38,9 @@ pub mod opcodes {
     pub const PASSKEY_CONFIRM: Opcode = Opcode(0x14);
     pub const START_DIRECTED_ADVERTISING: Opcode = Opcode(0x15);
     pub const CONN_PARAM_UPDATE: Opcode = Opcode(0x16);
+    pub const SET_MITM: Opcode = Opcode(0x1b);
     pub const SET_FILTER_ACCEPT_LIST: Opcode = Opcode(0x1c);
+    pub const SET_SC_ONLY: Opcode = Opcode(0x1e);
 
     // Events
     pub const EVENT_NEW_SETTINGS: Opcode = Opcode(0x80);
@@ -75,7 +77,9 @@ pub const SUPPORTED_COMMANDS: [u8; 4] = super::supported_commands_bitmask(&[
     opcodes::PASSKEY_CONFIRM,
     opcodes::START_DIRECTED_ADVERTISING,
     opcodes::CONN_PARAM_UPDATE,
+    opcodes::SET_MITM,
     opcodes::SET_FILTER_ACCEPT_LIST,
+    opcodes::SET_SC_ONLY,
 ]);
 
 /// GAP settings flags (bitfield). Bits 0-18 are defined by the BTP spec.
@@ -115,7 +119,8 @@ impl GapSettings {
         .union(Self::BONDABLE)
         .union(Self::LE)
         .union(Self::ADVERTISING)
-        .union(Self::SECURE_CONNECTIONS);
+        .union(Self::SECURE_CONNECTIONS)
+        .union(Self::SC_ONLY);
 }
 
 /// Synthetic flag stored in bit 31 (outside the valid BTP settings range of bits 0-18)
@@ -128,17 +133,31 @@ const FLAG_LE_LIMITED_DISCOVERABLE: u8 = 0x01;
 const FLAG_LE_GENERAL_DISCOVERABLE: u8 = 0x02;
 const FLAG_BR_EDR_NOT_SUPPORTED: u8 = 0x04;
 
-/// Ensure connectable advertising data has a Flags AD structure with the
-/// BR/EDR Not Supported flag and the appropriate discoverability flags.
+/// Convert BTP advertising data from `{AD_Type, AD_Len, AD_Data}` (TLV) format
+/// to BLE standard `{Length, AD_Type, AD_Data}` (LTV) format in place.
 ///
-/// If the data already starts with a Flags AD structure, the required bits are
-/// OR'd into the existing flags byte. Otherwise a new 3-byte Flags structure is
-/// prepended.
-fn prepend_flags(adv_data: &[u8], settings: GapSettings) -> Box<[u8]> {
-    if !settings.contains(GapSettings::CONNECTABLE) {
-        return Box::from(adv_data);
+/// Both formats have the same total size per structure, so this simply swaps
+/// the type/length bytes and adjusts the length to include the type byte.
+fn btp_ad_to_ble_ad(data: &mut [u8]) {
+    let mut i = 0;
+    while i + 1 < data.len() {
+        let ad_len = data[i + 1] as usize;
+        // Swap: TLV {type, len, ...} -> LTV {len+1, type, ...}
+        data.swap(i, i + 1);
+        data[i] = data[i].saturating_add(1); // len -> len+1 (include type byte)
+        i += 2 + ad_len;
     }
+}
 
+/// Convert BTP TLV advertising data to BLE LTV format and ensure a Flags AD
+/// structure is present with the BR/EDR Not Supported flag and the appropriate
+/// discoverability flags.
+///
+/// If the BTP data already starts with a Flags AD structure, the required bits
+/// are OR'd into the existing flags byte. Otherwise a new 3-byte Flags
+/// structure is prepended. The TLV-to-LTV conversion is performed in place on
+/// the same allocation.
+fn prepend_flags(btp_adv_data: &[u8], settings: GapSettings) -> Box<[u8]> {
     let mut flags = FLAG_BR_EDR_NOT_SUPPORTED;
     if settings.contains(GapSettings::DISCOVERABLE) {
         if settings.contains(LIMITED_DISCOVERABLE) {
@@ -148,19 +167,22 @@ fn prepend_flags(adv_data: &[u8], settings: GapSettings) -> Box<[u8]> {
         }
     }
 
-    // Check if adv_data already starts with a Flags AD structure (length=2, type=0x01)
-    if adv_data.len() >= 3 && adv_data[0] == 2 && adv_data[1] == AD_TYPE_FLAGS {
-        let mut result = Vec::from(adv_data);
+    // Check if BTP TLV data already starts with a Flags AD structure (type=0x01, len>=1)
+    let mut result = if btp_adv_data.len() >= 3 && btp_adv_data[0] == AD_TYPE_FLAGS && btp_adv_data[1] >= 1 {
+        let mut result: Box<[u8]> = Box::from(btp_adv_data);
         result[2] |= flags;
-        return result.into_boxed_slice();
-    }
+        result
+    } else {
+        let mut result = Vec::with_capacity(3 + btp_adv_data.len());
+        result.push(AD_TYPE_FLAGS);
+        result.push(1);
+        result.push(flags);
+        result.extend_from_slice(btp_adv_data);
+        result.into_boxed_slice()
+    };
 
-    let mut result = Vec::with_capacity(3 + adv_data.len());
-    result.push(2);
-    result.push(AD_TYPE_FLAGS);
-    result.push(flags);
-    result.extend_from_slice(adv_data);
-    result.into_boxed_slice()
+    btp_ad_to_ble_ad(&mut result);
+    result
 }
 
 /// Discoverable mode.
@@ -445,8 +467,14 @@ pub enum GapCommand<'a> {
     /// Connection parameter update (0x16).
     ConnParamUpdate(ConnParamUpdateCommand<'a>),
 
+    /// Set MITM flag (0x1b).
+    SetMitm(bool),
+
     /// Set filter accept list (0x1c).
     SetFilterAcceptList(SetFilterAcceptListCommand<'a>),
+
+    /// Set Secure Connections Only mode (0x1e).
+    SetScOnly(bool),
 }
 
 impl<'a> GapCommand<'a> {
@@ -533,12 +561,20 @@ impl<'a> GapCommand<'a> {
                 let params = cursor.read_exact(8)?;
                 Ok(GapCommand::ConnParamUpdate(ConnParamUpdateCommand { address, params }))
             }
+            opcodes::SET_MITM => {
+                let val = cursor.read_u8()?;
+                Ok(GapCommand::SetMitm(val != 0))
+            }
             opcodes::SET_FILTER_ACCEPT_LIST => {
                 let count = cursor.read_u8()? as usize;
                 let addresses = cursor.read_exact(count * 7)?;
                 Ok(GapCommand::SetFilterAcceptList(SetFilterAcceptListCommand {
                     addresses,
                 }))
+            }
+            opcodes::SET_SC_ONLY => {
+                let val = cursor.read_u8()?;
+                Ok(GapCommand::SetScOnly(val != 0))
             }
             _ => Err(Error::UnknownCommand {
                 service: ServiceId::GAP,
@@ -581,8 +617,10 @@ impl<'a> GapCommand<'a> {
             GapCommand::StartAdvertising(StartAdvertisingCommand {
                 adv_data, scan_data, ..
             }) => {
+                // Convert BTP TLV to BLE LTV and prepend flags
                 let adv_data: Box<[u8]> = prepend_flags(adv_data, settings);
-                let scan_data: Box<[u8]> = Box::from(*scan_data);
+                let mut scan_data: Box<[u8]> = Box::from(*scan_data);
+                btp_ad_to_ble_ad(&mut scan_data);
 
                 Some(if settings.contains(GapSettings::EXTENDED_ADVERTISING) {
                     if settings.contains(GapSettings::CONNECTABLE) {
@@ -1269,9 +1307,10 @@ mod tests {
 
     #[test]
     fn test_ad_connectable_undirected() {
+        // BTP TLV format: type=0xFF, len=1, data=[0xAA]
         let cmd = GapCommand::StartAdvertising(StartAdvertisingCommand {
-            adv_data: &[0x01],
-            scan_data: &[0x02],
+            adv_data: &[0xFF, 0x01, 0xAA],
+            scan_data: &[0xFF, 0x01, 0xBB],
             duration: 0,
             own_addr_type: AddrKind::PUBLIC,
         });
@@ -1286,7 +1325,7 @@ mod tests {
     #[test]
     fn test_ad_nonconnectable_nonscannable() {
         let cmd = GapCommand::StartAdvertising(StartAdvertisingCommand {
-            adv_data: &[0x01],
+            adv_data: &[0xFF, 0x01, 0xAA],
             scan_data: &[],
             duration: 0,
             own_addr_type: AddrKind::PUBLIC,
@@ -1302,8 +1341,8 @@ mod tests {
     #[test]
     fn test_ad_nonconnectable_scannable() {
         let cmd = GapCommand::StartAdvertising(StartAdvertisingCommand {
-            adv_data: &[0x01],
-            scan_data: &[0x02],
+            adv_data: &[0xFF, 0x01, 0xAA],
+            scan_data: &[0xFF, 0x01, 0xBB],
             duration: 0,
             own_addr_type: AddrKind::PUBLIC,
         });
@@ -1313,6 +1352,23 @@ mod tests {
             params,
             AdvertisementParams::NonconnectableScannableUndirected { .. }
         ));
+    }
+
+    #[test]
+    fn test_btp_tlv_to_ble_ltv_conversion() {
+        // BTP TLV: type=0x09 (Complete Local Name), len=5, data="Hello"
+        let mut data = [0x09, 0x05, b'H', b'e', b'l', b'l', b'o'];
+        btp_ad_to_ble_ad(&mut data);
+        // BLE LTV: length=6, type=0x09, data="Hello"
+        assert_eq!(data, [0x06, 0x09, b'H', b'e', b'l', b'l', b'o']);
+    }
+
+    #[test]
+    fn test_btp_tlv_to_ble_ltv_multiple_elements() {
+        // Two TLV elements
+        let mut data = [0x01, 0x01, 0x06, 0x09, 0x03, b'A', b'B', b'C'];
+        btp_ad_to_ble_ad(&mut data);
+        assert_eq!(data, [0x02, 0x01, 0x06, 0x04, 0x09, b'A', b'B', b'C']);
     }
 
     #[test]

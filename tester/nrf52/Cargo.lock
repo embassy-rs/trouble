@@ -383,6 +383,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "defmt-rtt"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93d5a25c99d89c40f5676bec8cefe0614f17f0f40e916f98e345dae941807f9e"
+dependencies = [
+ "critical-section",
+ "defmt 1.0.1",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -523,21 +533,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embassy-net-driver"
-version = "0.2.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=ed8d4277cd8165c8b280ccbb1501534056691b6a#ed8d4277cd8165c8b280ccbb1501534056691b6a"
-
-[[package]]
-name = "embassy-net-driver-channel"
-version = "0.3.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=ed8d4277cd8165c8b280ccbb1501534056691b6a#ed8d4277cd8165c8b280ccbb1501534056691b6a"
-dependencies = [
- "embassy-futures",
- "embassy-net-driver",
- "embassy-sync",
-]
-
-[[package]]
 name = "embassy-nrf"
 version = "0.9.0"
 source = "git+https://github.com/embassy-rs/embassy.git?rev=ed8d4277cd8165c8b280ccbb1501534056691b6a#ed8d4277cd8165c8b280ccbb1501534056691b6a"
@@ -613,22 +608,6 @@ version = "0.3.0"
 source = "git+https://github.com/embassy-rs/embassy.git?rev=ed8d4277cd8165c8b280ccbb1501534056691b6a#ed8d4277cd8165c8b280ccbb1501534056691b6a"
 dependencies = [
  "embassy-executor-timer-queue",
- "heapless",
-]
-
-[[package]]
-name = "embassy-usb"
-version = "0.5.1"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=ed8d4277cd8165c8b280ccbb1501534056691b6a#ed8d4277cd8165c8b280ccbb1501534056691b6a"
-dependencies = [
- "bitflags 2.10.0",
- "defmt 1.0.1",
- "embassy-futures",
- "embassy-net-driver-channel",
- "embassy-sync",
- "embassy-time",
- "embassy-usb-driver",
- "embedded-io-async",
  "heapless",
 ]
 
@@ -1228,6 +1207,9 @@ name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+dependencies = [
+ "critical-section",
+]
 
 [[package]]
 name = "ppv-lite86"
@@ -1635,17 +1617,18 @@ dependencies = [
  "cortex-m-rt",
  "critical-section",
  "defmt 1.0.1",
+ "defmt-rtt",
  "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync",
  "embassy-time",
- "embassy-usb",
  "embedded-alloc",
  "futures",
  "nrf-mpsl",
  "nrf-sdc",
  "panic-probe",
+ "portable-atomic",
  "rand_chacha",
  "rand_core 0.6.4",
  "static_cell",
