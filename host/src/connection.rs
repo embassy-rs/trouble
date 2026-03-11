@@ -595,6 +595,12 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.get_security_level(self.index)
     }
 
+    /// Get the negotiated encryption key length for this connection
+    #[cfg(feature = "legacy-pairing")]
+    pub fn encryption_key_len(&self) -> Result<u8, Error> {
+        self.manager.get_encryption_key_len(self.index)
+    }
+
     /// Get whether the connection is set as bondable or not.
     ///
     /// This is only relevant before pairing has started.

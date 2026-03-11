@@ -39,6 +39,7 @@ enum AttCommand {
         permissions: AttPermissions,
         uuid: Uuid,
         value: Option<AttValue>,
+        min_key_len: u8,
     },
     Descriptor {
         permissions: AttPermissions,
@@ -161,6 +162,7 @@ impl ServiceBuilder {
                 permissions,
                 uuid,
                 value: None,
+                min_key_len: 0,
             })
             .or(Err(BtpStatus::Fail))?;
         Ok(handle)
@@ -196,6 +198,49 @@ impl ServiceBuilder {
                 Ok(())
             }
             _ => Err(BtpStatus::Fail),
+        }
+    }
+
+    /// Set the minimum encryption key size on a characteristic.
+    /// If `attr_id` is 0, applies to the last added characteristic.
+    pub fn set_enc_key_size(&mut self, attr_id: u16, key_size: u8) -> Result<(), BtpStatus> {
+        trace!(
+            "ServiceBuilder::set_enc_key_size attr_id={} key_size={}",
+            attr_id, key_size
+        );
+        if self.service.is_none() {
+            return Err(BtpStatus::Fail);
+        }
+        if attr_id == 0 {
+            // Apply to the last characteristic
+            let last_char = self
+                .commands
+                .iter_mut()
+                .rev()
+                .find(|c| matches!(c, AttCommand::Characteristic { .. }))
+                .ok_or(BtpStatus::Fail)?;
+            match last_char {
+                AttCommand::Characteristic { min_key_len, .. } => {
+                    *min_key_len = key_size;
+                    Ok(())
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            // Find by handle — compute expected handles for each characteristic
+            let mut handle = self.service_id + 1; // first handle after service declaration
+            for cmd in self.commands.iter_mut() {
+                let count = cmd.att_count();
+                if let AttCommand::Characteristic { min_key_len, .. } = cmd {
+                    let value_handle = handle + 1;
+                    if value_handle == attr_id {
+                        *min_key_len = key_size;
+                        return Ok(());
+                    }
+                }
+                handle += count;
+            }
+            Err(BtpStatus::Fail)
         }
     }
 
@@ -238,6 +283,7 @@ impl ServiceBuilder {
                         permissions,
                         uuid,
                         value,
+                        min_key_len,
                     } => {
                         let mut characteristic_builder = match value {
                             Some(AttValue::Stored(store)) => {
@@ -268,6 +314,10 @@ impl ServiceBuilder {
                             || permissions.write == PermissionLevel::AuthenticationRequired
                         {
                             characteristic_builder = characteristic_builder.write_permission(permissions.write);
+                        }
+
+                        if min_key_len > 0 {
+                            characteristic_builder = characteristic_builder.min_key_len(min_key_len);
                         }
 
                         while let Some(AttCommand::Descriptor { .. }) = commands.peek() {
@@ -376,6 +426,7 @@ mod tests {
             permissions: AttPermissions::default(),
             uuid: test_uuid(),
             value: None,
+            min_key_len: 0,
         };
         assert_eq!(cmd.att_count(), 2);
     }
@@ -387,6 +438,7 @@ mod tests {
             permissions: AttPermissions::default(),
             uuid: test_uuid(),
             value: None,
+            min_key_len: 0,
         };
         assert_eq!(cmd.att_count(), 3);
     }
@@ -398,6 +450,7 @@ mod tests {
             permissions: AttPermissions::default(),
             uuid: test_uuid(),
             value: None,
+            min_key_len: 0,
         };
         assert_eq!(cmd.att_count(), 3);
     }

@@ -467,7 +467,14 @@ impl Pairing {
         };
         let stk = LongTermKey(masked_stk);
 
-        let bond = ops.try_enable_encryption(&stk, pairing_data.pairing_method.security_level(), false, 0, [0; 8])?;
+        let bond = ops.try_enable_encryption(
+            &stk,
+            pairing_data.pairing_method.security_level(),
+            false,
+            0,
+            [0; 8],
+            negotiated_key_size,
+        )?;
         pairing_data.bond_information = Some(bond);
 
         Ok(Self::WaitingLinkEncrypted)

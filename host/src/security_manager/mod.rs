@@ -65,6 +65,9 @@ pub struct BondInformation {
     #[cfg(feature = "legacy-pairing")]
     /// Random Number (all zeros for LESC, non-zero for legacy)
     pub rand: [u8; 8],
+    #[cfg(feature = "legacy-pairing")]
+    /// Negotiated encryption key length in bytes (16 for LESC)
+    pub encryption_key_len: u8,
 }
 
 impl BondInformation {
@@ -79,6 +82,8 @@ impl BondInformation {
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
             rand: [0; 8],
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len: 16,
         }
     }
 }
@@ -230,12 +235,17 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
 
             #[cfg(feature = "legacy-pairing")]
             {
-                // Check if peer supports SC by peeking at PairingRequest AuthReq byte
+                // Check if peer supports SC by peeking at PairingRequest AuthReq byte,
+                // or if peer requests a key size smaller than LESC requires
                 let use_legacy = command == Command::PairingRequest
-                    && payload.len() >= 3
-                    && !AuthReq::from(payload[2]).secure_connection();
+                    && payload.len() >= 4
+                    && (!AuthReq::from(payload[2]).secure_connection()
+                        || payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS);
 
                 if use_legacy && self.secure_connections_only {
+                    if payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS {
+                        return Err(Error::Security(Reason::EncryptionKeySize));
+                    }
                     return Err(Error::Security(Reason::AuthenticationRequirements));
                 }
 
@@ -252,14 +262,18 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
         }
 
         // Check if we need to switch from LESC to legacy peripheral
-        // when receiving a PairingRequest without SC flag
+        // when receiving a PairingRequest without SC flag or with insufficient key size
         #[cfg(feature = "legacy-pairing")]
         if command == Command::PairingRequest
-            && payload.len() >= 3
-            && !AuthReq::from(payload[2]).secure_connection()
+            && payload.len() >= 4
+            && (!AuthReq::from(payload[2]).secure_connection()
+                || payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS)
             && self.pairing_sm.as_ref().is_some_and(|p| p.is_lesc_peripheral())
         {
             if self.secure_connections_only {
+                if payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS {
+                    return Err(Error::Security(Reason::EncryptionKeySize));
+                }
                 return Err(Error::Security(Reason::AuthenticationRequirements));
             }
             let old = self.pairing_sm.take().unwrap();
@@ -314,14 +328,18 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
         }
 
         // Check if we need to switch from LESC to legacy central
-        // when receiving a PairingResponse without SC flag
+        // when receiving a PairingResponse without SC flag or with insufficient key size
         #[cfg(feature = "legacy-pairing")]
         if command == Command::PairingResponse
-            && payload.len() >= 3
-            && !AuthReq::from(payload[2]).secure_connection()
+            && payload.len() >= 4
+            && (!AuthReq::from(payload[2]).secure_connection()
+                || payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS)
             && self.pairing_sm.as_ref().is_some_and(|p| p.is_lesc_central())
         {
             if self.secure_connections_only {
+                if payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS {
+                    return Err(Error::Security(Reason::EncryptionKeySize));
+                }
                 return Err(Error::Security(Reason::AuthenticationRequirements));
             }
             let old = self.pairing_sm.take().unwrap();
@@ -399,6 +417,10 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
             if res.is_ok() {
                 storage.security_level = sm.security_level();
                 storage.bond_rejected = false;
+                #[cfg(feature = "legacy-pairing")]
+                if let Some(bond) = sm.bond_information() {
+                    storage.encryption_key_len = bond.encryption_key_len;
+                }
             }
             if sm.result().is_some() {
                 self.finished_waker.wake();
@@ -416,6 +438,10 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
                 Some(bond) if encrypted => {
                     info!("[smp] Encrypted using bond {:?}", bond.identity);
                     storage.security_level = bond.security_level;
+                    #[cfg(feature = "legacy-pairing")]
+                    {
+                        storage.encryption_key_len = bond.encryption_key_len;
+                    }
                 }
                 _ => {
                     warn!(
@@ -1032,6 +1058,7 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         is_bonded: bool,
         #[cfg(feature = "legacy-pairing")] ediv: u16,
         #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
+        #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
     ) -> Result<BondInformation, Error> {
         info!("Enabling encryption for {:?}", self.peer_identity);
         let bond_info = BondInformation {
@@ -1043,6 +1070,8 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
             ediv,
             #[cfg(feature = "legacy-pairing")]
             rand,
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len,
         };
         self.try_update_bond_information(&bond_info)?;
         self.events
