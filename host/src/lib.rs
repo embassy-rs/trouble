@@ -733,6 +733,11 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     pub fn get_connection_by_peer_address(&'stack self, peer_address: Address) -> Option<Connection<'stack, P>> {
         self.host.connections.get_connection_by_peer_address(peer_address)
     }
+
+    /// Iterate over all currently connected connections.
+    pub fn connections(&'stack self) -> connection_manager::ConnectedIter<'stack, P> {
+        self.host.connections.connections()
+    }
 }
 
 pub(crate) fn bt_hci_duration<const US: u32>(d: Duration) -> bt_hci::param::Duration<US> {

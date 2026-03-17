@@ -269,7 +269,8 @@ where
 pub(crate) async fn run<'stack, R: Read, W: Write, C, P: PacketPool>(
     pre_server_result: PreServerResult<'stack, R, W, C, P>,
     config: &BtpConfig<'_>,
-    table: &AttributeTable<'_, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
+    server: &crate::Server<'_, P>,
+    stack: &'stack Stack<'stack, C, P>,
     events: DynamicReceiver<'_, Event>,
     channels: &CommandChannels<'_>,
     packet: &mut BtpPacket,
@@ -312,7 +313,9 @@ where
             BtpCommand::Gap(gap_command) => handle_gap(packet.header, &gap_command, config, &mut gap, channels)
                 .await
                 .map(BtpResponse::Gap),
-            BtpCommand::Gatt(gatt_command) => handle_gatt(gatt_command, table, channels).await.map(BtpResponse::Gatt),
+            BtpCommand::Gatt(gatt_command) => handle_gatt(gatt_command, server, stack, channels)
+                .await
+                .map(BtpResponse::Gatt),
             BtpCommand::L2cap(l2cap_command) => handle_l2cap(l2cap_command).map(BtpResponse::L2cap),
         };
 
@@ -850,9 +853,10 @@ where
 ///
 /// Building commands return errors; StartServer returns the cached table_len.
 /// Client commands are forwarded to the gatt_client task.
-async fn handle_gatt<'a>(
+async fn handle_gatt<'a, 's, C: crate::Controller, P: PacketPool>(
     cmd: GattCommand<'a>,
-    table: &AttributeTable<'_, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
+    server: &crate::Server<'_, P>,
+    stack: &'s Stack<'s, C, P>,
     channels: &CommandChannels<'_>,
 ) -> HandlerResult<GattResponse> {
     use HandlerResult::*;
@@ -865,11 +869,11 @@ async fn handle_gatt<'a>(
         ReadSupportedCommands => Ready(GattResponse::SupportedCommands(SUPPORTED_COMMANDS)),
         StartServer => Ready(GattResponse::ServerStarted(ServerStartedResponse {
             db_attr_offset: (GAP_ATTRIBUTE_COUNT + GATT_ATTRIBUTE_COUNT + 1) as u16,
-            db_attr_count: table.len() as u8,
+            db_attr_count: server.table().len() as u8,
         })),
         // Building commands not available after server started
         AddService(..) | AddCharacteristic(..) | AddDescriptor(..) | AddIncludedService(..) => Error(BtpStatus::Fail),
-        SetValue(cmd) => match table.write(cmd.attr_id, 0, cmd.value) {
+        SetValue(cmd) => match server.write_and_notify(stack, cmd.attr_id, cmd.value).await {
             Ok(()) => Ready(GattResponse::ValueSet),
             Err(_) => Error(BtpStatus::Fail),
         },
@@ -877,7 +881,7 @@ async fn handle_gatt<'a>(
         GetAttrs(cmd) => {
             let mut attrs = alloc::vec::Vec::new();
             for h in cmd.start_handle..=cmd.end_handle {
-                if let (Some(uuid), Some(perms)) = (table.uuid(h), table.permissions(h))
+                if let (Some(uuid), Some(perms)) = (server.table().uuid(h), server.table().permissions(h))
                     && (cmd.type_uuid.is_none() || cmd.type_uuid.as_ref() == Some(&uuid))
                 {
                     attrs.push(AttributeInfo {
@@ -891,17 +895,30 @@ async fn handle_gatt<'a>(
             Ready(GattResponse::Attrs(attrs))
         }
         GetAttrValue(cmd) => {
+            let address = Address {
+                kind: cmd.addr_type,
+                addr: cmd.address,
+            };
             let mut buf = alloc::vec![0u8; 512];
-            match table.read(cmd.handle, 0, &mut buf) {
+            let result = match stack.get_connection_by_peer_address(address) {
+                Some(conn) => server.read(&conn, cmd.handle, 0, &mut buf),
+                None => server
+                    .table()
+                    .read(cmd.handle, 0, &mut buf)
+                    .map_err(|_| AttErrorCode::INVALID_HANDLE),
+            };
+            match result {
                 Ok(len) => {
                     buf.truncate(len);
-                    let data = buf.into_boxed_slice();
                     Ready(GattResponse::AttrValue(protocol::gatt::AttrValueResponse {
                         att_response: 0x00,
-                        value: data,
+                        value: buf.into_boxed_slice(),
                     }))
                 }
-                Err(_) => Error(BtpStatus::Fail),
+                Err(e) => Ready(GattResponse::AttrValue(protocol::gatt::AttrValueResponse {
+                    att_response: e.to_u8(),
+                    value: alloc::boxed::Box::default(),
+                })),
             }
         }
 

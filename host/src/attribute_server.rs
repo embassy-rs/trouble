@@ -173,12 +173,17 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn disconnect(&self, peer_identity: &Identity) {
+    fn disconnect(&self, peer_identity: &Identity, bonded: bool) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
-            for (client, _) in n.iter_mut() {
+            for (client, table) in n.iter_mut() {
                 if client.identity.match_identity(peer_identity) {
-                    client.is_connected = false;
+                    if !bonded {
+                        *client = Client::default();
+                        table.disable_all();
+                    } else {
+                        client.is_connected = false;
+                    }
                     break;
                 }
             }
@@ -335,7 +340,12 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
     }
 
     fn disconnect(&self, connection: &Connection<'_, P>) {
-        self.cccd_tables.disconnect(&connection.peer_identity());
+        #[cfg(feature = "security")]
+        let bonded = connection.is_bonded_peer();
+        #[cfg(not(feature = "security"))]
+        let bonded = false;
+
+        self.cccd_tables.disconnect(&connection.peer_identity(), bonded);
     }
 
     fn process(
@@ -389,6 +399,21 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
             cccd_tables,
             _p: PhantomData,
         }
+    }
+
+    /// Read an attribute value with permission checks for the given connection.
+    pub fn read(
+        &self,
+        connection: &Connection<'_, P>,
+        handle: u16,
+        offset: usize,
+        data: &mut [u8],
+    ) -> Result<usize, AttErrorCode> {
+        self.att_table
+            .with_attribute(handle, |att| {
+                self.read_attribute_data(connection, handle, offset, att, data)
+            })
+            .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND))
     }
 
     pub(crate) fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
@@ -996,6 +1021,52 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     /// Get a reference to the attribute table
     pub fn table(&self) -> &AttributeTable<'values, M, ATT_MAX> {
         &self.att_table
+    }
+
+    /// Write a value to the attribute table and send notifications/indications
+    /// to all connected peers that have subscribed via the CCCD.
+    ///
+    /// If the attribute at `value_handle + 1` is a CCCD (UUID 0x2902), each
+    /// connection is checked for notification/indication subscriptions and
+    /// sent the appropriate PDU.
+    #[cfg(feature = "gatt")]
+    pub async fn write_and_notify<'s, C: crate::Controller>(
+        &self,
+        stack: &'s crate::Stack<'s, C, P>,
+        value_handle: u16,
+        data: &[u8],
+    ) -> Result<(), Error> {
+        self.att_table.write(value_handle, 0, data)?;
+
+        // Check if the next handle is a CCCD
+        let cccd_handle = value_handle + 1;
+        if self.att_table.uuid(cccd_handle)
+            != Some(bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.into())
+        {
+            return Ok(());
+        }
+
+        for conn in stack.connections() {
+            if self.should_notify(&conn, cccd_handle) {
+                let uns = att::AttUns::Notify {
+                    handle: value_handle,
+                    data,
+                };
+                if let Ok(pdu) = crate::gatt::assemble(&conn, att::AttServer::Unsolicited(uns)) {
+                    conn.send(pdu).await;
+                }
+            }
+            if self.should_indicate(&conn, cccd_handle) {
+                let uns = att::AttUns::Indicate {
+                    handle: value_handle,
+                    data,
+                };
+                if let Ok(pdu) = crate::gatt::assemble(&conn, att::AttServer::Unsolicited(uns)) {
+                    conn.send(pdu).await;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Get the CCCD table for a connection
