@@ -215,8 +215,10 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
         },
     };
 
-    let mtu_val = channel.mtu();
-    let mps_val = channel.mps();
+    let peer_mtu = channel.peer_mtu();
+    let peer_mps = channel.peer_mps();
+    let our_mtu = channel.mtu();
+    let our_mps = channel.mps();
 
     let (writer, mut reader) = channel.split();
 
@@ -226,10 +228,10 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
         .send(Event::L2capConnected {
             chan_id,
             psm,
-            peer_mtu: mtu_val,
-            peer_mps: mps_val,
-            our_mtu: mtu_val,
-            our_mps: mps_val,
+            peer_mtu,
+            peer_mps,
+            our_mtu,
+            our_mps,
             address,
         })
         .await;

@@ -187,6 +187,16 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         self.manager.mps(self.index)
     }
 
+    /// Get the peer's MTU for this channel.
+    pub fn peer_mtu(&self) -> u16 {
+        self.manager.peer_mtu(self.index)
+    }
+
+    /// Get the peer's MPS for this channel.
+    pub fn peer_mps(&self) -> u16 {
+        self.manager.peer_mps(self.index)
+    }
+
     /// Send the provided buffer over this l2cap channel.
     ///
     /// The buffer must be equal to or smaller than the MTU agreed for the channel.
@@ -387,14 +397,14 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
         self.manager.disconnect(self.index);
     }
 
-    /// Get the negotiated MTU for this channel.
-    pub fn mtu(&self) -> u16 {
-        self.manager.mtu(self.index)
+    /// Get the peer's MTU for this channel.
+    pub fn peer_mtu(&self) -> u16 {
+        self.manager.peer_mtu(self.index)
     }
 
-    /// Get the negotiated MPS for this channel.
-    pub fn mps(&self) -> u16 {
-        self.manager.mps(self.index)
+    /// Get the peer's MPS for this channel.
+    pub fn peer_mps(&self) -> u16 {
+        self.manager.peer_mps(self.index)
     }
 
     /// Send the provided buffer over this l2cap channel.

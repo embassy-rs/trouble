@@ -128,6 +128,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         self.with_mut(|state| state.channels[index.0 as usize].mps)
     }
 
+    pub(crate) fn peer_mtu(&self, index: ChannelIndex) -> u16 {
+        self.with_mut(|state| state.channels[index.0 as usize].peer_mtu)
+    }
+
+    pub(crate) fn peer_mps(&self, index: ChannelIndex) -> u16 {
+        self.with_mut(|state| state.channels[index.0 as usize].peer_mps)
+    }
+
     pub(crate) fn disconnect(&self, index: ChannelIndex) {
         self.with_mut(|state| {
             let chan = &mut state.channels[index.0 as usize];
@@ -241,8 +249,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 ChannelState::PeerConnecting(req_id) => req_id,
                 _ => return Err(Error::NotFound.into()),
             };
-            chan.mtu = chan.mtu.min(mtu);
-            chan.mps = chan.mps.min(mps);
+            chan.mtu = mtu;
+            chan.mps = mps;
             chan.flow_control = CreditFlowControl::new(
                 *flow_policy,
                 initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16),
@@ -596,8 +604,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             storage.psm = req.psm;
             storage.peer_cid = req.scid;
             storage.peer_credits = req.credits;
-            storage.mps = req.mps;
-            storage.mtu = req.mtu;
+            storage.peer_mps = req.mps;
+            storage.peer_mtu = req.mtu;
             storage.state = ChannelState::PeerConnecting(identifier);
         })?;
         self.state.borrow_mut().accept_waker.wake();
@@ -614,8 +622,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         ChannelState::Connecting(req_id) if identifier == req_id && Some(conn) == storage.conn => {
                             storage.peer_cid = res.dcid;
                             storage.peer_credits = res.credits;
-                            storage.mps = storage.mps.min(res.mps);
-                            storage.mtu = storage.mtu.min(res.mtu);
+                            storage.peer_mps = res.mps;
+                            storage.peer_mtu = res.mtu;
                             storage.state = ChannelState::Connected;
                             state.create_waker.wake();
                             return Ok(());
@@ -854,7 +862,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let state = self.state.borrow();
         let chan = &state.channels[index.0 as usize];
         if chan.state == ChannelState::Connected {
-            return Ok((chan.conn.unwrap(), chan.mps, chan.mtu, chan.peer_cid));
+            return Ok((chan.conn.unwrap(), chan.peer_mps, chan.peer_mtu, chan.peer_cid));
         }
         //trace!("[l2cap][connected_channel_params] channel {} closed", index);
         Err(Error::ChannelClosed)
@@ -1061,6 +1069,8 @@ pub struct ChannelStorage<P> {
     refcount: u8,
 
     peer_cid: u16,
+    peer_mps: u16,
+    peer_mtu: u16,
     peer_credits: u16,
     credit_waker: WakerRegistration,
 
@@ -1142,6 +1152,8 @@ impl<P> core::fmt::Debug for ChannelStorage<P> {
             .field("peer_cid", &self.peer_cid)
             .field("mps", &self.mps)
             .field("mtu", &self.mtu)
+            .field("peer_mps", &self.peer_mps)
+            .field("peer_mtu", &self.peer_mtu)
             .field("peer_credits", &self.peer_credits)
             .field("available", &self.flow_control.available())
             .field("refcount", &self.refcount);
@@ -1156,13 +1168,15 @@ impl<P> defmt::Format for ChannelStorage<P> {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(
             f,
-            "state = {}, c = {}, cid = {}, peer = {}, mps = {}, mtu = {}, cred out {}, cred in = {}, ref = {}",
+            "state = {}, c = {}, cid = {}, peer = {}, mps = {}, mtu = {}, peer_mps = {}, peer_mtu = {}, cred out {}, cred in = {}, ref = {}",
             self.state,
             self.conn,
             self.cid,
             self.peer_cid,
             self.mps,
             self.mtu,
+            self.peer_mps,
+            self.peer_mtu,
             self.peer_credits,
             self.flow_control.available(),
             self.refcount,
@@ -1184,6 +1198,8 @@ impl<P> ChannelStorage<P> {
 
             flow_control: CreditFlowControl::new(CreditFlowPolicy::Every(1), 0),
             peer_cid: 0,
+            peer_mps: 0,
+            peer_mtu: 0,
             peer_credits: 0,
             credit_waker: WakerRegistration::new(),
             refcount: 0,
@@ -1203,6 +1219,8 @@ impl<P> ChannelStorage<P> {
         self.mtu = 0;
         self.psm = 0;
         self.peer_cid = 0;
+        self.peer_mps = 0;
+        self.peer_mtu = 0;
         self.flow_control = CreditFlowControl::new(CreditFlowPolicy::Every(1), 0);
         self.peer_credits = 0;
     }
