@@ -4,7 +4,7 @@ use core::task::{Context, Poll};
 
 use bt_hci::controller::{blocking, Controller};
 use bt_hci::param::ConnHandle;
-use bt_hci::FromHciBytes;
+use bt_hci::{FromHciBytes, WriteHci};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
@@ -18,8 +18,9 @@ use crate::l2cap::{L2capChannel, L2capPendingConnection};
 use crate::pdu::{Pdu, Sdu};
 use crate::prelude::{ConnectionEvent, ConnectionParamsRequest, L2capChannelConfig};
 use crate::types::l2cap::{
-    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capSignalCode,
-    L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
+    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
+    L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode,
+    LeCreditFlowInd, L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{config, BleHostError, Error, PacketPool};
 
@@ -602,6 +603,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             while !remaining.is_empty() {
                 let (header, rest) = L2capSignalHeader::from_hci_bytes(remaining)?;
                 if header.length as usize > rest.len() {
+                    Self::try_send_signal(conn, header.identifier, &CommandRejectRes { reason: 0 }, manager)?;
                     return Err(Error::InvalidValue);
                 }
                 remaining = &rest[header.length as usize..];
@@ -615,19 +617,16 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             let result = (|| match header.code {
                 L2capSignalCode::LE_CREDIT_CONN_REQ => {
                     let req = LeCreditConnReq::from_hci_bytes_complete(signal_data)?;
-                    self.handle_connect_request(conn, header.identifier, &req)?;
-                    Ok(())
+                    self.handle_connect_request(conn, header.identifier, &req, manager)
                 }
                 L2capSignalCode::LE_CREDIT_CONN_RES => {
                     let res = LeCreditConnRes::from_hci_bytes_complete(signal_data)?;
-                    self.handle_connect_response(conn, header.identifier, &res)?;
-                    Ok(())
+                    self.handle_connect_response(conn, header.identifier, &res)
                 }
                 L2capSignalCode::LE_CREDIT_FLOW_IND => {
                     let req = LeCreditFlowInd::from_hci_bytes_complete(signal_data)?;
                     //trace!("[l2cap] credit flow: {:?}", req);
-                    self.handle_credit_flow(conn, &req)?;
-                    Ok(())
+                    self.handle_credit_flow(conn, &req)
                 }
                 L2capSignalCode::COMMAND_REJECT_RES => {
                     let (_reject, _) = CommandRejectRes::from_hci_bytes(signal_data)?;
@@ -636,14 +635,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 L2capSignalCode::DISCONNECTION_REQ => {
                     let req = DisconnectionReq::from_hci_bytes_complete(signal_data)?;
                     debug!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
-                    self.handle_disconnect_request(header.identifier, req.dcid)?;
-                    Ok(())
+                    self.handle_disconnect_request(conn, header.identifier, req.dcid, manager)
                 }
                 L2capSignalCode::DISCONNECTION_RES => {
                     let res = DisconnectionRes::from_hci_bytes_complete(signal_data)?;
                     debug!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
-                    self.handle_disconnect_response(res.scid)?;
-                    Ok(())
+                    self.handle_disconnect_response(res.scid)
                 }
                 L2capSignalCode::CONN_PARAM_UPDATE_REQ => {
                     let req = ConnParamUpdateReq::from_hci_bytes_complete(signal_data)?;
@@ -655,20 +652,30 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     let timeout: bt_hci::param::Duration<10_000> = bt_hci::param::Duration::from_u16(req.timeout);
 
                     use embassy_time::Duration;
-                    let req = ConnectionParamsRequest::new(
-                        crate::prelude::RequestedConnParams {
-                            min_connection_interval: Duration::from_micros(interval_min.as_micros()),
-                            max_connection_interval: Duration::from_micros(interval_max.as_micros()),
-                            max_latency: req.latency,
-                            supervision_timeout: Duration::from_micros(timeout.as_micros()),
-                            ..Default::default()
-                        },
-                        conn,
-                        #[cfg(feature = "connection-params-update")]
-                        true,
-                    );
+                    let params = crate::prelude::RequestedConnParams {
+                        min_connection_interval: Duration::from_micros(interval_min.as_micros()),
+                        max_connection_interval: Duration::from_micros(interval_max.as_micros()),
+                        max_latency: req.latency,
+                        supervision_timeout: Duration::from_micros(timeout.as_micros()),
+                        ..Default::default()
+                    };
 
-                    let _ = manager.post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req));
+                    if !params.is_valid() {
+                        warn!(
+                            "[l2cap][conn = {:?}] rejecting connection param update request with invalid parameters",
+                            conn
+                        );
+                        Self::try_send_signal(conn, header.identifier, &ConnParamUpdateRes { result: 1 }, manager)?;
+                    } else {
+                        let req = ConnectionParamsRequest::new(
+                            params,
+                            conn,
+                            #[cfg(feature = "connection-params-update")]
+                            true,
+                        );
+
+                        let _ = manager.post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req));
+                    }
                     Ok(())
                 }
                 L2capSignalCode::CONN_PARAM_UPDATE_RES => {
@@ -679,33 +686,64 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     );
                     Ok(())
                 }
-                r => {
-                    warn!("[l2cap][conn = {:?}] unsupported signal: {:?}", conn, r);
+                _ => {
+                    warn!("[l2cap][conn = {:?}] unsupported signal: {:?}", conn, header.code);
+                    Self::try_send_signal(conn, header.identifier, &CommandRejectRes { reason: 0 }, manager)?;
                     Err(Error::NotSupported)
                 }
             })();
             if let Err(e) = result {
                 warn!("[l2cap][conn = {:?}] error processing signal: {:?}", conn, e);
+                if matches!(e, Error::HciDecode(_)) {
+                    Self::try_send_signal(conn, header.identifier, &CommandRejectRes { reason: 0 }, manager)?;
+                }
             }
             data = next;
         }
         Ok(())
     }
 
-    fn handle_connect_request(&self, conn: ConnHandle, identifier: u8, req: &LeCreditConnReq) -> Result<(), Error> {
-        if !self.state.borrow().is_psm_registered(req.psm) {
-            return Err(Error::NotSupported);
+    fn handle_connect_request(
+        &self,
+        conn: ConnHandle,
+        identifier: u8,
+        req: &LeCreditConnReq,
+        manager: &ConnectionManager<'_, P>,
+    ) -> Result<(), Error> {
+        let result = {
+            let mut state = self.state.borrow_mut();
+            if !state.is_psm_registered(req.psm) {
+                Err(LeCreditConnResultCode::SpsmNotSupported)
+            } else {
+                match state.alloc(conn, Some(req.scid), |storage| {
+                    storage.conn = Some(conn);
+                    storage.psm = req.psm;
+                    storage.peer_credits = req.credits;
+                    storage.peer_mps = req.mps;
+                    storage.peer_mtu = req.mtu;
+                    storage.state = ChannelState::PeerConnecting(identifier);
+                }) {
+                    Ok(_) => {
+                        state.accept_waker.wake();
+                        Ok(())
+                    }
+                    Err(Error::L2capConnectError(result)) => Err(result),
+                    Err(Error::NoChannelAvailable) => Err(LeCreditConnResultCode::NoResources),
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+
+        match result {
+            Ok(()) => Ok(()),
+            Err(result) => {
+                debug!(
+                    "[l2cap][conn = {:?}] rejecting connection for PSM 0x{:04x}: {:?}",
+                    conn, req.psm, result
+                );
+                Self::try_send_signal(conn, identifier, &LeCreditConnRes::reject(result), manager)
+            }
         }
-        self.alloc(conn, Some(req.scid), |storage| {
-            storage.conn = Some(conn);
-            storage.psm = req.psm;
-            storage.peer_credits = req.credits;
-            storage.peer_mps = req.mps;
-            storage.peer_mtu = req.mtu;
-            storage.state = ChannelState::PeerConnecting(identifier);
-        })?;
-        self.state.borrow_mut().accept_waker.wake();
-        Ok(())
     }
 
     fn handle_connect_response(&self, conn: ConnHandle, identifier: u8, res: &LeCreditConnRes) -> Result<(), Error> {
@@ -777,7 +815,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Err(Error::NotFound)
     }
 
-    fn handle_disconnect_request(&self, identifier: u8, cid: u16) -> Result<(), Error> {
+    fn handle_disconnect_request(
+        &self,
+        conn: ConnHandle,
+        identifier: u8,
+        cid: u16,
+        manager: &ConnectionManager<'_, P>,
+    ) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         for storage in state.channels.iter_mut() {
             if cid == storage.cid {
@@ -787,7 +831,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 return Ok(());
             }
         }
-        Ok(())
+        warn!(
+            "[l2cap][conn = {:?}, cid = {}] disconnect request for unknown channel",
+            conn, cid
+        );
+        Self::try_send_signal(conn, identifier, &CommandRejectRes { reason: 2 }, manager)
     }
 
     fn handle_disconnect_response(&self, cid: u16) -> Result<(), Error> {
@@ -944,6 +992,30 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             grant.confirm(1);
         }
         Ok(())
+    }
+
+    fn try_send_signal<D: L2capSignal>(
+        conn: ConnHandle,
+        identifier: u8,
+        signal: &D,
+        manager: &ConnectionManager<'_, P>,
+    ) -> Result<(), Error> {
+        let signal_header = L2capSignalHeader {
+            code: D::code(),
+            identifier,
+            length: signal.size() as u16,
+        };
+        let l2cap = L2capHeader {
+            channel: L2CAP_CID_LE_U_SIGNAL,
+            length: signal_header.size() as u16 + signal_header.length,
+        };
+        let mut buf = P::allocate().ok_or(Error::OutOfMemory)?;
+        let mut w = WriteCursor::new(buf.as_mut());
+        w.write_hci(&l2cap)?;
+        w.write_hci(&signal_header)?;
+        w.write_hci(signal)?;
+        let len = w.len();
+        manager.try_outbound(conn, Pdu::new(buf, len))
     }
 
     pub(crate) async fn send_conn_param_update_req<T: Controller>(

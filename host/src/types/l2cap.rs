@@ -266,6 +266,12 @@ unsafe impl FixedSizeValue for CommandRejectRes {
     }
 }
 
+impl L2capSignal for CommandRejectRes {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::COMMAND_REJECT_RES
+    }
+}
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
