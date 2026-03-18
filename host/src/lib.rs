@@ -327,6 +327,8 @@ pub enum Error {
 
     /// Error decoding advertisement data.
     Advertisement(AdvertisementDataError),
+    /// L2CAP credit-based connection refused by the peer.
+    L2capConnectError(crate::types::l2cap::LeCreditConnResultCode),
     /// Invalid l2cap channel id provided.
     InvalidChannelId,
     /// No l2cap channel available.

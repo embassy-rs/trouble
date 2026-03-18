@@ -454,6 +454,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         assert_eq!(Some(conn), storage.conn);
 
         match storage.state {
+            ChannelState::ConnectFailed(result) => {
+                storage.state = ChannelState::Disconnected;
+                return Poll::Ready(Err(Error::L2capConnectError(result).into()));
+            }
             ChannelState::Disconnecting | ChannelState::PeerDisconnecting => {
                 return Poll::Ready(Err(Error::Disconnected.into()));
             }
@@ -707,7 +711,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             }
             other => {
                 warn!("Channel open request failed: {:?}", other);
-                Err(Error::NotSupported)
+                storage.state = ChannelState::ConnectFailed(other);
+                state.create_waker.wake();
+                Err(Error::L2capConnectError(other))
             }
         }
     }
@@ -1313,6 +1319,7 @@ pub enum ChannelState {
     PeerConnecting(u8),
     Connected,
     PeerDisconnecting,
+    ConnectFailed(LeCreditConnResultCode),
     Disconnecting,
 }
 
