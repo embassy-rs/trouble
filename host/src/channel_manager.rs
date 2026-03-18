@@ -11,7 +11,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
-use crate::host::BleHost;
+use crate::host::{BleHost, OnDrop};
 #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
 use crate::l2cap::sar::PacketReassembly;
 use crate::l2cap::{L2capChannel, L2capPendingConnection};
@@ -31,6 +31,8 @@ struct State<'d, P> {
     accept_waker: WakerRegistration,
     create_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
+    /// Bitmask tracking which PSMs (0x0001..=0x00FF) have active listeners.
+    registered_psms: [u32; 8],
 }
 
 /// Channel manager for L2CAP channels used directly by clients.
@@ -73,6 +75,46 @@ impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
 }
 
 impl<P> State<'_, P> {
+    /// Register PSMs for listening. Returns Err(AlreadyInUse) if any PSM is already registered.
+    fn register_psms(&mut self, psms: &[u16]) -> Result<(), Error> {
+        // Check for overlap first
+        for &psm in psms {
+            if self.is_psm_registered(psm) {
+                return Err(Error::AlreadyInUse);
+            }
+        }
+        // All clear, set the bits
+        for &psm in psms {
+            if (1..=255).contains(&psm) {
+                let idx = psm as usize / 32;
+                let bit = psm as usize % 32;
+                self.registered_psms[idx] |= 1 << bit;
+            }
+        }
+        Ok(())
+    }
+
+    /// Unregister PSMs from listening.
+    fn unregister_psms(&mut self, psms: &[u16]) {
+        for &psm in psms {
+            if (1..=255).contains(&psm) {
+                let idx = psm as usize / 32;
+                let bit = psm as usize % 32;
+                self.registered_psms[idx] &= !(1 << bit);
+            }
+        }
+    }
+
+    /// Check if a PSM has an active listener.
+    fn is_psm_registered(&self, psm: u16) -> bool {
+        if psm == 0 || psm > 255 {
+            return false;
+        }
+        let idx = psm as usize / 32;
+        let bit = psm as usize % 32;
+        self.registered_psms[idx] & (1 << bit) != 0
+    }
+
     fn print(&self, verbose: bool) {
         for (idx, storage) in self.channels.iter().enumerate() {
             if verbose || storage.state != ChannelState::Disconnected {
@@ -105,6 +147,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 accept_waker: WakerRegistration::new(),
                 create_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
+                registered_psms: [0; 8],
             }),
         }
     }
@@ -191,7 +234,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         config: &L2capChannelConfig,
         ble: &BleHost<'d, T, P>,
     ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
-        let pending = self.listen(conn, psm).await;
+        let pending = self.listen(conn, psm, &ble.connections).await?;
         let index = pending.into_index();
         self.accept_pending(index, config, ble).await
     }
@@ -199,7 +242,19 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     /// Wait for an incoming L2CAP connection request matching the connection and PSM list.
     ///
     /// Returns a [`L2capPendingConnection`] that can be inspected and then accepted or rejected.
-    pub(crate) async fn listen(&'d self, conn: ConnHandle, psm: &[u16]) -> L2capPendingConnection<'d, P> {
+    /// Returns `Err(Error::AlreadyInUse)` if any of the requested PSMs already have a listener.
+    pub(crate) async fn listen(
+        &'d self,
+        conn: ConnHandle,
+        psm: &[u16],
+        connections: &ConnectionManager<'_, P>,
+    ) -> Result<L2capPendingConnection<'d, P>, Error> {
+        self.state.borrow_mut().register_psms(psm)?;
+
+        let _guard = OnDrop::new(|| {
+            self.state.borrow_mut().unregister_psms(psm);
+        });
+
         poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
             state.accept_waker.register(cx.waker());
@@ -212,10 +267,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         }
                         let index = ChannelIndex(idx as u8);
                         state.inc_ref(index);
-                        return Poll::Ready(L2capPendingConnection::new(index, self, conn));
+                        return Poll::Ready(Ok(L2capPendingConnection::new(index, self, conn)));
                     }
                     _ => {}
                 }
+            }
+            if !connections.is_handle_connected(conn) {
+                return Poll::Ready(Err(Error::Disconnected));
             }
             Poll::Pending
         })
@@ -599,6 +657,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     fn handle_connect_request(&self, conn: ConnHandle, identifier: u8, req: &LeCreditConnReq) -> Result<(), Error> {
+        if !self.state.borrow().is_psm_registered(req.psm) {
+            return Err(Error::NotSupported);
+        }
         self.alloc(conn, |storage| {
             storage.conn = Some(conn);
             storage.psm = req.psm;

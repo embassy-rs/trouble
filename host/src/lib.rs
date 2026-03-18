@@ -355,6 +355,8 @@ pub enum Error {
     ///
     /// The limit can be modified using the `gatt-client-notification-max-subscribers-N` features.
     GattSubscriberLimitReached,
+    /// Resource is already in use.
+    AlreadyInUse,
     /// Other error.
     Other,
 }

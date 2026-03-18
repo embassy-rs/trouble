@@ -186,7 +186,15 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
     let channel = match op {
         ChannelOp::Accept => {
             let psm_list = [psm];
-            let pending = L2capChannel::listen(stack, &conn, &psm_list).await;
+
+            let pending = match L2capChannel::listen(stack, &conn, &psm_list).await {
+                Ok(pending) => pending,
+                Err(e) => {
+                    info!("L2CAP listen ended (connection lost or error): {:?}", e);
+                    return;
+                }
+            };
+
             if response != LeCreditConnResultCode::Success {
                 if let Err(e) = pending.reject(stack, response).await {
                     error!("L2CAP reject failed: {:?}", e);

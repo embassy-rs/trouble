@@ -264,12 +264,17 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
     /// Listen for an incoming connection request matching the list of PSM.
     ///
     /// Returns a [`L2capPendingConnection`] that can be inspected, then accepted or rejected.
+    /// Returns `Err(Error::AlreadyInUse)` if any of the requested PSMs already have a listener.
     pub async fn listen(
         stack: &'d Stack<'d, impl Controller, P>,
         connection: &Connection<'_, P>,
         psm: &[u16],
-    ) -> L2capPendingConnection<'d, P> {
-        stack.host.channels.listen(connection.handle(), psm).await
+    ) -> Result<L2capPendingConnection<'d, P>, Error> {
+        stack
+            .host
+            .channels
+            .listen(connection.handle(), psm, &stack.host.connections)
+            .await
     }
 
     /// Await an incoming connection request matching the list of PSM and accept it.
