@@ -458,7 +458,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 storage.state = ChannelState::Disconnected;
                 return Poll::Ready(Err(Error::L2capConnectError(result).into()));
             }
-            ChannelState::Disconnecting | ChannelState::PeerDisconnecting => {
+            ChannelState::Disconnected | ChannelState::Disconnecting | ChannelState::PeerDisconnecting(_) => {
                 return Poll::Ready(Err(Error::Disconnected.into()));
             }
             ChannelState::Connected => {
@@ -609,7 +609,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             L2capSignalCode::DISCONNECTION_REQ => {
                 let req = DisconnectionReq::from_hci_bytes_complete(data)?;
                 debug!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
-                self.handle_disconnect_request(req.dcid)?;
+                self.handle_disconnect_request(header.identifier, req.dcid)?;
             }
             L2capSignalCode::DISCONNECTION_RES => {
                 let res = DisconnectionRes::from_hci_bytes_complete(data)?;
@@ -740,14 +740,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Err(Error::NotFound)
     }
 
-    fn handle_disconnect_request(&self, cid: u16) -> Result<(), Error> {
+    fn handle_disconnect_request(&self, identifier: u8, cid: u16) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
-        for (idx, storage) in state.channels.iter_mut().enumerate() {
+        for storage in state.channels.iter_mut() {
             if cid == storage.cid {
-                storage.state = ChannelState::PeerDisconnecting;
+                storage.state = ChannelState::PeerDisconnecting(identifier);
                 let _ = storage.inbound.close();
                 state.disconnect_waker.wake();
-                break;
+                return Ok(());
             }
         }
         Ok(())
@@ -1017,7 +1017,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
         for (idx, storage) in state.channels.iter().enumerate() {
             match storage.state {
-                ChannelState::Disconnecting | ChannelState::PeerDisconnecting => {
+                ChannelState::Disconnecting | ChannelState::PeerDisconnecting(_) => {
                     return Poll::Ready(DisconnectRequest {
                         index: ChannelIndex(idx as u8),
                         handle: storage.conn.unwrap(),
@@ -1086,24 +1086,40 @@ impl<'a, 'd, P: PacketPool> DisconnectRequest<'a, 'd, P> {
     }
 
     pub async fn send<T: Controller>(&self, host: &BleHost<'_, T, P>) -> Result<(), BleHostError<T::Error>> {
-        let (state, conn, identifier, dcid, scid) = {
-            let mut state = self.state.borrow_mut();
-            let identifier = state.next_request_id();
+        let (state, conn, our_cid, peer_cid) = {
+            let state = self.state.borrow();
             let chan = &state.channels[self.index.0 as usize];
-            (chan.state.clone(), chan.conn, identifier, chan.peer_cid, chan.cid)
+            (chan.state.clone(), chan.conn, chan.cid, chan.peer_cid)
         };
 
         let mut tx = [0; 18];
         match state {
-            ChannelState::PeerDisconnecting => {
+            ChannelState::PeerDisconnecting(identifier) => {
                 assert_eq!(Some(self.handle), conn);
-                host.l2cap_signal(self.handle, identifier, &DisconnectionRes { dcid, scid }, &mut tx[..])
-                    .await?;
+                host.l2cap_signal(
+                    self.handle,
+                    identifier,
+                    &DisconnectionRes {
+                        dcid: our_cid,
+                        scid: peer_cid,
+                    },
+                    &mut tx[..],
+                )
+                .await?;
             }
             ChannelState::Disconnecting => {
+                let identifier = self.state.borrow_mut().next_request_id();
                 assert_eq!(Some(self.handle), conn);
-                host.l2cap_signal(self.handle, identifier, &DisconnectionReq { dcid, scid }, &mut tx[..])
-                    .await?;
+                host.l2cap_signal(
+                    self.handle,
+                    identifier,
+                    &DisconnectionReq {
+                        dcid: peer_cid,
+                        scid: our_cid,
+                    },
+                    &mut tx[..],
+                )
+                .await?;
             }
             _ => {}
         }
@@ -1318,8 +1334,8 @@ pub enum ChannelState {
     Connecting(u8),
     PeerConnecting(u8),
     Connected,
-    PeerDisconnecting,
     ConnectFailed(LeCreditConnResultCode),
+    PeerDisconnecting(u8),
     Disconnecting,
 }
 
