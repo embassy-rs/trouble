@@ -381,19 +381,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         })?;
 
         let mut tx = [0; 18];
-        ble.l2cap_signal(
-            conn,
-            req_id,
-            &LeCreditConnRes {
-                mps: 0,
-                dcid: 0,
-                mtu: 0,
-                credits: 0,
-                result,
-            },
-            &mut tx[..],
-        )
-        .await?;
+        ble.l2cap_signal(conn, req_id, &LeCreditConnRes::reject(result), &mut tx[..])
+            .await?;
         Ok(())
     }
 

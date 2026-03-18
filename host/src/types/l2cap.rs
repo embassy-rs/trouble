@@ -208,6 +208,18 @@ pub struct LeCreditConnRes {
     pub result: LeCreditConnResultCode,
 }
 
+impl LeCreditConnRes {
+    pub const fn reject(result: LeCreditConnResultCode) -> Self {
+        Self {
+            dcid: 0,
+            mtu: 0,
+            mps: 0,
+            credits: 0,
+            result,
+        }
+    }
+}
+
 impl L2capSignal for LeCreditConnRes {
     fn code() -> L2capSignalCode {
         L2capSignalCode::LE_CREDIT_CONN_RES
