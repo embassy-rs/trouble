@@ -133,8 +133,15 @@ impl<P> PacketReassembly<P> {
         P: Packet,
     {
         if let Some(mut state) = self.state.take() {
-            state.packet.write(data)?;
             let target = state.state.length as usize;
+            if state.packet.len() + data.len() > target {
+                warn!(
+                    "[l2cap][cid = {}] segment data would exceed declared SDU length {}",
+                    state.state.channel, target
+                );
+                return Err(Error::InvalidValue);
+            }
+            state.packet.write(data)?;
             //info!(
             //    "[host] update reassembly on {} written {}, target {})",
             //    state.state.channel, state.packet.written, target
