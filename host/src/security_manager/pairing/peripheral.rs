@@ -4,7 +4,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::prelude::ConnectionEvent;
-use crate::security_manager::crypto::{Confirm, DHKey, Nonce, PublicKey, PublicKeyX, SecretKey};
+use crate::security_manager::crypto::{Confirm, DHKey, Nonce, PublicKey, PublicKeyX};
 use crate::security_manager::pairing::util::{
     choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet,
     prepare_packet, PairingMethod, PassKeyEntryAction,
@@ -52,7 +52,9 @@ pub(super) enum Pairing {
         phase_data: LescPhaseData,
         round: i32,
     },
-    // TODO add OOB
+    // OOB
+    WaitingOobData(LescPhaseData),
+    WaitingOobRandom(LescPhaseData),
     WaitingDHKeyEa(LescPhaseData),
     WaitingLinkEncrypted,
     // TODO: WaitingIdentitity is actually a subset of `ReceivingKeys(i32)`,
@@ -173,6 +175,9 @@ impl Pairing {
                 Self::WaitingPassKeyEntryRandom { phase_data, round },
                 Input::Command(Command::PairingRandom, payload),
             ) => Self::handle_pass_key_random(round, payload, ops, pairing_data, phase_data),
+            (Self::WaitingOobRandom(phase_data), Input::Command(Command::PairingRandom, payload)) => {
+                Self::handle_oob_random(payload, phase_data, pairing_data, ops, rng)
+            }
             (Self::WaitingDHKeyEa(phase_data), Input::Command(Command::PairingDhKeyCheck, payload)) => {
                 Self::handle_dhkey_ea(payload, ops, pairing_data, &phase_data)
             }
@@ -186,6 +191,9 @@ impl Pairing {
             (current, Input::Command(Command::KeypressNotification, _)) => Ok(current),
 
             // --- Event transitions ---
+            (Self::WaitingOobData(phase_data), Input::Event(Event::OobDataReceived { local, peer })) => {
+                Self::handle_oob_data_received(local, peer, phase_data, pairing_data)
+            }
             (
                 current @ (Self::WaitingPairingRequest | Self::WaitingLinkEncrypted),
                 Input::Event(Event::LinkEncryptedResult(res)),
@@ -274,8 +282,8 @@ impl Pairing {
         rng: &mut RNG,
     ) -> Result<Self, Error> {
         let peer_public_key = PublicKey::from_bytes(payload);
-        let secret_key = SecretKey::new(rng);
-        let local_public_key = secret_key.public_key();
+        let secret_key = ops.secret_key().clone();
+        let local_public_key = *ops.public_key();
         let dh_key = secret_key
             .dh_key(peer_public_key)
             .ok_or(Error::Security(Reason::DHKeyCheckFailed))?;
@@ -294,7 +302,10 @@ impl Pairing {
         };
 
         match pairing_data.pairing_method {
-            PairingMethod::OutOfBand => todo!("OOB not implemented"),
+            PairingMethod::OutOfBand => {
+                ops.try_send_connection_event(crate::prelude::ConnectionEvent::OobRequest)?;
+                Ok(Self::WaitingOobData(phase_data))
+            }
             PairingMethod::PassKeyEntry { peripheral, .. } => {
                 if peripheral == PassKeyEntryAction::Display {
                     phase_data.local_secret_rb = rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
@@ -388,6 +399,60 @@ impl Pairing {
         }
     }
 
+    fn handle_oob_data_received(
+        local: super::OobData,
+        peer: super::OobData,
+        mut phase_data: LescPhaseData,
+        pairing_data: &PairingData,
+    ) -> Result<Self, Error> {
+        // Verify peer's confirm value if peer OOB data was received.
+        // Per spec 2.3.5.6.3: if a device has not received the peer's OOB data,
+        // the peer's random is set to zero and the confirm check is skipped.
+        let peer_has_oob = peer.random != [0; 16] || peer.confirm != [0; 16];
+        if peer_has_oob {
+            let peer_r = Nonce(u128::from_le_bytes(peer.random));
+            let expected_c = peer_r.f4(&phase_data.peer_public_key_x, &phase_data.peer_public_key_x, 0);
+            if expected_c.0.to_le_bytes() != peer.confirm {
+                return Err(crate::Error::Security(
+                    crate::security_manager::Reason::ConfirmValueFailed,
+                ));
+            }
+        }
+
+        // Peripheral: rb = local random, ra = peer's (central's) random.
+        // Per spec 2.3.5.6.4: if the peer (central) did not receive our OOB data
+        // (peer's OOB flag = NotPresent), rb must be 0 so both sides agree.
+        phase_data.local_secret_rb = if matches!(
+            pairing_data.peer_features.use_oob,
+            crate::security_manager::types::UseOutOfBand::Present
+        ) {
+            u128::from_le_bytes(local.random)
+        } else {
+            0
+        };
+        phase_data.peer_secret_ra = u128::from_le_bytes(peer.random);
+
+        Ok(Self::WaitingOobRandom(phase_data))
+    }
+
+    fn handle_oob_random<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+        payload: &[u8],
+        mut phase_data: LescPhaseData,
+        pairing_data: &mut PairingData,
+        ops: &mut OPS,
+        rng: &mut RNG,
+    ) -> Result<Self, Error> {
+        // Receive Na from central
+        phase_data.peer_nonce = Nonce(u128::from_le_bytes(
+            payload.try_into().map_err(|_| crate::Error::InvalidValue)?,
+        ));
+        // Generate and send Nb
+        phase_data.local_nonce = Nonce::new(rng);
+        Self::send_nonce(ops, &phase_data.local_nonce)?;
+        // Wait for DHKey check from central
+        Ok(Self::WaitingDHKeyEa(phase_data))
+    }
+
     // --- Protocol helpers ---
 
     fn handle_pairing_request<P: PacketPool, OPS: PairingOps<P>>(
@@ -420,6 +485,9 @@ impl Pairing {
             auth_req = auth_req.with_mitm();
         }
         pairing_data.local_features.security_properties = auth_req;
+        if ops.oob_available() {
+            pairing_data.local_features.use_oob = crate::security_manager::types::UseOutOfBand::Present;
+        }
         pairing_data.pairing_method = choose_pairing_method(pairing_data.peer_features, pairing_data.local_features);
         info!("[smp] Pairing method {:?}", pairing_data.pairing_method);
         Ok(())
@@ -733,7 +801,7 @@ mod tests {
 
     #[test]
     fn just_works() {
-        let mut pairing_ops: TestOps<10> = TestOps::default();
+        let mut pairing_ops: TestOps<10> = TestOps::new(0xDEAD);
         let mut pairing_data = make_default_pairing_data(
             Address::random([1, 2, 3, 4, 5, 6]),
             Address::random([7, 8, 9, 10, 11, 12]),
@@ -796,16 +864,16 @@ mod tests {
             assert_eq!(
                 sent_packets[1].payload(),
                 &[
-                    83, 171, 46, 254, 4, 90, 134, 154, 166, 92, 149, 210, 40, 29, 13, 105, 204, 111, 93, 54, 48, 113,
-                    67, 56, 159, 46, 229, 216, 65, 17, 185, 147, 105, 13, 253, 69, 206, 82, 83, 1, 1, 141, 124, 108,
-                    221, 90, 7, 60, 250, 66, 190, 186, 121, 211, 140, 7, 80, 110, 58, 174, 243, 47, 255, 61
+                    21, 196, 108, 202, 69, 188, 69, 135, 69, 42, 164, 53, 225, 21, 133, 89, 26, 48, 111, 199, 227, 174,
+                    133, 111, 21, 207, 26, 116, 100, 190, 159, 168, 98, 251, 173, 190, 122, 175, 196, 246, 214, 0, 91,
+                    37, 138, 57, 110, 237, 171, 123, 98, 152, 198, 0, 252, 222, 53, 242, 184, 135, 125, 232, 8, 102
                 ]
             );
 
             assert_eq!(sent_packets[2].command, Command::PairingConfirm);
             assert_eq!(
                 sent_packets[2].payload(),
-                &[27, 253, 56, 56, 116, 220, 121, 84, 160, 189, 222, 40, 163, 99, 44, 214]
+                &[60, 131, 200, 162, 116, 60, 118, 168, 186, 178, 89, 159, 38, 122, 197, 173]
             );
         }
 
@@ -833,7 +901,7 @@ mod tests {
                 Input::Command(
                     Command::PairingDhKeyCheck,
                     &[
-                        0x70, 0xa9, 0xf1, 0xd0, 0xcf, 0x52, 0x84, 0xe9, 0xfc, 0x36, 0x9b, 0x84, 0x35, 0x13, 0xc5, 0xed,
+                        221, 215, 144, 142, 100, 9, 130, 242, 165, 163, 136, 234, 41, 58, 197, 162,
                     ],
                 ),
                 &mut pairing_data,
@@ -848,7 +916,7 @@ mod tests {
             assert_eq!(sent_packets[4].command, Command::PairingDhKeyCheck);
             assert_eq!(
                 sent_packets[4].payload(),
-                [161, 50, 135, 68, 154, 19, 105, 76, 55, 97, 207, 61, 193, 29, 234, 92]
+                [33, 152, 76, 163, 246, 225, 149, 237, 16, 164, 28, 82, 252, 35, 196, 40]
             );
             assert_eq!(pairing_ops.encryptions.len(), 1);
             assert!(matches!(pairing_ops.encryptions[0], LongTermKey(_)));
@@ -857,9 +925,10 @@ mod tests {
 
     #[test]
     fn just_works_with_irk_distribution() {
-        let mut pairing_ops: TestOps<10> = TestOps {
-            bondable: true,
-            ..Default::default()
+        let mut pairing_ops: TestOps<10> = {
+            let mut ops = TestOps::new(0xDEAD);
+            ops.bondable = true;
+            ops
         };
         let mut pairing_data = make_default_pairing_data(
             Address::random([1, 2, 3, 4, 5, 6]),
@@ -933,7 +1002,7 @@ mod tests {
                 Input::Command(
                     Command::PairingDhKeyCheck,
                     &[
-                        0x06, 0x32, 0x9c, 0x2c, 0x99, 0xc2, 0xb1, 0x62, 0x6a, 0x02, 0x0e, 0x56, 0x46, 0xf6, 0x0e, 0x97,
+                        70, 123, 121, 123, 91, 126, 242, 102, 238, 164, 153, 99, 69, 175, 183, 215,
                     ],
                 ),
                 &mut pairing_data,

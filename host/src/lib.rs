@@ -23,7 +23,9 @@ use crate::channel_manager::ChannelStorage;
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason};
+pub use crate::security_manager::{
+    BondInformation, IdentityResolvingKey, LongTermKey, OobData, Reason as PairingFailedReason,
+};
 pub use crate::types::capabilities::IoCapabilities;
 
 /// Number of bonding information stored
@@ -108,7 +110,7 @@ pub mod prelude {
     pub use crate::scan::*;
     #[cfg(feature = "security")]
     pub use crate::security_manager::{
-        BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason,
+        BondInformation, IdentityResolvingKey, LongTermKey, OobData, Reason as PairingFailedReason,
     };
     pub use crate::types::capabilities::IoCapabilities;
     #[cfg(feature = "gatt")]
@@ -711,6 +713,21 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Log status information of the host
     pub fn log_status(&self, verbose: bool) {
         self.host.log_status(verbose);
+    }
+
+    #[cfg(feature = "security")]
+    /// Generate local OOB data for LESC pairing.
+    ///
+    /// The returned data should be transferred to the peer device via an out-of-band
+    /// channel (NFC, QR code, etc.) before pairing begins.
+    pub fn get_local_oob_data(&self) -> OobData {
+        self.host.connections.security_manager.get_local_oob_data()
+    }
+
+    #[cfg(feature = "security")]
+    /// Get the local address configured on the security manager.
+    pub fn get_local_address(&self) -> Option<Address> {
+        self.host.connections.security_manager.get_local_address()
     }
 
     #[cfg(feature = "security")]

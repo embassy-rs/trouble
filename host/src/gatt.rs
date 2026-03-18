@@ -127,6 +127,9 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     #[cfg(feature = "security")]
     /// The peer has lost its bond.
     BondLost,
+    #[cfg(feature = "security")]
+    /// OOB data is requested during pairing. Respond with [`GattConnection::provide_oob_data()`].
+    OobRequest,
 }
 
 /// Used to manage a GATT connection with a client.
@@ -167,6 +170,18 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     /// Input the pairing pass key
     pub fn pass_key_input(&self, pass_key: u32) -> Result<(), Error> {
         self.connection.pass_key_input(pass_key)
+    }
+
+    /// Provide OOB data during pairing.
+    ///
+    /// Call this when [`GattConnectionEvent::OobRequest`] is received.
+    #[cfg(feature = "security")]
+    pub fn provide_oob_data(
+        &self,
+        local_oob: crate::security_manager::OobData,
+        peer_oob: crate::security_manager::OobData,
+    ) -> Result<(), Error> {
+        self.connection.provide_oob_data(local_oob, peer_oob)
     }
 
     /// Wait for the next GATT connection event.
@@ -242,6 +257,9 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::BondLost => GattConnectionEvent::BondLost,
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::OobRequest => GattConnectionEvent::OobRequest,
             },
             Either::Second(data) => GattConnectionEvent::Gatt {
                 event: GattEvent::new(GattData::new(data, self.connection.clone()), self.server),
