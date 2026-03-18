@@ -804,8 +804,21 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         storage.peer_credits,
                         req.credits
                     );
-                    storage.peer_credits = storage.peer_credits.saturating_add(req.credits);
-                    storage.credit_waker.wake();
+                    match storage.peer_credits.checked_add(req.credits) {
+                        Some(credits) => {
+                            storage.peer_credits = credits;
+                            storage.credit_waker.wake();
+                        }
+                        None => {
+                            warn!(
+                                "[l2cap][cid = {}] credit overflow ({} + {}), disconnecting channel",
+                                req.cid, storage.peer_credits, req.credits
+                            );
+                            storage.disconnect();
+                            state.disconnect_waker.wake();
+                            return Err(Error::InvalidValue);
+                        }
+                    }
                     return Ok(());
                 }
                 _ => {}
