@@ -668,30 +668,42 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     fn handle_connect_response(&self, conn: ConnHandle, identifier: u8, res: &LeCreditConnRes) -> Result<(), Error> {
-        match res.result {
-            LeCreditConnResultCode::Success => {
-                // Must be a response of a previous request which should already by allocated a channel for
-                let mut state = self.state.borrow_mut();
-                for storage in state.channels.iter_mut() {
-                    match storage.state {
-                        ChannelState::Connecting(req_id) if identifier == req_id && Some(conn) == storage.conn => {
-                            storage.peer_cid = res.dcid;
-                            storage.peer_credits = res.credits;
-                            storage.peer_mps = res.mps;
-                            storage.peer_mtu = res.mtu;
-                            storage.state = ChannelState::Connected;
-                            state.create_waker.wake();
-                            return Ok(());
-                        }
-                        _ => {}
+        let mut state = self.state.borrow_mut();
+
+        // Find the channel matching this response identifier
+        let matched = state.channels.iter_mut().find(|storage| {
+            matches!(storage.state, ChannelState::Connecting(req_id) if identifier == req_id && Some(conn) == storage.conn)
+        });
+
+        let Some(storage) = matched else {
+            // No channel matched this identifier. Clean up any Connecting channels
+            // on this connection — the peer has sent a response (with a wrong identifier),
+            // so the connection attempt has effectively failed.
+            for storage in state.channels.iter_mut() {
+                if let ChannelState::Connecting(_) = storage.state {
+                    if Some(conn) == storage.conn {
+                        debug!(
+                            "[l2cap][handle_connect_response][link = {}] cleaning up channel with mismatched identifier {}",
+                            conn.raw(),
+                            identifier
+                        );
+                        storage.state = ChannelState::Disconnected;
                     }
                 }
-                debug!(
-                    "[l2cap][handle_connect_response][link = {}] request with id {} not found",
-                    conn.raw(),
-                    identifier
-                );
-                Err(Error::NotFound)
+            }
+            state.create_waker.wake();
+            return Err(Error::NotFound);
+        };
+
+        match res.result {
+            LeCreditConnResultCode::Success => {
+                storage.peer_cid = res.dcid;
+                storage.peer_credits = res.credits;
+                storage.peer_mps = res.mps;
+                storage.peer_mtu = res.mtu;
+                storage.state = ChannelState::Connected;
+                state.create_waker.wake();
+                Ok(())
             }
             other => {
                 warn!("Channel open request failed: {:?}", other);
