@@ -8,7 +8,7 @@ use trouble_host::prelude::*;
 use trouble_host::scan::Scanner;
 
 use crate::command_channel::{self, CommandReceiver, HasResponse};
-use crate::{Event, Server};
+use crate::{Event, OobState, Server};
 
 /// Commands sent to the central task from the BTP dispatcher.
 #[derive(Debug, Clone)]
@@ -57,6 +57,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     server: &Server<'_, P>,
     events: DynamicSender<'_, Event>,
     conn_watch: &watch::DynSender<'_, Connection<'stack, P>>,
+    oob: &OobState,
 ) -> ! {
     trace!("central::run");
 
@@ -167,6 +168,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                     conn_address,
                                     &events,
                                     conn_watch,
+                                    oob,
                                     async || {
                                         let inner_cmd = commands.receive().await;
                                         match &*inner_cmd {

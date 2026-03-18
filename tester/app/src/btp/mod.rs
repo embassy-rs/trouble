@@ -55,6 +55,8 @@ struct GapState<'stack, C, P: PacketPool> {
     scan_mode: &'stack Cell<ScanMode>,
     /// Saved IO capability (for SET_MITM toggling).
     io_capability: IoCapabilities,
+    /// Shared OOB state.
+    oob: &'stack crate::OobState,
 }
 
 /// Result of a BTP command handler, supporting immediate, error, and forwarded outcomes.
@@ -102,6 +104,7 @@ pub(crate) async fn run_pre_server<'stack, R: Read, W: Write, C, P: PacketPool>(
     config: &BtpConfig<'_>,
     stack: &'stack Stack<'stack, C, P>,
     scan_mode: &'stack Cell<ScanMode>,
+    oob: &'stack crate::OobState,
     table: &mut AttributeTable<'stack, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
     packet: &mut BtpPacket,
 ) -> Result<Option<PreServerResult<'stack, R, W, C, P>>, Error>
@@ -119,6 +122,7 @@ where
         stack,
         scan_mode,
         io_capability: IoCapabilities::NoInputNoOutput,
+        oob,
     };
 
     // Send IUT Ready event before entering the main loop
@@ -704,6 +708,33 @@ where
                 *enabled,
             ))
         }
+        OobLegacySetData(data) => {
+            gap.oob.legacy_tk.set(Some(*data));
+            Ok(GapResponse::Success)
+        }
+        OobScGetLocalData => {
+            let oob_data = gap.oob.sc_local.get().unwrap_or_else(|| {
+                let data = gap.stack.get_local_oob_data();
+                gap.oob.sc_local.set(Some(data));
+                data
+            });
+            Ok(GapResponse::OobScLocalData {
+                random: oob_data.random,
+                confirm: oob_data.confirm,
+            })
+        }
+        OobScSetRemoteData { random, confirm } => {
+            gap.oob.sc_remote.set(Some(trouble_host::OobData {
+                random: *random,
+                confirm: *confirm,
+            }));
+            // Auto-generate local OOB data if not already present, so the OOB flag
+            // is set in the pairing request.
+            if gap.oob.sc_local.get().is_none() {
+                gap.oob.sc_local.set(Some(gap.stack.get_local_oob_data()));
+            }
+            Ok(GapResponse::Success)
+        }
         _ => Err(BtpStatus::NotReady),
     }
 }
@@ -887,7 +918,10 @@ where
         | SetIoCapability(_)
         | SetMitm(_)
         | SetFilterAcceptList(_)
-        | SetScOnly(_) => unreachable!(),
+        | SetScOnly(_)
+        | OobLegacySetData(_)
+        | OobScGetLocalData
+        | OobScSetRemoteData { .. } => unreachable!(),
     }
 }
 
