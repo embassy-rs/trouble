@@ -39,6 +39,10 @@ pub(super) enum Pairing {
         preq: [u8; 7],
         pres: [u8; 7],
     },
+    WaitingOobData {
+        preq: [u8; 7],
+        pres: [u8; 7],
+    },
     WaitingPairingConfirm(ConfirmPhaseData),
     WaitingPairingRandom {
         confirm_data: ConfirmPhaseData,
@@ -123,6 +127,17 @@ impl Pairing {
             // --- Command transitions ---
             (Self::WaitingPairingResponse { preq }, Input::Command(Command::PairingResponse, payload)) => {
                 Self::handle_pairing_response(payload, ops, pairing_data, rng, preq)
+            }
+            (Self::WaitingOobData { preq, pres }, Input::Event(Event::OobDataReceived { local, peer })) => {
+                let tk = u128::from_le_bytes(local.random);
+                let mut confirm_data = ConfirmPhaseData {
+                    tk,
+                    preq,
+                    pres,
+                    local_nonce: 0,
+                };
+                Self::send_mconfirm(ops, pairing_data, &mut confirm_data, rng)?;
+                Ok(Self::WaitingPairingConfirm(confirm_data))
             }
             (Self::WaitingPassKeyInput { preq, pres, .. }, Input::Command(Command::PairingConfirm, payload)) => {
                 Self::store_confirm_bytes(payload, preq, pres)
@@ -347,7 +362,10 @@ impl Pairing {
         info!("[smp legacy central] Pairing method {:?}", pairing_data.pairing_method);
 
         match pairing_data.pairing_method {
-            PairingMethod::OutOfBand => Err(Error::Security(Reason::OobNotAvailable)),
+            PairingMethod::OutOfBand => {
+                ops.try_send_connection_event(ConnectionEvent::OobRequest)?;
+                Ok(Self::WaitingOobData { preq, pres })
+            }
             PairingMethod::PassKeyEntry { central, .. } => {
                 if central == PassKeyEntryAction::Display {
                     let tk = rng.sample(rand::distributions::Uniform::new_inclusive(0u32, 999999)) as u128;

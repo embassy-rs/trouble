@@ -9,7 +9,7 @@ use crate::security_manager::pairing::util::{
     prepare_packet, PairingMethod, PassKeyEntryAction,
 };
 use crate::security_manager::pairing::{Event, Input, PairingData, PairingOps};
-use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures};
+use crate::security_manager::types::{AuthReq, BondingFlag, Command, PairingFeatures, UseOutOfBand};
 use crate::security_manager::{PassKey, Reason};
 use crate::{Error, IoCapabilities, LongTermKey, PacketPool};
 
@@ -64,7 +64,9 @@ enum Step {
         phase_data: LescPhaseData,
         round: i32,
     },
-    // TODO add OOB
+    // OOB
+    WaitingOobData(LescPhaseData),
+    WaitingOobRandom(LescPhaseData),
     WaitingDHKeyEb(DhKeyCheckData),
     WaitingLinkEncrypted,
     WaitingBondedLinkEncryption,
@@ -132,6 +134,9 @@ impl Pairing {
             auth_req = auth_req.with_mitm();
         }
         pairing_data.local_features.security_properties = auth_req;
+        if ops.oob_available() {
+            pairing_data.local_features.use_oob = crate::security_manager::types::UseOutOfBand::Present;
+        }
         if matches!(ops.bonding_flag(), BondingFlag::Bonding) {
             pairing_data
                 .local_features
@@ -238,12 +243,18 @@ impl Pairing {
                 Step::WaitingPassKeyEntryRandom { phase_data, round },
                 Input::Command(Command::PairingRandom, payload),
             ) => Self::handle_pass_key_entry_random(payload, phase_data, round, pairing_data, ops, rng),
+            (Step::WaitingOobRandom(phase_data), Input::Command(Command::PairingRandom, payload)) => {
+                Self::handle_oob_random(payload, phase_data, pairing_data, ops)
+            }
             (Step::WaitingDHKeyEb(check_data), Input::Command(Command::PairingDhKeyCheck, payload)) => {
                 Self::handle_dhkey_eb_command(payload, &check_data, pairing_data, ops)
             }
             (current, Input::Command(Command::KeypressNotification, _)) => Ok(current),
 
             // --- Event transitions ---
+            (Step::WaitingOobData(phase_data), Input::Event(Event::OobDataReceived { local, peer })) => {
+                Self::handle_oob_data_received(local, peer, phase_data, pairing_data, ops, rng)
+            }
             (Step::WaitingLinkEncrypted, Input::Event(Event::LinkEncryptedResult(true))) => {
                 info!("Link encrypted!");
                 Ok(Step::Success)
@@ -326,6 +337,9 @@ impl Pairing {
             auth_req = auth_req.with_mitm();
         }
         pairing_data.local_features.security_properties = auth_req;
+        if ops.oob_available() {
+            pairing_data.local_features.use_oob = crate::security_manager::types::UseOutOfBand::Present;
+        }
 
         // Per Core Spec Vol 3, Part H, Section 3.6.7: if the existing bond
         // meets the peer's security requirements, re-encrypt with it;
@@ -348,11 +362,11 @@ impl Pairing {
         payload: &[u8],
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
+        _rng: &mut RNG,
     ) -> Result<Step, Error> {
         Self::handle_pairing_response(payload, ops, pairing_data)?;
-        let secret_key = SecretKey::new(rng);
-        let public_key = secret_key.public_key();
+        let secret_key = ops.secret_key().clone();
+        let public_key = *ops.public_key();
         Self::send_public_key(ops, &public_key)?;
         Ok(Step::WaitingPublicKey {
             private_key: secret_key,
@@ -386,7 +400,10 @@ impl Pairing {
         };
 
         match pairing_data.pairing_method {
-            PairingMethod::OutOfBand => todo!("OOB not implemented"),
+            PairingMethod::OutOfBand => {
+                ops.try_send_connection_event(ConnectionEvent::OobRequest)?;
+                Ok(Step::WaitingOobData(phase_data))
+            }
             PairingMethod::PassKeyEntry { central, .. } => {
                 if central == PassKeyEntryAction::Display {
                     phase_data.local_secret_ra = rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
@@ -510,6 +527,54 @@ impl Pairing {
             }
             None => Ok(Step::WaitingPassKeyEntryConfirm { phase_data, round: 0 }),
         }
+    }
+
+    fn handle_oob_data_received<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+        local: super::OobData,
+        peer: super::OobData,
+        mut phase_data: LescPhaseData,
+        pairing_data: &PairingData,
+        ops: &mut OPS,
+        rng: &mut RNG,
+    ) -> Result<Step, Error> {
+        // Verify peer's confirm value if peer OOB data was received.
+        // Per spec 2.3.5.6.3: if a device has not received the peer's OOB data,
+        // the peer's random is set to zero and the confirm check is skipped.
+        let peer_has_oob = peer.random != [0; 16] || peer.confirm != [0; 16];
+        if peer_has_oob {
+            let peer_r = Nonce(u128::from_le_bytes(peer.random));
+            let expected_c = peer_r.f4(&phase_data.peer_public_key_x, &phase_data.peer_public_key_x, 0);
+            if expected_c.0.to_le_bytes() != peer.confirm {
+                return Err(Error::Security(Reason::ConfirmValueFailed));
+            }
+        }
+
+        // ra = central's own OOB random, rb = peripheral's OOB random.
+        // Per spec 2.3.5.6.4: if the peer (peripheral) did not receive our OOB data
+        // (peer's OOB flag = NotPresent), ra must be 0 so both sides agree.
+        phase_data.local_secret_ra = if matches!(pairing_data.peer_features.use_oob, UseOutOfBand::Present) {
+            u128::from_le_bytes(local.random)
+        } else {
+            0
+        };
+        phase_data.peer_secret_rb = u128::from_le_bytes(peer.random);
+
+        // Generate and send Na
+        phase_data.local_nonce = Nonce::new(rng);
+        Self::send_nonce(ops, &phase_data.local_nonce)?;
+        Ok(Step::WaitingOobRandom(phase_data))
+    }
+
+    fn handle_oob_random<P: PacketPool, OPS: PairingOps<P>>(
+        payload: &[u8],
+        mut phase_data: LescPhaseData,
+        pairing_data: &mut PairingData,
+        ops: &mut OPS,
+    ) -> Result<Step, Error> {
+        phase_data.peer_nonce = Nonce(u128::from_le_bytes(
+            payload.try_into().map_err(|_| Error::InvalidValue)?,
+        ));
+        Self::send_dhkey_ea_and_transition(ops, pairing_data, &phase_data)
     }
 
     // --- Protocol helpers ---

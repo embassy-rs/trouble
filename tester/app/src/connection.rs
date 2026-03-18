@@ -111,6 +111,9 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     info!("BondLost addr={:?}", address);
                     events.send(Event::BondLost { address }).await;
                 }
+                GattConnectionEvent::OobRequest => {
+                    warn!("OobRequest not handled by tester");
+                }
                 GattConnectionEvent::PhyUpdated { .. } => warn!("Ignored Phy update event"),
                 GattConnectionEvent::RequestConnectionParams(req) => {
                     let params = req.params();
