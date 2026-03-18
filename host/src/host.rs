@@ -310,11 +310,9 @@ where
                     return Err(Error::NotSupported);
                 }
 
-                // Avoids using the packet buffer for signalling packets
-                if header.channel == L2CAP_CID_LE_U_SIGNAL {
-                    assert!(data.len() == header.length as usize);
-                    self.channels.signal(acl.handle(), data, &self.connections)?;
-                    return Ok(());
+                // Fast-path for complete signalling packets
+                if header.channel == L2CAP_CID_LE_U_SIGNAL && data.len() == header.length as usize {
+                    return self.channels.signal(acl.handle(), data, &self.connections);
                 }
 
                 trace!(
@@ -331,29 +329,38 @@ where
                     if header.channel >= L2CAP_CID_DYN_START {
                         // This is the start of the frame, so make sure to adjust the credits.
                         self.channels.received(header.channel, 1)?;
+                        self.channels.check_pdu_len(header.channel, header.length)?;
 
-                        self.connections.reassembly(acl.handle(), |p| {
-                            let r = if !p.in_progress() {
-                                // Init the new assembly assuming the length of the SDU.
-                                let (first, payload) = data.split_at(2);
-                                let len: u16 = u16::from_le_bytes([first[0], first[1]]);
-                                let Some(packet) = P::allocate() else {
-                                    warn!("[host] no memory for packets on channel {}", header.channel);
-                                    return Err(Error::OutOfMemory);
+                        self.connections
+                            .reassembly(acl.handle(), |p| {
+                                let r = if !p.in_progress() {
+                                    // Init the new assembly assuming the length of the SDU.
+                                    let (first, payload) = data.split_at(2);
+                                    let len: u16 = u16::from_le_bytes([first[0], first[1]]);
+                                    self.channels.check_sdu_len(header.channel, len)?;
+                                    let Some(packet) = P::allocate() else {
+                                        warn!("[host] no memory for packets on channel {}", header.channel);
+                                        return Err(Error::OutOfMemory);
+                                    };
+                                    p.init(header.channel, len, packet)?;
+                                    p.update(payload)?
+                                } else {
+                                    p.update(data)?
                                 };
-                                p.init(header.channel, len, packet)?;
-                                p.update(payload)?
-                            } else {
-                                p.update(data)?
-                            };
-                            // Something is wrong if assembly was finished since we've not received the last fragment.
-                            if r.is_some() {
-                                Err(Error::InvalidState)
-                            } else {
-                                Ok(())
-                            }
-                        })?;
+                                // Something is wrong if assembly was finished since we've not received the last fragment.
+                                if r.is_some() {
+                                    Err(Error::InvalidState)
+                                } else {
+                                    Ok(())
+                                }
+                            })
+                            .inspect_err(|_| self.channels.disconnect_by_cid(header.channel))?;
                         return Ok(());
+                    }
+
+                    // For dynamic channels, validate PDU length against MPS before reassembly.
+                    if header.channel >= L2CAP_CID_DYN_START {
+                        self.channels.check_pdu_len(header.channel, header.length)?;
                     }
 
                     let Some(packet) = P::allocate() else {
@@ -374,26 +381,33 @@ where
                     #[allow(unused_mut)]
                     let mut result = None;
 
+                    // For dynamic channels, validate PDU length against MPS and handle
+                    // credit accounting and SDU reassembly before HCI reassembly.
                     #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
                     if header.channel >= L2CAP_CID_DYN_START {
                         // This is a complete L2CAP K-frame, so make sure to adjust the credits.
                         self.channels.received(header.channel, 1)?;
+                        self.channels.check_pdu_len(header.channel, header.length)?;
 
-                        if let Some((state, pdu)) = self.connections.reassembly(acl.handle(), |p| {
-                            if !p.in_progress() {
-                                let (first, payload) = data.split_at(2);
-                                let len: u16 = u16::from_le_bytes([first[0], first[1]]);
-
-                                let Some(packet) = P::allocate() else {
-                                    warn!("[host] no memory for packets on channel {}", header.channel);
-                                    return Err(Error::OutOfMemory);
-                                };
-                                p.init(header.channel, len, packet)?;
-                                p.update(payload)
-                            } else {
-                                p.update(data)
-                            }
-                        })? {
+                        if let Some((state, pdu)) = self
+                            .connections
+                            .reassembly(acl.handle(), |p| {
+                                if !p.in_progress() {
+                                    let (first, payload) = data.split_at(2);
+                                    let len: u16 = u16::from_le_bytes([first[0], first[1]]);
+                                    self.channels.check_sdu_len(header.channel, len)?;
+                                    let Some(packet) = P::allocate() else {
+                                        warn!("[host] no memory for packets on channel {}", header.channel);
+                                        return Err(Error::OutOfMemory);
+                                    };
+                                    p.init(header.channel, len, packet)?;
+                                    p.update(payload)
+                                } else {
+                                    p.update(data)
+                                }
+                            })
+                            .inspect_err(|_| self.channels.disconnect_by_cid(header.channel))?
+                        {
                             result.replace((state, pdu));
                         } else {
                             return Ok(());
@@ -403,6 +417,11 @@ where
                     if let Some((state, pdu)) = result {
                         (state, pdu)
                     } else {
+                        // For dynamic channels, validate PDU length against MPS before reassembly.
+                        if header.channel >= L2CAP_CID_DYN_START {
+                            self.channels.check_pdu_len(header.channel, header.length)?;
+                        }
+
                         let Some(packet) = P::allocate() else {
                             warn!("[host] no memory for packets on channel {}", header.channel);
                             return Err(Error::OutOfMemory);
@@ -560,7 +579,7 @@ where
                 }
             }
             L2CAP_CID_LE_U_SIGNAL => {
-                panic!("le signalling channel was fragmented, impossible!");
+                self.channels.signal(handle, pdu.as_ref(), &self.connections)?;
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
                 self.connections

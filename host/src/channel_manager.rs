@@ -221,6 +221,55 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         })
     }
 
+    pub(crate) fn disconnect_by_cid(&self, channel: u16) {
+        if channel >= BASE_ID {
+            let chan = (channel - BASE_ID) as usize;
+            self.with_mut(|state| {
+                if chan < state.channels.len() {
+                    state.channels[chan].disconnect();
+                    state.disconnect_waker.wake();
+                }
+            })
+        }
+    }
+
+    /// Validate an incoming length against a channel limit (MTU or MPS).
+    ///
+    /// If the length exceeds the limit, the channel is disconnected per Bluetooth spec
+    /// Vol 3, Part A, Section 10.1 and `Err(Error::InvalidValue)` is returned.
+    fn check_len(
+        &self,
+        channel: u16,
+        actual: u16,
+        limit: impl FnOnce(&ChannelStorage<P::Packet>) -> u16,
+        label: &str,
+    ) -> Result<(), Error> {
+        if channel < BASE_ID {
+            return Err(Error::InvalidChannelId);
+        }
+
+        let chan = (channel - BASE_ID) as usize;
+        self.with_mut(|state| {
+            if chan >= state.channels.len() {
+                return Err(Error::InvalidChannelId);
+            }
+
+            let storage = &mut state.channels[chan];
+            let max = limit(storage);
+            storage
+                .check_len(actual, max, label)
+                .inspect_err(|_| state.disconnect_waker.wake())
+        })
+    }
+
+    pub(crate) fn check_sdu_len(&self, channel: u16, sdu_len: u16) -> Result<(), Error> {
+        self.check_len(channel, sdu_len, |s| s.mtu, "SDU")
+    }
+
+    pub(crate) fn check_pdu_len(&self, channel: u16, pdu_len: u16) -> Result<(), Error> {
+        self.check_len(channel, pdu_len, |s| s.mps, "PDU")
+    }
+
     pub(crate) fn disconnected(&self, conn: ConnHandle) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         for storage in state.channels.iter_mut() {
@@ -562,6 +611,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         if !storage.reassembly.in_progress() {
                             let (first, _) = pdu.as_ref().split_at(2);
                             let sdu_len: u16 = u16::from_le_bytes([first[0], first[1]]);
+
+                            storage
+                                .check_sdu_len(sdu_len)
+                                .inspect_err(|_| state.disconnect_waker.wake())?;
+
                             let len = pdu.len() - 2;
 
                             let mut packet = pdu.into_inner();
@@ -574,8 +628,18 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                                 // Need another fragment
                                 storage.reassembly.init_with_written(channel, sdu_len, packet, len)?;
                             }
-                        } else if let Some((state, pdu)) = storage.reassembly.update(pdu.as_ref())? {
-                            sdu.replace(pdu);
+                        } else {
+                            match storage.reassembly.update(pdu.as_ref()) {
+                                Ok(Some((_, pdu))) => {
+                                    sdu.replace(pdu);
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    storage.disconnect();
+                                    state.disconnect_waker.wake();
+                                    return Err(e);
+                                }
+                            }
                         }
                     }
                 }
@@ -1421,6 +1485,25 @@ impl<P> ChannelStorage<P> {
             #[cfg(feature = "channel-metrics")]
             metrics: Metrics::new(),
         }
+    }
+
+    /// Check a received length against a limit. If exceeded, log a warning and disconnect.
+    /// Returns `Err(Error::InvalidValue)` on violation.
+    /// Callers must wake `State::disconnect_waker` on error.
+    fn check_len(&mut self, actual: u16, limit: u16, label: &str) -> Result<(), Error> {
+        if actual > limit {
+            warn!(
+                "[l2cap][cid = {}] received {} length {} exceeds {}, disconnecting channel",
+                self.cid, label, actual, limit
+            );
+            self.disconnect();
+            return Err(Error::InvalidValue);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_sdu_len(&mut self, sdu_len: u16) -> Result<(), Error> {
+        self.check_len(sdu_len, self.mtu, "SDU")
     }
 
     /// Begin a local-initiated disconnect. Sets the channel to `Disconnecting`, closes the
