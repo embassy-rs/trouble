@@ -136,6 +136,40 @@ impl<P> State<'_, P> {
         let state = &mut self.channels[index.0 as usize];
         state.refcount = unwrap!(state.refcount.checked_add(1), "Too many references to the same channel");
     }
+
+    fn alloc<F: FnOnce(&mut ChannelStorage<P>)>(
+        &mut self,
+        conn: ConnHandle,
+        peer_cid: Option<u16>,
+        f: F,
+    ) -> Result<ChannelIndex, Error> {
+        // Check that the peer CID isn't already in use on this connection.
+        if let Some(peer_cid) = peer_cid {
+            let in_use = self.channels.iter().any(|s| {
+                s.conn == Some(conn) && s.peer_cid == peer_cid && !matches!(s.state, ChannelState::Disconnected)
+            });
+            if in_use {
+                return Err(Error::L2capConnectError(LeCreditConnResultCode::ScidAlreadyAllocated));
+            }
+        }
+
+        let idx = self
+            .channels
+            .iter()
+            .position(|s| s.state == ChannelState::Disconnected && s.refcount == 0)
+            .ok_or(Error::NoChannelAvailable)?;
+
+        let storage = &mut self.channels[idx];
+        storage.inbound.clear();
+        #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+        storage.reassembly.clear();
+        storage.conn = Some(conn);
+        storage.cid = BASE_ID + idx as u16;
+        storage.peer_cid = peer_cid.unwrap_or(0);
+        f(storage);
+
+        Ok(ChannelIndex(idx as u8))
+    }
 }
 
 impl<'d, P: PacketPool> ChannelManager<'d, P> {
@@ -203,22 +237,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(())
     }
 
-    fn alloc<F: FnOnce(&mut ChannelStorage<P::Packet>)>(&self, conn: ConnHandle, f: F) -> Result<ChannelIndex, Error> {
-        let mut state = self.state.borrow_mut();
-        for (idx, storage) in state.channels.iter_mut().enumerate() {
-            if ChannelState::Disconnected == storage.state && storage.refcount == 0 {
-                // Ensure inbound is empty.
-                storage.inbound.clear();
-                #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
-                storage.reassembly.clear();
-                let cid: u16 = BASE_ID + idx as u16;
-                storage.conn = Some(conn);
-                storage.cid = cid;
-                f(storage);
-                return Ok(ChannelIndex(idx as u8));
-            }
-        }
-        Err(Error::NoChannelAvailable)
+    fn alloc<F: FnOnce(&mut ChannelStorage<P::Packet>)>(
+        &self,
+        conn: ConnHandle,
+        peer_cid: Option<u16>,
+        f: F,
+    ) -> Result<ChannelIndex, Error> {
+        self.state.borrow_mut().alloc(conn, peer_cid, f)
     }
 
     pub(crate) async fn accept<T: Controller>(
@@ -408,7 +433,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
 
         // Allocate space for our new channel.
-        let idx = self.alloc(conn, |storage| {
+        let idx = self.alloc(conn, None, |storage| {
             cid = storage.cid;
             credits = initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16);
             storage.psm = psm;
@@ -658,10 +683,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         if !self.state.borrow().is_psm_registered(req.psm) {
             return Err(Error::NotSupported);
         }
-        self.alloc(conn, |storage| {
+        self.alloc(conn, Some(req.scid), |storage| {
             storage.conn = Some(conn);
             storage.psm = req.psm;
-            storage.peer_cid = req.scid;
             storage.peer_credits = req.credits;
             storage.peer_mps = req.mps;
             storage.peer_mtu = req.mtu;
@@ -1477,7 +1501,7 @@ mod tests {
             .unwrap();
         let idx = ble
             .channels
-            .alloc(conn, |storage| {
+            .alloc(conn, None, |storage| {
                 storage.state = ChannelState::Connecting(42);
             })
             .unwrap();
