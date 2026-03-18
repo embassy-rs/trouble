@@ -181,14 +181,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
     pub(crate) fn disconnect(&self, index: ChannelIndex) {
         self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
-            if chan.state == ChannelState::Connected {
-                chan.state = ChannelState::Disconnecting;
-                let _ = chan.inbound.close();
-                #[cfg(feature = "channel-metrics")]
-                chan.metrics.reset();
-                state.disconnect_waker.wake();
-            }
+            state.channels[index.0 as usize].disconnect();
+            state.disconnect_waker.wake();
         })
     }
 
@@ -1026,14 +1020,15 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
     pub(crate) fn dec_ref(&self, index: ChannelIndex) {
         self.with_mut(|state| {
-            let state = &mut state.channels[index.0 as usize];
-            state.refcount = unwrap!(
-                state.refcount.checked_sub(1),
+            let chan = &mut state.channels[index.0 as usize];
+            chan.refcount = unwrap!(
+                chan.refcount.checked_sub(1),
                 "bug: dropping a channel (i = {}) with refcount 0",
                 index.0
             );
-            if state.refcount == 0 && state.state == ChannelState::Connected {
-                state.state = ChannelState::Disconnecting;
+            if chan.refcount == 0 {
+                chan.disconnect();
+                state.disconnect_waker.wake();
             }
         });
     }
@@ -1269,6 +1264,17 @@ impl<P> ChannelStorage<P> {
             reassembly: PacketReassembly::new(),
             #[cfg(feature = "channel-metrics")]
             metrics: Metrics::new(),
+        }
+    }
+
+    /// Begin a local-initiated disconnect. Sets the channel to `Disconnecting`, closes the
+    /// inbound queue, and resets metrics. Callers must wake `State::disconnect_waker` afterwards.
+    fn disconnect(&mut self) {
+        if self.state == ChannelState::Connected {
+            self.state = ChannelState::Disconnecting;
+            let _ = self.inbound.close();
+            #[cfg(feature = "channel-metrics")]
+            self.metrics.reset();
         }
     }
 
