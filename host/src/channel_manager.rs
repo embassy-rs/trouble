@@ -596,74 +596,98 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         data: &[u8],
         manager: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
-        let (header, data) = L2capSignalHeader::from_hci_bytes(data)?;
-        //trace!(
-        //    "[l2cap][conn = {:?}] received signal (req {}) code {:?}",
-        //    conn,
-        //    header.identifier,
-        //    header.code
-        //);
-        match header.code {
-            L2capSignalCode::LE_CREDIT_CONN_REQ => {
-                let req = LeCreditConnReq::from_hci_bytes_complete(data)?;
-                self.handle_connect_request(conn, header.identifier, &req)?;
+        // Validate that all signal headers fit within the PDU before processing.
+        {
+            let mut remaining = data;
+            while !remaining.is_empty() {
+                let (header, rest) = L2capSignalHeader::from_hci_bytes(remaining)?;
+                if header.length as usize > rest.len() {
+                    return Err(Error::InvalidValue);
+                }
+                remaining = &rest[header.length as usize..];
             }
-            L2capSignalCode::LE_CREDIT_CONN_RES => {
-                let res = LeCreditConnRes::from_hci_bytes_complete(data)?;
-                self.handle_connect_response(conn, header.identifier, &res)?;
-            }
-            L2capSignalCode::LE_CREDIT_FLOW_IND => {
-                let req = LeCreditFlowInd::from_hci_bytes_complete(data)?;
-                //trace!("[l2cap] credit flow: {:?}", req);
-                self.handle_credit_flow(conn, &req)?;
-            }
-            L2capSignalCode::COMMAND_REJECT_RES => {
-                let (reject, _) = CommandRejectRes::from_hci_bytes(data)?;
-            }
-            L2capSignalCode::DISCONNECTION_REQ => {
-                let req = DisconnectionReq::from_hci_bytes_complete(data)?;
-                debug!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
-                self.handle_disconnect_request(header.identifier, req.dcid)?;
-            }
-            L2capSignalCode::DISCONNECTION_RES => {
-                let res = DisconnectionRes::from_hci_bytes_complete(data)?;
-                debug!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
-                self.handle_disconnect_response(res.scid)?;
-            }
-            L2capSignalCode::CONN_PARAM_UPDATE_REQ => {
-                let req = ConnParamUpdateReq::from_hci_bytes_complete(data)?;
-                debug!("[l2cap][conn = {:?}] connection param update request: {:?}", conn, req);
-                let interval_min: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_min);
-                let interval_max: bt_hci::param::Duration<1_250> = bt_hci::param::Duration::from_u16(req.interval_max);
-                let timeout: bt_hci::param::Duration<10_000> = bt_hci::param::Duration::from_u16(req.timeout);
+        }
 
-                use embassy_time::Duration;
-                let req = ConnectionParamsRequest::new(
-                    crate::prelude::RequestedConnParams {
-                        min_connection_interval: Duration::from_micros(interval_min.as_micros()),
-                        max_connection_interval: Duration::from_micros(interval_max.as_micros()),
-                        max_latency: req.latency,
-                        supervision_timeout: Duration::from_micros(timeout.as_micros()),
-                        ..Default::default()
-                    },
-                    conn,
-                    #[cfg(feature = "connection-params-update")]
-                    true,
-                );
+        let mut data = data;
+        while !data.is_empty() {
+            let (header, remaining) = L2capSignalHeader::from_hci_bytes(data)?;
+            let (signal_data, next) = remaining.split_at(header.length as usize);
+            let result = (|| match header.code {
+                L2capSignalCode::LE_CREDIT_CONN_REQ => {
+                    let req = LeCreditConnReq::from_hci_bytes_complete(signal_data)?;
+                    self.handle_connect_request(conn, header.identifier, &req)?;
+                    Ok(())
+                }
+                L2capSignalCode::LE_CREDIT_CONN_RES => {
+                    let res = LeCreditConnRes::from_hci_bytes_complete(signal_data)?;
+                    self.handle_connect_response(conn, header.identifier, &res)?;
+                    Ok(())
+                }
+                L2capSignalCode::LE_CREDIT_FLOW_IND => {
+                    let req = LeCreditFlowInd::from_hci_bytes_complete(signal_data)?;
+                    //trace!("[l2cap] credit flow: {:?}", req);
+                    self.handle_credit_flow(conn, &req)?;
+                    Ok(())
+                }
+                L2capSignalCode::COMMAND_REJECT_RES => {
+                    let (_reject, _) = CommandRejectRes::from_hci_bytes(signal_data)?;
+                    Ok(())
+                }
+                L2capSignalCode::DISCONNECTION_REQ => {
+                    let req = DisconnectionReq::from_hci_bytes_complete(signal_data)?;
+                    debug!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
+                    self.handle_disconnect_request(header.identifier, req.dcid)?;
+                    Ok(())
+                }
+                L2capSignalCode::DISCONNECTION_RES => {
+                    let res = DisconnectionRes::from_hci_bytes_complete(signal_data)?;
+                    debug!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
+                    self.handle_disconnect_response(res.scid)?;
+                    Ok(())
+                }
+                L2capSignalCode::CONN_PARAM_UPDATE_REQ => {
+                    let req = ConnParamUpdateReq::from_hci_bytes_complete(signal_data)?;
+                    debug!("[l2cap][conn = {:?}] connection param update request: {:?}", conn, req);
+                    let interval_min: bt_hci::param::Duration<1_250> =
+                        bt_hci::param::Duration::from_u16(req.interval_min);
+                    let interval_max: bt_hci::param::Duration<1_250> =
+                        bt_hci::param::Duration::from_u16(req.interval_max);
+                    let timeout: bt_hci::param::Duration<10_000> = bt_hci::param::Duration::from_u16(req.timeout);
 
-                let _ = manager.post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req));
+                    use embassy_time::Duration;
+                    let req = ConnectionParamsRequest::new(
+                        crate::prelude::RequestedConnParams {
+                            min_connection_interval: Duration::from_micros(interval_min.as_micros()),
+                            max_connection_interval: Duration::from_micros(interval_max.as_micros()),
+                            max_latency: req.latency,
+                            supervision_timeout: Duration::from_micros(timeout.as_micros()),
+                            ..Default::default()
+                        },
+                        conn,
+                        #[cfg(feature = "connection-params-update")]
+                        true,
+                    );
+
+                    let _ = manager.post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req));
+                    Ok(())
+                }
+                L2capSignalCode::CONN_PARAM_UPDATE_RES => {
+                    let res = ConnParamUpdateRes::from_hci_bytes_complete(signal_data)?;
+                    debug!(
+                        "[l2cap][conn = {:?}] connection param update response: {}",
+                        conn, res.result,
+                    );
+                    Ok(())
+                }
+                r => {
+                    warn!("[l2cap][conn = {:?}] unsupported signal: {:?}", conn, r);
+                    Err(Error::NotSupported)
+                }
+            })();
+            if let Err(e) = result {
+                warn!("[l2cap][conn = {:?}] error processing signal: {:?}", conn, e);
             }
-            L2capSignalCode::CONN_PARAM_UPDATE_RES => {
-                let res = ConnParamUpdateRes::from_hci_bytes_complete(data)?;
-                debug!(
-                    "[l2cap][conn = {:?}] connection param update response: {}",
-                    conn, res.result,
-                );
-            }
-            r => {
-                warn!("[l2cap][conn = {:?}] unsupported signal: {:?}", conn, r);
-                return Err(Error::NotSupported);
-            }
+            data = next;
         }
         Ok(())
     }
