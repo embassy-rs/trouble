@@ -4,8 +4,8 @@
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
-use embassy_nrf::peripherals::RNG;
 use embassy_nrf::mode::Async;
+use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, rng};
 use embassy_time::{Duration, Instant, Timer};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
@@ -104,7 +104,7 @@ async fn main(spawner: Spawner) {
                 mtu: Some(PAYLOAD_LEN as u16),
                 mps: Some(L2CAP_MTU as u16 - 4),
             };
-            let mut ch1 = unwrap!(L2capChannel::create(&stack, &conn, 0x2349, &config).await);
+            let mut ch1 = unwrap!(L2capChannel::create(&stack, &conn, 0xF2, &config).await);
             info!("sending l2cap data");
             let mut last = Instant::now();
             let mut bytes: u64 = 0;
