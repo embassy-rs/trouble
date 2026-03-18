@@ -493,8 +493,15 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         };
         ble.l2cap_signal(conn, req_id, &command, &mut tx[..]).await?;
 
+        // Clean up the channel slot if the future is dropped before completion.
+        let ondrop = OnDrop::new(|| {
+            self.state.borrow_mut().channels[idx.0 as usize].close();
+        });
+
         // Wait until a response is accepted.
-        poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))).await
+        let result = poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))).await;
+        ondrop.defuse();
+        result
     }
 
     fn poll_created<T: Controller>(
@@ -604,6 +611,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                             debug!("[l2cap][cid = {}] no credits available", channel);
                             return Err(Error::OutOfMemory);
                         }
+
                         storage.flow_control.confirm_received(1);
 
                         #[cfg(feature = "channel-metrics")]
