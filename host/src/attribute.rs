@@ -944,6 +944,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                     // Included service values only include 16-bit UUIDs per the Bluetooth spec
                     let uuid = match uuid {
                         Uuid::Uuid16(uuid) => Some(*uuid),
+                        Uuid::Uuid32(_) => None,
                         Uuid::Uuid128(_) => None,
                     };
 
