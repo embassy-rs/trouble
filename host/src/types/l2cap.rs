@@ -1,7 +1,5 @@
 use bt_hci::{FixedSizeValue, WriteHci};
 
-use crate::codec::Error;
-
 pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
 pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
 pub(crate) const L2CAP_CID_LE_U_SECURITY_MANAGER: u16 = 0x0006;
@@ -52,58 +50,101 @@ pub trait L2capSignal: WriteHci + FixedSizeValue + defmt::Format {
     fn code() -> L2capSignalCode;
 }
 
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum L2capSignalCode {
-    CommandRejectRes = 0x01,
-    ConnectionReq = 0x02,
-    ConnectionRes = 0x03,
-    ConfigurationReq = 0x04,
-    ConfigurationRes = 0x05,
-    DisconnectionReq = 0x06,
-    DisconnectionRes = 0x07,
-    EchoReq = 0x08,
-    EchoRes = 0x09,
-    InformationReq = 0x0A,
-    InformationRes = 0x0B,
-    ConnParamUpdateReq = 0x12,
-    ConnParamUpdateRes = 0x13,
-    LeCreditConnReq = 0x14,
-    LeCreditConnRes = 0x15,
-    LeCreditFlowInd = 0x16,
-    CreditConnReq = 0x17,
-    CreditConnRes = 0x18,
-    CreditConnReconfigReq = 0x19,
-    CreditConnReconfigRes = 0x1A,
+#[derive(Clone, Copy, PartialEq)]
+#[repr(transparent)]
+pub struct L2capSignalCode(pub u8);
+
+unsafe impl FixedSizeValue for L2capSignalCode {
+    fn is_valid(_data: &[u8]) -> bool {
+        true
+    }
 }
 
-impl TryFrom<u8> for L2capSignalCode {
-    type Error = Error;
-    fn try_from(val: u8) -> Result<Self, Error> {
-        Ok(match val {
-            0x01 => Self::CommandRejectRes,
-            0x02 => Self::ConnectionReq,
-            0x03 => Self::ConnectionRes,
-            0x04 => Self::ConfigurationReq,
-            0x05 => Self::ConfigurationRes,
-            0x06 => Self::DisconnectionReq,
-            0x07 => Self::DisconnectionRes,
-            0x08 => Self::EchoReq,
-            0x09 => Self::EchoRes,
-            0x0A => Self::InformationReq,
-            0x0B => Self::InformationRes,
-            0x12 => Self::ConnParamUpdateReq,
-            0x13 => Self::ConnParamUpdateRes,
-            0x14 => Self::LeCreditConnReq,
-            0x15 => Self::LeCreditConnRes,
-            0x16 => Self::LeCreditFlowInd,
-            0x17 => Self::CreditConnReq,
-            0x18 => Self::CreditConnRes,
-            0x19 => Self::CreditConnReconfigReq,
-            0x1A => Self::CreditConnReconfigRes,
-            _ => return Err(Error::InvalidValue),
-        })
+impl core::fmt::Debug for L2capSignalCode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Self::COMMAND_REJECT_RES => write!(f, "CommandRejectRes"),
+            Self::CONNECTION_REQ => write!(f, "ConnectionReq"),
+            Self::CONNECTION_RES => write!(f, "ConnectionRes"),
+            Self::CONFIGURATION_REQ => write!(f, "ConfigurationReq"),
+            Self::CONFIGURATION_RES => write!(f, "ConfigurationRes"),
+            Self::DISCONNECTION_REQ => write!(f, "DisconnectionReq"),
+            Self::DISCONNECTION_RES => write!(f, "DisconnectionRes"),
+            Self::ECHO_REQ => write!(f, "EchoReq"),
+            Self::ECHO_RES => write!(f, "EchoRes"),
+            Self::INFORMATION_REQ => write!(f, "InformationReq"),
+            Self::INFORMATION_RES => write!(f, "InformationRes"),
+            Self::CONN_PARAM_UPDATE_REQ => write!(f, "ConnParamUpdateReq"),
+            Self::CONN_PARAM_UPDATE_RES => write!(f, "ConnParamUpdateRes"),
+            Self::LE_CREDIT_CONN_REQ => write!(f, "LeCreditConnReq"),
+            Self::LE_CREDIT_CONN_RES => write!(f, "LeCreditConnRes"),
+            Self::LE_CREDIT_FLOW_IND => write!(f, "LeCreditFlowInd"),
+            Self::CREDIT_CONN_REQ => write!(f, "CreditConnReq"),
+            Self::CREDIT_CONN_RES => write!(f, "CreditConnRes"),
+            Self::CREDIT_CONN_RECONFIG_REQ => write!(f, "CreditConnReconfigReq"),
+            Self::CREDIT_CONN_RECONFIG_RES => write!(f, "CreditConnReconfigRes"),
+            _ => write!(f, "Unknown(0x{:02x})", self.0),
+        }
     }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for L2capSignalCode {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        match *self {
+            Self::COMMAND_REJECT_RES => defmt::write!(f, "CommandRejectRes"),
+            Self::CONNECTION_REQ => defmt::write!(f, "ConnectionReq"),
+            Self::CONNECTION_RES => defmt::write!(f, "ConnectionRes"),
+            Self::CONFIGURATION_REQ => defmt::write!(f, "ConfigurationReq"),
+            Self::CONFIGURATION_RES => defmt::write!(f, "ConfigurationRes"),
+            Self::DISCONNECTION_REQ => defmt::write!(f, "DisconnectionReq"),
+            Self::DISCONNECTION_RES => defmt::write!(f, "DisconnectionRes"),
+            Self::ECHO_REQ => defmt::write!(f, "EchoReq"),
+            Self::ECHO_RES => defmt::write!(f, "EchoRes"),
+            Self::INFORMATION_REQ => defmt::write!(f, "InformationReq"),
+            Self::INFORMATION_RES => defmt::write!(f, "InformationRes"),
+            Self::CONN_PARAM_UPDATE_REQ => defmt::write!(f, "ConnParamUpdateReq"),
+            Self::CONN_PARAM_UPDATE_RES => defmt::write!(f, "ConnParamUpdateRes"),
+            Self::LE_CREDIT_CONN_REQ => defmt::write!(f, "LeCreditConnReq"),
+            Self::LE_CREDIT_CONN_RES => defmt::write!(f, "LeCreditConnRes"),
+            Self::LE_CREDIT_FLOW_IND => defmt::write!(f, "LeCreditFlowInd"),
+            Self::CREDIT_CONN_REQ => defmt::write!(f, "CreditConnReq"),
+            Self::CREDIT_CONN_RES => defmt::write!(f, "CreditConnRes"),
+            Self::CREDIT_CONN_RECONFIG_REQ => defmt::write!(f, "CreditConnReconfigReq"),
+            Self::CREDIT_CONN_RECONFIG_RES => defmt::write!(f, "CreditConnReconfigRes"),
+            _ => defmt::write!(f, "Unknown(0x{:02x})", self.0),
+        }
+    }
+}
+
+impl From<u8> for L2capSignalCode {
+    fn from(val: u8) -> Self {
+        Self(val)
+    }
+}
+
+#[allow(non_upper_case_globals)]
+impl L2capSignalCode {
+    pub const COMMAND_REJECT_RES: Self = Self(0x01);
+    pub const CONNECTION_REQ: Self = Self(0x02);
+    pub const CONNECTION_RES: Self = Self(0x03);
+    pub const CONFIGURATION_REQ: Self = Self(0x04);
+    pub const CONFIGURATION_RES: Self = Self(0x05);
+    pub const DISCONNECTION_REQ: Self = Self(0x06);
+    pub const DISCONNECTION_RES: Self = Self(0x07);
+    pub const ECHO_REQ: Self = Self(0x08);
+    pub const ECHO_RES: Self = Self(0x09);
+    pub const INFORMATION_REQ: Self = Self(0x0A);
+    pub const INFORMATION_RES: Self = Self(0x0B);
+    pub const CONN_PARAM_UPDATE_REQ: Self = Self(0x12);
+    pub const CONN_PARAM_UPDATE_RES: Self = Self(0x13);
+    pub const LE_CREDIT_CONN_REQ: Self = Self(0x14);
+    pub const LE_CREDIT_CONN_RES: Self = Self(0x15);
+    pub const LE_CREDIT_FLOW_IND: Self = Self(0x16);
+    pub const CREDIT_CONN_REQ: Self = Self(0x17);
+    pub const CREDIT_CONN_RES: Self = Self(0x18);
+    pub const CREDIT_CONN_RECONFIG_REQ: Self = Self(0x19);
+    pub const CREDIT_CONN_RECONFIG_RES: Self = Self(0x1A);
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -125,23 +166,34 @@ unsafe impl FixedSizeValue for LeCreditConnReq {
 
 impl L2capSignal for LeCreditConnReq {
     fn code() -> L2capSignalCode {
-        L2capSignalCode::LeCreditConnReq
+        L2capSignalCode::LE_CREDIT_CONN_REQ
     }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
+/// Result code for an LE Credit Based Connection Response.
 pub enum LeCreditConnResultCode {
+    /// Connection successful.
     Success = 0x0000,
+    /// Connection refused — LE_PSM not supported.
     SpsmNotSupported = 0x0002,
+    /// Connection refused — no resources available.
     NoResources = 0x0004,
+    /// Connection refused — insufficient authentication.
     InsufficientAuthentication = 0x0005,
+    /// Connection refused — insufficient authorization.
     InsufficientAuthorization = 0x0006,
+    /// Connection refused — encryption key size too short.
     EncryptionKeyTooShort = 0x0007,
+    /// Connection refused — insufficient encryption.
     InsufficientEncryption = 0x0008,
+    /// Connection refused — invalid Source CID.
     InvalidSourceId = 0x0009,
+    /// Connection refused — Source CID already allocated.
     ScidAlreadyAllocated = 0x000A,
+    /// Connection refused — unacceptable parameters.
     UnacceptableParameters = 0x000B,
 }
 
@@ -156,9 +208,21 @@ pub struct LeCreditConnRes {
     pub result: LeCreditConnResultCode,
 }
 
+impl LeCreditConnRes {
+    pub const fn reject(result: LeCreditConnResultCode) -> Self {
+        Self {
+            dcid: 0,
+            mtu: 0,
+            mps: 0,
+            credits: 0,
+            result,
+        }
+    }
+}
+
 impl L2capSignal for LeCreditConnRes {
     fn code() -> L2capSignalCode {
-        L2capSignalCode::LeCreditConnRes
+        L2capSignalCode::LE_CREDIT_CONN_RES
     }
 }
 
@@ -184,7 +248,7 @@ unsafe impl FixedSizeValue for LeCreditFlowInd {
 
 impl L2capSignal for LeCreditFlowInd {
     fn code() -> L2capSignalCode {
-        L2capSignalCode::LeCreditFlowInd
+        L2capSignalCode::LE_CREDIT_FLOW_IND
     }
 }
 
@@ -199,6 +263,12 @@ pub struct CommandRejectRes {
 unsafe impl FixedSizeValue for CommandRejectRes {
     fn is_valid(data: &[u8]) -> bool {
         true
+    }
+}
+
+impl L2capSignal for CommandRejectRes {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::COMMAND_REJECT_RES
     }
 }
 
@@ -218,7 +288,7 @@ unsafe impl FixedSizeValue for DisconnectionReq {
 
 impl L2capSignal for DisconnectionReq {
     fn code() -> L2capSignalCode {
-        L2capSignalCode::DisconnectionReq
+        L2capSignalCode::DISCONNECTION_REQ
     }
 }
 
@@ -238,7 +308,7 @@ unsafe impl FixedSizeValue for DisconnectionRes {
 
 impl L2capSignal for DisconnectionRes {
     fn code() -> L2capSignalCode {
-        L2capSignalCode::DisconnectionRes
+        L2capSignalCode::DISCONNECTION_RES
     }
 }
 
@@ -260,7 +330,7 @@ unsafe impl FixedSizeValue for ConnParamUpdateReq {
 
 impl L2capSignal for ConnParamUpdateReq {
     fn code() -> L2capSignalCode {
-        L2capSignalCode::ConnParamUpdateReq
+        L2capSignalCode::CONN_PARAM_UPDATE_REQ
     }
 }
 
@@ -279,6 +349,6 @@ unsafe impl FixedSizeValue for ConnParamUpdateRes {
 
 impl L2capSignal for ConnParamUpdateRes {
     fn code() -> L2capSignalCode {
-        L2capSignalCode::ConnParamUpdateRes
+        L2capSignalCode::CONN_PARAM_UPDATE_RES
     }
 }

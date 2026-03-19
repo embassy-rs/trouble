@@ -3,18 +3,13 @@ use core::ops::ControlFlow;
 
 use bt_hci::param::{AddrKind, BdAddr};
 use embassy_futures::select::{Either, select};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::DynamicSender;
-use embassy_sync::signal::Signal;
+use embassy_sync::watch;
 use trouble_host::prelude::*;
 
 use crate::Event;
 use crate::btp::protocol::gatt;
 use crate::command_channel::{self, CommandReceiver, HasResponse};
-
-/// Signal used by `connection::run` to notify the gatt_client task
-/// that a bonded peer has reconnected. Carries the peer's [`Address`].
-pub type ConnectionSignal = Signal<NoopRawMutex, Address>;
 
 /// Maximum number of discovered services cached per connection.
 const MAX_SERVICES: usize = 32;
@@ -229,14 +224,14 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     stack: &'stack Stack<'stack, C, P>,
     commands: CommandReceiver<'_, Command>,
     events: DynamicSender<'_, Event>,
-    connection_signal: &ConnectionSignal,
+    conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,
 ) -> ! {
     trace!("gatt_client::run");
     let mut had_subscriptions = false;
     loop {
-        // === Phase 1: Idle — wait for a command or a bonded-peer reconnection signal ===
+        // === Phase 1: Idle — wait for a command or a connection via Watch ===
         let (connection, mut cmd) = loop {
-            match select(commands.receive(), connection_signal.wait()).await {
+            match select(commands.receive(), conn_rx.changed()).await {
                 Either::First(cmd) => {
                     let addr = cmd.address();
                     if let Some(conn) = stack.get_connection_by_peer_address(addr) {
@@ -245,12 +240,11 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     warn!("No connection for address {:?}", addr);
                     cmd.reply(Response::Fail).await;
                 }
-                Either::Second(addr) => {
-                    info!("Bonded peer reconnected signal: {:?}", addr);
-                    if let Some(conn) = stack.get_connection_by_peer_address(addr) {
+                Either::Second(conn) => {
+                    if had_subscriptions && conn.is_bonded_peer() {
+                        info!("Connection signal received for gatt_client");
                         break (conn, None);
                     }
-                    warn!("No connection for signaled address {:?}", addr);
                 }
             }
         };
@@ -735,7 +729,7 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                             char_handle: c.handle - 1,
                             value_handle: c.handle,
                             properties: c.props.to_raw(),
-                            uuid: c.uuid.clone(),
+                            uuid: c.uuid,
                         })
                         .collect();
                     Response::Characteristics(infos.into_boxed_slice())

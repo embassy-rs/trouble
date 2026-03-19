@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use embedded_io_async::Write;
+use trouble_host::prelude::LeCreditConnResultCode;
 
 use super::Cursor;
 use super::header::BtpHeader;
@@ -32,17 +33,18 @@ pub mod opcodes {
 }
 
 /// Supported commands bitmask for L2CAP service.
-pub const SUPPORTED_COMMANDS: [u8; 2] = super::supported_commands_bitmask(&[
-    opcodes::READ_SUPPORTED_COMMANDS,
-    opcodes::CONNECT,
-    opcodes::DISCONNECT,
-    opcodes::SEND_DATA,
-    opcodes::LISTEN,
-    opcodes::ACCEPT_CONNECTION,
-    opcodes::RECONFIGURE,
-    opcodes::CREDITS,
-    opcodes::DISCONNECT_EATT_CHANS,
-]);
+///
+/// Opcodes 0x01-0x06 fit in a single byte; pad to 2 bytes for the BTP wire format.
+pub const SUPPORTED_COMMANDS: [u8; 2] = {
+    let [b0] = super::supported_commands_bitmask(&[
+        opcodes::READ_SUPPORTED_COMMANDS,
+        opcodes::CONNECT,
+        opcodes::DISCONNECT,
+        opcodes::SEND_DATA,
+        opcodes::LISTEN,
+    ]);
+    [b0, 0]
+};
 
 /// L2CAP transport type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -135,39 +137,19 @@ impl TryFrom<u8> for ChannelMode {
     }
 }
 
-/// L2CAP listen security response values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u16)]
-pub enum ListenResponse {
-    /// Success - accept connection.
-    #[default]
-    Success = 0x0000,
-    /// Insufficient authentication.
-    InsufficientAuthentication = 0x0001,
-    /// Insufficient authorization.
-    InsufficientAuthorization = 0x0002,
-    /// Insufficient encryption key size.
-    InsufficientEncryptionKeySize = 0x0003,
-    /// Insufficient encryption.
-    InsufficientEncryption = 0x0004,
-    /// Insufficient secure authentication.
-    InsufficientSecureAuthentication = 0x0005,
-}
-
-impl TryFrom<u16> for ListenResponse {
-    type Error = Error;
-
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            0x0000 => Ok(Self::Success),
-            0x0001 => Ok(Self::InsufficientAuthentication),
-            0x0002 => Ok(Self::InsufficientAuthorization),
-            0x0003 => Ok(Self::InsufficientEncryptionKeySize),
-            0x0004 => Ok(Self::InsufficientEncryption),
-            0x0005 => Ok(Self::InsufficientSecureAuthentication),
-            _ => Err(Error::InvalidPacket),
-        }
+/// Parse a BTP Listen Response value into an L2CAP result code.
+///
+/// BTP uses its own numbering (0–5) which differs from the L2CAP spec values.
+fn parse_listen_response(value: u16) -> Result<LeCreditConnResultCode, Error> {
+    match value {
+        0x0000 => Ok(LeCreditConnResultCode::Success),
+        0x0001 => Ok(LeCreditConnResultCode::InsufficientAuthentication),
+        0x0002 => Ok(LeCreditConnResultCode::InsufficientAuthorization),
+        0x0003 => Ok(LeCreditConnResultCode::EncryptionKeyTooShort),
+        0x0004 => Ok(LeCreditConnResultCode::InsufficientEncryption),
+        // No direct L2CAP mapping for "secure authentication"; closest match.
+        0x0005 => Ok(LeCreditConnResultCode::InsufficientAuthentication),
+        _ => Err(Error::InvalidPacket),
     }
 }
 
@@ -213,16 +195,7 @@ pub struct ListenCommand {
     pub psm: u16,
     pub transport: Transport,
     pub mtu: u16,
-    pub security_type: u8,
-    pub key_size: u8,
-    pub response: ListenResponse,
-}
-
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AcceptConnectionCommand {
-    pub chan_id: u8,
-    pub result: u16,
+    pub response: LeCreditConnResultCode,
 }
 
 #[derive(Debug, Clone)]
@@ -270,9 +243,6 @@ pub enum L2capCommand<'a> {
 
     /// Listen command (0x05).
     Listen(ListenCommand),
-
-    /// Accept connection request (0x06).
-    AcceptConnection(AcceptConnectionCommand),
 
     /// Reconfigure command (0x07).
     Reconfigure(ReconfigureCommand<'a>),
@@ -328,24 +298,12 @@ impl<'a> L2capCommand<'a> {
                 let psm = cursor.read_u16_le()?;
                 let transport = Transport::try_from(cursor.read_u8()?)?;
                 let mtu = cursor.read_u16_le()?;
-                let security_type = cursor.read_u8()?;
-                let key_size = cursor.read_u8()?;
-                let response = ListenResponse::try_from(cursor.read_u16_le()?)?;
+                let response = parse_listen_response(cursor.read_u16_le()?)?;
                 Ok(L2capCommand::Listen(ListenCommand {
                     psm,
                     transport,
                     mtu,
-                    security_type,
-                    key_size,
                     response,
-                }))
-            }
-            opcodes::ACCEPT_CONNECTION => {
-                let chan_id = cursor.read_u8()?;
-                let result = cursor.read_u16_le()?;
-                Ok(L2capCommand::AcceptConnection(AcceptConnectionCommand {
-                    chan_id,
-                    result,
                 }))
             }
             opcodes::RECONFIGURE => {
@@ -382,7 +340,6 @@ impl<'a> L2capCommand<'a> {
             L2capCommand::Disconnect(..) => opcodes::DISCONNECT,
             L2capCommand::SendData(..) => opcodes::SEND_DATA,
             L2capCommand::Listen(..) => opcodes::LISTEN,
-            L2capCommand::AcceptConnection(..) => opcodes::ACCEPT_CONNECTION,
             L2capCommand::Reconfigure(..) => opcodes::RECONFIGURE,
             L2capCommand::Credits(..) => opcodes::CREDITS,
             L2capCommand::DisconnectEattChans(..) => opcodes::DISCONNECT_EATT_CHANS,
@@ -394,7 +351,7 @@ impl<'a> L2capCommand<'a> {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ConnectedResponse {
+pub struct ConnectingResponse {
     pub num: u8,
     pub chan_ids: heapless::Vec<u8, MAX_CHANNELS>,
 }
@@ -407,7 +364,7 @@ pub enum L2capResponse {
     SupportedCommands([u8; 2]),
 
     /// Connect response (response to 0x02, 0x0b).
-    Connected(ConnectedResponse),
+    Connecting(ConnectingResponse),
 
     /// Empty response for commands that only indicate success.
     Empty,
@@ -418,7 +375,7 @@ impl L2capResponse {
     pub fn data_len(&self) -> u16 {
         match self {
             L2capResponse::SupportedCommands(bitmask) => bitmask.len() as u16,
-            L2capResponse::Connected(rsp) => 1 + rsp.chan_ids.len() as u16,
+            L2capResponse::Connecting(rsp) => 1 + rsp.chan_ids.len() as u16,
             L2capResponse::Empty => 0,
         }
     }
@@ -427,7 +384,7 @@ impl L2capResponse {
     pub async fn write<W: Write>(&self, mut writer: W) -> Result<(), W::Error> {
         match self {
             L2capResponse::SupportedCommands(bitmask) => writer.write_all(bitmask).await,
-            L2capResponse::Connected(rsp) => {
+            L2capResponse::Connecting(rsp) => {
                 writer.write_all(&[rsp.num]).await?;
                 writer.write_all(&rsp.chan_ids).await
             }
@@ -437,14 +394,6 @@ impl L2capResponse {
 }
 
 // --- L2capEvent structs ---
-
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ConnectionRequestEvent {
-    pub chan_id: u8,
-    pub psm: u16,
-    pub address: Address,
-}
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -499,9 +448,6 @@ pub struct ReconfiguredEvent {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum L2capEvent<'a> {
-    /// Connection request event (0x80).
-    ConnectionRequest(ConnectionRequestEvent),
-
     /// Connected event (0x81).
     Connected(ConnectedEvent),
 
@@ -519,7 +465,6 @@ impl L2capEvent<'_> {
     /// Get the header for this event.
     pub fn header(&self) -> BtpHeader {
         let (opcode, data_len) = match self {
-            L2capEvent::ConnectionRequest(..) => (opcodes::EVENT_CONNECTION_REQUEST, 10),
             L2capEvent::Connected(..) => (opcodes::EVENT_CONNECTED, 18),
             L2capEvent::Disconnected(..) => (opcodes::EVENT_DISCONNECTED, 12),
             L2capEvent::DataReceived(evt) => (opcodes::EVENT_DATA_RECEIVED, 3 + evt.data.len() as u16),
@@ -531,12 +476,6 @@ impl L2capEvent<'_> {
     /// Write the event data.
     pub async fn write<W: Write>(&self, mut writer: W) -> Result<(), W::Error> {
         match self {
-            L2capEvent::ConnectionRequest(evt) => {
-                writer.write_all(&[evt.chan_id]).await?;
-                writer.write_all(&evt.psm.to_le_bytes()).await?;
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await
-            }
             L2capEvent::Connected(evt) => {
                 writer.write_all(&[evt.chan_id]).await?;
                 writer.write_all(&evt.psm.to_le_bytes()).await?;
@@ -600,17 +539,22 @@ mod tests {
     }
 
     #[test]
-    fn test_listen_response_try_from() {
-        assert_eq!(ListenResponse::try_from(0x0000).unwrap(), ListenResponse::Success);
+    fn test_parse_listen_response() {
+        assert_eq!(parse_listen_response(0x0000).unwrap(), LeCreditConnResultCode::Success);
         assert_eq!(
-            ListenResponse::try_from(0x0001).unwrap(),
-            ListenResponse::InsufficientAuthentication
+            parse_listen_response(0x0001).unwrap(),
+            LeCreditConnResultCode::InsufficientAuthentication
         );
         assert_eq!(
-            ListenResponse::try_from(0x0005).unwrap(),
-            ListenResponse::InsufficientSecureAuthentication
+            parse_listen_response(0x0003).unwrap(),
+            LeCreditConnResultCode::EncryptionKeyTooShort
         );
-        assert!(ListenResponse::try_from(0x0006).is_err());
+        // 0x0005 (secure auth) maps to InsufficientAuthentication
+        assert_eq!(
+            parse_listen_response(0x0005).unwrap(),
+            LeCreditConnResultCode::InsufficientAuthentication
+        );
+        assert!(parse_listen_response(0x0006).is_err());
     }
 
     #[test]
@@ -697,8 +641,8 @@ mod tests {
 
     #[test]
     fn test_read_listen() {
-        // psm=0x0025, transport=1 (LE), mtu=256, security_type=0, key_size=16, response=0
-        let data: &[u8] = &[0x25, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x00, 0x00];
+        // psm=0x0025, transport=1 (LE), mtu=256, response=0
+        let data: &[u8] = &[0x25, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00];
         let header = make_header(opcodes::LISTEN, Some(0));
         let mut cursor = Cursor::new(data);
         let cmd = L2capCommand::parse(&header, &mut cursor).unwrap();
@@ -706,34 +650,15 @@ mod tests {
             psm,
             transport,
             mtu,
-            security_type,
-            key_size,
             response,
         }) = cmd
         {
             assert_eq!(psm, 0x0025);
             assert_eq!(transport, Transport::Le);
             assert_eq!(mtu, 256);
-            assert_eq!(security_type, 0);
-            assert_eq!(key_size, 16);
-            assert_eq!(response, ListenResponse::Success);
+            assert_eq!(response, LeCreditConnResultCode::Success);
         } else {
             panic!("Expected Listen");
-        }
-    }
-
-    #[test]
-    fn test_read_accept_connection() {
-        // chan_id=1, result=0
-        let data: &[u8] = &[0x01, 0x00, 0x00];
-        let header = make_header(opcodes::ACCEPT_CONNECTION, Some(0));
-        let mut cursor = Cursor::new(data);
-        let cmd = L2capCommand::parse(&header, &mut cursor).unwrap();
-        if let L2capCommand::AcceptConnection(cmd) = cmd {
-            assert_eq!(cmd.chan_id, 1);
-            assert_eq!(cmd.result, 0);
-        } else {
-            panic!("Expected AcceptConnection");
         }
     }
 
@@ -809,27 +734,11 @@ mod tests {
         let mut chan_ids = heapless::Vec::new();
         chan_ids.push(1).unwrap();
         chan_ids.push(2).unwrap();
-        let resp = L2capResponse::Connected(ConnectedResponse { num: 2, chan_ids });
+        let resp = L2capResponse::Connecting(ConnectingResponse { num: 2, chan_ids });
         assert_eq!(resp.data_len(), 3);
         let mut buf = [0u8; 16];
         block_on(resp.write(&mut buf.as_mut_slice())).unwrap();
         assert_eq!(&buf[..3], &[0x02, 0x01, 0x02]);
-    }
-
-    #[test]
-    fn test_connection_request_event_header() {
-        let evt = L2capEvent::ConnectionRequest(ConnectionRequestEvent {
-            chan_id: 1,
-            psm: 0x0025,
-            address: Address {
-                kind: AddrKind::PUBLIC,
-                addr: BdAddr::default(),
-            },
-        });
-        let header = evt.header();
-        assert_eq!(header.service_id, ServiceId::L2CAP);
-        assert_eq!(header.opcode, opcodes::EVENT_CONNECTION_REQUEST);
-        assert_eq!(header.data_len, 10);
     }
 
     #[test]
@@ -848,25 +757,6 @@ mod tests {
         });
         let header = evt.header();
         assert_eq!(header.data_len, 18);
-    }
-
-    #[test]
-    fn test_write_connection_request_event() {
-        use futures_executor::block_on;
-        let evt = L2capEvent::ConnectionRequest(ConnectionRequestEvent {
-            chan_id: 1,
-            psm: 0x0025,
-            address: Address {
-                kind: AddrKind::RANDOM,
-                addr: BdAddr::new([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
-            },
-        });
-        let mut buf = [0u8; 16];
-        block_on(evt.write(&mut buf.as_mut_slice())).unwrap();
-        assert_eq!(buf[0], 1); // chan_id
-        assert_eq!(u16::from_le_bytes([buf[1], buf[2]]), 0x0025); // psm
-        assert_eq!(buf[3], 0x01); // addr_type (RANDOM)
-        assert_eq!(&buf[4..10], &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]); // address
     }
 
     #[test]
