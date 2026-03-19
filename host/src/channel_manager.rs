@@ -80,7 +80,7 @@ impl<P> State<'_, P> {
     fn register_psms(&mut self, psms: &[u16]) -> Result<(), Error> {
         // Validate and check for overlap first
         for &psm in psms {
-            if !(1..=255).contains(&psm) {
+            if !(1..=255).contains(&psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
                 return Err(Error::InvalidValue);
             } else if self.is_psm_registered(psm) {
                 return Err(Error::AlreadyInUse);
@@ -89,9 +89,11 @@ impl<P> State<'_, P> {
 
         // All clear, set the bits
         for &psm in psms {
-            let idx = psm as usize / 32;
-            let bit = psm as usize % 32;
-            self.registered_psms[idx] |= 1 << bit;
+            if (1..=255).contains(&psm) {
+                let idx = psm as usize / 32;
+                let bit = psm as usize % 32;
+                self.registered_psms[idx] |= 1 << bit;
+            }
         }
         Ok(())
     }
@@ -109,8 +111,9 @@ impl<P> State<'_, P> {
 
     /// Check if a PSM has an active listener.
     fn is_psm_registered(&self, psm: u16) -> bool {
-        if psm == 0 || psm > 255 {
-            return false;
+        if !(1..=255).contains(&psm) {
+            // When the allow-reserved-l2ca-psu feature is enable, treat all reserved PSUs as registered
+            return cfg!(feature = "allow-reserved-l2cap-psu");
         }
         let idx = psm as usize / 32;
         let bit = psm as usize % 32;

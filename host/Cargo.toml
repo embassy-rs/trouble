@@ -95,6 +95,9 @@ l2cap-sdu-reassembly-optimization = []
 # Support connection parameter update procedure
 connection-params-update = []
 
+# Allow L2CAP SPSU values that are reserved for future use
+allow-reserved-l2cap-psu = []
+
 default = ["peripheral", "central", "gatt", "derive", "default-packet-pool"]
 
 
