@@ -7,7 +7,7 @@ use embassy_time::Duration;
 use trouble_host::prelude::*;
 
 use crate::command_channel::{self, CommandReceiver, HasResponse};
-use crate::{Event, Server};
+use crate::{Event, OobState, Server};
 
 /// Heap-backed mirror of `Advertisement` that owns its byte data via `Box<[u8]>`.
 ///
@@ -156,6 +156,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     server: &Server<'_, P>,
     events: DynamicSender<'_, Event>,
     conn_watch: &watch::DynSender<'_, Connection<'stack, P>>,
+    oob: &OobState,
 ) -> ! {
     trace!("peripheral::run");
     let mut cmd = commands.receive().await;
@@ -244,16 +245,17 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 info!("Entering GATT connection loop");
                 match conn.with_attribute_server(server) {
                     Ok(gatt_conn) => {
-                        let res = crate::connection::run(stack, &gatt_conn, address, &events, conn_watch, async || {
-                            let cmd = commands.receive().await;
-                            match &*cmd {
-                                Command::StartAdvertising(..) => cmd.reply(Response::Fail).await,
-                                Command::StopAdvertising => {
-                                    cmd.reply(Response::StoppedAdvertising).await;
+                        let res =
+                            crate::connection::run(stack, &gatt_conn, address, &events, conn_watch, oob, async || {
+                                let cmd = commands.receive().await;
+                                match &*cmd {
+                                    Command::StartAdvertising(..) => cmd.reply(Response::Fail).await,
+                                    Command::StopAdvertising => {
+                                        cmd.reply(Response::StoppedAdvertising).await;
+                                    }
                                 }
-                            }
-                        })
-                        .await;
+                            })
+                            .await;
                         if let Err(err) = res {
                             error!("Connection terminated with error: {:?}", err);
                         }

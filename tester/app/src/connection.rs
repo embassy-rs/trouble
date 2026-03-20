@@ -6,7 +6,7 @@ use embassy_sync::watch;
 use embassy_time::Duration;
 use trouble_host::prelude::*;
 
-use crate::Event;
+use crate::{Event, OobState};
 
 /// Extract the peer's [`Address`] from a connection.
 pub(crate) fn peer_address<P: PacketPool>(conn: &Connection<'_, P>) -> Address {
@@ -26,9 +26,13 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     address: Address,
     events: &DynamicSender<'_, Event>,
     conn_watch: &watch::DynSender<'_, Connection<'stack, P>>,
+    oob: &OobState,
     mut on_command: impl AsyncFnMut(),
 ) -> Result<(), BleHostError<C::Error>> {
     trace!("connection::run addr={:?}", address);
+    if oob.has_oob() {
+        let _ = gatt_conn.raw().set_oob_available(true);
+    }
     conn_watch.send(gatt_conn.raw().clone());
     loop {
         match select(gatt_conn.next(), on_command()).await {
@@ -110,6 +114,30 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 GattConnectionEvent::BondLost => {
                     info!("BondLost addr={:?}", address);
                     events.send(Event::BondLost { address }).await;
+                }
+                GattConnectionEvent::OobRequest => {
+                    let (local_oob, peer_oob) = if let Some(sc_local) = oob.sc_local.get() {
+                        let sc_remote = oob.sc_remote.get().unwrap_or(trouble_host::OobData {
+                            random: [0; 16],
+                            confirm: [0; 16],
+                        });
+                        (sc_local, sc_remote)
+                    } else if let Some(tk) = oob.legacy_tk.get() {
+                        let local = trouble_host::OobData {
+                            random: tk,
+                            confirm: [0; 16],
+                        };
+                        let peer = trouble_host::OobData {
+                            random: [0; 16],
+                            confirm: [0; 16],
+                        };
+                        (local, peer)
+                    } else {
+                        unreachable!("OobRequest without OOB data");
+                    };
+                    if let Err(e) = gatt_conn.provide_oob_data(local_oob, peer_oob) {
+                        warn!("oob_data_received failed: {:?}", e);
+                    }
                 }
                 GattConnectionEvent::PhyUpdated { .. } => warn!("Ignored Phy update event"),
                 GattConnectionEvent::RequestConnectionParams(req) => {

@@ -272,6 +272,9 @@ pub enum ConnectionEvent {
     #[cfg(feature = "security")]
     /// The peer has lost its bond (received pairing request for a bonded peer).
     BondLost,
+    #[cfg(feature = "security")]
+    /// OOB data is requested during pairing. Respond with [`Connection::provide_oob_data()`].
+    OobRequest,
 }
 
 /// A connection parameters update request
@@ -639,6 +642,30 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// Input the pairing pass key
     pub fn pass_key_input(&self, pass_key: u32) -> Result<(), Error> {
         self.manager.pass_key_input(self.index, pass_key)
+    }
+
+    /// Set whether OOB data is available for this connection.
+    ///
+    /// When set to `true`, the pairing procedure will use out-of-band authentication
+    /// if the peer also supports it (LESC) or if both sides have OOB (legacy).
+    ///
+    /// This must be set before pairing is initiated.
+    #[cfg(feature = "security")]
+    pub fn set_oob_available(&self, available: bool) -> Result<(), Error> {
+        self.manager.set_oob_available(self.index, available)
+    }
+
+    /// Provide OOB data during pairing.
+    ///
+    /// Call this when [`ConnectionEvent::OobRequest`] is received. Both the local
+    /// and peer OOB data must be provided.
+    #[cfg(feature = "security")]
+    pub fn provide_oob_data(
+        &self,
+        local_oob: crate::security_manager::OobData,
+        peer_oob: crate::security_manager::OobData,
+    ) -> Result<(), Error> {
+        self.manager.provide_oob_data(self.index, local_oob, peer_oob)
     }
 
     /// Request connection to be disconnected.
