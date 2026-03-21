@@ -10,7 +10,8 @@ use sequential_storage::{
 };
 use serde::{Deserialize, Serialize};
 use trouble_host::{
-    prelude::{ConnectConfig, ConnectionEvent, DefaultPacketPool, ScanConfig},
+    gatt::GattClient,
+    prelude::{Characteristic, ConnectConfig, ConnectionEvent, DefaultPacketPool, ScanConfig, Uuid},
     Address, BondInformation, Controller, Host, HostResources,
 };
 
@@ -43,10 +44,10 @@ where
     // Make sure CONNECTIONS_MAX >= this len
     let peripheral_addresses = [
         // My Xbox Series X | S controller
-        Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0x1D, 0x85, 0xD7, 0x0B, 0xEA, 0x28]),
-        },
+        // Address {
+        //     kind: AddrKind::PUBLIC,
+        //     addr: BdAddr::new([0x1D, 0x85, 0xD7, 0x0B, 0xEA, 0x28]),
+        // },
         // My Xbox One S controller
         Address {
             kind: AddrKind::PUBLIC,
@@ -56,7 +57,7 @@ where
 
     let mut map_storage =
         MapStorage::<[u8; 7], _, _>::new(storage, MapConfig::new(0..S::ERASE_SIZE as u32 * 2), NoCache::new());
-    let mut data_buffer = [0; 32];
+    let mut data_buffer = [0; 512];
     // Note that we will also be iterating through all old, overwritten bonds.
     // This is okay, because stack.add_bond_information will overwrite the previously added bond info for that address.
     let mut stored_bonds = map_storage.fetch_all_items(&mut data_buffer).await.unwrap();
@@ -68,14 +69,20 @@ where
 
     let bonds_mutex = Mutex::<CriticalSectionRawMutex, _>::new((map_storage, data_buffer));
 
-    let Host { mut runner, .. } = stack.build();
+    let Host {
+        mut runner,
+        mut central,
+        ..
+    } = stack.build();
 
     join(
         async {
             runner.run().await.unwrap();
         },
-        join_array(peripheral_addresses.map(async |peripheral_address| {
-            let Host { mut central, .. } = stack.build();
+        // join_array(peripheral_addresses.map(async |peripheral_address| {
+        // let Host { mut central, .. } = stack.build();
+        async {
+            let peripheral_address = peripheral_addresses[0];
             info!("Connecting to {}", peripheral_address);
             let config = ConnectConfig {
                 connect_params: Default::default(),
@@ -86,8 +93,8 @@ where
             };
             let conn = central.connect(&config).await.unwrap();
             info!("Connected, pairing / bonding...");
-            // Even if we loaded a previously-saved bond, the peripheral may have deleted its bond.
-            // So we always allow creating a new bond for this example.
+            // // Even if we loaded a previously-saved bond, the peripheral may have deleted its bond.
+            // // So we always allow creating a new bond for this example.
             conn.set_bondable(true).unwrap();
             conn.request_security().unwrap();
             loop {
@@ -127,8 +134,53 @@ where
                     }
                 }
             }
-            info!("Done with loop");
-        })),
+            info!("[{}] Encrypted", peripheral_address);
+            join(
+                async {
+                    let client = GattClient::<_, DefaultPacketPool, 1>::new(&stack, &conn).await.unwrap();
+                    join(async { client.task().await.unwrap() }, async {
+                        info!("Created GATT client");
+                        info!("Getting HID service");
+                        let hid_service = client.services_by_uuid(&Uuid::new_short(0x1812)).await.unwrap();
+                        let hid_service = hid_service.first().unwrap();
+
+                        // The descriptor characteristic tells us about the data structure for inputs
+                        // (button presses, etc) and outputs (rumble)
+                        // Normally we would actually parse this but for this example we won't
+                        info!("Getting descriptor characteristic");
+                        let descriptor_characteristic: Characteristic<[u8; 512]> = client
+                            .characteristic_by_uuid(&hid_service, &Uuid::new_short(0x2A4B))
+                            .await
+                            .unwrap();
+                        info!("Reading descriptor characteristic");
+                        let mut data = [0_u8; 512];
+                        let bytes_read = client
+                            .read_characteristic(&descriptor_characteristic, &mut data)
+                            .await
+                            .unwrap();
+                        let feature_report = &data[..bytes_read];
+                        info!("feature report: {:X?}", feature_report);
+                    })
+                    .await;
+                },
+                async {
+                    loop {
+                        let event = conn.next().await;
+                        match event {
+                            ConnectionEvent::RequestConnectionParams(req) => {
+                                // Note that if we don't respond to this request the Xbox controller will automatically disconnecting in ~60s.
+                                info!("connection params request AFTER security");
+                                req.accept(None, &stack).await.unwrap();
+                            }
+                            event => {
+                                info!("ConnectionEvent: {:?}", event);
+                            }
+                        }
+                    }
+                },
+            )
+            .await;
+        },
     )
     .await;
 }
