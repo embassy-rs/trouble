@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-embassy-executor = "0.9.1"
+embassy-executor = "0.9"
 esp-bootloader-esp-idf = "0.4.0"
 esp-backtrace = { version = "0.18.1", features = [ "panic-handler", "println" ] }
 esp-hal = { version = "1.0.0", features = [ "unstable" ] }
@@ -17,7 +17,7 @@ trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"]
 trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
 
 # for 'ble_bas_peripheral_bonding'
-embassy-embedded-hal = "0.5.0"
+embassy-embedded-hal = "0.6.0"
 esp-storage = { version = "0.8.1" }
 
 [features]
@@ -70,3 +70,4 @@ esp-println =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba
 esp-radio =             { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
 esp-rtos =              { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
 esp-storage =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
+# bt-hci =                { git = "https://github.com/embassy-rs/bt-hci.git", rev = "f6f359650e671d71c96b4354a6b5e26ea3918031" }

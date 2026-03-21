@@ -22,7 +22,7 @@ aes = { version = "0.8.2", optional = true }
 bt-hci = { version = "0.8", features = ["uuid"] }
 cmac = { version = "0.7.2", optional = true }
 embedded-io = { version = "0.7" }
-embassy-sync = "0.7"
+embassy-sync = "0.8"
 embassy-time = "0.5"
 embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
@@ -53,7 +53,7 @@ critical-section = { version = "1", features = ["std"] }  # needed for CI builds
 rand = "0.8.5"
 rand_core = { version = "0.6", features = ["getrandom"]}
 heapless = "0.9"
-embassy-executor = { version = "0.9", features = ["arch-std", "executor-thread"]}
+embassy-executor = { version = "0.10", features = ["platform-std", "executor-thread"]}
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 
 [features]
