@@ -16,7 +16,7 @@ async fn main() -> Result<(), std::io::Error> {
     };
     let transport = Transport::new(dev)?;
     let controller = ExternalController::<_, 8>::new(transport);
-    let nor = NorMemoryInFile::<32, 32, 32>::new("ble_hid_central.nor", 4096)?;
+    let nor = NorMemoryInFile::<1, 1, 32>::new("ble_hid_central.nor", 4096)?;
     let mut storage = NorMemoryAsync::new(nor.storage().nor_flash());
     ble_hid_central::run(controller, &mut OsRng, &mut storage).await;
     Ok(())

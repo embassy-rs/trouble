@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-trouble-host = { path = "../../host", features = ["derive", "scan"] }
+trouble-host = { path = "../../host", features = ["connection-event-queue-size-64", "default-packet-pool-mtu-1024", "default-packet-pool-size-128", "derive", "gatt", "gatt-client-notification-max-subscribers-512", "gatt-client-notification-queue-size-512", "l2cap-rx-queue-size-64", "l2cap-tx-queue-size-64", "peripheral", "prepare-write-buffer-size-1024", "scan"], default-features = false }
 bt-hci = { version = "0.8" }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.7" }

@@ -15,7 +15,7 @@ use trouble_host::{
 };
 
 /// Max number of connections
-const CONNECTIONS_MAX: usize = 1;
+const CONNECTIONS_MAX: usize = 2;
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
@@ -40,6 +40,7 @@ where
         .set_random_address(address)
         .set_random_generator_seed(random_generator);
     // Replace these with the addresses of your HID devices
+    // Make sure CONNECTIONS_MAX >= this len
     let peripheral_addresses = [
         // My Xbox Series X | S controller
         Address {
@@ -63,7 +64,7 @@ where
         stack.add_bond_information(bond_info).unwrap();
     }
     let loaded_bond_information = stack.get_bond_information();
-    info!("Loaded bonds: {}", loaded_bond_information);
+    info!("Loaded bonds: {:?}", loaded_bond_information);
 
     let bonds_mutex = Mutex::<CriticalSectionRawMutex, _>::new((map_storage, data_buffer));
 
@@ -118,12 +119,15 @@ where
                     }
                     ConnectionEvent::RequestConnectionParams(req) => {
                         // Note that if we don't respond to this request the Xbox controller will automatically disconnecting in ~60s.
-                        info!("[{}] Accepting {}", peripheral_address, req);
+                        info!("[{}] Accepting {:?}", peripheral_address, req);
                         req.accept(None, &stack).await.unwrap()
                     }
-                    _ => {}
+                    event => {
+                        info!("Other connection event: {:?}", event);
+                    }
                 }
             }
+            info!("Done with loop");
         })),
     )
     .await;
