@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 trouble-host = { path = "../../host", features = ["derive", "scan"] }
 bt-hci = { version = "0.8" }
 embassy-futures = "0.1.1"
-embassy-sync = { version = "0.7" }
+embassy-sync = { version = "0.8" }
 embassy-time = "0.5"
 embedded-hal-async = "1.0"
 static_cell = "2"
