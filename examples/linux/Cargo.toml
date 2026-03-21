@@ -17,6 +17,7 @@ env_logger = "0.11"
 log = "0.4"
 critical-section = { version = "1", features = ["std"] }
 bt-hci-linux = { version = "0.1.0", path = "../../bt-hci-linux" }
+embedded-storage-file = "0.1.0"
 
 [features]
 security = [
@@ -29,4 +30,8 @@ required-features = ["security"]
 
 [[bin]]
 name = "ble_bas_peripheral_sec"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_hid_central"
 required-features = ["security"]
