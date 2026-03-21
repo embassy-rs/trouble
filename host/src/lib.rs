@@ -196,6 +196,7 @@ impl defmt::Format for Address {
 /// Because sometimes the peer uses the static or public address even though the IRK is sent.
 /// In this case, the IRK exists but the used address is not RPA.
 /// Should `Address` be used instead?
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Identity {
     /// Random static or public address

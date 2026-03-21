@@ -34,6 +34,7 @@ use crate::{bt_hci_duration, BleHostError, Error, Identity, PacketPool, Stack};
 ///
 /// This describes the various security levels that are supported.
 ///
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SecurityLevel {
