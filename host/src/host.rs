@@ -702,7 +702,8 @@ where
         handle: ConnHandle,
         param: &ConnParamUpdateRes,
     ) -> Result<(), BleHostError<T::Error>> {
-        self.channels.send_conn_param_update_res(handle, self, param).await
+        let result = self.channels.send_conn_param_update_res(handle, self, param).await;
+        result
     }
 
     /// Read current host metrics
@@ -1237,7 +1238,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
 
         {
             const ACL_LEN: u16 = 255;
-            const ACL_N: u16 = 1;
+            const ACL_N: u16 = 64;
             info!(
                 "[host] configuring host buffers ({} packets of size {})",
                 ACL_N, ACL_LEN,

@@ -32,6 +32,7 @@ p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arith
 rand_core = "0.6"
 rand_chacha = { version = "0.3", default-features = false, optional = true }
 rand = { version="0.8", default-features = false, optional = true}
+serde = { version = "1.0.228", optional = true, default-features = false, features = ["derive"] }
 static_cell = "2.1.0"
 zerocopy = "0.8.21"
 
@@ -97,6 +98,8 @@ connection-params-update = []
 
 # Allow L2CAP SPSU values that are reserved for future use
 allow-reserved-l2cap-psu = []
+
+serde = ["dep:serde", "bt-hci/serde"]
 
 default = ["peripheral", "central", "gatt", "derive", "default-packet-pool"]
 

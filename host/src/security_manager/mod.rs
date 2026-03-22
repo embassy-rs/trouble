@@ -49,6 +49,7 @@ pub(crate) enum SecurityEventData {
 }
 
 /// Bond Information
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct BondInformation {
     /// Long Term Key (LTK)
@@ -514,6 +515,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
             {
                 return Ok(());
             }
+            error!("Tried to request security while pairing with a different device");
             return Err(Error::InvalidState);
         }
 
