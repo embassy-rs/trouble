@@ -47,10 +47,10 @@ where
     // Replace these with the addresses of your HID devices
     let peripheral_addresses = [
         // My Xbox Series X | S controller
-        // Address {
-        //     kind: AddrKind::PUBLIC,
-        //     addr: BdAddr::new([0x1D, 0x85, 0xD7, 0x0B, 0xEA, 0x28]),
-        // },
+        Address {
+            kind: AddrKind::PUBLIC,
+            addr: BdAddr::new([0x1D, 0x85, 0xD7, 0x0B, 0xEA, 0x28]),
+        },
         // My Xbox One S controller
         Address {
             kind: AddrKind::PUBLIC,
@@ -92,21 +92,15 @@ where
 
     let bonds_mutex = Mutex::<CriticalSectionRawMutex, _>::new((map_storage, data_buffer));
 
-    let Host {
-        mut runner,
-        mut central,
-        ..
-    } = stack.build();
+    let Host { mut runner, .. } = stack.build();
 
     join(
         async {
             runner.run().await.unwrap();
         },
-        // join_array(peripheral_addresses.map(async |peripheral_address| {
-        // let Host { mut central, .. } = stack.build();
-        async {
+        join_array(peripheral_addresses.map(async |peripheral_address| {
+            let Host { mut central, .. } = stack.build();
             'connect_loop: loop {
-                let peripheral_address = peripheral_addresses[0];
                 info!("Connecting to {}", peripheral_address);
                 let config = ConnectConfig {
                     connect_params: RequestedConnParams {
@@ -119,7 +113,7 @@ where
                     },
                 };
                 let conn = central.connect(&config).await.unwrap();
-                info!("Connected, pairing / bonding...");
+                info!("[{}] Connected, pairing / bonding...", peripheral_address);
                 // Set bondable if no bond is stored for this peripheral
                 conn.set_bondable(bonds_map.get(&peripheral_address.to_bytes()).unwrap().is_none())
                     .unwrap();
@@ -233,7 +227,7 @@ where
                 )
                 .await;
             }
-        },
+        })),
     )
     .await;
 }
