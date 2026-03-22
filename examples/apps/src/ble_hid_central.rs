@@ -1,8 +1,8 @@
 use bt_hci::param::{AddrKind, BdAddr};
-use core::ops::DerefMut;
-use embassy_futures::join::{join, join_array};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
-use embassy_time::{Duration, Timer};
+use core::{array, ops::DerefMut};
+use embassy_futures::join::{join, join3, join_array};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, signal::Signal};
+use embassy_time::Timer;
 use embedded_storage_async::nor_flash::NorFlash;
 use heapless::index_map::FnvIndexMap;
 use rand_core::{CryptoRng, RngCore};
@@ -13,10 +13,8 @@ use sequential_storage::{
 use serde::{Deserialize, Serialize};
 use trouble_host::{
     gatt::GattClient,
-    prelude::{
-        Characteristic, ConnectConfig, ConnectionEvent, DefaultPacketPool, RequestedConnParams, ScanConfig, Uuid,
-    },
-    Address, BondInformation, Controller, Host, HostResources, Identity,
+    prelude::{Characteristic, ConnectConfig, ConnectionEvent, DefaultPacketPool, ScanConfig, Uuid},
+    Address, BondInformation, Controller, Host, HostResources,
 };
 
 /// Max number of connections
@@ -92,27 +90,53 @@ where
 
     let bonds_mutex = Mutex::<CriticalSectionRawMutex, _>::new((map_storage, data_buffer));
 
-    let Host { mut runner, .. } = stack.build();
+    let Host {
+        mut runner,
+        mut central,
+        ..
+    } = stack.build();
 
-    join(
+    let signals = peripheral_addresses.map(|_| Signal::<CriticalSectionRawMutex, _>::new());
+    join3(
         async {
             runner.run().await.unwrap();
         },
-        join_array(peripheral_addresses.map(async |peripheral_address| {
-            let Host { mut central, .. } = stack.build();
-            'connect_loop: loop {
-                info!("Connecting to {}", peripheral_address);
-                let config = ConnectConfig {
-                    connect_params: RequestedConnParams {
-                        supervision_timeout: Duration::from_secs(15),
-                        ..Default::default()
-                    },
-                    scan_config: ScanConfig {
-                        filter_accept_list: &[(peripheral_address.kind, &peripheral_address.addr)],
-                        ..Default::default()
-                    },
+        async {
+            // TODO: On disconnect, start scanning / connecting again
+            let mut connections_count = 0;
+            while connections_count < peripheral_addresses.len() {
+                info!("Scanning for peripherals to connect to");
+                let conn = central
+                    .connect(&ConnectConfig {
+                        scan_config: ScanConfig {
+                            filter_accept_list: &peripheral_addresses
+                                .each_ref()
+                                .map(|peripheral_address| (peripheral_address.kind, &peripheral_address.addr)),
+                            ..Default::default()
+                        },
+                        connect_params: Default::default(),
+                    })
+                    .await
+                    .unwrap();
+                let peer_address = Address {
+                    kind: conn.peer_addr_kind(),
+                    addr: conn.peer_address(),
                 };
-                let conn = central.connect(&config).await.unwrap();
+                let peripheral_index = peripheral_addresses
+                    .iter()
+                    .position(|address| address == &peer_address)
+                    .unwrap();
+                signals[peripheral_index].signal(conn);
+                connections_count += 1;
+            }
+            info!("Connected to all peripherals. No longer trying to scan / connect to a new peripheral");
+        },
+        join_array(array::from_fn::<_, CONNECTIONS_MAX, _>(|i| i).map(async |i| {
+            let signal = &signals[i];
+            let peripheral_address = &peripheral_addresses[i];
+            'connect_loop: loop {
+                info!("[{}] Connecting...", peripheral_address);
+                let conn = signal.wait().await;
                 info!("[{}] Connected, pairing / bonding...", peripheral_address);
                 // Set bondable if no bond is stored for this peripheral
                 conn.set_bondable(bonds_map.get(&peripheral_address.to_bytes()).unwrap().is_none())
