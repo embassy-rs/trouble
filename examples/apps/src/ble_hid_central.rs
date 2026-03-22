@@ -2,9 +2,10 @@ use bt_hci::param::{AddrKind, BdAddr};
 use core::{array, ops::DerefMut};
 use embassy_futures::join::{join, join3, join_array};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, signal::Signal};
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 use embedded_storage_async::nor_flash::NorFlash;
 use heapless::index_map::FnvIndexMap;
+use hid_parser::ReportIdIterator;
 use rand_core::{CryptoRng, RngCore};
 use sequential_storage::{
     cache::NoCache,
@@ -13,7 +14,9 @@ use sequential_storage::{
 use serde::{Deserialize, Serialize};
 use trouble_host::{
     gatt::GattClient,
-    prelude::{Characteristic, ConnectConfig, ConnectionEvent, DefaultPacketPool, ScanConfig, Uuid},
+    prelude::{
+        Characteristic, ConnectConfig, ConnectionEvent, DefaultPacketPool, RequestedConnParams, ScanConfig, Uuid,
+    },
     Address, BondInformation, Controller, Host, HostResources,
 };
 
@@ -97,14 +100,16 @@ where
     } = stack.build();
 
     let signals = peripheral_addresses.map(|_| Signal::<CriticalSectionRawMutex, _>::new());
+    let security_mutex = Mutex::<CriticalSectionRawMutex, _>::new(());
+    let used_small_interval = Mutex::<CriticalSectionRawMutex, _>::new(false);
     join3(
         async {
             runner.run().await.unwrap();
         },
         async {
             // TODO: On disconnect, start scanning / connecting again
-            let mut connections_count = 0;
-            while connections_count < peripheral_addresses.len() {
+            // let mut connections_count = 0;
+            loop {
                 info!("Scanning for peripherals to connect to");
                 let conn = central
                     .connect(&ConnectConfig {
@@ -127,9 +132,9 @@ where
                     .position(|address| address == &peer_address)
                     .unwrap();
                 signals[peripheral_index].signal(conn);
-                connections_count += 1;
+                // connections_count += 1;
             }
-            info!("Connected to all peripherals. No longer trying to scan / connect to a new peripheral");
+            // info!("Connected to all peripherals. No longer trying to scan / connect to a new peripheral");
         },
         join_array(array::from_fn::<_, CONNECTIONS_MAX, _>(|i| i).map(async |i| {
             let signal = &signals[i];
@@ -137,10 +142,21 @@ where
             'connect_loop: loop {
                 info!("[{}] Connecting...", peripheral_address);
                 let conn = signal.wait().await;
-                info!("[{}] Connected, pairing / bonding...", peripheral_address);
+                info!(
+                    "[{}] Connected, acquiring lock to security manager...",
+                    peripheral_address
+                );
                 // Set bondable if no bond is stored for this peripheral
-                conn.set_bondable(bonds_map.get(&peripheral_address.to_bytes()).unwrap().is_none())
-                    .unwrap();
+                // conn.set_bondable(bonds_map.get(&peripheral_address.to_bytes()).unwrap().is_none())
+                //     .unwrap();
+                conn.set_bondable(true).unwrap();
+                // Se cannot call request_security for two connections at the same time
+
+                let security_lock = security_mutex.lock().await;
+                info!(
+                    "[{}] Acquired lock to security manager. Calling request_security...",
+                    peripheral_address
+                );
                 conn.request_security().unwrap();
                 loop {
                     match conn.next().await {
@@ -172,8 +188,16 @@ where
                         ConnectionEvent::RequestConnectionParams(req) => {
                             // Note that if we don't respond to this request the Xbox controller will automatically disconnecting in ~60s.
                             info!("[{}] Accepting {:?}", peripheral_address, req);
-                            if let Err(e) = req.accept(None, &stack).await {
-                                error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
+                            let params = RequestedConnParams {
+                                min_connection_interval: Duration::from_millis(15),
+                                max_connection_interval: Duration::from_millis(15),
+                                ..req.params().clone()
+                            };
+                            // if let Err(e) = req.accept(Some(&params), &stack).await {
+                            //     error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
+                            // }
+                            if let Err(e) = req.reject(&stack).await {
+                                error!("[{}] Error rejecting connection params: {:?}", peripheral_address, e);
                             }
                         }
                         ConnectionEvent::BondLost => {
@@ -198,33 +222,86 @@ where
                         }
                     }
                 }
-                info!("[{}] Encrypted", peripheral_address);
+                drop(security_lock);
+                info!("[{}] Encrypted. Creating GATT client...", peripheral_address);
                 join(
                     async {
-                        Timer::after_secs(1).await;
+                        // Timer::after_secs(1).await;
                         let client = GattClient::<_, DefaultPacketPool, 1>::new(&stack, &conn).await.unwrap();
                         join(async { client.task().await.unwrap() }, async {
-                            info!("Created GATT client");
-                            info!("Getting HID service");
+                            info!("[{}] Created GATT client", peripheral_address);
+                            info!("[{}] Getting HID service", peripheral_address);
                             let hid_service = client.services_by_uuid(&Uuid::new_short(0x1812)).await.unwrap();
                             let hid_service = hid_service.first().unwrap();
+                            info!("[{}] Got HID service", peripheral_address);
 
                             // The descriptor characteristic tells us about the data structure for inputs
                             // (button presses, etc) and outputs (rumble)
                             // Normally we would actually parse this but for this example we won't
-                            info!("Getting descriptor characteristic");
+                            info!("[{}] Getting descriptor characteristic", peripheral_address);
                             let descriptor_characteristic: Characteristic<[u8; 512]> = client
                                 .characteristic_by_uuid(&hid_service, &Uuid::new_short(0x2A4B))
                                 .await
                                 .unwrap();
-                            info!("Reading descriptor characteristic");
+                            info!("[{}] Reading descriptor characteristic", peripheral_address);
                             let mut data = [0_u8; 512];
                             let bytes_read = client
                                 .read_characteristic(&descriptor_characteristic, &mut data)
                                 .await
                                 .unwrap();
                             let feature_report = &data[..bytes_read];
-                            info!("feature report: {:X?}", feature_report);
+                            info!("[{}] Feature report: {:X?}", peripheral_address, feature_report);
+
+                            // Set this to whatever max characteristics you want to support
+                            // Xbox controllers have 5 characteristics within the HID service
+                            let characteristics = client.characteristics::<10>(&hid_service).await.unwrap();
+                            for characteristic in characteristics {
+                                if characteristic.uuid == Uuid::new_short(0x2A4D) {
+                                    // Read the Report Reference Descriptor
+                                    // The descriptor is two bytes
+                                    // The first byte is the report ID
+                                    // The second byte is if the characteristic is the report type
+                                    // 0x1 - Input
+                                    // 0x2 - Output
+                                    // 0x3 - Feature
+                                    let report_reference_descriptor = client
+                                        .descriptor_by_uuid::<_, [u8; 2]>(&characteristic, &Uuid::new_short(0x2908))
+                                        .await
+                                        .unwrap();
+                                    let mut buffer = [Default::default(); 2];
+                                    let bytes_read = client
+                                        .read_descriptor(&report_reference_descriptor, &mut buffer)
+                                        .await
+                                        .unwrap();
+                                    let [report_id, report_type] = <[u8; 2]>::try_from(&buffer[..bytes_read]).unwrap();
+                                    match report_type {
+                                        0x1 => {
+                                            info!(
+                                                "[{}] Found input report with id {:#X}",
+                                                peripheral_address, report_id
+                                            );
+                                        }
+                                        0x2 => {
+                                            info!(
+                                                "[{}] Found output report with id {:#X}",
+                                                peripheral_address, report_id
+                                            );
+                                        }
+                                        0x3 => {
+                                            info!(
+                                                "[{}] Found feature report with id {:#X}",
+                                                peripheral_address, report_id
+                                            );
+                                        }
+                                        report_type => {
+                                            warn!(
+                                                "[{}] Unexpected report type: {:#X}",
+                                                peripheral_address, report_type
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         })
                         .await;
                     },
@@ -235,11 +312,19 @@ where
                                 ConnectionEvent::RequestConnectionParams(req) => {
                                     // Note that if we don't respond to this request the Xbox controller will automatically disconnecting in ~60s.
                                     info!("connection params request AFTER encrypted");
-                                    if let Err(e) = req.accept(None, &stack).await {
-                                        error!(
-                                            "[{}] Error accepting connection params AFTER encrypted: {:?}",
-                                            peripheral_address, e
-                                        );
+                                    let params = RequestedConnParams {
+                                        min_connection_interval: Duration::from_millis(15),
+                                        max_connection_interval: Duration::from_millis(15),
+                                        ..req.params().clone()
+                                    };
+                                    // if let Err(e) = req.accept(Some(&params), &stack).await {
+                                    //     error!(
+                                    //         "[{}] Error accepting connection params AFTER encrypted: {:?}",
+                                    //         peripheral_address, e
+                                    //     );
+                                    // }
+                                    if let Err(e) = req.reject(&stack).await {
+                                        error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
                                     }
                                 }
                                 event => {

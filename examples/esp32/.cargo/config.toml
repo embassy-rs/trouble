@@ -19,7 +19,7 @@ rustflags = [
 target = "riscv32imc-unknown-none-elf" # adding default target for rust-analyzer
 
 [env]
-ESP_LOG = "info"
+ESP_LOG = "debug"
 
 # Xtensa only:
 # Needed for nightly, until llvm upstream has support for Rust Xtensa.

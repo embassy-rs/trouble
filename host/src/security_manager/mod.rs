@@ -515,6 +515,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
             {
                 return Ok(());
             }
+            error!("Tried to request security while pairing with a different device");
             return Err(Error::InvalidState);
         }
 

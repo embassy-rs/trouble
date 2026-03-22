@@ -7,7 +7,7 @@
     "rust-analyzer": {
       "initialization_options": {
         "cargo": {
-          "features": ["security", "serde"],
+          // "features": ["security", "serde"],
         },
       },
     },

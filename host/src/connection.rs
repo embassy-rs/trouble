@@ -324,10 +324,14 @@ impl ConnectionParamsRequest {
 
         let params = params.unwrap_or(&self.params);
         if !params.is_valid() {
+            warn!("[host] invalid params: {:?}. rejecting...", params);
             return self.reject(stack).await;
+        } else {
+            debug!("[host] valid connection params: {:?}", params);
         }
 
-        match stack.host.async_command(into_le_conn_update(self.handle, params)).await {
+        let cmd = into_le_conn_update(self.handle, params);
+        match stack.host.async_command(cmd).await {
             Ok(()) => {
                 let param = ConnParamUpdateRes { result: 0 };
                 stack.host.send_conn_param_update_res(self.handle, &param).await
@@ -336,7 +340,10 @@ impl ConnectionParamsRequest {
                 Err(crate::Error::Disconnected.into())
             }
             Err(e) => {
-                info!("Connection parameters request procedure failed");
+                error!(
+                    "Connection parameters request procedure failed. Command that failed: {:?}",
+                    cmd
+                );
                 if let Err(e) = self.reject(stack).await {
                     warn!("Failed to reject ConnParamRequest after failure");
                 }

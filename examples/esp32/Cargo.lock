@@ -777,7 +777,6 @@ dependencies = [
  "esp32s3",
  "fugit",
  "instability",
- "log",
  "nb 1.1.0",
  "paste",
  "portable-atomic",
@@ -829,7 +828,6 @@ dependencies = [
  "esp-wifi-sys-esp32c6",
  "esp-wifi-sys-esp32h2",
  "esp-wifi-sys-esp32s3",
- "log",
 ]
 
 [[package]]
@@ -872,7 +870,6 @@ dependencies = [
  "esp-wifi-sys-esp32c3",
  "esp-wifi-sys-esp32c6",
  "esp-wifi-sys-esp32h2",
- "esp-wifi-sys-esp32s2",
  "esp-wifi-sys-esp32s3",
  "esp32",
  "esp32c2",
@@ -882,7 +879,6 @@ dependencies = [
  "esp32s3",
  "heapless 0.9.2",
  "instability",
- "log",
  "num-derive",
  "num-traits",
  "portable-atomic",
@@ -940,7 +936,6 @@ dependencies = [
  "esp-radio-rtos-driver",
  "esp-rom-sys",
  "esp-sync",
- "log",
  "portable-atomic",
  "riscv",
  "xtensa-lx",
@@ -991,57 +986,31 @@ dependencies = [
 name = "esp-wifi-sys-esp32"
 version = "0.1.0"
 source = "git+https://github.com/esp-rs/esp-wifi-sys?rev=e7b72a1#e7b72a199147c1dc8beb47a0b01938791e866c98"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "esp-wifi-sys-esp32c2"
 version = "0.1.0"
 source = "git+https://github.com/esp-rs/esp-wifi-sys?rev=e7b72a1#e7b72a199147c1dc8beb47a0b01938791e866c98"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "esp-wifi-sys-esp32c3"
 version = "0.1.0"
 source = "git+https://github.com/esp-rs/esp-wifi-sys?rev=e7b72a1#e7b72a199147c1dc8beb47a0b01938791e866c98"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "esp-wifi-sys-esp32c6"
 version = "0.1.0"
 source = "git+https://github.com/esp-rs/esp-wifi-sys?rev=e7b72a1#e7b72a199147c1dc8beb47a0b01938791e866c98"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "esp-wifi-sys-esp32h2"
 version = "0.1.0"
 source = "git+https://github.com/esp-rs/esp-wifi-sys?rev=e7b72a1#e7b72a199147c1dc8beb47a0b01938791e866c98"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "esp-wifi-sys-esp32s2"
-version = "0.1.0"
-source = "git+https://github.com/esp-rs/esp-wifi-sys?rev=e7b72a1#e7b72a199147c1dc8beb47a0b01938791e866c98"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "esp-wifi-sys-esp32s3"
 version = "0.1.0"
 source = "git+https://github.com/esp-rs/esp-wifi-sys?rev=e7b72a1#e7b72a199147c1dc8beb47a0b01938791e866c98"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "esp32"
