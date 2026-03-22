@@ -5,7 +5,6 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, s
 use embassy_time::{Duration, Timer};
 use embedded_storage_async::nor_flash::NorFlash;
 use heapless::index_map::FnvIndexMap;
-use hid_parser::ReportIdIterator;
 use rand_core::{CryptoRng, RngCore};
 use sequential_storage::{
     cache::NoCache,
