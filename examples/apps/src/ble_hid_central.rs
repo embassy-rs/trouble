@@ -187,17 +187,9 @@ where
                         ConnectionEvent::RequestConnectionParams(req) => {
                             // Note that if we don't respond to this request the Xbox controller will automatically disconnecting in ~60s.
                             info!("[{}] Accepting {:?}", peripheral_address, req);
-                            let params = RequestedConnParams {
-                                // min_connection_interval: Duration::from_millis(15),
-                                // max_connection_interval: Duration::from_millis(15),
-                                ..req.params().clone()
-                            };
-                            if let Err(e) = req.accept(Some(&params), &stack).await {
+                            if let Err(e) = req.accept(None, &stack).await {
                                 error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
                             }
-                            // if let Err(e) = req.reject(&stack).await {
-                            //     error!("[{}] Error rejecting connection params: {:?}", peripheral_address, e);
-                            // }
                         }
                         ConnectionEvent::BondLost => {
                             info!(
@@ -227,81 +219,109 @@ where
                     async {
                         // Timer::after_secs(1).await;
                         let client = GattClient::<_, DefaultPacketPool, 1>::new(&stack, &conn).await.unwrap();
-                        join(async { client.task().await.unwrap() }, async {
-                            info!("[{}] Created GATT client", peripheral_address);
-                            info!("[{}] Getting HID service", peripheral_address);
-                            let hid_service = client.services_by_uuid(&Uuid::new_short(0x1812)).await.unwrap();
-                            let hid_service = hid_service.first().unwrap();
-                            info!("[{}] Got HID service", peripheral_address);
+                        join(
+                            async {
+                                if let Err(e) = client.task().await {
+                                    warn!("[{}] {:?}", peripheral_address, e);
+                                }
+                            },
+                            async {
+                                info!("[{}] Created GATT client", peripheral_address);
+                                info!("[{}] Getting HID service", peripheral_address);
+                                let hid_service = client.services_by_uuid(&Uuid::new_short(0x1812)).await.unwrap();
+                                let hid_service = hid_service.first().unwrap();
+                                info!("[{}] Got HID service", peripheral_address);
 
-                            // The descriptor characteristic tells us about the data structure for inputs
-                            // (button presses, etc) and outputs (rumble)
-                            // Normally we would actually parse this but for this example we won't
-                            info!("[{}] Getting descriptor characteristic", peripheral_address);
-                            let descriptor_characteristic: Characteristic<[u8; 512]> = client
-                                .characteristic_by_uuid(&hid_service, &Uuid::new_short(0x2A4B))
-                                .await
-                                .unwrap();
-                            info!("[{}] Reading descriptor characteristic", peripheral_address);
-                            let mut data = [0_u8; 512];
-                            let bytes_read = client
-                                .read_characteristic(&descriptor_characteristic, &mut data)
-                                .await
-                                .unwrap();
-                            let feature_report = &data[..bytes_read];
-                            info!("[{}] Feature report: {:X?}", peripheral_address, feature_report);
+                                // The descriptor characteristic tells us about the data structure for inputs
+                                // (button presses, etc) and outputs (rumble)
+                                // Normally we would actually parse this but for this example we won't
+                                info!("[{}] Getting descriptor characteristic", peripheral_address);
+                                let descriptor_characteristic: Characteristic<[u8; 512]> = client
+                                    .characteristic_by_uuid(&hid_service, &Uuid::new_short(0x2A4B))
+                                    .await
+                                    .unwrap();
+                                info!("[{}] Reading descriptor characteristic", peripheral_address);
+                                let mut data = [0_u8; 512];
+                                let bytes_read = client
+                                    .read_characteristic(&descriptor_characteristic, &mut data)
+                                    .await
+                                    .unwrap();
+                                let feature_report = &data[..bytes_read];
+                                info!("[{}] Feature report: {:X?}", peripheral_address, feature_report);
 
-                            // Set this to whatever max characteristics you want to support
-                            // Xbox controllers have 5 characteristics within the HID service
-                            let characteristics = client.characteristics::<10>(&hid_service).await.unwrap();
-                            for characteristic in characteristics {
-                                if characteristic.uuid == Uuid::new_short(0x2A4D) {
-                                    // Read the Report Reference Descriptor
-                                    // The descriptor is two bytes
-                                    // The first byte is the report ID
-                                    // The second byte is if the characteristic is the report type
-                                    // 0x1 - Input
-                                    // 0x2 - Output
-                                    // 0x3 - Feature
-                                    let report_reference_descriptor = client
-                                        .descriptor_by_uuid::<_, [u8; 2]>(&characteristic, &Uuid::new_short(0x2908))
-                                        .await
-                                        .unwrap();
-                                    let mut buffer = [Default::default(); 2];
-                                    let bytes_read = client
-                                        .read_descriptor(&report_reference_descriptor, &mut buffer)
-                                        .await
-                                        .unwrap();
-                                    let [report_id, report_type] = <[u8; 2]>::try_from(&buffer[..bytes_read]).unwrap();
-                                    match report_type {
-                                        0x1 => {
-                                            info!(
-                                                "[{}] Found input report with id {:#X}",
-                                                peripheral_address, report_id
-                                            );
-                                        }
-                                        0x2 => {
-                                            info!(
-                                                "[{}] Found output report with id {:#X}",
-                                                peripheral_address, report_id
-                                            );
-                                        }
-                                        0x3 => {
-                                            info!(
-                                                "[{}] Found feature report with id {:#X}",
-                                                peripheral_address, report_id
-                                            );
-                                        }
-                                        report_type => {
-                                            warn!(
-                                                "[{}] Unexpected report type: {:#X}",
-                                                peripheral_address, report_type
-                                            );
+                                // Set this to whatever max characteristics you want to support
+                                // Xbox controllers have 5 characteristics within the HID service
+                                const MAX_CHARACTERISTICS: usize = 10;
+                                let characteristics = client
+                                    .characteristics::<MAX_CHARACTERISTICS>(&hid_service)
+                                    .await
+                                    .unwrap();
+                                let mut input_report_characteristics = heapless::Vec::<_, MAX_CHARACTERISTICS>::new();
+                                for characteristic in characteristics {
+                                    if characteristic.uuid == Uuid::new_short(0x2A4D) {
+                                        // Read the Report Reference Descriptor
+                                        // The descriptor is two bytes
+                                        // The first byte is the report ID
+                                        // The second byte is if the characteristic is the report type
+                                        // 0x1 - Input
+                                        // 0x2 - Output
+                                        // 0x3 - Feature
+                                        let report_reference_descriptor = client
+                                            .descriptor_by_uuid::<_, [u8; 2]>(&characteristic, &Uuid::new_short(0x2908))
+                                            .await
+                                            .unwrap();
+                                        let mut buffer = [Default::default(); 2];
+                                        let bytes_read = client
+                                            .read_descriptor(&report_reference_descriptor, &mut buffer)
+                                            .await
+                                            .unwrap();
+                                        let [report_id, report_type] =
+                                            <[u8; 2]>::try_from(&buffer[..bytes_read]).unwrap();
+                                        match report_type {
+                                            0x1 => {
+                                                info!(
+                                                    "[{}] Found input report with id {:#X}",
+                                                    peripheral_address, report_id
+                                                );
+                                                input_report_characteristics.push((characteristic, report_id)).unwrap();
+                                            }
+                                            0x2 => {
+                                                info!(
+                                                    "[{}] Found output report with id {:#X}",
+                                                    peripheral_address, report_id
+                                                );
+                                            }
+                                            0x3 => {
+                                                info!(
+                                                    "[{}] Found feature report with id {:#X}",
+                                                    peripheral_address, report_id
+                                                );
+                                            }
+                                            report_type => {
+                                                warn!(
+                                                    "[{}] Unexpected report type: {:#X}",
+                                                    peripheral_address, report_type
+                                                );
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        })
+                                join_array(array::from_fn::<_, MAX_CHARACTERISTICS, _>(async |i| {
+                                    if let Some((input_report_characteristic, report_id)) =
+                                        input_report_characteristics.get(i)
+                                    {
+                                        let mut listener =
+                                            client.subscribe(&input_report_characteristic, false).await.unwrap();
+                                        loop {
+                                            let notification = listener.next().await;
+                                            let data = notification.as_ref();
+                                            info!("[{}] report {:#X?}: {:X?}", peripheral_address, report_id, data);
+                                        }
+                                    }
+                                }))
+                                .await;
+                            },
+                        )
                         .await;
                     },
                     async {
@@ -311,20 +331,12 @@ where
                                 ConnectionEvent::RequestConnectionParams(req) => {
                                     // Note that if we don't respond to this request the Xbox controller will automatically disconnecting in ~60s.
                                     info!("connection params request AFTER encrypted");
-                                    let params = RequestedConnParams {
-                                        // min_connection_interval: Duration::from_millis(15),
-                                        // max_connection_interval: Duration::from_millis(15),
-                                        ..req.params().clone()
-                                    };
-                                    if let Err(e) = req.accept(Some(&params), &stack).await {
+                                    if let Err(e) = req.accept(None, &stack).await {
                                         error!(
                                             "[{}] Error accepting connection params AFTER encrypted: {:?}",
                                             peripheral_address, e
                                         );
                                     }
-                                    // if let Err(e) = req.reject(&stack).await {
-                                    //     error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
-                                    // }
                                 }
                                 event => {
                                     info!("ConnectionEvent: {:?}", event);
