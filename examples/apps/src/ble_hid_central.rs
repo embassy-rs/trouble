@@ -192,12 +192,12 @@ where
                                 max_connection_interval: Duration::from_millis(15),
                                 ..req.params().clone()
                             };
-                            // if let Err(e) = req.accept(Some(&params), &stack).await {
-                            //     error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
-                            // }
-                            if let Err(e) = req.reject(&stack).await {
-                                error!("[{}] Error rejecting connection params: {:?}", peripheral_address, e);
+                            if let Err(e) = req.accept(Some(&params), &stack).await {
+                                error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
                             }
+                            // if let Err(e) = req.reject(&stack).await {
+                            //     error!("[{}] Error rejecting connection params: {:?}", peripheral_address, e);
+                            // }
                         }
                         ConnectionEvent::BondLost => {
                             info!(
@@ -312,19 +312,19 @@ where
                                     // Note that if we don't respond to this request the Xbox controller will automatically disconnecting in ~60s.
                                     info!("connection params request AFTER encrypted");
                                     let params = RequestedConnParams {
-                                        min_connection_interval: Duration::from_millis(15),
-                                        max_connection_interval: Duration::from_millis(15),
+                                        // min_connection_interval: Duration::from_millis(15),
+                                        // max_connection_interval: Duration::from_millis(15),
                                         ..req.params().clone()
                                     };
-                                    // if let Err(e) = req.accept(Some(&params), &stack).await {
-                                    //     error!(
-                                    //         "[{}] Error accepting connection params AFTER encrypted: {:?}",
-                                    //         peripheral_address, e
-                                    //     );
-                                    // }
-                                    if let Err(e) = req.reject(&stack).await {
-                                        error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
+                                    if let Err(e) = req.accept(Some(&params), &stack).await {
+                                        error!(
+                                            "[{}] Error accepting connection params AFTER encrypted: {:?}",
+                                            peripheral_address, e
+                                        );
                                     }
+                                    // if let Err(e) = req.reject(&stack).await {
+                                    //     error!("[{}] Error accepting connection params: {:?}", peripheral_address, e);
+                                    // }
                                 }
                                 event => {
                                     info!("ConnectionEvent: {:?}", event);
