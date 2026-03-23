@@ -145,6 +145,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         self.connection(index).role.unwrap()
     }
 
+    pub(crate) fn role_by_handle(&self, handle: ConnHandle) -> Option<LeConnRole> {
+        self.connection_by_handle(handle).and_then(|connection| connection.role)
+    }
+
     pub(crate) fn handle(&self, index: u8) -> ConnHandle {
         self.connection(index).handle.unwrap()
     }
