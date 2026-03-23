@@ -98,7 +98,13 @@ impl Pairing {
     }
 
     pub(crate) fn is_encrypted(&self) -> bool {
-        matches!(self, Self::ReceivingKeys { .. } | Self::Success)
+        matches!(
+            self,
+            Self::WaitingIdentitityInformation
+                | Self::WaitingIdentitityAddressInformation
+                | Self::ReceivingKeys { .. }
+                | Self::Success
+        )
     }
 
     // --- FSM core ---
@@ -189,6 +195,12 @@ impl Pairing {
             }
             (current, Input::Event(Event::PassKeyConfirm | Event::PassKeyCancel | Event::PassKeyInput(_))) => {
                 Ok(current)
+            }
+            // Handle PairingFailed from peer in any state
+            (_, Input::Command(Command::PairingFailed, payload)) => {
+                let reason = Reason::try_from(payload[0]).unwrap_or(Reason::UnspecifiedReason);
+                warn!("[smp legacy central] Peer sent PairingFailed: {:?}", reason);
+                Err(Error::Security(reason))
             }
 
             // --- Catch-all ---
@@ -317,7 +329,9 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<Self, Error> {
-        if pairing_data.local_features.initiator_key_distribution.encryption_key() {
+        // Use peer_features (from PairingResponse) to determine which keys the responder
+        // agreed for the initiator to distribute.
+        if pairing_data.peer_features.initiator_key_distribution.encryption_key() {
             let mut ltk_bytes = [0u8; 16];
             rng.fill_bytes(&mut ltk_bytes);
             let long_term_key = LongTermKey::from_le_bytes(ltk_bytes);
@@ -330,11 +344,13 @@ impl Pairing {
             let packet = make_central_identification_packet(ediv, &rand)?;
             ops.try_send_packet(packet)?;
         }
-        if pairing_data.local_features.initiator_key_distribution.identity_key() {
-            let irk = IdentityResolvingKey::new(0);
+        if pairing_data.peer_features.initiator_key_distribution.identity_key() {
+            let irk = ops.local_irk();
             let packet = make_identity_information_packet(&irk)?;
             ops.try_send_packet(packet)?;
-            let packet = make_identity_address_information_packet(&pairing_data.local_address)?;
+            // Send the identity address (public or static random), not the RPA used for pairing.
+            let identity_address = ops.local_identity_address()?;
+            let packet = make_identity_address_information_packet(&identity_address)?;
             ops.try_send_packet(packet)?;
         }
         Ok(Self::Success)
@@ -551,7 +567,7 @@ impl Pairing {
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
         if let Some(ref mut bond) = &mut pairing_data.bond_information {
-            bond.identity.irk = Some(irk);
+            bond.identity.irk = irk;
         }
         trace!("[smp legacy central] Received IRK");
         Ok(Self::WaitingIdentitityAddressInformation)

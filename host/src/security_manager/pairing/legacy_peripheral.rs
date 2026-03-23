@@ -197,6 +197,12 @@ impl Pairing {
             (current, Input::Event(Event::PassKeyConfirm | Event::PassKeyCancel | Event::PassKeyInput(_))) => {
                 Ok(current)
             }
+            // Handle PairingFailed from peer in any state
+            (_, Input::Command(Command::PairingFailed, payload)) => {
+                let reason = Reason::try_from(payload[0]).unwrap_or(Reason::UnspecifiedReason);
+                warn!("[smp legacy peripheral] Peer sent PairingFailed: {:?}", reason);
+                Err(Error::Security(reason))
+            }
 
             // --- Catch-all ---
             _ => Err(Error::InvalidState),
@@ -360,10 +366,12 @@ impl Pairing {
             }
         }
         if pairing_data.local_features.responder_key_distribution.identity_key() {
-            let irk = IdentityResolvingKey::new(0);
+            let irk = ops.local_irk();
             let packet = make_identity_information_packet(&irk)?;
             ops.try_send_packet(packet)?;
-            let packet = make_identity_address_information_packet(&pairing_data.local_address)?;
+            // Send the identity address (public or static random), not the RPA used for pairing.
+            let identity_address = ops.local_identity_address()?;
+            let packet = make_identity_address_information_packet(&identity_address)?;
             ops.try_send_packet(packet)?;
         }
 
@@ -415,6 +423,7 @@ impl Pairing {
                 .initiator_key_distribution
                 .set_encryption_key();
         }
+        // Always agree to distribute identity key when the peer requests it
         if peer_features.responder_key_distribution.identity_key() {
             pairing_data
                 .local_features
@@ -616,7 +625,7 @@ impl Pairing {
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
         if let Some(ref mut bond) = &mut pairing_data.bond_information {
-            bond.identity.irk = Some(irk);
+            bond.identity.irk = irk;
         }
         trace!("[smp legacy] Received IRK");
         Ok(Self::WaitingIdentitityAddressInformation)

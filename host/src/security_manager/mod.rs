@@ -47,6 +47,8 @@ pub(crate) enum SecurityEventData {
     Timeout,
     /// Pairing timer changed
     TimerChange,
+    /// A new bond was stored during pairing
+    BondAdded(crate::Identity),
 }
 
 /// Bond Information
@@ -109,6 +111,8 @@ struct SecurityManagerData {
     local_address: Option<Address>,
     /// Random generator seeded
     random_generator_seeded: bool,
+    /// Local Identity Resolving Key (set when privacy is enabled)
+    local_irk: Option<IdentityResolvingKey>,
 }
 
 impl SecurityManagerData {
@@ -117,6 +121,7 @@ impl SecurityManagerData {
         Self {
             local_address: None,
             random_generator_seeded: false,
+            local_irk: None,
         }
     }
 }
@@ -180,8 +185,6 @@ impl<P: PacketPool> TxPacket<P> {
     }
 }
 
-// TODO: IRK exchange, HCI_LE_­Add_­Device_­To_­Resolving_­List
-
 /// Inner mutable state of the security manager
 struct Inner {
     /// Random generator
@@ -217,10 +220,36 @@ impl Inner {
         self.pairing_sm.as_ref().map(|sm| sm.result().is_some()).unwrap_or(true)
     }
 
+    /// Get the local address to use for pairing calculations.
+    /// When privacy is enabled and a local RPA was used for this connection, use it;
+    /// otherwise fall back to the identity address.
+    fn connection_local_address<P>(&self, storage: &ConnectionStorage<P>) -> Result<Address, Error> {
+        if let Some(rpa) = storage.resolvable_addrs.local {
+            return Ok(Address {
+                kind: bt_hci::param::AddrKind::RANDOM,
+                addr: rpa,
+            });
+        }
+        self.state.local_address.ok_or(Error::InvalidValue)
+    }
+
+    /// Get the peer address to use for pairing calculations.
+    /// When privacy is enabled and a peer RPA was used for this connection, use it;
+    /// otherwise fall back to the identity address.
+    fn connection_peer_address<P>(identity_addr: Address, storage: &ConnectionStorage<P>) -> Address {
+        if let Some(rpa) = storage.resolvable_addrs.peer {
+            return Address {
+                kind: bt_hci::param::AddrKind::RANDOM,
+                addr: rpa,
+            };
+        }
+        identity_addr
+    }
+
     fn handle_peripheral<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
-        events: &Channel<NoopRawMutex, SecurityEventData, 2>,
+        events: &Channel<NoopRawMutex, SecurityEventData, 3>,
         cmd: &SmpCommand<'_>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
@@ -233,7 +262,8 @@ impl Inner {
             peer_identity,
         } = *cmd;
         if self.is_idle() {
-            let local_address = self.state.local_address.unwrap();
+            let local_address = self.connection_local_address(storage)?;
+            let peer_address = Self::connection_peer_address(peer_address, storage);
             let local_io = self.io_capabilities;
 
             #[cfg(feature = "legacy-pairing")]
@@ -303,6 +333,7 @@ impl Inner {
             connections,
             storage,
             peer_identity,
+            state: &self.state,
         };
         self.pairing_sm
             .as_mut()
@@ -313,7 +344,7 @@ impl Inner {
     fn handle_central<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
-        events: &Channel<NoopRawMutex, SecurityEventData, 2>,
+        events: &Channel<NoopRawMutex, SecurityEventData, 3>,
         cmd: &SmpCommand<'_>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
@@ -327,8 +358,8 @@ impl Inner {
         } = *cmd;
         if self.is_idle() {
             self.pairing_sm = Some(Pairing::new_central(
-                self.state.local_address.unwrap(),
-                peer_address,
+                self.connection_local_address(storage)?,
+                Self::connection_peer_address(peer_address, storage),
                 self.io_capabilities,
             ));
         }
@@ -372,6 +403,7 @@ impl Inner {
             connections,
             storage,
             peer_identity,
+            state: &self.state,
         };
         self.pairing_sm
             .as_mut()
@@ -382,7 +414,7 @@ impl Inner {
     fn handle_pairing_event<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
-        events: &Channel<NoopRawMutex, SecurityEventData, 2>,
+        events: &Channel<NoopRawMutex, SecurityEventData, 3>,
         pairing_event: pairing::Event,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
@@ -397,6 +429,7 @@ impl Inner {
                 conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
                 connections,
                 storage,
+                state: &self.state,
             };
             let res = sm.handle_event(pairing_event, &mut ops, &mut self.rng);
             if res.is_ok() {
@@ -411,7 +444,7 @@ impl Inner {
     fn handle_encryption_success<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
-        events: &Channel<NoopRawMutex, SecurityEventData, 2>,
+        events: &Channel<NoopRawMutex, SecurityEventData, 3>,
         encrypted: bool,
         connections: &ConnectionManager<'_, P>,
         storage: &mut ConnectionStorage<P::Packet>,
@@ -426,6 +459,7 @@ impl Inner {
                 connections,
                 storage,
                 conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                state: &self.state,
             };
             let res = sm.handle_event(pairing::Event::LinkEncryptedResult(encrypted), &mut ops, &mut self.rng);
             if res.is_ok() {
@@ -470,7 +504,7 @@ impl Inner {
     fn handle_encryption_failure<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
-        events: &Channel<NoopRawMutex, SecurityEventData, 2>,
+        events: &Channel<NoopRawMutex, SecurityEventData, 3>,
         connections: &ConnectionManager<'_, P>,
         storage: &mut ConnectionStorage<P::Packet>,
     ) {
@@ -492,6 +526,7 @@ impl Inner {
                     connections,
                     storage,
                     conn_handle: storage.handle.unwrap_or(ConnHandle::new(0)),
+                    state: &self.state,
                 },
                 &mut self.rng,
             );
@@ -508,7 +543,7 @@ impl Inner {
     fn initiate<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
-        events: &Channel<NoopRawMutex, SecurityEventData, 2>,
+        events: &Channel<NoopRawMutex, SecurityEventData, 3>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
         user_initiated: bool,
@@ -530,9 +565,9 @@ impl Inner {
         }
 
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
-        let local_address = self.state.local_address.ok_or(Error::InvalidValue)?;
         let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-        let peer_address = peer_identity.addr;
+        let local_address = self.connection_local_address(storage)?;
+        let peer_address = Self::connection_peer_address(peer_identity.addr, storage);
         let local_io = self.io_capabilities;
         let mut ops = PairingOpsImpl {
             bonds,
@@ -543,6 +578,7 @@ impl Inner {
             connections,
             storage,
             peer_identity,
+            state: &self.state,
         };
         if role == LeConnRole::Peripheral {
             self.pairing_sm = Some(Pairing::initiate_peripheral(
@@ -572,7 +608,7 @@ pub struct SecurityManager<'d> {
     /// Bond storage (externally owned by HostResources)
     bonds: &'d RefCell<VecView<BondInformation>>,
     /// Received events
-    events: Channel<NoopRawMutex, SecurityEventData, 2>,
+    events: Channel<NoopRawMutex, SecurityEventData, 3>,
 }
 
 impl<'d> SecurityManager<'d> {
@@ -702,6 +738,17 @@ impl<'d> SecurityManager<'d> {
         self.inner.borrow().state.local_address
     }
 
+    /// Set the local Identity Resolving Key (IRK) for privacy.
+    pub(crate) fn set_local_irk(&self, irk: IdentityResolvingKey) {
+        self.inner.borrow_mut().state.local_irk = Some(irk);
+    }
+
+    /// Get the local Identity Resolving Key (IRK).
+    /// Returns `Some` when privacy is enabled, `None` otherwise.
+    pub(crate) fn get_local_irk(&self) -> Option<IdentityResolvingKey> {
+        self.inner.borrow().state.local_irk
+    }
+
     /// Add a bonded device
     pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
         add_bond(&mut self.bonds.borrow_mut(), bond_information)
@@ -729,6 +776,11 @@ impl<'d> SecurityManager<'d> {
     /// Get the number of bonded devices
     pub(crate) fn bond_count(&self) -> usize {
         self.bonds.borrow().len()
+    }
+
+    /// Get a bond by its index
+    pub(crate) fn get_bond(&self, index: usize) -> Option<BondInformation> {
+        self.bonds.borrow().get(index).cloned()
     }
 
     /// Get the identity of a bonded device by index
@@ -1097,13 +1149,14 @@ impl<'d> SecurityManager<'d> {
 
 struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> {
     bonds: &'sm mut VecView<BondInformation>,
-    events: &'sm Channel<NoopRawMutex, SecurityEventData, 2>,
+    events: &'sm Channel<NoopRawMutex, SecurityEventData, 3>,
     secret_key: &'sm crypto::SecretKey,
     public_key: &'sm crypto::PublicKey,
     connections: &'cm ConnectionManager<'cm2, P>,
     storage: &'cs ConnectionStorage<P::Packet>,
     conn_handle: ConnHandle,
     peer_identity: Identity,
+    state: &'sm SecurityManagerData,
 }
 
 impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, P> {
@@ -1116,7 +1169,11 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
     }
 
     fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error> {
-        add_bond(self.bonds, bond.clone())
+        add_bond(self.bonds, bond.clone())?;
+        if bond.identity.irk.is_some() {
+            let _ = self.events.try_send(SecurityEventData::BondAdded(bond.identity));
+        }
+        Ok(())
     }
 
     fn find_bond(&self) -> Option<BondInformation> {
@@ -1203,5 +1260,13 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
 
     fn public_key(&self) -> &crypto::PublicKey {
         self.public_key
+    }
+
+    fn local_irk(&self) -> [u8; 16] {
+        self.state.local_irk.map(|k| k.to_le_bytes()).unwrap_or_default()
+    }
+
+    fn local_identity_address(&self) -> Result<Address, Error> {
+        self.state.local_address.ok_or(Error::InvalidValue)
     }
 }

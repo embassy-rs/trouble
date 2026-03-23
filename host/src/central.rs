@@ -45,7 +45,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
             true,
             AddrKind::PUBLIC,
             BdAddr::default(),
-            host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            host.own_addr_kind(),
             bt_hci_duration(config.connect_params.min_connection_interval),
             bt_hci_duration(config.connect_params.max_connection_interval),
             config.connect_params.max_latency,
@@ -107,7 +107,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
 
         host.async_command(LeExtCreateConn::new(
             true,
-            host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            host.own_addr_kind(),
             AddrKind::PUBLIC,
             BdAddr::default(),
             phy_params,
@@ -140,7 +140,18 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         let host = self.host;
         host.command(LeClearFilterAcceptList::new()).await?;
         for entry in filter_accept_list {
-            host.command(LeAddDeviceToFilterAcceptList::new(entry.kind, entry.addr))
+            // Resolve RPAs to identity addresses using bond information so the controller
+            // can match new RPAs via the resolving list.
+            #[cfg(feature = "security")]
+            let addr = host
+                .connections
+                .security_manager
+                .get_peer_bond_information(&(*entry).into())
+                .map(|bond| bond.identity.addr)
+                .unwrap_or(*entry);
+            #[cfg(not(feature = "security"))]
+            let addr = *entry;
+            host.command(LeAddDeviceToFilterAcceptList::new(addr.kind, addr.addr))
                 .await?;
         }
         Ok(())

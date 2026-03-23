@@ -2,9 +2,9 @@
 use core::task::Poll;
 
 use bt_hci::cmd::le::{
-    LeClearAdvSets, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
-    LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanResponseData,
-    LeSetScanResponseData,
+    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeReadNumberOfSupportedAdvSets,
+    LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable,
+    LeSetExtAdvParams, LeSetExtScanResponseData, LeSetScanResponseData,
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, LeConnRole, Operation};
@@ -23,6 +23,23 @@ pub struct Peripheral<'d, C, P: PacketPool> {
 impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     pub(crate) fn new(host: &'d BleHost<'d, C, P>) -> Self {
         Self { host }
+    }
+
+    /// Set the filter accept list for advertising.
+    ///
+    /// This clears the existing filter accept list on the controller and adds the provided entries.
+    /// Must be called before starting advertising (not while advertising is active).
+    pub async fn set_filter_accept_list(&mut self, filter_accept_list: &[Address]) -> Result<(), BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<LeClearFilterAcceptList> + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
+    {
+        let host = &self.host;
+        host.command(LeClearFilterAcceptList::new()).await?;
+        for entry in filter_accept_list {
+            host.command(LeAddDeviceToFilterAcceptList::new(entry.kind, entry.addr))
+                .await?;
+        }
+        Ok(())
     }
 
     /// Start advertising with the provided parameters and return a handle to accept connections.
@@ -74,10 +91,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             bt_hci_duration(params.interval_min),
             bt_hci_duration(params.interval_max),
             kind,
-            params
-                .own_addr_kind
-                .or(host.address.map(|a| a.kind))
-                .unwrap_or(AddrKind::PUBLIC),
+            params.own_addr_kind.unwrap_or_else(|| host.own_addr_kind()),
             peer.kind,
             peer.addr,
             params.channel_map.unwrap_or(AdvChannelMap::ALL),
@@ -205,16 +219,20 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             let data: RawAdvertisement<'k> = set.data.into();
             let params = set.params;
             let peer = data.peer.unwrap_or(Address::new(AddrKind::PUBLIC, BdAddr::default()));
+            let own_addr_kind = params.own_addr_kind.unwrap_or_else(|| host.own_addr_kind());
+            let random_addr = if let Some(addr) = set.address {
+                Some(addr)
+            } else {
+                host.address.as_ref().map(|a| a.addr)
+            };
+
             host.command(LeSetExtAdvParams::new(
                 handle,
                 data.props,
                 bt_hci_ext_duration(params.interval_min),
                 bt_hci_ext_duration(params.interval_max),
                 params.channel_map.unwrap_or(AdvChannelMap::ALL),
-                params
-                    .own_addr_kind
-                    .or(host.address.map(|a| a.kind))
-                    .unwrap_or(AddrKind::PUBLIC),
+                own_addr_kind,
                 peer.kind,
                 peer.addr,
                 params.filter_policy,
@@ -227,7 +245,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             ))
             .await?;
 
-            if let Some(addr) = set.address.or(host.address.as_ref().map(|a| a.addr)) {
+            if let Some(addr) = random_addr {
                 host.command(LeSetAdvSetRandomAddr::new(handle, addr)).await?;
             }
 

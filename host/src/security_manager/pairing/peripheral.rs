@@ -57,12 +57,8 @@ pub(super) enum Pairing {
     WaitingOobRandom(LescPhaseData),
     WaitingDHKeyEa(LescPhaseData),
     WaitingLinkEncrypted,
-    // TODO: WaitingIdentitity is actually a subset of `ReceivingKeys(i32)`,
-    // they can be removed after implementing the full receiving keys procedure.
     WaitingIdentitityInformation,
     WaitingIdentitityAddressInformation,
-    SendingKeys(i32),
-    ReceivingKeys(i32),
     Success,
     Error(Error),
 }
@@ -90,11 +86,7 @@ impl Pairing {
     pub(crate) fn is_encrypted(&self) -> bool {
         matches!(
             self,
-            Self::WaitingIdentitityInformation
-                | Self::WaitingIdentitityAddressInformation
-                | Self::SendingKeys(_)
-                | Self::ReceivingKeys(_)
-                | Self::Success
+            Self::WaitingIdentitityInformation | Self::WaitingIdentitityAddressInformation | Self::Success
         )
     }
 
@@ -189,6 +181,12 @@ impl Pairing {
                 Input::Command(Command::IdentityAddressInformation, payload),
             ) => Self::handle_identity_address_information(payload, pairing_data),
             (current, Input::Command(Command::KeypressNotification, _)) => Ok(current),
+            // Handle PairingFailed from peer in any state
+            (_, Input::Command(Command::PairingFailed, payload)) => {
+                let reason = Reason::try_from(payload[0]).unwrap_or(Reason::UnspecifiedReason);
+                warn!("[smp peripheral] Peer sent PairingFailed: {:?}", reason);
+                Err(Error::Security(reason))
+            }
 
             // --- Event transitions ---
             (Self::WaitingOobData(phase_data), Input::Event(Event::OobDataReceived { local, peer })) => {
@@ -371,6 +369,13 @@ impl Pairing {
             if matches!(current, Self::WaitingPairingRequest) {
                 pairing_data.bond_information = ops.try_enable_bonded_encryption()?;
             }
+
+            // Send our keys first (responder distributes first in LESC)
+            if pairing_data.local_features.responder_key_distribution.identity_key() {
+                let irk = ops.local_irk();
+                Self::send_irk_distribution(ops, &irk)?;
+            }
+
             if pairing_data.peer_features.initiator_key_distribution.identity_key() {
                 Ok(Self::WaitingIdentitityInformation)
             } else {
@@ -380,6 +385,20 @@ impl Pairing {
             error!("Failed to enable encryption!");
             Err(Error::Security(Reason::KeyRejected))
         }
+    }
+
+    /// Send local IRK and identity address to the peer.
+    fn send_irk_distribution<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, irk: &[u8; 16]) -> Result<(), Error> {
+        use crate::security_manager::pairing::util::{
+            make_identity_address_information_packet, make_identity_information_packet,
+        };
+        let packet = make_identity_information_packet(irk)?;
+        ops.try_send_packet(packet)?;
+        // Send the identity address (public or static random), not the RPA used for pairing.
+        let identity_address = ops.local_identity_address()?;
+        let packet = make_identity_address_information_packet(&identity_address)?;
+        ops.try_send_packet(packet)?;
+        Ok(())
     }
 
     #[inline]
@@ -479,6 +498,15 @@ impl Pairing {
                 .set_identity_key();
         }
 
+        // Always agree to distribute identity key when the peer requests it,
+        // even without a local IRK — we'll send a zero IRK with our identity address.
+        if peer_features.responder_key_distribution.identity_key() {
+            pairing_data
+                .local_features
+                .responder_key_distribution
+                .set_identity_key();
+        }
+
         pairing_data.peer_features = peer_features;
         let mut auth_req = AuthReq::new(ops.bonding_flag());
         if pairing_data.local_features.io_capabilities != IoCapabilities::NoInputNoOutput {
@@ -521,7 +549,7 @@ impl Pairing {
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
         if let Some(ref mut bond) = &mut pairing_data.bond_information {
-            bond.identity.irk = Some(irk);
+            bond.identity.irk = irk;
         }
 
         trace!("Identity information: IRK: {:?}", irk);
@@ -1059,7 +1087,7 @@ mod tests {
 
             assert!(bond.identity.irk.is_some());
             let stored_irk = bond.identity.irk.unwrap();
-            assert_eq!(stored_irk.0, u128::from_le_bytes(irk_data));
+            assert_eq!(stored_irk.0.get(), u128::from_le_bytes(irk_data));
 
             assert_eq!(
                 bond.identity.addr.addr,
@@ -1080,7 +1108,7 @@ mod tests {
                 assert!(bond.is_some());
                 let bond_info = bond.as_ref().unwrap();
                 assert!(bond_info.identity.irk.is_some());
-                assert_eq!(bond_info.identity.irk.unwrap().0, u128::from_le_bytes(irk_data));
+                assert_eq!(bond_info.identity.irk.unwrap().0.get(), u128::from_le_bytes(irk_data));
             }
             _ => panic!("Unexpected connection event"),
         }

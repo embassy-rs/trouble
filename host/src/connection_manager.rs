@@ -4,6 +4,8 @@ use core::future::poll_fn;
 use core::future::Future;
 use core::task::{Context, Poll};
 
+#[cfg(feature = "security")]
+use bt_hci::param::BdAddr;
 use bt_hci::param::{ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -18,6 +20,31 @@ use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::{config, Address, Error, Identity, PacketPool};
+
+/// Resolvable private addresses used on a connection.
+///
+/// Holds the Resolvable Private Addresses (RPAs) for a connection that were
+/// resolved by the controller.
+#[cfg(feature = "security")]
+#[derive(Debug, Default, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) struct ResolvablePrivateAddrs {
+    /// The local resolvable private address used on this connection, if any.
+    pub(crate) local: Option<BdAddr>,
+    /// The peer's resolvable private address used on this connection, if any.
+    pub(crate) peer: Option<BdAddr>,
+}
+
+#[cfg(feature = "security")]
+impl ResolvablePrivateAddrs {
+    /// Create an empty `ResolvablePrivateAddrs` with no addresses set.
+    pub(crate) const fn none() -> Self {
+        Self {
+            local: None,
+            peer: None,
+        }
+    }
+}
 
 #[cfg(feature = "att-queued-writes")]
 pub(crate) struct PrepareWriteState {
@@ -390,6 +417,24 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         role: LeConnRole,
         params: ConnParams,
     ) -> Result<(), Error> {
+        self.connect_with_rpas(
+            handle,
+            peer_addr,
+            role,
+            params,
+            #[cfg(feature = "security")]
+            ResolvablePrivateAddrs::none(),
+        )
+    }
+
+    pub(crate) fn connect_with_rpas(
+        &self,
+        handle: ConnHandle,
+        peer_addr: Address,
+        role: LeConnRole,
+        params: ConnParams,
+        #[cfg(feature = "security")] resolvable_addrs: ResolvablePrivateAddrs,
+    ) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         let default_credits = state.default_link_credits;
         let default_att_mtu = state.default_att_mtu;
@@ -402,17 +447,25 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 // Default ATT MTU is 23
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
-                storage.peer_identity.replace(Identity {
-                    addr: peer_addr,
-                    #[cfg(feature = "security")]
-                    irk: None,
-                });
+                #[cfg(feature = "security")]
+                let identity = self
+                    .security_manager
+                    .get_peer_bond_information(&peer_addr.into())
+                    .map(|bond| bond.identity)
+                    .unwrap_or(peer_addr.into());
+                #[cfg(not(feature = "security"))]
+                let identity = Identity::from(peer_addr);
+                storage.peer_identity.replace(identity);
                 storage.role.replace(role);
                 storage.params = params;
                 #[cfg(feature = "security")]
                 {
                     storage.bond_rejected = false;
                     storage.smp_timeout = false;
+                }
+                #[cfg(feature = "security")]
+                {
+                    storage.resolvable_addrs = resolvable_addrs;
                 }
 
                 match role {
@@ -455,8 +508,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 if r == role {
                     if !peers.is_empty() {
                         for peer in peers.iter() {
-                            // TODO: Accept advertising peers which use IRK
-                            if storage.peer_identity.unwrap().addr == *peer {
+                            if storage.peer_identity.unwrap().match_address(peer) {
                                 storage.state = ConnectionState::Connected;
                                 debug!("[link][poll_accept] connection accepted: state: {:?}", storage);
                                 assert_eq!(storage.refcount, 0);
@@ -900,6 +952,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 self.security_manager.cancel_timeout();
             }
             crate::security_manager::SecurityEventData::TimerChange => (),
+            #[cfg(feature = "security")]
+            crate::security_manager::SecurityEventData::BondAdded(identity) => {
+                host.resolving_list_state
+                    .borrow_mut()
+                    .push(crate::host::ResolvingListUpdate::Add(identity));
+            }
         }
         Ok(())
     }
@@ -1006,6 +1064,8 @@ pub struct ConnectionStorage<P> {
     pub bond_rejected: bool,
     #[cfg(feature = "security")]
     pub smp_timeout: bool,
+    #[cfg(feature = "security")]
+    pub resolvable_addrs: ResolvablePrivateAddrs,
     #[cfg(feature = "legacy-pairing")]
     pub encryption_key_len: u8,
     pub events: EventChannel,
@@ -1102,6 +1162,8 @@ impl<P> ConnectionStorage<P> {
             bond_rejected: false,
             #[cfg(feature = "security")]
             smp_timeout: false,
+            #[cfg(feature = "security")]
+            resolvable_addrs: ResolvablePrivateAddrs::none(),
             #[cfg(feature = "legacy-pairing")]
             encryption_key_len: 0,
             events: EventChannel::new(),

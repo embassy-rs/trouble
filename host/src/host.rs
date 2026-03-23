@@ -1,20 +1,26 @@
 //! BleHost
 //!
 //! The host module contains the main entry point for the TrouBLE host.
+#[cfg(feature = "security")]
+use core::cell::Cell;
 use core::cell::RefCell;
 use core::future::poll_fn;
 use core::mem::MaybeUninit;
-use core::task::Poll;
+use core::task::{Context, Poll};
 
 use bt_hci::cmd::controller_baseband::{
     HostBufferSize, HostNumberOfCompletedPackets, Reset, SetControllerToHostFlowControl, SetEventMask,
     SetEventMaskPage2,
 };
 use bt_hci::cmd::info::ReadBdAddr;
+#[cfg(feature = "security")]
 use bt_hci::cmd::le::{
-    LeConnUpdate, LeCreateConnCancel, LeEnableEncryption, LeLongTermKeyRequestReply, LeReadBufferSize,
-    LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask, LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr,
-    LeSetScanEnable,
+    LeAddDeviceToResolvingList, LeClearResolvingList, LeRemoveDeviceFromResolvingList, LeSetAddrResolutionEnable,
+    LeSetPrivacyMode, LeSetResolvablePrivateAddrTimeout,
+};
+use bt_hci::cmd::le::{
+    LeConnUpdate, LeCreateConnCancel, LeReadBufferSize, LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask,
+    LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr, LeSetScanEnable,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
@@ -30,6 +36,8 @@ use bt_hci::event::le::{
     LePhyUpdateComplete, LeRemoteConnectionParameterRequest,
 };
 use bt_hci::event::{DisconnectionComplete, EventKind, NumberOfCompletedPackets, Vendor};
+#[cfg(feature = "security")]
+use bt_hci::param::BdAddr;
 use bt_hci::param::{
     AddrKind, AdvHandle, AdvSet, ConnHandle, DisconnectReason, EventMask, EventMaskPage2, FilterDuplicates, LeConnRole,
     LeEventMask, Status,
@@ -45,6 +53,8 @@ use crate::att::{AttClient, AttServer};
 use crate::channel_manager::{ChannelManager, ChannelStorage};
 use crate::command::CommandState;
 use crate::connection::{ConnParams, ConnectionEvent};
+#[cfg(feature = "security")]
+use crate::connection_manager::ResolvablePrivateAddrs;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
@@ -56,6 +66,53 @@ use crate::types::l2cap::{
     L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{att, Address, BleHostError, Error, PacketPool};
+
+#[cfg(feature = "security")]
+#[derive(Clone, Copy)]
+pub(crate) enum ResolvingListUpdate {
+    FullSync,
+    Add(crate::Identity),
+    Remove(crate::Identity),
+}
+
+#[cfg(feature = "security")]
+pub(crate) struct ResolvingListSignal {
+    state: Option<ResolvingListUpdate>,
+    waker: WakerRegistration,
+}
+
+#[cfg(feature = "security")]
+impl ResolvingListSignal {
+    const fn new() -> Self {
+        Self {
+            state: None,
+            waker: WakerRegistration::new(),
+        }
+    }
+
+    /// Push an update and wake the control loop.
+    pub(crate) fn push(&mut self, update: ResolvingListUpdate) {
+        self.state = Some(match self.state {
+            Some(_) => ResolvingListUpdate::FullSync,
+            None => update,
+        });
+        self.waker.wake();
+    }
+
+    /// Discard any pending update.
+    pub(crate) fn clear(&mut self) {
+        self.state = None;
+    }
+
+    /// Poll for a pending update. Takes the value on Ready.
+    fn poll_changed(&mut self, cx: &mut Context<'_>) -> Poll<ResolvingListUpdate> {
+        self.waker.register(cx.waker());
+        match self.state.take() {
+            Some(state) => Poll::Ready(state),
+            None => Poll::Pending,
+        }
+    }
+}
 
 /// A BLE Host.
 ///
@@ -75,6 +132,10 @@ pub(crate) struct BleHost<'d, T, P: PacketPool> {
     pub(crate) advertise_command_state: CommandState<bool>,
     pub(crate) connect_command_state: CommandState<bool>,
     pub(crate) scan_command_state: CommandState<bool>,
+    #[cfg(feature = "security")]
+    pub(crate) rpa_timeout: Cell<embassy_time::Duration>,
+    #[cfg(feature = "security")]
+    pub(crate) resolving_list_state: RefCell<ResolvingListSignal>,
 }
 
 #[derive(Clone, Copy)]
@@ -209,7 +270,205 @@ where
             advertise_command_state: CommandState::new(),
             scan_command_state: CommandState::new(),
             connect_command_state: CommandState::new(),
+            #[cfg(feature = "security")]
+            rpa_timeout: Cell::new(embassy_time::Duration::from_secs(900)),
+            #[cfg(feature = "security")]
+            resolving_list_state: RefCell::new(ResolvingListSignal::new()),
         }
+    }
+
+    /// Poll whether any command should be cancelled or the resolving list should be synced.
+    fn poll_cancelled(&self, cx: &mut Context<'_>) -> Poll<CancelledCommandState> {
+        if let Poll::Ready(ctx) = self.connect_command_state.poll_cancelled(cx) {
+            return Poll::Ready(CancelledCommandState::Connect(ctx));
+        }
+        if let Poll::Ready(ctx) = self.advertise_command_state.poll_cancelled(cx) {
+            return Poll::Ready(CancelledCommandState::Advertise(ctx));
+        }
+        if let Poll::Ready(ctx) = self.scan_command_state.poll_cancelled(cx) {
+            return Poll::Ready(CancelledCommandState::Scan(ctx));
+        }
+
+        #[cfg(feature = "security")]
+        if self.connect_command_state.is_idle()
+            && self.advertise_command_state.is_idle()
+            && self.scan_command_state.is_idle()
+        {
+            if let Poll::Ready(update) = self.resolving_list_state.borrow_mut().poll_changed(cx) {
+                return Poll::Ready(CancelledCommandState::SyncResolvingList(update));
+            }
+        }
+
+        Poll::Pending
+    }
+
+    /// Check whether BLE address privacy is enabled.
+    #[cfg(feature = "security")]
+    pub(crate) fn is_privacy_enabled(&self) -> bool {
+        self.connections.security_manager.get_local_irk().is_some()
+    }
+
+    /// Get the appropriate own address kind based on the host address and privacy state.
+    pub(crate) fn own_addr_kind(&self) -> AddrKind {
+        #[cfg(feature = "security")]
+        if self.is_privacy_enabled() {
+            return if self.address.is_some() {
+                AddrKind::RESOLVABLE_PRIVATE_OR_RANDOM
+            } else {
+                AddrKind::RESOLVABLE_PRIVATE_OR_PUBLIC
+            };
+        }
+        self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC)
+    }
+
+    /// Sync the controller's resolving list based on a pending update.
+    #[cfg(feature = "security")]
+    pub(crate) async fn sync_resolving_list(&self, update: ResolvingListUpdate) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdSync<LeClearResolvingList>
+            + ControllerCmdSync<LeSetAddrResolutionEnable>
+            + ControllerCmdSync<LeRemoveDeviceFromResolvingList>
+            + ControllerCmdSync<LeAddDeviceToResolvingList>
+            + ControllerCmdSync<LeSetPrivacyMode>,
+        T::Error: crate::fmt::Format,
+    {
+        let local_irk = self.connections.security_manager.get_local_irk();
+        let local_irk_bytes = local_irk.map(|k| k.to_le_bytes()).unwrap_or_default();
+
+        // Disable address resolution while modifying the list
+        LeSetAddrResolutionEnable::new(false).exec(&self.controller).await?;
+
+        let res = match update {
+            ResolvingListUpdate::FullSync => self.full_resolving_list_sync(local_irk).await,
+            ResolvingListUpdate::Add(identity) => {
+                if let Some(peer_irk) = identity.irk {
+                    let peer_addr_kind = identity.addr.kind;
+                    let peer_irk_bytes = peer_irk.to_le_bytes();
+
+                    info!("[host] incremental resolving list add");
+
+                    // Remove first in case this is an update (device already in list)
+                    let _ = LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr)
+                        .exec(&self.controller)
+                        .await;
+
+                    if let Err(e) = LeAddDeviceToResolvingList::new(
+                        peer_addr_kind,
+                        identity.addr.addr,
+                        peer_irk_bytes,
+                        local_irk_bytes,
+                    )
+                    .exec(&self.controller)
+                    .await
+                    {
+                        warn!("[host] failed to add device to resolving list: {:?}", e);
+                    }
+
+                    if let Err(e) =
+                        LeSetPrivacyMode::new(peer_addr_kind, identity.addr.addr, bt_hci::param::PrivacyMode::Device)
+                            .exec(&self.controller)
+                            .await
+                    {
+                        warn!("[host] failed to set privacy mode: {:?}", e);
+                    }
+                }
+                Ok(())
+            }
+            ResolvingListUpdate::Remove(identity) => {
+                let peer_addr_kind = identity.addr.kind;
+
+                info!("[host] incremental resolving list remove");
+
+                if let Err(e) = LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr)
+                    .exec(&self.controller)
+                    .await
+                {
+                    warn!("[host] failed to remove device from resolving list: {:?}", e);
+                }
+                Ok(())
+            }
+        };
+
+        // Always re-enable address resolution
+        if let Err(e) = LeSetAddrResolutionEnable::new(true).exec(&self.controller).await {
+            warn!("[host] failed to re-enable address resolution: {:?}", e);
+            return res.and(Err(e.into()));
+        }
+
+        res
+    }
+
+    /// Full clear-and-rebuild of the resolving list.
+    #[cfg(feature = "security")]
+    async fn full_resolving_list_sync(
+        &self,
+        local_irk: Option<crate::security_manager::IdentityResolvingKey>,
+    ) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdSync<LeClearResolvingList>
+            + ControllerCmdSync<LeAddDeviceToResolvingList>
+            + ControllerCmdSync<LeSetPrivacyMode>,
+        T::Error: crate::fmt::Format,
+    {
+        info!("[host] full resolving list sync");
+
+        // Clear resolving list
+        LeClearResolvingList::new().exec(&self.controller).await?;
+
+        let local_irk_bytes = local_irk.map(|k| k.to_le_bytes()).unwrap_or_default();
+
+        // Add a default entry with just the local IRK so the controller can generate RPAs
+        // even when no peers are bonded yet. Only needed when we have our own IRK.
+        if local_irk.is_some() {
+            if let Err(e) =
+                LeAddDeviceToResolvingList::new(AddrKind::PUBLIC, BdAddr::default(), [0u8; 16], local_irk_bytes)
+                    .exec(&self.controller)
+                    .await
+            {
+                warn!("[host] failed to add default resolving list entry: {:?}", e);
+            }
+        }
+
+        // Add entries for all bonded peers with IRKs
+        let mut i = 0;
+        while let Some(bond) = self.connections.security_manager.get_bond(i) {
+            i += 1;
+            if let Some(peer_irk) = bond.identity.irk {
+                let peer_addr_kind = bond.identity.addr.kind;
+                let peer_irk_bytes = peer_irk.to_le_bytes();
+                if let Err(e) = LeAddDeviceToResolvingList::new(
+                    peer_addr_kind,
+                    bond.identity.addr.addr,
+                    peer_irk_bytes,
+                    local_irk_bytes,
+                )
+                .exec(&self.controller)
+                .await
+                {
+                    warn!("[host] failed to add device to resolving list: {:?}", e);
+                    break;
+                }
+                // Set device privacy mode so we can receive both RPAs and identity addresses
+                if let Err(e) = LeSetPrivacyMode::new(
+                    peer_addr_kind,
+                    bond.identity.addr.addr,
+                    bt_hci::param::PrivacyMode::Device,
+                )
+                .exec(&self.controller)
+                .await
+                {
+                    warn!("[host] failed to set privacy mode: {:?}", e);
+                }
+            }
+        }
+
+        info!("[host] resolving list synced");
+        Ok(())
+    }
+
+    /// Returns true if the host has been initialized by the Runner.
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.initialized.try_get().is_some()
     }
 
     /// Run a HCI command and return the response.
@@ -241,23 +500,31 @@ where
         peer_addr: Address,
         role: LeConnRole,
         params: ConnParams,
+        #[cfg(feature = "security")] resolvable_addrs: ResolvablePrivateAddrs,
     ) -> bool {
         match status.to_result() {
             Ok(_) => {
-                if let Err(err) = self.connections.connect(handle, peer_addr, role, params) {
+                if let Err(err) = self.connections.connect_with_rpas(
+                    handle,
+                    peer_addr,
+                    role,
+                    params,
+                    #[cfg(feature = "security")]
+                    resolvable_addrs,
+                ) {
                     warn!("Error establishing connection: {:?}", err);
                     return false;
                 } else {
                     #[cfg(feature = "defmt")]
                     debug!(
-                        "[host] connection with handle {:?} established to {:02x}",
-                        handle, peer_addr.addr
+                        "[host] connection with handle {:?} established to {}",
+                        handle, peer_addr
                     );
 
                     #[cfg(feature = "log")]
                     debug!(
-                        "[host] connection with handle {:?} established to {:02x?}",
-                        handle, peer_addr.addr
+                        "[host] connection with handle {:?} established to {}",
+                        handle, peer_addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
@@ -791,9 +1058,9 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
-            + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>
-            + ControllerCmdSync<ReadBdAddr>,
+            + ControllerCmdSync<ReadBdAddr>
+            + crate::SecurityCmds,
+        C::Error: crate::fmt::Format,
     {
         let dummy = DummyHandler;
         self.run_with_handler(&dummy).await
@@ -819,9 +1086,9 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<Reset>
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeReadBufferSize>
-            + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>
-            + ControllerCmdSync<ReadBdAddr>,
+            + ControllerCmdSync<ReadBdAddr>
+            + crate::SecurityCmds,
+        C::Error: crate::fmt::Format,
     {
         let control_fut = self.control.run();
         let rx_fut = self.rx.run_with_handler(event_handler);
@@ -920,6 +1187,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                                 e.supervision_timeout.as_micros(),
                                             ),
                                         },
+                                        #[cfg(feature = "security")]
+                                        ResolvablePrivateAddrs::none(),
                                     ) {
                                         let _ = host
                                             .command(Disconnect::new(
@@ -943,6 +1212,11 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             supervision_timeout: Duration::from_micros(
                                                 e.supervision_timeout.as_micros(),
                                             ),
+                                        },
+                                        #[cfg(feature = "security")]
+                                        ResolvablePrivateAddrs {
+                                            local: Some(e.local_resolvable_private_addr).filter(|a| *a.raw() != [0; 6]),
+                                            peer: Some(e.peer_resolvable_private_addr).filter(|a| *a.raw() != [0; 6]),
                                         },
                                     ) {
                                         let _ = host
@@ -1149,6 +1423,14 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     }
 }
 
+enum CancelledCommandState {
+    Connect(bool),
+    Advertise(bool),
+    Scan(bool),
+    #[cfg(feature = "security")]
+    SyncResolvingList(ResolvingListUpdate),
+}
+
 impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
     /// Run the control loop for the host
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
@@ -1170,9 +1452,9 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + ControllerCmdSync<LeSetExtScanEnable>
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
-            + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>
-            + ControllerCmdSync<ReadBdAddr>,
+            + ControllerCmdSync<ReadBdAddr>
+            + crate::SecurityCmds,
+        C::Error: crate::fmt::Format,
     {
         let host = &self.host;
         Reset::new().exec(&host.controller).await?;
@@ -1269,27 +1551,41 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             }
         }
 
+        // Set default RPA timeout in controller
+        #[cfg(feature = "security")]
+        {
+            let timeout_secs = host.rpa_timeout.get().as_secs();
+            LeSetResolvablePrivateAddrTimeout::new(bt_hci::param::Duration::from_secs(timeout_secs as u32))
+                .exec(&host.controller)
+                .await?;
+            info!("[host] RPA timeout set to {}s", timeout_secs);
+        }
+
+        // Initialize privacy: sync resolving list
+        #[cfg(feature = "security")]
+        if host.is_privacy_enabled() {
+            host.resolving_list_state.borrow_mut().clear();
+            host.sync_resolving_list(ResolvingListUpdate::FullSync).await?;
+            info!("[host] privacy initialized");
+        }
+
         loop {
-            match select3(
+            match select4(
                 poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
                 poll_fn(|cx| host.channels.poll_disconnecting(Some(cx))),
-                select4(
-                    poll_fn(|cx| host.connect_command_state.poll_cancelled(cx)),
-                    poll_fn(|cx| host.advertise_command_state.poll_cancelled(cx)),
-                    poll_fn(|cx| host.scan_command_state.poll_cancelled(cx)),
-                    #[cfg(feature = "security")]
-                    {
-                        host.connections.poll_security_events()
-                    },
-                    #[cfg(not(feature = "security"))]
-                    {
-                        poll_fn(|cx| Poll::<()>::Pending)
-                    },
-                ),
+                poll_fn(|cx| host.poll_cancelled(cx)),
+                #[cfg(feature = "security")]
+                {
+                    host.connections.poll_security_events()
+                },
+                #[cfg(not(feature = "security"))]
+                {
+                    poll_fn(|cx| Poll::<()>::Pending)
+                },
             )
             .await
             {
-                Either3::First(request) => {
+                Either4::First(request) => {
                     trace!("[host] poll disconnecting links");
                     match host.command(Disconnect::new(request.handle(), request.reason())).await {
                         Ok(_) => {}
@@ -1300,7 +1596,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     }
                     request.confirm();
                 }
-                Either3::Second(request) => {
+                Either4::Second(request) => {
                     trace!("[host] poll disconnecting channels");
                     match request.send(host).await {
                         Ok(_) => {}
@@ -1312,17 +1608,16 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     }
                     request.confirm();
                 }
-                Either3::Third(states) => match states {
-                    Either4::First(_) => {
+                Either4::Third(action) => match action {
+                    CancelledCommandState::Connect(_) => {
                         trace!("[host] cancel connection create");
-                        // trace!("[host] cancelling create connection");
                         if host.command(LeCreateConnCancel::new()).await.is_err() {
                             warn!("[host] error cancelling connection");
                         }
                         // Signal to ensure no one is stuck
                         host.connect_command_state.canceled();
                     }
-                    Either4::Second(ext) => {
+                    CancelledCommandState::Advertise(ext) => {
                         trace!("[host] disabling advertising");
                         if ext {
                             host.command(LeSetExtAdvEnable::new(false, &[])).await?
@@ -1331,7 +1626,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                         }
                         host.advertise_command_state.canceled();
                     }
-                    Either4::Third(ext) => {
+                    CancelledCommandState::Scan(ext) => {
                         trace!("[host] disabling scanning");
                         if ext {
                             // TODO: A bit opinionated but not more than before
@@ -1347,14 +1642,18 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                         }
                         host.scan_command_state.canceled();
                     }
-                    Either4::Fourth(request) => {
-                        #[cfg(feature = "security")]
-                        {
-                            let event_data = request.unwrap_or(SecurityEventData::Timeout);
-                            host.connections.handle_security_event(host, event_data).await?;
-                        }
+                    #[cfg(feature = "security")]
+                    CancelledCommandState::SyncResolvingList(update) => {
+                        host.sync_resolving_list(update).await?;
                     }
                 },
+                Either4::Fourth(request) => {
+                    #[cfg(feature = "security")]
+                    {
+                        let event_data = request.unwrap_or(SecurityEventData::Timeout);
+                        host.connections.handle_security_event(host, event_data).await?;
+                    }
+                }
             }
         }
     }

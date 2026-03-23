@@ -83,6 +83,12 @@ pub trait PairingOps<P: PacketPool> {
     fn secret_key(&self) -> &crate::security_manager::crypto::SecretKey;
     /// The persistent LESC public key.
     fn public_key(&self) -> &crate::security_manager::crypto::PublicKey;
+    /// The local Identity Resolving Key, if privacy is enabled.
+    /// If there is no local IRK, all zeros are returned.
+    fn local_irk(&self) -> [u8; 16];
+    /// The local identity address (public or static random), used for Identity Address Information.
+    /// This is distinct from the address used for pairing calculations, which may be an RPA.
+    fn local_identity_address(&self) -> Result<Address, Error>;
 }
 
 #[derive(Debug)]
@@ -509,6 +515,14 @@ mod tests {
 
         fn public_key(&self) -> &crate::security_manager::crypto::PublicKey {
             &self.public_key
+        }
+
+        fn local_irk(&self) -> [u8; 16] {
+            [0; 16]
+        }
+
+        fn local_identity_address(&self) -> Result<Address, Error> {
+            Ok(Address::random([0xff, 0x8f, 0x08, 0x05, 0xe4, 0xff]))
         }
     }
 
@@ -951,6 +965,17 @@ mod tests {
             .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
             .unwrap();
 
+        // Exchange identity keys after encryption
+        transmit_packets(
+            &mut peripheral_ops,
+            &mut central_ops,
+            &mut rng,
+            &mut peripheral_pairing,
+            &mut central_pairing,
+            &mut num_central_data_sent,
+            &mut num_peripheral_data_sent,
+        );
+
         assert!(matches!(
             central_ops.connection_events[0],
             ConnectionEvent::PairingComplete {
@@ -988,10 +1013,7 @@ mod tests {
             security_level: SecurityLevel::EncryptedAuthenticated,
             is_bonded: true,
             ltk: LongTermKey(1),
-            identity: Identity {
-                irk: None,
-                addr: peripheral,
-            },
+            identity: peripheral.into(),
             #[cfg(feature = "legacy-pairing")]
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
@@ -1004,10 +1026,7 @@ mod tests {
             security_level: SecurityLevel::EncryptedAuthenticated,
             is_bonded: true,
             ltk: LongTermKey(1),
-            identity: Identity {
-                irk: None,
-                addr: central,
-            },
+            identity: central.into(),
             #[cfg(feature = "legacy-pairing")]
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
@@ -1073,10 +1092,7 @@ mod tests {
             security_level: SecurityLevel::EncryptedAuthenticated,
             is_bonded: true,
             ltk: LongTermKey(1),
-            identity: Identity {
-                irk: None,
-                addr: peripheral,
-            },
+            identity: peripheral.into(),
             #[cfg(feature = "legacy-pairing")]
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]
@@ -1089,10 +1105,7 @@ mod tests {
             security_level: SecurityLevel::EncryptedAuthenticated,
             is_bonded: true,
             ltk: LongTermKey(1),
-            identity: Identity {
-                irk: None,
-                addr: central,
-            },
+            identity: central.into(),
             #[cfg(feature = "legacy-pairing")]
             ediv: 0,
             #[cfg(feature = "legacy-pairing")]

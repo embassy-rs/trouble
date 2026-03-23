@@ -79,7 +79,11 @@ let stack = trouble_host::new(controller, &mut resources)
 The `StackBuilder` allows you to set some properties of the host before creating it:
 
 * `set_random_address` for specifying a BLE random address (see xref:_random_address).
-* `set_random_generator_seed` for specifying the random seed used by the security manager (if enabled).
+* `enable_privacy` for enabling BLE address privacy with a given Identity Resolving Key (IRK), so the controller generates Resolvable Private Addresses (RPAs) that rotate periodically (requires `security` feature).
+* `set_rpa_timeout` for configuring the RPA rotation timeout (defaults to 900 seconds per the BLE specification, requires `security` feature).
+* `set_random_generator_seed` for specifying the random seed used by the security manager (requires `security` feature).
+* `set_io_capabilities` for configuring IO capabilities used during pairing (requires `security` feature).
+* `set_secure_connections_only` for enabling Secure Connections Only mode, which rejects legacy pairing (requires `legacy-pairing` feature).
 
 Once properties are set, call `.build()` to obtain the `Stack`. Then use the stack to obtain handles for the roles you need:
 

@@ -1,6 +1,8 @@
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
+use core::num::NonZeroU128;
+
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
 use bt_hci::param::BdAddr;
@@ -57,28 +59,31 @@ impl defmt::Format for LongTermKey {
 
 /// Identity Resolving Key.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
-pub struct IdentityResolvingKey(pub u128);
+pub struct IdentityResolvingKey(pub NonZeroU128);
 
 impl IdentityResolvingKey {
     /// Creates an Identity Resolving Key from a `u128` value.
     #[inline(always)]
-    pub const fn new(k: u128) -> Self {
-        Self(k)
+    pub const fn new(k: u128) -> Option<Self> {
+        match NonZeroU128::new(k) {
+            Some(k) => Some(Self(k)),
+            None => None,
+        }
     }
 
     /// Creates an Identity Resolving Key from a `[u8; 16]` value in little endian.
     #[inline(always)]
-    pub const fn from_le_bytes(k: [u8; 16]) -> Self {
-        Self(u128::from_le_bytes(k))
+    pub const fn from_le_bytes(k: [u8; 16]) -> Option<Self> {
+        Self::new(u128::from_le_bytes(k))
     }
 
     /// Returns the Identity Resolving Key as `[u8; 16]` value in little endian.
     #[inline(always)]
     pub const fn to_le_bytes(self) -> [u8; 16] {
-        self.0.to_le_bytes()
+        self.0.get().to_le_bytes()
     }
 
     /// Generates a resolvable private address using this key.
@@ -137,7 +142,7 @@ impl IdentityResolvingKey {
         let mut r_prime = [0u8; 16];
         r_prime[13..].copy_from_slice(&r);
 
-        let cipher = Aes128::new_from_slice(&self.0.to_be_bytes()).unwrap();
+        let cipher = Aes128::new_from_slice(&self.0.get().to_be_bytes()).unwrap();
         cipher.encrypt_block((&mut r_prime).into());
         // Extract least significant 24 bits (3 bytes) as the result
         r_prime[13..16].try_into().unwrap()
@@ -147,7 +152,7 @@ impl IdentityResolvingKey {
 impl From<&IdentityResolvingKey> for u128 {
     #[inline(always)]
     fn from(k: &IdentityResolvingKey) -> Self {
-        k.0
+        k.0.get()
     }
 }
 
@@ -913,7 +918,7 @@ mod tests {
 
     #[test]
     pub fn irk_test() {
-        let irk = IdentityResolvingKey::new(0xec0234a3_57c8ad05_341010a6_0a397d9b);
+        let irk = IdentityResolvingKey::new(0xec0234a3_57c8ad05_341010a6_0a397d9b).unwrap();
         let prand = [0x70, 0x81, 0x94];
 
         let hash = irk.ah(prand);
@@ -922,7 +927,7 @@ mod tests {
 
     #[test]
     pub fn rpa_test() {
-        let irk = IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d);
+        let irk = IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d).unwrap();
         let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
         let re = irk.resolve_address(&address);
         assert_eq!(re, true);
