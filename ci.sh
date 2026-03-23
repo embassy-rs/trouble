@@ -25,6 +25,7 @@ cargo batch \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,central \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,security \
+    --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,legacy-pairing \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,controller-host-flow-control \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,controller-host-flow-control,connection-metrics,channel-metrics \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,controller-host-flow-control,connection-metrics,channel-metrics,l2cap-sdu-reassembly-optimization \
@@ -52,9 +53,10 @@ cargo batch \
 cargo fmt --check --manifest-path ./host/Cargo.toml
 cargo fmt --check --manifest-path ./tester/app/Cargo.toml
 cargo fmt --check --manifest-path ./tester/nrf52/Cargo.toml
-cargo clippy --manifest-path ./host/Cargo.toml --features gatt,peripheral,central
+cargo clippy --manifest-path ./host/Cargo.toml --features gatt,peripheral,central,legacy-pairing
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security --lib -- --nocapture
+cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,legacy-pairing --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./examples/tests/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./tester/app/Cargo.toml --lib -- --nocapture
