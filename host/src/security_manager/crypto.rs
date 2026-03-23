@@ -11,6 +11,7 @@ use rand_core::{CryptoRng, RngCore};
 use crate::Address;
 
 /// LE Secure Connections Long Term Key.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
@@ -55,6 +56,7 @@ impl defmt::Format for LongTermKey {
 }
 
 /// Identity Resolving Key.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
