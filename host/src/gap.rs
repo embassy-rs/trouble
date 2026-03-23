@@ -17,13 +17,18 @@ use crate::prelude::*;
 const DEVICE_NAME_MAX_LENGTH: usize = 22;
 
 /// The number of attributes added by the GAP and GATT services
-/// GAP_SERVICE:       1
-/// ├── DEVICE_NAME:   2
-/// └── APPEARANCE:    2
-/// GATT_SERVICE:    + 1
-///                  ---
-///                  = 6
+/// GAP_SERVICE:                      1
+/// ├── DEVICE_NAME:                  2
+/// ├── APPEARANCE:                   2
+/// └── CENTRAL_ADDRESS_RESOLUTION:   2 (security+central only)
+/// GATT_SERVICE:                   + 1
+///                                 ---
+///                                 = 6 (or 8 with security+central)
+#[cfg(not(feature = "security"))]
 pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 6;
+/// The number of attributes added by the GAP and GATT services (with security)
+#[cfg(all(feature = "security", feature = "central"))]
+pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 8;
 
 /// Configuration for the GAP Service.
 pub enum GapConfig<'a> {
@@ -91,6 +96,8 @@ impl<'a> PeripheralConfig<'a> {
         let mut gap_builder = table.add_service(Service::new(service::GAP));
         gap_builder.add_characteristic_ro(characteristic::DEVICE_NAME, peripheral_name);
         gap_builder.add_characteristic_ro(characteristic::APPEARANCE, self.appearance);
+        #[cfg(all(feature = "security", feature = "central"))]
+        gap_builder.add_characteristic_ro(characteristic::CENTRAL_ADDRESS_RESOLUTION, &1u8);
         gap_builder.build();
 
         table.add_service(Service::new(service::GATT));
@@ -111,6 +118,8 @@ impl<'a> CentralConfig<'a> {
         let mut gap_builder = table.add_service(Service::new(service::GAP));
         gap_builder.add_characteristic_ro(characteristic::DEVICE_NAME, central_name);
         gap_builder.add_characteristic_ro(characteristic::APPEARANCE, self.appearance);
+        #[cfg(all(feature = "security", feature = "central"))]
+        gap_builder.add_characteristic_ro(characteristic::CENTRAL_ADDRESS_RESOLUTION, &1u8);
         gap_builder.build();
 
         table.add_service(Service::new(service::GATT));
