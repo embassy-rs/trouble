@@ -1,5 +1,5 @@
 //! Advertisement config.
-use bt_hci::param::AdvEventProps;
+use bt_hci::param::{AddrKind, AdvEventProps, BdAddr};
 pub use bt_hci::param::{AdvChannelMap, AdvFilterPolicy, AdvHandle, AdvSet, PhyKind};
 use embassy_time::Duration;
 
@@ -43,6 +43,9 @@ pub struct AdvertisementSet<'d> {
     pub params: AdvertisementParameters,
     /// Advertisement data.
     pub data: Advertisement<'d>,
+    /// Override the random address for this advertising set.
+    /// `None` = use host default address.
+    pub address: Option<BdAddr>,
 }
 
 impl<'d> AdvertisementSet<'d> {
@@ -97,6 +100,10 @@ pub struct AdvertisementParameters {
 
     /// Fragmentation preference
     pub fragment: bool,
+
+    /// Override the own address type for this advertising set.
+    /// `None` = use host default (derived from host address + privacy state).
+    pub own_addr_kind: Option<AddrKind>,
 }
 
 impl Default for AdvertisementParameters {
@@ -112,6 +119,7 @@ impl Default for AdvertisementParameters {
             filter_policy: AdvFilterPolicy::default(),
             channel_map: None,
             fragment: false,
+            own_addr_kind: None,
         }
     }
 }

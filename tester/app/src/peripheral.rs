@@ -174,6 +174,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 let sets = [AdvertisementSet {
                     params: adv_params,
                     data: params.as_advertisement(),
+                    address: None,
                 }];
                 let mut handles = AdvertisementSet::handles(&sets);
                 let advertiser = match peripheral.advertise_ext(&sets, &mut handles).await {

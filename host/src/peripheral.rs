@@ -74,7 +74,10 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             bt_hci_duration(params.interval_min),
             bt_hci_duration(params.interval_max),
             kind,
-            host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            params
+                .own_addr_kind
+                .or(host.address.map(|a| a.kind))
+                .unwrap_or(AddrKind::PUBLIC),
             peer.kind,
             peer.addr,
             params.channel_map.unwrap_or(AdvChannelMap::ALL),
@@ -208,7 +211,10 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
                 bt_hci_ext_duration(params.interval_min),
                 bt_hci_ext_duration(params.interval_max),
                 params.channel_map.unwrap_or(AdvChannelMap::ALL),
-                host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+                params
+                    .own_addr_kind
+                    .or(host.address.map(|a| a.kind))
+                    .unwrap_or(AddrKind::PUBLIC),
                 peer.kind,
                 peer.addr,
                 params.filter_policy,
@@ -221,8 +227,8 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             ))
             .await?;
 
-            if let Some(address) = host.address.as_ref() {
-                host.command(LeSetAdvSetRandomAddr::new(handle, address.addr)).await?;
+            if let Some(addr) = set.address.or(host.address.as_ref().map(|a| a.addr)) {
+                host.command(LeSetAdvSetRandomAddr::new(handle, addr)).await?;
             }
 
             if !data.adv_data.is_empty() {
