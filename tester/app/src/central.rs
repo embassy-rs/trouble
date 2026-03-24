@@ -1,6 +1,6 @@
 use embassy_sync::channel::DynamicSender;
 use embassy_sync::watch;
-use embassy_time::Duration;
+use embassy_time::{Duration, with_timeout};
 use trouble_host::Address;
 use trouble_host::connection::{ConnectConfig, ScanConfig};
 use trouble_host::prelude::*;
@@ -71,13 +71,13 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 // TODO: Use a proper device discovery procedure when Trouble supports it
                 let config = ScanConfig {
                     active: *active,
-                    filter_accept_list: filter_accept_list,
+                    filter_accept_list,
                     interval: Duration::from_millis(100),
                     window: Duration::from_millis(50),
                     ..Default::default()
                 };
                 let mut scanner = Scanner::new(central);
-                match scanner.scan(&config).await {
+                match scanner.scan_ext(&config).await {
                     Ok(session) => {
                         info!("Scan started");
                         cmd.reply(Response::DiscoveryStarted).await;
@@ -129,14 +129,27 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     connect_params: Default::default(),
                 };
 
-                match central.connect(&config).await {
-                    Ok(conn) => {
+                // Dropping the connect future cancels the pending LeCreateConn
+                let connect_result = match with_timeout(Duration::from_secs(30), central.connect_ext(&config)).await {
+                    Ok(Ok(conn)) => Some(conn),
+                    Ok(Err(e)) => {
+                        error!("Failed to connect: {:?}", e);
+                        None
+                    }
+                    Err(_) => {
+                        warn!("Connect timed out after 30s");
+                        None
+                    }
+                };
+
+                match connect_result {
+                    Some(conn) => {
                         info!("Connect success: {:?}", filter_accept_list);
                         if let Err(err) = conn.set_bondable(bondable) {
                             error!("Failed to set bondable: {:?}", err);
                         }
 
-                        let conn_address = crate::connection::peer_address(&conn);
+                        let conn_address = conn.peer_address();
                         let conn_params = conn.params();
 
                         events
@@ -179,8 +192,11 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                             }
                         }
                     }
-                    Err(e) => {
-                        error!("Failed to connect: {:?}", e);
+                    None => {
+                        // Send disconnected for whichever peer we were trying to reach
+                        for peer in filter_accept_list.iter() {
+                            events.send(Event::DeviceDisconnected { address: *peer }).await;
+                        }
                     }
                 }
             }

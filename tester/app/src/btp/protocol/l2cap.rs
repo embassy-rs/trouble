@@ -4,8 +4,8 @@
 use embedded_io_async::Write;
 use trouble_host::prelude::LeCreditConnResultCode;
 
-use super::Cursor;
 use super::header::BtpHeader;
+use super::{Cursor, write_btp_address};
 use crate::btp::error::Error;
 use crate::btp::types::{Address, Opcode, ServiceId};
 
@@ -483,15 +483,13 @@ impl L2capEvent<'_> {
                 writer.write_all(&evt.peer_mps.to_le_bytes()).await?;
                 writer.write_all(&evt.our_mtu.to_le_bytes()).await?;
                 writer.write_all(&evt.our_mps.to_le_bytes()).await?;
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await
+                write_btp_address(&mut writer, &evt.address).await
             }
             L2capEvent::Disconnected(evt) => {
                 writer.write_all(&evt.result.to_le_bytes()).await?;
                 writer.write_all(&[evt.chan_id]).await?;
                 writer.write_all(&evt.psm.to_le_bytes()).await?;
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await
+                write_btp_address(&mut writer, &evt.address).await
             }
             L2capEvent::DataReceived(evt) => {
                 writer.write_all(&[evt.chan_id]).await?;

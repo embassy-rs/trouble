@@ -41,6 +41,16 @@ pub(crate) const fn supported_commands_bitmask<const N: usize>(opcodes: &[Opcode
     result
 }
 
+/// Write a BTP address (1 byte kind + 6 bytes addr) to the wire.
+///
+/// HCI may report identity address types 0x02 (Public Identity) or 0x03 (Random Static Identity)
+/// when the controller resolved the peer's RPA. BTP only defines types 0 (public) and 1 (random),
+/// so we normalize by masking to the low bit.
+pub(crate) async fn write_btp_address<W: Write>(writer: &mut W, address: &Address) -> Result<(), W::Error> {
+    writer.write_all(&[address.kind.as_raw() & 1]).await?;
+    writer.write_all(address.addr.raw()).await
+}
+
 /// A synchronous, bounds-checked cursor for parsing borrowed data from a byte slice.
 pub struct Cursor<'a> {
     data: &'a [u8],
@@ -325,7 +335,7 @@ mod tests {
             size_of::<BtpResponse>()
         );
         assert!(
-            size_of::<BtpEvent>() <= 48,
+            size_of::<BtpEvent>() <= 64,
             "BtpEvent is {} bytes",
             size_of::<BtpEvent>()
         );
