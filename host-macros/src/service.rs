@@ -132,7 +132,7 @@ impl ServiceBuilder {
 
                 #visibility fn new<M, const MAX_ATTRIBUTES: usize>(table: &mut trouble_host::attribute::AttributeTable<'_, M, MAX_ATTRIBUTES>) -> Self
                 where
-                    M: embassy_sync::blocking_mutex::raw::RawMutex,
+                    M: trouble_host::__export::embassy_sync::blocking_mutex::raw::RawMutex,
                 {
                     let mut service = table.add_service(trouble_host::attribute::Service::new(#uuid));
                     #code_build_chars
