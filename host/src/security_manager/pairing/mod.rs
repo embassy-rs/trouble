@@ -990,7 +990,7 @@ mod tests {
             ltk: LongTermKey(1),
             identity: Identity {
                 irk: None,
-                bd_addr: peripheral.addr,
+                addr: peripheral,
             },
             #[cfg(feature = "legacy-pairing")]
             ediv: 0,
@@ -1006,7 +1006,7 @@ mod tests {
             ltk: LongTermKey(1),
             identity: Identity {
                 irk: None,
-                bd_addr: central.addr,
+                addr: central,
             },
             #[cfg(feature = "legacy-pairing")]
             ediv: 0,
@@ -1075,7 +1075,7 @@ mod tests {
             ltk: LongTermKey(1),
             identity: Identity {
                 irk: None,
-                bd_addr: peripheral.addr,
+                addr: peripheral,
             },
             #[cfg(feature = "legacy-pairing")]
             ediv: 0,
@@ -1091,7 +1091,7 @@ mod tests {
             ltk: LongTermKey(1),
             identity: Identity {
                 irk: None,
-                bd_addr: central.addr,
+                addr: central,
             },
             #[cfg(feature = "legacy-pairing")]
             ediv: 0,

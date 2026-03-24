@@ -135,7 +135,8 @@ pub mod gatt;
 /// - *Private Random Address*: Changes periodically for privacy purposes. It can be *Resolvable* (can be linked to the original device using an Identity Resolving Key) or *Non-Resolvable* (completely anonymous).
 ///
 /// Random addresses enhance privacy by preventing device tracking.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Address {
     /// Address type.
     pub kind: AddrKind,
@@ -196,12 +197,11 @@ impl defmt::Format for Address {
 /// Sometimes we have to save both the address and the IRK.
 /// Because sometimes the peer uses the static or public address even though the IRK is sent.
 /// In this case, the IRK exists but the used address is not RPA.
-/// Should `Address` be used instead?
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Identity {
-    /// Random static or public address
-    pub bd_addr: BdAddr,
+    /// Identity address (random static or public)
+    pub addr: Address,
 
     /// Identity Resolving Key
     #[cfg(feature = "security")]
@@ -211,36 +211,48 @@ pub struct Identity {
 #[cfg(feature = "defmt")]
 impl defmt::Format for Identity {
     fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "BdAddr({:X}) ", self.bd_addr);
+        defmt::write!(fmt, "Addr({}) ", self.addr);
         #[cfg(feature = "security")]
         defmt::write!(fmt, "Irk({:X})", self.irk);
     }
 }
 
 impl Identity {
-    /// Check whether the address matches the identity
-    pub fn match_address(&self, address: &BdAddr) -> bool {
-        if self.bd_addr == *address {
+    /// Check whether the address matches the identity.
+    ///
+    /// Matches if the address is an exact match (kind + addr) or if the IRK can resolve it.
+    pub fn match_address(&self, address: &Address) -> bool {
+        if self.addr == *address {
             return true;
         }
         #[cfg(feature = "security")]
         if let Some(irk) = self.irk {
-            return irk.resolve_address(address);
+            return irk.resolve_address(&address.addr);
         }
         false
     }
 
     /// Check whether the given identity matches current identity
     pub fn match_identity(&self, identity: &Identity) -> bool {
-        if self.match_address(&identity.bd_addr) {
+        if self.addr == identity.addr {
             return true;
         }
         #[cfg(feature = "security")]
-        if let Some(irk) = identity.irk {
-            if let Some(current_irk) = self.irk {
-                return irk == current_irk;
-            } else {
-                return irk.resolve_address(&self.bd_addr);
+        {
+            if let Some(irk) = self.irk {
+                if irk.resolve_address(&identity.addr.addr) {
+                    return true;
+                }
+            }
+            if let Some(irk) = identity.irk {
+                if let Some(current_irk) = self.irk {
+                    if irk == current_irk {
+                        return true;
+                    }
+                }
+                if irk.resolve_address(&self.addr.addr) {
+                    return true;
+                }
             }
         }
         false

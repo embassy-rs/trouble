@@ -575,7 +575,7 @@ impl Pairing {
         pairing_data.peer_address = Address { kind, addr };
 
         if let Some(ref mut bond) = &mut pairing_data.bond_information {
-            bond.identity.bd_addr = addr;
+            bond.identity.addr = Address { kind, addr };
         }
 
         trace!("[smp legacy central] Received identity address {:?}", addr);

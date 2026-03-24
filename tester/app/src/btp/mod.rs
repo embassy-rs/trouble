@@ -955,7 +955,7 @@ where
                 conn.peer_identity()
             } else {
                 Identity {
-                    bd_addr: address.addr,
+                    addr: *address,
                     irk: None,
                 }
             };

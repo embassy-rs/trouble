@@ -230,13 +230,16 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     pub(crate) fn peer_addr_kind(&self, index: u8) -> AddrKind {
-        self.connection(index).peer_addr_kind.unwrap_or_default()
+        self.connection(index)
+            .peer_identity
+            .map(|i| i.addr.kind)
+            .unwrap_or_default()
     }
 
     pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
         self.connection(index)
             .peer_identity
-            .map(|id| id.bd_addr)
+            .map(|i| i.addr.addr)
             .unwrap_or_default()
     }
 
@@ -314,9 +317,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn get_connection_by_peer_address(&'d self, peer_address: Address) -> Option<Connection<'d, P>> {
         for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-            if storage.state == ConnectionState::Connected && storage.peer_addr_kind == Some(peer_address.kind) {
+            if storage.state == ConnectionState::Connected {
                 if let Some(peer) = &storage.peer_identity {
-                    if peer.match_address(&peer_address.addr) {
+                    if peer.match_address(&peer_address) {
                         storage.inc_ref();
                         return Some(Connection::new(index as u8, self));
                     }
@@ -406,9 +409,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 // Default ATT MTU is 23
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
-                storage.peer_addr_kind.replace(peer_addr_kind);
                 storage.peer_identity.replace(Identity {
-                    bd_addr: peer_addr,
+                    addr: Address {
+                        kind: peer_addr_kind,
+                        addr: peer_addr,
+                    },
                     #[cfg(feature = "security")]
                     irk: None,
                 });
@@ -460,9 +465,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 if r == role {
                     if !peers.is_empty() {
                         for peer in peers.iter() {
-                            // TODO: Accept advertsing peers which use IRK
-                            if storage.peer_addr_kind.unwrap() == peer.0
-                                && storage.peer_identity.unwrap().bd_addr == *peer.1
+                            // TODO: Accept advertising peers which use IRK
+                            if storage.peer_identity.unwrap().addr
+                                == (Address {
+                                    kind: peer.0,
+                                    addr: *peer.1,
+                                })
                             {
                                 storage.state = ConnectionState::Connected;
                                 debug!("[link][poll_accept] connection accepted: state: {:?}", storage);
@@ -680,11 +688,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             } else if storage.security_level != SecurityLevel::NoEncryption {
                 return Ok(());
             }
-            match (storage.peer_addr_kind, storage.peer_identity.as_ref()) {
-                (Some(kind), Some(identity)) => Address {
-                    kind,
-                    addr: identity.bd_addr,
-                },
+            match storage.peer_identity.as_ref() {
+                Some(identity) => identity.addr,
                 _ => return Err(Error::InvalidValue),
             }
         };
@@ -897,11 +902,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 warn!("[host] Pairing timeout");
                 if let Some(peer_address) = self.security_manager.peer_address() {
                     for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-                        if storage.state == ConnectionState::Connected
-                            && storage.peer_addr_kind == Some(peer_address.kind)
-                        {
+                        if storage.state == ConnectionState::Connected {
                             if let Some(peer) = &storage.peer_identity {
-                                if peer.match_address(&peer_address.addr) {
+                                if peer.match_address(&peer_address) {
                                     storage.smp_timeout = true;
                                     break;
                                 }
@@ -1000,7 +1003,6 @@ pub struct ConnectionStorage<P> {
     pub state: ConnectionState,
     pub handle: Option<ConnHandle>,
     pub role: Option<LeConnRole>,
-    pub peer_addr_kind: Option<AddrKind>,
     pub peer_identity: Option<Identity>,
     pub params: ConnParams,
     pub att_mtu: u16,
@@ -1101,7 +1103,6 @@ impl<P> ConnectionStorage<P> {
             state: ConnectionState::Disconnected,
             handle: None,
             role: None,
-            peer_addr_kind: None,
             peer_identity: None,
             params: ConnParams::new(),
             att_mtu: 23,

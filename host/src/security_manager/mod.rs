@@ -517,12 +517,8 @@ impl Inner {
 
         if !self.is_idle() {
             // If pairing is already in progress for this peer, consider the request fulfilled.
-            let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
             let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-            let peer_address = Address {
-                kind: peer_address_kind,
-                addr: peer_identity.bd_addr,
-            };
+            let peer_address = peer_identity.addr;
             if self
                 .pairing_sm
                 .as_ref()
@@ -535,12 +531,8 @@ impl Inner {
 
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
         let local_address = self.state.local_address.ok_or(Error::InvalidValue)?;
-        let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
         let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-        let peer_address = Address {
-            kind: peer_address_kind,
-            addr: peer_identity.bd_addr,
-        };
+        let peer_address = peer_identity.addr;
         let local_io = self.io_capabilities;
         let mut ops = PairingOpsImpl {
             bonds,
@@ -779,10 +771,7 @@ impl<'d> SecurityManager<'d> {
         let cmd = SmpCommand {
             command,
             payload: &buffer[1..size],
-            peer_address: Address {
-                kind: storage.peer_addr_kind.ok_or(Error::InvalidValue)?,
-                addr: storage.peer_identity.ok_or(Error::InvalidValue)?.bd_addr,
-            },
+            peer_address: storage.peer_identity.ok_or(Error::InvalidValue)?.addr,
             handle: storage.handle.ok_or(Error::InvalidValue)?,
             peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
         };
@@ -805,10 +794,7 @@ impl<'d> SecurityManager<'d> {
         let cmd = SmpCommand {
             command,
             payload: &buffer[1..size],
-            peer_address: Address {
-                kind: storage.peer_addr_kind.ok_or(Error::InvalidValue)?,
-                addr: storage.peer_identity.ok_or(Error::InvalidValue)?.bd_addr,
-            },
+            peer_address: storage.peer_identity.ok_or(Error::InvalidValue)?.addr,
             handle: storage.handle.ok_or(Error::InvalidValue)?,
             peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
         };
@@ -923,7 +909,7 @@ impl<'d> SecurityManager<'d> {
             if inner
                 .pairing_sm
                 .as_ref()
-                .is_some_and(|sm| sm.peer_address().addr == identity.bd_addr)
+                .is_some_and(|sm| sm.peer_address() == identity.addr)
             {
                 inner.pairing_sm = None;
                 inner.finished_waker.wake();

@@ -543,7 +543,7 @@ impl Pairing {
         pairing_data.peer_address = Address { kind, addr };
 
         if let Some(ref mut bond) = &mut pairing_data.bond_information {
-            bond.identity.bd_addr = addr;
+            bond.identity.addr = Address { kind, addr };
         }
 
         trace!(
@@ -1061,7 +1061,10 @@ mod tests {
             let stored_irk = bond.identity.irk.unwrap();
             assert_eq!(stored_irk.0, u128::from_le_bytes(irk_data));
 
-            assert_eq!(bond.identity.bd_addr, BdAddr::new([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]));
+            assert_eq!(
+                bond.identity.addr.addr,
+                BdAddr::new([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC])
+            );
             assert_eq!(pairing_data.peer_address.kind, AddrKind::PUBLIC);
             assert_eq!(
                 pairing_data.peer_address.addr,
