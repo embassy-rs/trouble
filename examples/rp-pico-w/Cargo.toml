@@ -57,4 +57,4 @@ debug = 2
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 #bt-hci = { path = "../../../bt-hci" }
-# bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "f6f359650e671d71c96b4354a6b5e26ea3918031" }
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "f6f359650e671d71c96b4354a6b5e26ea3918031" }

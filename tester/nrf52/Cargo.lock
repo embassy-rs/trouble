@@ -99,8 +99,7 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40f2166cc54c410ddc0d0dafb3cf8dd536bcbae6bddfcc12c020c5ee4de518de"
+source = "git+https://github.com/embassy-rs/bt-hci.git?rev=f6f359650e671d71c96b4354a6b5e26ea3918031#f6f359650e671d71c96b4354a6b5e26ea3918031"
 dependencies = [
  "btuuid",
  "defmt 1.0.1",

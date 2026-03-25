@@ -52,7 +52,7 @@ debug = 2
 # embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="ed8d4277cd8165c8b280ccbb1501534056691b6a"}
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "812a56e3411bc3ff850d354401d95221e1f4fb84"}
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "812a56e3411bc3ff850d354401d95221e1f4fb84"}
-# bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "f6f359650e671d71c96b4354a6b5e26ea3918031" }
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "f6f359650e671d71c96b4354a6b5e26ea3918031" }
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 
