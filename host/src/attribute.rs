@@ -1195,8 +1195,8 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         assert!(bytes.len() <= 8);
         let mut value = [0; 8];
         value[..bytes.len()].copy_from_slice(bytes);
-        let variable_len = T::MAX_SIZE != T::MIN_SIZE;
-        let capacity = T::MAX_SIZE.min(8) as u8;
+        let variable_len = DT::MAX_SIZE != DT::MIN_SIZE;
+        let capacity = DT::MAX_SIZE.min(8) as u8;
         let len = bytes.len() as u8;
         self.add_descriptor_internal(
             uuid.into(),
