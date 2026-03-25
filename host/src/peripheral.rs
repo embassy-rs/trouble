@@ -68,10 +68,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             (false, true, _) => AdvKind::AdvScanInd,
             (false, false, _) => AdvKind::AdvNonconnInd,
         };
-        let peer = data.peer.unwrap_or(Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::default(),
-        });
+        let peer = data.peer.unwrap_or(Address::new(AddrKind::PUBLIC, BdAddr::default()));
 
         host.command(LeSetAdvParams::new(
             bt_hci_duration(params.interval_min),
@@ -204,10 +201,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             let handle = AdvHandle::new(i as u8);
             let data: RawAdvertisement<'k> = set.data.into();
             let params = set.params;
-            let peer = data.peer.unwrap_or(Address {
-                kind: AddrKind::PUBLIC,
-                addr: BdAddr::default(),
-            });
+            let peer = data.peer.unwrap_or(Address::new(AddrKind::PUBLIC, BdAddr::default()));
             host.command(LeSetExtAdvParams::new(
                 handle,
                 data.props,

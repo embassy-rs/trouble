@@ -28,7 +28,7 @@ use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
 use crate::security_manager::{BondInformation, PassKey};
 use crate::types::l2cap::ConnParamUpdateRes;
-use crate::{bt_hci_duration, BleHostError, Error, Identity, PacketPool, Stack};
+use crate::{bt_hci_duration, Address, BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Security level of a connection
 ///
@@ -71,7 +71,7 @@ pub struct ScanConfig<'d> {
     /// Active scanning.
     pub active: bool,
     /// List of addresses to accept.
-    pub filter_accept_list: &'d [(AddrKind, &'d BdAddr)],
+    pub filter_accept_list: &'d [Address],
     /// PHYs to scan on.
     pub phys: PhySet,
     /// Scan interval.

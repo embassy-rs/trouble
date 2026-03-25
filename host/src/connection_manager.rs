@@ -392,8 +392,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn connect(
         &self,
         handle: ConnHandle,
-        peer_addr_kind: AddrKind,
-        peer_addr: BdAddr,
+        peer_addr: Address,
         role: LeConnRole,
         params: ConnParams,
     ) -> Result<(), Error> {
@@ -410,10 +409,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
                 storage.peer_identity.replace(Identity {
-                    addr: Address {
-                        kind: peer_addr_kind,
-                        addr: peer_addr,
-                    },
+                    addr: peer_addr,
                     #[cfg(feature = "security")]
                     irk: None,
                 });
@@ -443,7 +439,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn poll_accept(
         &'d self,
         role: LeConnRole,
-        peers: &[(AddrKind, &BdAddr)],
+        peers: &[Address],
         cx: Option<&mut Context<'_>>,
     ) -> Poll<Connection<'d, P>> {
         let mut state = self.state.borrow_mut();
@@ -466,12 +462,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     if !peers.is_empty() {
                         for peer in peers.iter() {
                             // TODO: Accept advertising peers which use IRK
-                            if storage.peer_identity.unwrap().addr
-                                == (Address {
-                                    kind: peer.0,
-                                    addr: *peer.1,
-                                })
-                            {
+                            if storage.peer_identity.unwrap().addr == *peer {
                                 storage.state = ConnectionState::Connected;
                                 debug!("[link][poll_accept] connection accepted: state: {:?}", storage);
                                 assert_eq!(storage.refcount, 0);
@@ -511,7 +502,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             .dec_ref(&mut self.state.borrow_mut().disconnect_waker);
     }
 
-    pub(crate) async fn accept(&'d self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> Connection<'d, P> {
+    pub(crate) async fn accept(&'d self, role: LeConnRole, peers: &[Address]) -> Connection<'d, P> {
         poll_fn(|cx| self.poll_accept(role, peers, Some(cx))).await
     }
 
@@ -1293,8 +1284,7 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(0),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new(),
         ));
@@ -1316,8 +1306,7 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(0),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Central,
             ConnParams::new(),
         ));
@@ -1335,16 +1324,14 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Central,
             ConnParams::new(),
         ));
 
         unwrap!(mgr.connect(
             ConnHandle::new(2),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Peripheral,
             ConnParams::new(),
         ));
@@ -1389,16 +1376,14 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Central,
             ConnParams::new(),
         ));
 
         unwrap!(mgr.connect(
             ConnHandle::new(2),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Peripheral,
             ConnParams::new(),
         ));
@@ -1453,8 +1438,7 @@ pub(crate) mod tests {
         let handle = ConnHandle::new(42);
         unwrap!(mgr.connect(
             handle,
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1471,8 +1455,7 @@ pub(crate) mod tests {
         let handle = ConnHandle::new(42);
         unwrap!(mgr.connect(
             handle,
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1502,8 +1485,7 @@ pub(crate) mod tests {
         let handle = ConnHandle::new(42);
         unwrap!(mgr.connect(
             handle,
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1520,8 +1502,7 @@ pub(crate) mod tests {
         let handle = ConnHandle::new(42);
         unwrap!(mgr.connect(
             handle,
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1548,8 +1529,7 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1585,8 +1565,7 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));

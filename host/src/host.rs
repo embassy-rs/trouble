@@ -31,8 +31,8 @@ use bt_hci::event::le::{
 };
 use bt_hci::event::{DisconnectionComplete, EventKind, NumberOfCompletedPackets, Vendor};
 use bt_hci::param::{
-    AddrKind, AdvHandle, AdvSet, BdAddr, ConnHandle, DisconnectReason, EventMask, EventMaskPage2, FilterDuplicates,
-    LeConnRole, LeEventMask, Status,
+    AddrKind, AdvHandle, AdvSet, ConnHandle, DisconnectReason, EventMask, EventMaskPage2, FilterDuplicates, LeConnRole,
+    LeEventMask, Status,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select4, Either3, Either4};
@@ -238,30 +238,26 @@ where
         &self,
         status: Status,
         handle: ConnHandle,
-        peer_addr_kind: AddrKind,
-        peer_addr: BdAddr,
+        peer_addr: Address,
         role: LeConnRole,
         params: ConnParams,
     ) -> bool {
         match status.to_result() {
             Ok(_) => {
-                if let Err(err) = self
-                    .connections
-                    .connect(handle, peer_addr_kind, peer_addr, role, params)
-                {
+                if let Err(err) = self.connections.connect(handle, peer_addr, role, params) {
                     warn!("Error establishing connection: {:?}", err);
                     return false;
                 } else {
                     #[cfg(feature = "defmt")]
                     debug!(
                         "[host] connection with handle {:?} established to {:02x}",
-                        handle, peer_addr
+                        handle, peer_addr.addr
                     );
 
                     #[cfg(feature = "log")]
                     debug!(
                         "[host] connection with handle {:?} established to {:02x?}",
-                        handle, peer_addr
+                        handle, peer_addr.addr
                     );
                     let mut m = self.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
@@ -915,8 +911,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     if !host.handle_connection(
                                         e.status,
                                         e.handle,
-                                        e.peer_addr_kind,
-                                        e.peer_addr,
+                                        Address::new(e.peer_addr_kind, e.peer_addr),
                                         e.role,
                                         ConnParams {
                                             conn_interval: Duration::from_micros(e.conn_interval.as_micros()),
@@ -940,8 +935,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     if !host.handle_connection(
                                         e.status,
                                         e.handle,
-                                        e.peer_addr_kind,
-                                        e.peer_addr,
+                                        Address::new(e.peer_addr_kind, e.peer_addr),
                                         e.role,
                                         ConnParams {
                                             conn_interval: Duration::from_micros(e.conn_interval.as_micros()),
@@ -1267,10 +1261,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
 
         let device_address = host.command(ReadBdAddr::new()).await?;
         if *device_address.raw() != [0, 0, 0, 0, 0, 0] {
-            let device_address = Address {
-                kind: AddrKind::PUBLIC,
-                addr: device_address,
-            };
+            let device_address = Address::new(AddrKind::PUBLIC, device_address);
             info!("[host] Device Address {}", device_address);
             if host.address.is_none() {
                 #[cfg(feature = "security")]

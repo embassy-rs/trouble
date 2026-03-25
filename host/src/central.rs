@@ -8,7 +8,7 @@ use embassy_futures::select::{select, Either};
 
 use crate::connection::{ConnectConfig, ConnectRateParams, Connection, PhySet};
 use crate::host::BleHost;
-use crate::{bt_hci_duration, BleHostError, Error, PacketPool};
+use crate::{bt_hci_duration, Address, BleHostError, Error, PacketPool};
 
 /// A type implementing the BLE central role.
 pub struct Central<'stack, C, P: PacketPool> {
@@ -132,7 +132,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
 
     pub(crate) async fn set_accept_filter(
         &mut self,
-        filter_accept_list: &[(AddrKind, &BdAddr)],
+        filter_accept_list: &[Address],
     ) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeClearFilterAcceptList> + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
@@ -140,7 +140,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         let host = self.host;
         host.command(LeClearFilterAcceptList::new()).await?;
         for entry in filter_accept_list {
-            host.command(LeAddDeviceToFilterAcceptList::new(entry.0, *entry.1))
+            host.command(LeAddDeviceToFilterAcceptList::new(entry.kind, entry.addr))
                 .await?;
         }
         Ok(())

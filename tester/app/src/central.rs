@@ -1,4 +1,3 @@
-use bt_hci::param::{AddrKind, BdAddr};
 use embassy_sync::channel::DynamicSender;
 use embassy_sync::watch;
 use embassy_time::Duration;
@@ -70,15 +69,9 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 filter_accept_list,
             } => {
                 // TODO: Use a proper device discovery procedure when Trouble supports it
-                let bd_addrs: heapless::Vec<BdAddr, 1> = filter_accept_list.iter().map(|a| a.addr).collect();
-                let filter_list: heapless::Vec<(AddrKind, &BdAddr), 1> = filter_accept_list
-                    .iter()
-                    .zip(bd_addrs.iter())
-                    .map(|(a, bd)| (a.kind, bd))
-                    .collect();
                 let config = ScanConfig {
                     active: *active,
-                    filter_accept_list: &filter_list,
+                    filter_accept_list: filter_accept_list,
                     interval: Duration::from_millis(100),
                     window: Duration::from_millis(50),
                     ..Default::default()
@@ -126,15 +119,9 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 let bondable = *bondable;
                 cmd.reply(Response::Connecting).await;
 
-                let bd_addrs: heapless::Vec<BdAddr, 1> = filter_accept_list.iter().map(|a| a.addr).collect();
-                let filter_list: heapless::Vec<(AddrKind, &BdAddr), 1> = filter_accept_list
-                    .iter()
-                    .zip(bd_addrs.iter())
-                    .map(|(a, bd)| (a.kind, bd))
-                    .collect();
                 let config = ConnectConfig {
                     scan_config: ScanConfig {
-                        filter_accept_list: &filter_list,
+                        filter_accept_list: &filter_accept_list,
                         interval: Duration::from_millis(60),
                         window: Duration::from_millis(60),
                         ..Default::default()

@@ -57,7 +57,7 @@ where
     let config = ConnectConfig {
         connect_params: Default::default(),
         scan_config: ScanConfig {
-            filter_accept_list: &[(target.kind, &target.addr)],
+            filter_accept_list: &[target],
             ..Default::default()
         },
     };

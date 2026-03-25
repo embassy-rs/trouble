@@ -145,6 +145,11 @@ pub struct Address {
 }
 
 impl Address {
+    /// Create a new address with the given kind and value.
+    pub const fn new(kind: AddrKind, addr: BdAddr) -> Self {
+        Self { kind, addr }
+    }
+
     /// Create a new random address.
     pub fn random(val: [u8; 6]) -> Self {
         Self {

@@ -1628,7 +1628,7 @@ mod tests {
     use super::*;
     use crate::mock_controller::MockController;
     use crate::prelude::{ConnParams, DefaultPacketPool};
-    use crate::HostResources;
+    use crate::{Address, HostResources};
 
     #[test]
     fn channel_refcount() {
@@ -1642,8 +1642,7 @@ mod tests {
         ble.connections
             .connect(
                 conn,
-                AddrKind::PUBLIC,
-                BdAddr::new([0; 6]),
+                Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
                 LeConnRole::Central,
                 ConnParams::new(),
             )

@@ -540,10 +540,10 @@ impl Pairing {
             return Err(Error::InvalidValue);
         };
         let addr = BdAddr::new(payload[1..7].try_into().map_err(|_| Error::InvalidValue)?);
-        pairing_data.peer_address = Address { kind, addr };
+        pairing_data.peer_address = Address::new(kind, addr);
 
         if let Some(ref mut bond) = &mut pairing_data.bond_information {
-            bond.identity.addr = Address { kind, addr };
+            bond.identity.addr = Address::new(kind, addr);
         }
 
         trace!(

@@ -773,14 +773,8 @@ mod tests {
         );
         let n1 = Nonce(0xd5cb8454_d177733e_ffffb2ec_712baeab);
         let n2 = Nonce(0xa6e8e7cc_25a75f6e_216583f7_ff3dc4cf);
-        let a1 = Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0xce, 0xbf, 0x37, 0x37, 0x12, 0x56]),
-        };
-        let a2 = Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7]),
-        };
+        let a1 = Address::new(AddrKind::PUBLIC, BdAddr::new([0xce, 0xbf, 0x37, 0x37, 0x12, 0x56]));
+        let a2 = Address::new(AddrKind::PUBLIC, BdAddr::new([0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7]));
         let (mk, ltk) = w.f5(n1, n2, a1, a2);
         assert_eq!(ltk.0, 0x69867911_69d7cd23_980522b5_94750a38);
         assert_eq!(u128::from(&mk.0), 0x2965f176_a1084a02_fd3f6a20_ce636e20);
@@ -870,14 +864,8 @@ mod tests {
         let n2 = Nonce(0xa6e8e7cc_25a75f6e_216583f7_ff3dc4cf);
         let r = 0x12a3343b_b453bb54_08da42d2_0c2d0fc8;
         let io_cap = IoCap([0x01, 0x01, 0x02]);
-        let a1 = Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0xce, 0xbf, 0x37, 0x37, 0x12, 0x56]),
-        };
-        let a2 = Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7]),
-        };
+        let a1 = Address::new(AddrKind::PUBLIC, BdAddr::new([0xce, 0xbf, 0x37, 0x37, 0x12, 0x56]));
+        let a2 = Address::new(AddrKind::PUBLIC, BdAddr::new([0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7]));
         let c = k.f6(n1, n2, r, io_cap, a1, a2);
         assert_eq!(c.0, 0xe3c47398_9cd0e8c5_d26c0b09_da958f61);
     }

@@ -1090,6 +1090,7 @@ mod tests {
     use super::*;
     use crate::connection_manager::tests::{setup, ADDR_1};
     use crate::prelude::*;
+    use crate::Address;
 
     #[test]
     fn test_attribute_server_last_handle_of_group() {
@@ -1188,8 +1189,7 @@ mod tests {
             assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
             unwrap!(mgr.connect(
                 ConnHandle::new(0),
-                AddrKind::RANDOM,
-                BdAddr::new(ADDR_1),
+                Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
                 LeConnRole::Peripheral,
                 ConnParams::new(),
             ));
