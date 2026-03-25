@@ -89,7 +89,7 @@ impl ServerBuilder {
         let visibility = &self.properties.vis;
 
         let mutex_type = self.arguments.mutex_type.unwrap_or(syn::Type::Verbatim(quote!(
-            embassy_sync::blocking_mutex::raw::NoopRawMutex
+            trouble_host::__export::embassy_sync::blocking_mutex::raw::NoopRawMutex
         )));
 
         let packet_type = self

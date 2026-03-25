@@ -752,3 +752,9 @@ pub(crate) fn bt_hci_duration<const US: u32>(d: Duration) -> bt_hci::param::Dura
 pub(crate) fn bt_hci_ext_duration<const US: u16>(d: Duration) -> bt_hci::param::ExtDuration<US> {
     bt_hci::param::ExtDuration::from_micros(d.as_micros())
 }
+
+// Re-export our version of embassy-sync for the macros
+#[doc(hidden)]
+pub mod __export {
+    pub use embassy_sync;
+}
