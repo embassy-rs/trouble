@@ -7,8 +7,8 @@ use bt_hci::cmd::le::{
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
-    AddrKind, AllPhys, BdAddr, ConnHandle, DisconnectReason, FrameSpaceInitiator, LeConnRole, PhyKind, PhyMask,
-    PhyOptions, SpacingTypes, Status,
+    AllPhys, ConnHandle, DisconnectReason, FrameSpaceInitiator, LeConnRole, PhyKind, PhyMask, PhyOptions, SpacingTypes,
+    Status,
 };
 #[cfg(feature = "connection-params-update")]
 use bt_hci::{
@@ -551,13 +551,8 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.role(self.index)
     }
 
-    /// The peer address kind for this connection.
-    pub fn peer_addr_kind(&self) -> AddrKind {
-        self.manager.peer_addr_kind(self.index)
-    }
-
     /// The peer address for this connection.
-    pub fn peer_address(&self) -> BdAddr {
+    pub fn peer_address(&self) -> Address {
         self.manager.peer_address(self.index)
     }
 

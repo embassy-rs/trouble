@@ -10,10 +10,7 @@ use crate::{Event, OobState};
 
 /// Extract the peer's [`Address`] from a connection.
 pub(crate) fn peer_address<P: PacketPool>(conn: &Connection<'_, P>) -> Address {
-    Address {
-        kind: conn.peer_addr_kind(),
-        addr: conn.peer_address(),
-    }
+    conn.peer_address()
 }
 
 /// Run the GATT connection event loop, shared between peripheral and central.

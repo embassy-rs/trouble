@@ -263,10 +263,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
 
         // Run client.task() concurrently with command processing.
         // When client.task() completes (connection dropped), we return to Phase 1.
-        let conn_address = Address {
-            kind: connection.peer_addr_kind(),
-            addr: connection.peer_address(),
-        };
+        let conn_address = connection.peer_address();
         info!("GattClient created for {:?}", conn_address);
         let mut cache = DiscoveryCache::new();
         let mut listener = match client.listen_all() {

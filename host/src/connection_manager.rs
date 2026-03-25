@@ -4,7 +4,7 @@ use core::future::poll_fn;
 use core::future::Future;
 use core::task::{Context, Poll};
 
-use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
+use bt_hci::param::{ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
@@ -229,18 +229,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         .await
     }
 
-    pub(crate) fn peer_addr_kind(&self, index: u8) -> AddrKind {
-        self.connection(index)
-            .peer_identity
-            .map(|i| i.addr.kind)
-            .unwrap_or_default()
-    }
-
-    pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
-        self.connection(index)
-            .peer_identity
-            .map(|i| i.addr.addr)
-            .unwrap_or_default()
+    pub(crate) fn peer_address(&self, index: u8) -> Address {
+        self.connection(index).peer_identity.map(|i| i.addr).unwrap_or_default()
     }
 
     pub(crate) fn peer_identity(&self, index: u8) -> Identity {
@@ -1254,6 +1244,7 @@ pub(crate) mod tests {
 
     use std::boxed::Box;
 
+    use bt_hci::param::{AddrKind, BdAddr};
     use embassy_futures::block_on;
 
     use crate::prelude::*;
@@ -1293,7 +1284,10 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(handle.role(), LeConnRole::Peripheral);
-        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(
+            handle.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1))
+        );
 
         handle.disconnect();
     }
@@ -1315,7 +1309,10 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(handle.role(), LeConnRole::Central);
-        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_2));
+        assert_eq!(
+            handle.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2))
+        );
     }
 
     #[test]
@@ -1447,7 +1444,7 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(conn.role(), LeConnRole::Peripheral);
-        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(conn.peer_address(), Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)));
 
         unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
 
@@ -1467,12 +1464,15 @@ pub(crate) mod tests {
         // Ensure existing connection doesnt panic things
         assert_eq!(conn.handle(), ConnHandle::new(42));
         assert_eq!(conn.role(), LeConnRole::Peripheral);
-        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(conn.peer_address(), Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)));
         assert!(!conn.is_connected());
 
         assert_eq!(conn2.handle(), ConnHandle::new(42));
         assert_eq!(conn2.role(), LeConnRole::Peripheral);
-        assert_eq!(conn2.peer_address(), BdAddr::new(ADDR_2));
+        assert_eq!(
+            conn2.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2))
+        );
         assert!(conn2.is_connected());
     }
 
@@ -1494,7 +1494,7 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(conn.role(), LeConnRole::Peripheral);
-        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(conn.peer_address(), Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)));
 
         unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
 
@@ -1513,7 +1513,10 @@ pub(crate) mod tests {
 
         assert_eq!(conn2.handle(), ConnHandle::new(42));
         assert_eq!(conn2.role(), LeConnRole::Peripheral);
-        assert_eq!(conn2.peer_address(), BdAddr::new(ADDR_2));
+        assert_eq!(
+            conn2.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2))
+        );
         assert!(conn2.is_connected());
 
         unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
@@ -1538,7 +1541,10 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(handle.role(), LeConnRole::Peripheral);
-        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(
+            handle.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1))
+        );
 
         assert!(mgr.poll_disconnecting(None).is_pending());
 
