@@ -754,6 +754,12 @@ pub trait EventHandler {
     /// Handle extended advertising reports
     #[cfg(feature = "scan")]
     fn on_ext_adv_reports(&self, reports: bt_hci::param::LeExtAdvReportsIter) {}
+    /// Handle HCI NumberOfCompletedPackets event.
+    ///
+    /// Called for each connection handle entry when the controller confirms
+    /// ACL data packets have been transmitted over the air. Useful for
+    /// measuring actual air delivery rate and estimating connection event timing.
+    fn on_packets_completed(&self, _num_completed: usize) {}
 }
 
 struct DummyHandler;
@@ -1123,6 +1129,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 match (entry.handle(), entry.num_completed_packets()) {
                                     (Ok(handle), Ok(completed)) => {
                                         let _ = host.connections.confirm_sent(handle, completed as usize);
+                                        event_handler.on_packets_completed(completed as usize);
                                     }
                                     (Ok(handle), Err(e)) => {
                                         warn!("[host] error processing completed packets for {:?}: {:?}", handle, e);
