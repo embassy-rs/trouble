@@ -1,0 +1,208 @@
+= Platform Setup
+
+Trouble works with any BLE controller that implements the `bt_hci::controller::Controller` trait. This page shows the initialization pattern for each supported platform.
+
+All platforms follow the same pattern: create a platform-specific controller, then pass it to the shared application logic. The shared examples in link:https://github.com/embassy-rs/trouble/tree/main/examples/apps[examples/apps/] demonstrate this approach.
+
+== Linux
+
+The simplest setup, useful for development and testing. Uses the host's Bluetooth adapter via HCI sockets (requires Bluez).
+
+[source,rust]
+----
+use bt_hci::controller::ExternalController;
+use bt_hci_linux::Transport;
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let dev = 0; // HCI device number (hci0)
+    let transport = Transport::new(dev).unwrap();
+    let controller = ExternalController::<_, 8>::new(transport);
+
+    // Pass controller to your application
+    my_app::run(controller).await;
+}
+----
+
+Dependencies:
+
+[source,toml]
+----
+[dependencies]
+bt-hci = "0.8"
+bt-hci-linux = { path = "../../bt-hci-linux" }
+tokio = { version = "1", features = ["macros", "rt"] }
+trouble-host = { version = "0.6", features = ["log"] }
+----
+
+The generic parameter on `ExternalController` (`8`) is the number of HCI command slots.
+
+== nRF52 / nRF54 (SoftDevice Controller)
+
+Uses Nordic's SoftDevice Controller via the `nrf-sdc` crate. Requires setting up the Multiprotocol Service Layer (MPSL) and configuring the SoftDevice.
+
+[source,rust]
+----
+#![no_std]
+#![no_main]
+
+use embassy_executor::Spawner;
+use embassy_nrf::rng;
+use nrf_sdc::{self as sdc, mpsl};
+use static_cell::StaticCell;
+
+#[embassy_executor::task]
+async fn mpsl_task(mpsl: &'static mpsl::MultiprotocolServiceLayer<'static>) -> ! {
+    mpsl.run().await
+}
+
+#[embassy_executor::main]
+async fn main(spawner: Spawner) {
+    let p = embassy_nrf::init(Default::default());
+
+    // 1. Initialize MPSL
+    let mpsl_p = mpsl::Peripherals::new(
+        p.RTC0, p.TIMER0, p.TEMP,
+        p.PPI_CH19, p.PPI_CH30, p.PPI_CH31,
+    );
+    let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
+        source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
+        rc_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
+        rc_temp_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
+        accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+        skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
+    };
+    static MPSL: StaticCell<mpsl::MultiprotocolServiceLayer> = StaticCell::new();
+    let mpsl = MPSL.init(mpsl::MultiprotocolServiceLayer::new(mpsl_p, Irqs, lfclk_cfg));
+    spawner.must_spawn(mpsl_task(mpsl));
+
+    // 2. Configure SoftDevice Controller
+    let sdc_p = sdc::Peripherals::new(/* PPI channels */);
+    let mut rng = rng::Rng::new(p.RNG, Irqs);
+    let mut sdc_mem = sdc::Mem::<4864>::new();
+    let sdc = sdc::Builder::new().unwrap()
+        .support_peripheral().unwrap()
+        .peripheral_count(1).unwrap()
+        .build(sdc_p, &mut rng, mpsl, &mut sdc_mem)
+        .unwrap();
+
+    // 3. Run application
+    my_app::run(sdc).await;
+}
+----
+
+The SoftDevice builder methods configure roles (`support_central()`, `support_peripheral()`, `support_scan()`) and buffer sizes (`buffer_cfg()`). See the link:https://github.com/embassy-rs/trouble/tree/main/examples/nrf52[nrf52 examples] for complete configurations.
+
+== ESP32
+
+Uses the ESP32's built-in BLE radio via `esp-radio`.
+
+[source,rust]
+----
+#![no_std]
+#![no_main]
+
+use embassy_executor::Spawner;
+use esp_hal::clock::CpuClock;
+use esp_hal::timer::timg::TimerGroup;
+use esp_radio::ble::controller::BleConnector;
+use trouble_host::prelude::ExternalController;
+
+#[esp_rtos::main]
+async fn main(_s: Spawner) {
+    let peripherals = esp_hal::init(
+        esp_hal::Config::default().with_cpu_clock(CpuClock::max())
+    );
+    esp_alloc::heap_allocator!(size: 72 * 1024);
+
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    esp_rtos::start(timg0.timer0, /* ... */);
+
+    let connector = BleConnector::new(peripherals.BT, Default::default()).unwrap();
+    let controller: ExternalController<_, 20> = ExternalController::new(connector);
+
+    my_app::run(controller).await;
+}
+----
+
+See the link:https://github.com/embassy-rs/trouble/tree/main/examples/esp32[esp32 examples] for complete configurations including interrupt setup.
+
+== Raspberry Pi Pico W
+
+Uses the CYW43 WiFi/BLE chip via the `cyw43` crate with PIO SPI.
+
+[source,rust]
+----
+#![no_std]
+#![no_main]
+
+use cyw43_pio::PioSpi;
+use embassy_executor::Spawner;
+use embassy_rp::gpio::{Level, Output};
+use embassy_rp::pio::Pio;
+use static_cell::StaticCell;
+use trouble_host::prelude::ExternalController;
+
+#[embassy_executor::task]
+async fn cyw43_task(runner: cyw43::Runner<'static, /* ... */>) -> ! {
+    runner.run().await
+}
+
+#[embassy_executor::main]
+async fn main(spawner: Spawner) {
+    let p = embassy_rp::init(Default::default());
+
+    // Load firmware blobs
+    let fw = include_bytes!("../../cyw43-firmware/43439A0.bin");
+    let clm = include_bytes!("../../cyw43-firmware/43439A0_clm.bin");
+    let btfw = include_bytes!("../../cyw43-firmware/43439A0_btfw.bin");
+
+    // Set up PIO SPI
+    let pwr = Output::new(p.PIN_23, Level::Low);
+    let cs = Output::new(p.PIN_25, Level::High);
+    let mut pio = Pio::new(p.PIO0, Irqs);
+    let spi = PioSpi::new(/* ... */);
+
+    // Initialize cyw43
+    static STATE: StaticCell<cyw43::State> = StaticCell::new();
+    let state = STATE.init(cyw43::State::new());
+    let (_net, bt_device, mut control, runner) =
+        cyw43::new_with_bluetooth(state, pwr, spi, fw, btfw, nvram).await;
+    spawner.must_spawn(cyw43_task(runner));
+    control.init(clm).await;
+
+    let controller: ExternalController<_, 10> = ExternalController::new(bt_device);
+    my_app::run(controller).await;
+}
+----
+
+See the link:https://github.com/embassy-rs/trouble/tree/main/examples/rp-pico-w[rp-pico-w examples] for complete configurations.
+
+== Serial HCI (UART)
+
+For any Bluetooth controller connected over a UART (e.g., HCI dongles). Works on desktop with `tokio`.
+
+[source,rust]
+----
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use tokio_serial::SerialStream;
+use trouble_host::prelude::{ExternalController, SerialTransport};
+
+#[tokio::main]
+async fn main() {
+    let port = SerialStream::open(
+        &tokio_serial::new("/dev/ttyUSB0", 1000000)
+    ).unwrap();
+
+    let (reader, writer) = tokio::io::split(port);
+    let reader = embedded_io_adapters::tokio_1::FromTokio::new(reader);
+    let writer = embedded_io_adapters::tokio_1::FromTokio::new(writer);
+
+    let driver: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
+    let controller: ExternalController<_, 10> = ExternalController::new(driver);
+
+    my_app::run(controller).await;
+}
+----
+
+NOTE: The controller firmware's buffer configuration may limit throughput. Check the link:https://github.com/embassy-rs/trouble/tree/main/examples/serial-hci[serial-hci examples] for details on firmware configuration.

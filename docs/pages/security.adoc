@@ -1,0 +1,194 @@
+= Security and Pairing
+
+Trouble supports BLE pairing and encryption via the Security Manager, including LE Secure Connections (LESC) and optionally legacy pairing. Enable it with the `security` cargo feature. For legacy pairing support (BLE 4.0/4.1 devices), also enable `legacy-pairing`.
+
+== Setup
+
+Security requires a cryptographically secure random seed:
+
+[source,rust]
+----
+let stack = trouble_host::new(controller, &mut resources)
+    .set_random_address(address)
+    .set_random_generator_seed(&mut rng);  // Must implement RngCore + CryptoRng
+----
+
+WARNING: The stack will panic at build time if the random generator is not seeded (unless the `dev-disable-csprng-seed-requirement` feature is enabled for development).
+
+== IO Capabilities
+
+IO capabilities determine which pairing method is used. Set them before building the stack by calling `stack.set_io_capabilities()`. The available options are:
+
+* `DisplayOnly` - Device can display a 6-digit number.
+* `DisplayYesNo` - Device can display a number and the user can confirm or reject.
+* `KeyboardOnly` - Device has keyboard input.
+* `NoInputNoOutput` - No user interaction possible (JustWorks only).
+* `KeyboardDisplay` - Device has both keyboard and display.
+
+The pairing method is automatically selected based on *both* devices' IO capabilities:
+
+[cols="1,1,1"]
+|===
+| Method | When used | Security level
+
+| *JustWorks*
+| Either device has `NoInputNoOutput`
+| `Encrypted` (no MITM protection)
+
+| *Numeric Comparison*
+| Both have `DisplayYesNo` or `KeyboardDisplay` (LESC only)
+| `EncryptedAuthenticated` (MITM protected)
+
+| *PassKey Entry*
+| One device can display, the other can input
+| `EncryptedAuthenticated` (MITM protected)
+|===
+
+== Requesting Security
+
+Pairing can be initiated from either side:
+
+[source,rust]
+----
+// Central or peripheral can request security
+conn.request_security().unwrap();
+----
+
+This triggers the pairing process. The result is delivered as events on the connection.
+
+== Handling Pairing Events
+
+Pairing events are delivered through the connection event loop. When using a GATT server, they arrive as `GattConnectionEvent` variants; otherwise as `ConnectionEvent`:
+
+[source,rust]
+----
+loop {
+    match conn.next().await {
+        GattConnectionEvent::Disconnected { reason } => break,
+
+        // Display a passkey for the user to enter on the other device
+        GattConnectionEvent::PassKeyDisplay(key) => {
+            info!("Display this passkey: {}", key);
+        }
+
+        // User must confirm the displayed number matches
+        GattConnectionEvent::PassKeyConfirm(key) => {
+            info!("Confirm passkey: {}", key);
+            // After user confirms or rejects:
+            conn.raw().pass_key_confirm().unwrap();
+            // OR: conn.raw().pass_key_cancel().unwrap();
+        }
+
+        // User must input the passkey shown on the other device
+        GattConnectionEvent::PassKeyInput => {
+            let user_input: u32 = 123456; // Get from user
+            conn.raw().pass_key_input(user_input).unwrap();
+        }
+
+        // Pairing succeeded
+        GattConnectionEvent::PairingComplete { security_level, bond } => {
+            info!("Paired with security level: {:?}", security_level);
+            if let Some(bond) = bond {
+                // Persist the bond information (see Bonding section)
+            }
+        }
+
+        // Pairing failed
+        GattConnectionEvent::PairingFailed(err) => {
+            error!("Pairing failed: {:?}", err);
+        }
+
+        GattConnectionEvent::Gatt { event } => {
+            event.accept().ok();
+        }
+        _ => {}
+    }
+}
+----
+
+== Security Levels
+
+Each connection has a security level that determines what operations are allowed:
+
+* `NoEncryption` - Default for new connections. No encryption.
+* `Encrypted` - Encrypted but not authenticated (JustWorks pairing).
+* `EncryptedAuthenticated` - Encrypted and MITM-protected (PassKey or Numeric Comparison).
+
+Characteristics can require a minimum security level using the `permissions` attribute:
+
+[source,rust]
+----
+#[characteristic(uuid = "2a19", read, notify, permissions(encrypted))]
+level: u8,
+
+#[characteristic(uuid = "2a4a", read, permissions(authenticated))]
+hid_info: [u8; 4],
+----
+
+When a client tries to access a characteristic without meeting the required security level, a `GattEvent::NotAllowed` event is generated.
+
+== Bonding
+
+Bonding persists the encryption keys so that reconnecting devices can re-encrypt without re-pairing.
+
+=== Controlling Bondable State
+
+[source,rust]
+----
+// Allow bonding for this connection (default)
+conn.set_bondable(true).unwrap();
+
+// Disable bonding (pairing will be temporary)
+conn.set_bondable(false).unwrap();
+----
+
+If both devices are bondable, the `PairingComplete` event will contain `bond: Some(BondInformation)`. If either side is not bondable, `bond` will be `None`.
+
+=== Persisting Bonds
+
+Bond information must be stored by the application (e.g., in flash storage). On startup, restore bonds to the stack:
+
+[source,rust]
+----
+use sequential_storage::map::{MapConfig, MapStorage, PostcardValue};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct StoredBondInformation(BondInformation);
+impl<'a> PostcardValue<'a> for StoredBondInformation {}
+
+// On startup: restore saved bonds
+let mut map_storage = MapStorage::<(), _, _>::new(
+    storage,
+    MapConfig::new(0..erase_size * 2),
+    NoCache::new(),
+);
+let mut buf = [0; 32];
+if let Some(StoredBondInformation(bond)) = map_storage.fetch_item(&mut buf, &()).await.unwrap() {
+    stack.add_bond_information(bond).unwrap();
+}
+
+// After pairing: save the new bond
+match conn.next().await {
+    GattConnectionEvent::PairingComplete { bond: Some(bond), .. } => {
+        map_storage.store_item(&mut buf, &(), &StoredBondInformation(bond)).await.unwrap();
+    }
+    _ => {}
+}
+----
+
+Enable the `serde` feature on `trouble-host` for `BondInformation` serialization support.
+
+=== Bond Management API
+
+[source,rust]
+----
+// Add a previously stored bond
+stack.add_bond_information(bond)?;
+
+// Remove a bond
+stack.remove_bond_information(identity)?;
+
+// List all bonds
+let bonds = stack.get_bond_information();
+----

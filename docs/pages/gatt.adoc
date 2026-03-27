@@ -1,0 +1,300 @@
+= GATT Services
+
+The Generic Attribute Profile (GATT) defines how BLE devices exchange data using services and characteristics.
+Trouble provides both a GATT server (peripheral exposing data) and a GATT client (central consuming data), along with proc macros for ergonomic service definitions.
+
+Enable GATT support with the `gatt` feature, and the proc macros with the `derive` feature (both included in default features).
+
+== Defining Services
+
+Services are defined as Rust structs annotated with `#[gatt_service]`. Each field becomes a characteristic.
+
+[source,rust]
+----
+use trouble_host::prelude::*;
+
+#[gatt_service(uuid = "180f")]
+struct BatteryService {
+    #[characteristic(uuid = "2a19", read, notify, value = 10)]
+    level: u8,
+}
+----
+
+=== Service Attributes
+
+* `uuid` (required) - Service UUID. Accepts 16-bit short (`"180f"`), 128-bit (`"7e701cf1-b1df-42a1-bb5f-6a1028c793b0"`), or predefined constants (`service::BATTERY`).
+
+=== Characteristic Attributes
+
+* `uuid` (required) - Characteristic UUID.
+* `read` - Readable by clients.
+* `write` - Writable by clients (with response).
+* `write_without_response` - Writable without response.
+* `notify` - Supports notifications (server-initiated, no confirmation).
+* `indicate` - Supports indications (server-initiated, with confirmation).
+* `value = <expr>` - Initial value. Supports literals, byte arrays, and const expressions.
+* `permissions(encrypted)` - Require an encrypted connection.
+* `permissions(authenticated)` - Require an authenticated (MITM-protected) connection.
+
+Supported field types: `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool`, `[u8; N]`, and `heapless::Vec<u8, N>`.
+
+=== Descriptors
+
+Characteristics can have descriptors, defined as additional attributes on the field:
+
+[source,rust]
+----
+#[gatt_service(uuid = service::BATTERY)]
+struct BatteryService {
+    #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]
+    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, name = "hello", read, value = "Battery Level", type = &'static str)]
+    #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
+    level: u8,
+}
+----
+
+Descriptor attributes: `uuid` (required), `read`, `value`, `name`, `type`.
+
+== The GATT Server
+
+Combine multiple services into a server with `#[gatt_server]`:
+
+[source,rust]
+----
+#[gatt_server]
+struct Server {
+    battery_service: BatteryService,
+}
+----
+
+Create the server with a GAP configuration:
+
+[source,rust]
+----
+let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+    name: "TrouBLE",
+    appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
+}))
+.unwrap();
+----
+
+=== Handling GATT Events
+
+After accepting a connection, attach the attribute server and process events in a loop:
+
+[source,rust]
+----
+let conn = advertiser.accept().await?.with_attribute_server(&server)?;
+
+let level = server.battery_service.level;
+loop {
+    match conn.next().await {
+        GattConnectionEvent::Disconnected { reason } => break,
+        GattConnectionEvent::Gatt { event } => {
+            match &event {
+                GattEvent::Read(event) => {
+                    if event.handle() == level.handle {
+                        let value = server.get(&level);
+                        info!("Read battery level: {:?}", value);
+                    }
+                }
+                GattEvent::Write(event) => {
+                    if event.handle() == level.handle {
+                        info!("Write to battery level: {:?}", event.data());
+                    }
+                }
+                _ => {}
+            }
+            // Accept the event and send the response. Also performed on drop,
+            // but calling explicitly ensures the reply is sent promptly.
+            match event.accept() {
+                Ok(reply) => reply.send().await,
+                Err(e) => warn!("Error sending response: {:?}", e),
+            }
+        }
+        _ => {}
+    }
+}
+----
+
+=== Reading and Writing Values
+
+[source,rust]
+----
+// Read the current value of a characteristic
+let value = server.get(&server.battery_service.level);
+
+// Set a characteristic value
+server.set(&server.battery_service.level, &75).unwrap();
+----
+
+=== Notifications and Indications
+
+Send updates to connected clients that have subscribed:
+
+[source,rust]
+----
+let level = server.battery_service.level;
+
+// Notification (no confirmation from client)
+level.notify(&conn, &new_value).await?;
+
+// Indication (waits for client confirmation)
+level.indicate(&conn, &new_value).await?;
+----
+
+NOTE: Notifications/indications will only be delivered if the client has enabled them by writing to the characteristic's CCCD (Client Characteristic Configuration Descriptor). The `notify` and `indicate` calls return an error if the client hasn't subscribed.
+
+== The GATT Client
+
+The GATT client is used from the central role to discover and interact with services on a connected peripheral.
+
+[source,rust]
+----
+let conn = central.connect(&config).await.unwrap();
+let client = GattClient::<C, DefaultPacketPool, 10>::new(&stack, &conn).await.unwrap();
+----
+
+The third generic parameter (`10`) is the maximum number of attributes the client can discover.
+
+IMPORTANT: The GATT client has a background task that must run concurrently:
+
+[source,rust]
+----
+let _ = join(client.task(), async {
+    // Your client operations here
+}).await;
+----
+
+=== Service Discovery
+
+[source,rust]
+----
+// Find a service by UUID
+let services = client.services_by_uuid(&Uuid::new_short(0x180f)).await.unwrap();
+let service = services.first().unwrap().clone();
+
+// Find a characteristic by UUID within a service
+let c: Characteristic<u8> = client
+    .characteristic_by_uuid(&service, &Uuid::new_short(0x2a19))
+    .await
+    .unwrap();
+----
+
+=== Reading and Writing
+
+[source,rust]
+----
+// Read a characteristic
+let mut data = [0; 1];
+client.read_characteristic(&c, &mut data[..]).await.unwrap();
+
+// Write a characteristic (with response)
+client.write_characteristic(&c, &[42]).await.unwrap();
+
+// Write without response
+client.write_characteristic_without_response(&c, &[42]).await.unwrap();
+----
+
+=== Subscribing to Notifications
+
+[source,rust]
+----
+// Subscribe (writes the CCCD automatically)
+let mut listener = client.subscribe(&c, false).await.unwrap();
+
+// Receive notifications
+loop {
+    let data = listener.next().await;
+    info!("Got notification: {:?}", data.as_ref());
+}
+----
+
+Pass `true` to `subscribe()` for indications instead of notifications.
+
+== Full Example
+
+A complete peripheral with a battery service that notifies a counter value:
+
+[source,rust]
+----
+use embassy_futures::join::join;
+use embassy_futures::select::select;
+use trouble_host::prelude::*;
+
+const CONNECTIONS_MAX: usize = 1;
+const L2CAP_CHANNELS_MAX: usize = 2; // Signal + ATT
+
+#[gatt_server]
+struct Server {
+    battery_service: BatteryService,
+}
+
+#[gatt_service(uuid = service::BATTERY)]
+struct BatteryService {
+    #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
+    level: u8,
+}
+
+pub async fn run<C: Controller>(controller: C) {
+    let address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        HostResources::new();
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let Host { mut peripheral, runner, .. } = stack.build();
+
+    let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+        name: "TrouBLE",
+        appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
+    })).unwrap();
+
+    let _ = join(
+        async { loop { runner.run().await.ok(); } },
+        async {
+            loop {
+                // Advertise and wait for connection
+                let mut adv_data = [0; 31];
+                let len = AdStructure::encode_slice(
+                    &[
+                        AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                        AdStructure::CompleteLocalName(b"TrouBLE"),
+                    ],
+                    &mut adv_data[..],
+                ).unwrap();
+                let advertiser = peripheral.advertise(
+                    &Default::default(),
+                    Advertisement::ConnectableScannableUndirected {
+                        adv_data: &adv_data[..len],
+                        scan_data: &[],
+                    },
+                ).await.unwrap();
+                let conn = advertiser.accept().await.unwrap().with_attribute_server(&server).unwrap();
+
+                // Run GATT event handler and notification task concurrently
+                let level = server.battery_service.level;
+                select(
+                    async {
+                        loop {
+                            match conn.next().await {
+                                GattConnectionEvent::Disconnected { .. } => break,
+                                GattConnectionEvent::Gatt { event } => {
+                                    event.accept().ok();
+                                }
+                                _ => {}
+                            }
+                        }
+                    },
+                    async {
+                        let mut tick: u8 = 0;
+                        loop {
+                            tick = tick.wrapping_add(1);
+                            let _ = level.notify(&conn, &tick).await;
+                            Timer::after_secs(2).await;
+                        }
+                    },
+                ).await;
+            }
+        },
+    ).await;
+}
+----

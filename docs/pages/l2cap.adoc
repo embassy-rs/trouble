@@ -1,0 +1,222 @@
+= L2CAP Connection-Oriented Channels
+
+L2CAP Connection-Oriented Channels (CoC) provide a way to exchange arbitrary data between two BLE devices without the overhead of the GATT protocol. They use credit-based flow control to prevent overwhelming either device.
+
+L2CAP CoC support is available without any additional feature flags beyond `central` and/or `peripheral`.
+
+== Resource Configuration
+
+When using L2CAP CoC channels, you need to allocate an extra L2CAP channel slot in `HostResources` beyond the default signal and ATT channels:
+
+[source,rust]
+----
+const CONNECTIONS_MAX: usize = 1;
+const L2CAP_CHANNELS_MAX: usize = 3; // Signal + ATT + 1 CoC channel
+
+let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+    HostResources::new();
+----
+
+== Channel Configuration
+
+[source,rust]
+----
+let config = L2capChannelConfig {
+    mtu: Some(PAYLOAD_LEN as u16),   // Service Data Unit size
+    mps: Some(251),                   // Max PDU payload size (frame size)
+    flow_policy: CreditFlowPolicy::Every(1), // When to grant credits
+    initial_credits: Some(10),        // Credits granted at connection start
+};
+----
+
+All fields are optional and have sensible defaults:
+
+* `mtu` - Maximum payload size per send/receive. Defaults to packet pool MTU minus 6.
+* `mps` - Frame size (one frame consumes one credit). Defaults to packet pool MTU minus 4.
+* `flow_policy` - Controls when credits are replenished. Defaults to `Every(1)`.
+* `initial_credits` - Credits given to the peer at channel creation. Defaults to the minimum of the RX queue size and packet pool capacity.
+
+== Creating Channels
+
+=== Central (initiator)
+
+[source,rust]
+----
+let conn = central.connect(&connect_config).await.unwrap();
+
+let config = L2capChannelConfig {
+    mtu: Some(PAYLOAD_LEN as u16),
+    ..Default::default()
+};
+let mut ch = L2capChannel::create(&stack, &conn, 0x0081, &config).await.unwrap();
+----
+
+The third argument is the PSM (Protocol/Service Multiplexer). Values in the range `0x0080`-`0x00FF` are available for custom use.
+
+=== Peripheral (responder)
+
+The simplest approach accepts any incoming channel request on the given PSMs:
+
+[source,rust]
+----
+let conn = advertiser.accept().await.unwrap();
+
+let config = L2capChannelConfig {
+    mtu: Some(PAYLOAD_LEN as u16),
+    ..Default::default()
+};
+let mut ch = L2capChannel::accept(&stack, &conn, &[0x0081], &config).await.unwrap();
+----
+
+For more control, use `listen` to inspect the request before accepting:
+
+[source,rust]
+----
+let pending = L2capChannel::listen(&stack, &conn, &[0x0081]).await.unwrap();
+
+// Inspect the incoming request
+let psm = pending.psm();
+let peer_mtu = pending.mtu();
+
+// Accept or reject
+let ch = pending.accept(&stack, &config).await.unwrap();
+// OR: pending.reject(&stack, LeCreditConnResultCode::UnacceptableParameters).await.unwrap();
+----
+
+== Sending and Receiving Data
+
+[source,rust]
+----
+// Send data (waits for available credits)
+let tx = [0x42; PAYLOAD_LEN];
+ch.send(&stack, &tx).await.unwrap();
+
+// Non-blocking send (returns Error::Busy if no credits)
+ch.try_send(&stack, &tx).unwrap();
+
+// Receive data (blocks until data available)
+let mut rx = [0; PAYLOAD_LEN];
+let len = ch.receive(&stack, &mut rx).await.unwrap();
+
+// Receive as an owned SDU packet
+let sdu = ch.receive_sdu(&stack).await.unwrap();
+let data: &[u8] = sdu.as_ref();
+----
+
+The send buffer must be no larger than the negotiated MTU. The receive buffer must be at least as large as the negotiated MTU.
+
+== Credit-Based Flow Control
+
+Credits prevent a sender from overwhelming the receiver. Each sent frame consumes one credit. When credits run out, `send()` blocks until the peer grants more.
+
+The `CreditFlowPolicy` controls when your device replenishes credits to the peer:
+
+* `Every(N)` - Grant credits for every N messages received. Default is `Every(1)`.
+* `MinThreshold(N)` - Grant credits when the available count drops below N.
+
+For high-throughput scenarios, a less frequent credit policy with more initial credits reduces signaling overhead:
+
+[source,rust]
+----
+let config = L2capChannelConfig {
+    mtu: Some(2504),
+    mps: Some(247),
+    flow_policy: CreditFlowPolicy::Every(50),
+    initial_credits: Some(200),
+};
+----
+
+== Splitting Channels
+
+For concurrent reading and writing, split a channel into separate endpoints:
+
+[source,rust]
+----
+let (mut writer, mut reader) = ch.split();
+
+// Use in separate concurrent tasks
+join(
+    async {
+        writer.send(&stack, &data).await.unwrap();
+    },
+    async {
+        let len = reader.receive(&stack, &mut buf).await.unwrap();
+    },
+).await;
+
+// Merge back if needed
+let ch = L2capChannel::merge(writer, reader);
+----
+
+== Channel Properties
+
+[source,rust]
+----
+ch.mtu()       // Local negotiated MTU
+ch.mps()       // Local negotiated MPS
+ch.peer_mtu()  // Remote device's MTU
+ch.peer_mps()  // Remote device's MPS
+ch.psm()       // Protocol/Service Multiplexer
+ch.disconnect() // Disconnect the channel
+----
+
+== Full Example
+
+A peripheral that accepts an L2CAP channel and echoes received data:
+
+[source,rust]
+----
+use embassy_futures::join::join;
+use trouble_host::prelude::*;
+
+const CONNECTIONS_MAX: usize = 1;
+const L2CAP_CHANNELS_MAX: usize = 3;
+const PAYLOAD_LEN: usize = 27;
+
+pub async fn run<C: Controller>(controller: C) {
+    let address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        HostResources::new();
+    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let Host { mut peripheral, mut runner, .. } = stack.build();
+
+    let _ = join(runner.run(), async {
+        loop {
+            // Advertise and accept connection
+            let mut adv_data = [0; 31];
+            let len = AdStructure::encode_slice(
+                &[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED)],
+                &mut adv_data[..],
+            ).unwrap();
+            let advertiser = peripheral.advertise(
+                &Default::default(),
+                Advertisement::ConnectableScannableUndirected {
+                    adv_data: &adv_data[..len],
+                    scan_data: &[],
+                },
+            ).await.unwrap();
+            let conn = advertiser.accept().await.unwrap();
+
+            // Accept L2CAP channel
+            let config = L2capChannelConfig {
+                mtu: Some(PAYLOAD_LEN as u16),
+                ..Default::default()
+            };
+            let mut ch = L2capChannel::accept(&stack, &conn, &[0x0081], &config)
+                .await
+                .unwrap();
+
+            // Echo received data
+            let mut buf = [0; PAYLOAD_LEN];
+            loop {
+                match ch.receive(&stack, &mut buf).await {
+                    Ok(len) => {
+                        ch.send(&stack, &buf[..len]).await.unwrap();
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }).await;
+}
+----
