@@ -2,7 +2,7 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use bt_hci::controller::{blocking, Controller};
+use bt_hci::controller::{Controller, blocking};
 use bt_hci::param::ConnHandle;
 use bt_hci::{FromHciBytes, WriteHci};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -18,11 +18,11 @@ use crate::l2cap::{L2capChannel, L2capPendingConnection};
 use crate::pdu::{Pdu, Sdu};
 use crate::prelude::{ConnectionEvent, ConnectionParamsRequest, L2capChannelConfig};
 use crate::types::l2cap::{
-    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
-    L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode,
-    LeCreditFlowInd, L2CAP_CID_LE_U_SIGNAL,
+    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes,
+    L2CAP_CID_LE_U_SIGNAL, L2capHeader, L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq,
+    LeCreditConnRes, LeCreditConnResultCode, LeCreditFlowInd,
 };
-use crate::{config, BleHostError, Error, PacketPool};
+use crate::{BleHostError, Error, PacketPool, config};
 
 const BASE_ID: u16 = 0x40;
 
@@ -82,7 +82,7 @@ impl<P> State<'_, P> {
         for &psm in psms {
             if !(1..=255).contains(&psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
                 return Err(Error::InvalidValue);
-            } else if self.is_psm_registered(psm) {
+            } else if self.is_psm_registered(psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
                 return Err(Error::AlreadyInUse);
             }
         }
@@ -876,9 +876,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 ChannelState::Connected if storage.peer_cid == req.cid && Some(conn) == storage.conn => {
                     trace!(
                         "[l2cap][handle_credit_flow][cid = {}] {} += {} credits",
-                        req.cid,
-                        storage.peer_credits,
-                        req.credits
+                        req.cid, storage.peer_credits, req.credits
                     );
                     match storage.peer_credits.checked_add(req.credits) {
                         Some(credits) => {
@@ -1670,9 +1668,9 @@ mod tests {
     use bt_hci::param::{AddrKind, BdAddr, LeConnRole, Status};
 
     use super::*;
+    use crate::HostResources;
     use crate::mock_controller::MockController;
     use crate::prelude::{ConnParams, DefaultPacketPool};
-    use crate::HostResources;
 
     #[test]
     fn channel_refcount() {
