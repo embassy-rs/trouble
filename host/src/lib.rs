@@ -11,7 +11,7 @@ use advertise::AdvertisementDataError;
 use bt_hci::cmd::le::LeReadMinimumSupportedConnectionInterval;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::param::{AddrKind, BdAddr};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle};
 use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
@@ -737,6 +737,11 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Get a connection by its peer address
     pub fn get_connection_by_peer_address(&'stack self, peer_address: Address) -> Option<Connection<'stack, P>> {
         self.host.connections.get_connection_by_peer_address(peer_address)
+    }
+
+    /// Get a connection by its handle
+    pub fn get_connected_handle(&'stack self, handle: ConnHandle) -> Option<Connection<'stack, P>> {
+        self.host.connections.get_connected_handle(handle)
     }
 
     /// Iterate over all currently connected connections.
