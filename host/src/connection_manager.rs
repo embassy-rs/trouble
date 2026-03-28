@@ -432,10 +432,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
                 storage.peer_addr_kind.replace(peer_addr_kind);
+                #[cfg(feature = "security")]
+                let irk = self.security_manager.find_irk_for_addr(&peer_addr);
                 storage.peer_identity.replace(Identity {
                     bd_addr: peer_addr,
                     #[cfg(feature = "security")]
-                    irk: None,
+                    irk,
                 });
                 storage.role.replace(role);
                 storage.params = params;

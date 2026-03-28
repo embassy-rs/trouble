@@ -12,7 +12,7 @@ use core::task::Poll;
 
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
-use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
+use bt_hci::param::{BdAddr, ConnHandle, EncryptionEnabledLevel, LeConnRole};
 use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -645,6 +645,17 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             }
         })
         .await
+    }
+
+    /// Find the IRK for a peer address from stored bonds
+    pub(crate) fn find_irk_for_addr(&self, addr: &BdAddr) -> Option<IdentityResolvingKey> {
+        self.inner.borrow().state.bond.iter().find_map(|bond| {
+            if bond.identity.match_address(addr) {
+                bond.identity.irk
+            } else {
+                None
+            }
+        })
     }
 
     pub(crate) fn get_peer_bond_information(&self, identity: &Identity) -> Option<BondInformation> {
