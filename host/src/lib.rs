@@ -456,6 +456,9 @@ pub trait Controller:
     + ControllerCmdSync<LeLongTermKeyRequestReply>
     + ControllerCmdAsync<LeEnableEncryption>
     + ControllerCmdSync<ReadBdAddr>
+    + ControllerCmdSync<LeClearResolvingList>
+    + ControllerCmdSync<LeAddDeviceToResolvingList>
+    + ControllerCmdSync<LeSetAddrResolutionEnable>
 {
 }
 
@@ -490,7 +493,10 @@ impl<
             + for<'t> ControllerCmdSync<LeSetScanResponseData>
             + ControllerCmdSync<LeLongTermKeyRequestReply>
             + ControllerCmdAsync<LeEnableEncryption>
-            + ControllerCmdSync<ReadBdAddr>,
+            + ControllerCmdSync<ReadBdAddr>
+            + ControllerCmdSync<LeClearResolvingList>
+            + ControllerCmdSync<LeAddDeviceToResolvingList>
+            + ControllerCmdSync<LeSetAddrResolutionEnable>,
     > Controller for C
 {
 }
