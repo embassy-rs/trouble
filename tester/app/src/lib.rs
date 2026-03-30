@@ -65,6 +65,7 @@ use embassy_sync::watch::Watch;
 use embedded_io_async::{Read, Write};
 use rand_core::{CryptoRng, RngCore};
 use static_cell::StaticCell;
+use trouble_host::OobData;
 use trouble_host::prelude::*;
 
 use crate::command_channel::CommandReceiver;
@@ -325,6 +326,7 @@ where
     } = stack.build();
 
     let scan_mode = Cell::new(ScanMode::default());
+    let oob = OobState::new();
 
     let mut table = AttributeTable::<NoopRawMutex, ATTRIBUTE_TABLE_SIZE>::new();
     init_table(&mut table, &config);
@@ -333,7 +335,8 @@ where
     let transport = btp::BtpTransport { reader, writer };
     let mut packet = btp::protocol::BtpPacket::new();
     info!("Entering pre-server phase");
-    let Some(pre) = btp::run_pre_server(transport, &config, &stack, &scan_mode, &mut table, &mut packet).await? else {
+    let Some(pre) = btp::run_pre_server(transport, &config, &stack, &scan_mode, &oob, &mut table, &mut packet).await?
+    else {
         info!("Clean shutdown from pre-server phase");
         return Ok(());
     };
@@ -381,6 +384,7 @@ where
                 &server,
                 events.dyn_sender(),
                 &conn_sender,
+                &oob,
             ),
             central::run(
                 &stack,
@@ -389,6 +393,7 @@ where
                 &server,
                 events.dyn_sender(),
                 &conn_sender,
+                &oob,
             ),
             gatt_client::run(
                 &stack,
@@ -471,6 +476,31 @@ pub(crate) enum ScanMode {
     GeneralDiscovery,
     /// Observation — forward all advertising reports.
     Observer,
+}
+
+/// Shared OOB (Out of Band) pairing state, written by BTP commands and read by connection tasks.
+pub(crate) struct OobState {
+    /// Legacy OOB TK value (16 bytes), set via `OobLegacySetData`.
+    pub legacy_tk: Cell<Option<[u8; 16]>>,
+    /// Local SC OOB data, generated via `OobScGetLocalData`.
+    pub sc_local: Cell<Option<OobData>>,
+    /// Remote SC OOB data, set via `OobScSetRemoteData`.
+    pub sc_remote: Cell<Option<OobData>>,
+}
+
+impl OobState {
+    fn new() -> Self {
+        Self {
+            legacy_tk: Cell::new(None),
+            sc_local: Cell::new(None),
+            sc_remote: Cell::new(None),
+        }
+    }
+
+    /// Whether any OOB data has been configured.
+    pub fn has_oob(&self) -> bool {
+        self.legacy_tk.get().is_some() || (self.sc_local.get().is_some() && self.sc_remote.get().is_some())
+    }
 }
 
 /// HCI event handler that forwards advertising reports to the event channel.

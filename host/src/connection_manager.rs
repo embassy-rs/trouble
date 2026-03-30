@@ -806,6 +806,37 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         Err(Error::NotSupported)
     }
 
+    #[cfg(feature = "security")]
+    pub(crate) fn set_oob_available(&self, index: u8, available: bool) -> Result<(), Error> {
+        let mut state = self.state.borrow_mut();
+        match state.connections[index as usize].state {
+            ConnectionState::Connected => {
+                state.connections[index as usize].oob_available = available;
+                Ok(())
+            }
+            _ => Err(Error::Disconnected),
+        }
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) fn provide_oob_data(
+        &self,
+        index: u8,
+        local_oob: crate::security_manager::OobData,
+        peer_oob: crate::security_manager::OobData,
+    ) -> Result<(), Error> {
+        if self.state.borrow().connections[index as usize].state == ConnectionState::Connected {
+            self.security_manager.handle_oob_data_received(
+                local_oob,
+                peer_oob,
+                self,
+                &self.state.borrow().connections[index as usize],
+            )
+        } else {
+            Err(Error::Disconnected)
+        }
+    }
+
     pub(crate) fn handle_security_channel(
         &self,
         handle: ConnHandle,
@@ -1059,6 +1090,8 @@ pub struct ConnectionStorage<P> {
     #[cfg(feature = "security")]
     pub bondable: bool,
     #[cfg(feature = "security")]
+    pub oob_available: bool,
+    #[cfg(feature = "security")]
     pub bond_rejected: bool,
     #[cfg(feature = "security")]
     pub smp_timeout: bool,
@@ -1171,6 +1204,8 @@ impl<P> ConnectionStorage<P> {
             reassembly: PacketReassembly::new(),
             #[cfg(feature = "security")]
             bondable: false,
+            #[cfg(feature = "security")]
+            oob_available: false,
             #[cfg(feature = "att-queued-writes")]
             prepare_write: PrepareWriteState::new(),
         }

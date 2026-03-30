@@ -37,6 +37,10 @@ pub(super) enum Pairing {
         preq: [u8; 7],
         pres: [u8; 7],
     },
+    WaitingOobData {
+        preq: [u8; 7],
+        pres: [u8; 7],
+    },
     WaitingPairingConfirm(ConfirmPhaseData),
     WaitingPairingRandom {
         confirm_data: ConfirmPhaseData,
@@ -125,6 +129,15 @@ impl Pairing {
             // --- Command transitions ---
             (Self::WaitingPairingRequest, Input::Command(Command::PairingRequest, payload)) => {
                 Self::handle_pairing_request(payload, ops, pairing_data, rng)
+            }
+            (Self::WaitingOobData { preq, pres }, Input::Event(Event::OobDataReceived { local, .. })) => {
+                let tk = u128::from_le_bytes(local.random);
+                Ok(Self::WaitingPairingConfirm(ConfirmPhaseData {
+                    tk,
+                    preq,
+                    pres,
+                    local_nonce: 0,
+                }))
             }
             (Self::WaitingPassKeyInput { preq, pres, .. }, Input::Command(Command::PairingConfirm, payload)) => {
                 Self::store_confirm_bytes(payload, preq, pres)
@@ -421,6 +434,9 @@ impl Pairing {
             auth_req = auth_req.with_mitm();
         }
         pairing_data.local_features.security_properties = auth_req;
+        if ops.oob_available() {
+            pairing_data.local_features.use_oob = crate::security_manager::types::UseOutOfBand::Present;
+        }
         pairing_data.pairing_method =
             choose_legacy_pairing_method(pairing_data.peer_features, pairing_data.local_features);
         info!("[smp legacy] Pairing method {:?}", pairing_data.pairing_method);
@@ -438,7 +454,10 @@ impl Pairing {
         ops.try_send_packet(packet)?;
 
         match pairing_data.pairing_method {
-            PairingMethod::OutOfBand => Err(Error::Security(Reason::OobNotAvailable)),
+            PairingMethod::OutOfBand => {
+                ops.try_send_connection_event(ConnectionEvent::OobRequest)?;
+                Ok(Self::WaitingOobData { preq, pres })
+            }
             PairingMethod::PassKeyEntry { peripheral, .. } => {
                 if peripheral == PassKeyEntryAction::Display {
                     let tk = rng.sample(rand::distributions::Uniform::new_inclusive(0u32, 999999)) as u128;
@@ -658,7 +677,7 @@ mod tests {
 
     #[test]
     fn just_works() {
-        let mut ops: TestOps<10> = TestOps::default();
+        let mut ops: TestOps<10> = TestOps::new(0xDEAD);
         let mut pairing_data = make_default_pairing_data(
             Address::random([1, 2, 3, 4, 5, 6]),
             Address::random([7, 8, 9, 10, 11, 12]),
