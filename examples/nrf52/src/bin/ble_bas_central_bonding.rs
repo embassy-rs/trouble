@@ -98,5 +98,7 @@ async fn main(spawner: Spawner) {
         qspi.erase(0).await.unwrap();
     }
 
-    ble_bas_central_bonding::run(sdc, &mut rng_2, &mut qspi).await;
+    // MX25R64 has 4KB erase sectors
+    let storage_range = 0..(4096u32 * 2);
+    ble_bas_central_bonding::run(sdc, &mut rng_2, &mut qspi, storage_range).await;
 }
