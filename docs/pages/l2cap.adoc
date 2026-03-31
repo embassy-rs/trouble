@@ -55,7 +55,17 @@ The third argument is the PSM (Protocol/Service Multiplexer). Values in the rang
 
 === Peripheral (responder)
 
-The simplest approach accepts any incoming channel request on the given PSMs:
+PSMs must be registered on the `StackBuilder` before use:
+
+[source,rust]
+----
+let (stack, runner) = trouble_host::new(controller, &mut resources, &mut stack)
+    .set_random_address(address)
+    .register_l2cap_psm(0x0081)
+    .build();
+----
+
+The simplest approach accepts any incoming channel request:
 
 [source,rust]
 ----
@@ -65,14 +75,16 @@ let config = L2capChannelConfig {
     mtu: Some(PAYLOAD_LEN as u16),
     ..Default::default()
 };
-let mut ch = L2capChannel::accept(&stack, &conn, &[0x0081], &config).await.unwrap();
+let mut ch = L2capChannel::listen(&stack, &conn).accept(&config).await.unwrap();
 ----
 
-For more control, use `listen` to inspect the request before accepting:
+For more control, use `listen` to get a listener, then `next` to inspect each request before accepting:
 
 [source,rust]
 ----
-let pending = L2capChannel::listen(&stack, &conn, &[0x0081]).await.unwrap();
+let listener = L2capChannel::listen(&stack, &conn);
+
+let pending = listener.next().await.unwrap();
 
 // Inspect the incoming request
 let psm = pending.psm();
@@ -179,6 +191,7 @@ pub async fn run<C: Controller>(controller: C) {
         HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
+        .register_l2cap_psm(0x0081)
         .build();
     let mut runner = stack.runner();
     let mut peripheral = stack.peripheral();
@@ -205,9 +218,7 @@ pub async fn run<C: Controller>(controller: C) {
                 mtu: Some(PAYLOAD_LEN as u16),
                 ..Default::default()
             };
-            let mut ch = L2capChannel::accept(&stack, &conn, &[0x0081], &config)
-                .await
-                .unwrap();
+            let mut ch = L2capChannel::listen(&stack, &conn).accept(&config).await.unwrap();
 
             // Echo received data
             let mut buf = [0; PAYLOAD_LEN];

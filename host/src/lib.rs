@@ -748,6 +748,12 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
         self.host.as_mut().unwrap()
     }
 
+    /// Register an L2CAP PSM (Protocol/Service Multiplexer) for accepting incoming connections.
+    pub fn register_l2cap_psm(mut self, psm: u16) -> Self {
+        self.host().channels.register_psm(psm);
+        self
+    }
+
     /// Set the random address used by this host.
     pub fn set_random_address(mut self, address: Address) -> Self {
         self.host().address.replace(address);

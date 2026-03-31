@@ -76,36 +76,12 @@ impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
 }
 
 impl State {
-    /// Register PSMs for listening. Returns Err(AlreadyInUse) if any PSM is already registered.
-    fn register_psms(&mut self, psms: &[u16]) -> Result<(), Error> {
-        // Validate and check for overlap first
-        for &psm in psms {
-            if !(1..=255).contains(&psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
-                return Err(Error::InvalidValue);
-            } else if self.is_psm_registered(psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
-                return Err(Error::AlreadyInUse);
-            }
-        }
-
-        // All clear, set the bits
-        for &psm in psms {
-            if (1..=255).contains(&psm) {
-                let idx = psm as usize / 32;
-                let bit = psm as usize % 32;
-                self.registered_psms[idx] |= 1 << bit;
-            }
-        }
-        Ok(())
-    }
-
-    /// Unregister PSMs from listening.
-    fn unregister_psms(&mut self, psms: &[u16]) {
-        for &psm in psms {
-            if (1..=255).contains(&psm) {
-                let idx = psm as usize / 32;
-                let bit = psm as usize % 32;
-                self.registered_psms[idx] &= !(1 << bit);
-            }
+    /// Register a PSM for listening.
+    fn register_psm(&mut self, psm: u16) {
+        if (1..=255).contains(&psm) {
+            let idx = psm as usize / 32;
+            let bit = psm as usize % 32;
+            self.registered_psms[idx] |= 1 << bit;
         }
     }
 
@@ -151,6 +127,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
     fn channel_mut(&self, index: ChannelIndex) -> RefMut<'_, ChannelStorage<P::Packet>> {
         RefMut::map(self.channels.borrow_mut(), |x| &mut x[index.0 as usize])
+    }
+
+    pub(crate) fn register_psm(&self, psm: u16) {
+        self.state.borrow_mut().register_psm(psm);
     }
 
     fn next_request_id(&self) -> u8 {
@@ -271,34 +251,15 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(ChannelIndex(idx as u8))
     }
 
-    pub(crate) async fn accept<T: Controller>(
-        &'d self,
-        conn: ConnHandle,
-        psm: &[u16],
-        config: &L2capChannelConfig,
-        ble: &BleHost<'d, T, P>,
-    ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
-        let pending = self.listen(conn, psm, &ble.connections).await?;
-        let index = pending.into_index();
-        self.accept_pending(index, config, ble).await
-    }
-
-    /// Wait for an incoming L2CAP connection request matching the connection and PSM list.
+    /// Wait for an incoming L2CAP connection request on the given connection.
     ///
     /// Returns a [`L2capPendingConnection`] that can be inspected and then accepted or rejected.
-    /// Returns `Err(Error::AlreadyInUse)` if any of the requested PSMs already have a listener.
-    pub(crate) async fn listen(
+    /// PSMs must be registered globally via [`StackBuilder::register_l2cap_psm`].
+    pub(crate) async fn next_pending(
         &'d self,
         conn: ConnHandle,
-        psm: &[u16],
         connections: &ConnectionManager<'_, P>,
     ) -> Result<L2capPendingConnection<'d, P>, Error> {
-        self.state.borrow_mut().register_psms(psm)?;
-
-        let _guard = OnDrop::new(|| {
-            self.state.borrow_mut().unregister_psms(psm);
-        });
-
         poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
             state.accept_waker.register(cx.waker());
@@ -307,7 +268,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             let mut channels = self.channels.borrow_mut();
             for (idx, chan) in channels.iter_mut().enumerate() {
                 match chan.state {
-                    ChannelState::PeerConnecting(_) if chan.conn == Some(conn) && psm.contains(&chan.psm) => {
+                    ChannelState::PeerConnecting(_) if chan.conn == Some(conn) => {
                         if chan.refcount != 0 {
                             log_status(&channels, true);
                             panic!("unexpected refcount");
@@ -325,6 +286,31 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             Poll::Pending
         })
         .await
+    }
+
+    /// Reject all pending L2CAP connections on the given connection that have not yet been
+    /// returned by `next_pending` (refcount == 0). Sends a `NoResources` rejection response
+    /// for each, then closes the channel slot.
+    pub(crate) fn reject_all_pending(&self, conn: ConnHandle, manager: &ConnectionManager<'_, P>) {
+        let mut channels = self.channels.borrow_mut();
+        for chan in channels.iter_mut() {
+            if chan.conn == Some(conn) && chan.refcount == 0 {
+                if let ChannelState::PeerConnecting(identifier) = chan.state {
+                    if let Err(e) = Self::try_send_signal(
+                        conn,
+                        identifier,
+                        &LeCreditConnRes::reject(LeCreditConnResultCode::NoResources),
+                        manager,
+                    ) {
+                        warn!(
+                            "[l2cap] error rejecting pending channel connect request {:?}: {:?}",
+                            identifier, e
+                        );
+                    }
+                    chan.close();
+                }
+            }
+        }
     }
 
     /// Accept a pending L2CAP connection: negotiate parameters, transition to Connected, send success response.
@@ -758,6 +744,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             let mut state = self.state.borrow_mut();
             if !state.is_psm_registered(req.psm) {
                 Err(LeCreditConnResultCode::SpsmNotSupported)
+            } else if !manager.is_l2cap_listening(conn) {
+                Err(LeCreditConnResultCode::NoResources)
             } else {
                 match self.alloc(conn, Some(req.scid), |storage| {
                     storage.conn = Some(conn);

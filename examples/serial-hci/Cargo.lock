@@ -1129,24 +1129,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serial-hci"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "embassy-sync 0.7.2",
- "embassy-time",
- "embedded-io-adapters",
- "env_logger",
- "log",
- "rand",
- "rand_core 0.3.1",
- "tokio",
- "tokio-serial",
- "trouble-example-apps",
- "trouble-host",
-]
-
-[[package]]
 name = "serialport"
 version = "4.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1367,6 +1349,24 @@ dependencies = [
  "quote",
  "syn",
  "uuid",
+]
+
+[[package]]
+name = "trouble-serial-hci-examples"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embedded-io-adapters",
+ "env_logger",
+ "log",
+ "rand",
+ "rand_core 0.3.1",
+ "tokio",
+ "tokio-serial",
+ "trouble-example-apps",
+ "trouble-host",
 ]
 
 [[package]]
