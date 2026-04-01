@@ -8,6 +8,7 @@ use bt_hci::{FromHciBytes, WriteHci};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
+use embassy_time::with_timeout;
 
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
@@ -25,6 +26,9 @@ use crate::types::l2cap::{
 use crate::{config, BleHostError, Error, PacketPool};
 
 const BASE_ID: u16 = 0x40;
+
+/// BT Core Spec Vol 3, Part A, Section 6.2.1: RTX signaling timeout.
+const L2CAP_RTX_TIMEOUT: embassy_time::Duration = embassy_time::Duration::from_secs(30);
 
 struct State {
     next_req_id: u8,
@@ -458,9 +462,17 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let ondrop = OnDrop::new(|| self.channel_mut(idx).close());
 
         // Wait until a response is accepted.
-        let result = poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))).await;
+        let result = with_timeout(
+            L2CAP_RTX_TIMEOUT,
+            poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            warn!("[l2cap] RTX timeout waiting for LE Credit Based Connection Response");
+            Err(BleHostError::BleHost(Error::Timeout))
+        })?;
         ondrop.defuse();
-        result
+        Ok(result)
     }
 
     fn poll_created<T: Controller>(
