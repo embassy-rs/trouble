@@ -191,13 +191,19 @@ where
         connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
         channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
         advertise_handles: &'d RefCell<[AdvHandleState]>,
+        #[cfg(feature = "security")] bond_storage: &'d RefCell<heapless::VecView<crate::BondInformation>>,
     ) -> Self {
         Self {
             address: None,
             initialized: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             controller,
-            connections: ConnectionManager::new(connections, P::MTU as u16 - 4),
+            connections: ConnectionManager::new(
+                connections,
+                P::MTU as u16 - 4,
+                #[cfg(feature = "security")]
+                bond_storage,
+            ),
             channels: ChannelManager::new(channels),
             advertise_state: AdvState::new(advertise_handles),
             advertise_command_state: CommandState::new(),

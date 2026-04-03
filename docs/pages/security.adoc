@@ -191,5 +191,7 @@ stack.add_bond_information(bond)?;
 stack.remove_bond_information(identity)?;
 
 // List all bonds
-let bonds = stack.get_bond_information();
+stack.with_bond_information(|bonds| {
+    // ...
+});
 ----

@@ -81,11 +81,15 @@ pub(crate) struct ConnectionManager<'d, P: PacketPool> {
     connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "security")]
-    pub(crate) security_manager: SecurityManager<{ crate::BI_COUNT }>,
+    pub(crate) security_manager: SecurityManager<'d>,
 }
 
 impl<'d, P: PacketPool> ConnectionManager<'d, P> {
-    pub(crate) fn new(connections: &'d RefCell<[ConnectionStorage<P::Packet>]>, default_att_mtu: u16) -> Self {
+    pub(crate) fn new(
+        connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
+        default_att_mtu: u16,
+        #[cfg(feature = "security")] bond_storage: &'d RefCell<heapless::VecView<crate::BondInformation>>,
+    ) -> Self {
         Self {
             state: RefCell::new(State {
                 central_waker: WakerRegistration::new(),
@@ -97,7 +101,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             connections,
             outbound: Channel::new(),
             #[cfg(feature = "security")]
-            security_manager: SecurityManager::new(),
+            security_manager: SecurityManager::new(bond_storage),
         }
     }
 
@@ -1267,7 +1271,17 @@ pub(crate) mod tests {
 
     pub fn setup() -> &'static ConnectionManager<'static, DefaultPacketPool> {
         let storage: &RefCell<[_]> = Box::leak(Box::new(RefCell::new([const { ConnectionStorage::new() }; 3])));
-        let mgr = ConnectionManager::new(storage, 23);
+        #[cfg(feature = "security")]
+        let bond_storage: &RefCell<heapless::VecView<_>> = Box::leak(Box::new(RefCell::new(heapless::Vec::<
+            crate::security_manager::BondInformation,
+            10,
+        >::new())));
+        let mgr = ConnectionManager::new(
+            storage,
+            23,
+            #[cfg(feature = "security")]
+            bond_storage,
+        );
         Box::leak(Box::new(mgr))
     }
 

@@ -16,7 +16,7 @@ use bt_hci::param::{AddrKind, BdAddr, ConnHandle};
 use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
-use heapless::Vec;
+use heapless::{Vec, VecView};
 #[cfg(feature = "security")]
 use rand_core::{CryptoRng, RngCore};
 
@@ -29,9 +29,6 @@ pub use crate::security_manager::{
     BondInformation, IdentityResolvingKey, LongTermKey, OobData, Reason as PairingFailedReason,
 };
 pub use crate::types::capabilities::IoCapabilities;
-
-/// Number of bonding information stored
-pub(crate) const BI_COUNT: usize = 10; // Should be configurable
 
 mod fmt;
 
@@ -536,23 +533,38 @@ pub struct HostResources<
     const CONNS: usize,
     const CHANNELS: usize,
     const ADV_SETS: usize = 1,
+    const BONDS: usize = 10,
 > {
     host: MaybeUninit<ManuallyDrop<BleHost<'static, C, P>>>,
     connections: MaybeUninit<RefCell<[ConnectionStorage<P::Packet>; CONNS]>>,
     channels: MaybeUninit<RefCell<[ChannelStorage<P::Packet>; CHANNELS]>>,
     advertise_handles: MaybeUninit<RefCell<[AdvHandleState; ADV_SETS]>>,
+    #[cfg(feature = "security")]
+    bond_storage: MaybeUninit<RefCell<Vec<BondInformation, BONDS>>>,
 }
 
-impl<C: Controller, P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize> Default
-    for HostResources<C, P, CONNS, CHANNELS, ADV_SETS>
+impl<
+        C: Controller,
+        P: PacketPool,
+        const CONNS: usize,
+        const CHANNELS: usize,
+        const ADV_SETS: usize,
+        const BONDS: usize,
+    > Default for HostResources<C, P, CONNS, CHANNELS, ADV_SETS, BONDS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: Controller, P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>
-    HostResources<C, P, CONNS, CHANNELS, ADV_SETS>
+impl<
+        C: Controller,
+        P: PacketPool,
+        const CONNS: usize,
+        const CHANNELS: usize,
+        const ADV_SETS: usize,
+        const BONDS: usize,
+    > HostResources<C, P, CONNS, CHANNELS, ADV_SETS, BONDS>
 {
     /// Create a new instance of host resources.
     pub const fn new() -> Self {
@@ -561,6 +573,8 @@ impl<C: Controller, P: PacketPool, const CONNS: usize, const CHANNELS: usize, co
             connections: MaybeUninit::uninit(),
             channels: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
+            #[cfg(feature = "security")]
+            bond_storage: MaybeUninit::uninit(),
         }
     }
 }
@@ -574,9 +588,10 @@ pub fn new<
     const CONNS: usize,
     const CHANNELS: usize,
     const ADV_SETS: usize,
+    const BONDS: usize,
 >(
     controller: C,
-    resources: &'resources mut HostResources<C, P, CONNS, CHANNELS, ADV_SETS>,
+    resources: &'resources mut HostResources<C, P, CONNS, CHANNELS, ADV_SETS, BONDS>,
 ) -> StackBuilder<'resources, C, P> {
     let connections: &'resources RefCell<[ConnectionStorage<P::Packet>]> = resources
         .connections
@@ -590,6 +605,10 @@ pub fn new<
         .advertise_handles
         .write(RefCell::new([AdvHandleState::None; ADV_SETS]));
 
+    #[cfg(feature = "security")]
+    let bond_storage: &'resources RefCell<VecView<BondInformation>> =
+        resources.bond_storage.write(RefCell::new(Vec::new()));
+
     // SAFETY: Narrows the host field's lifetime from `'static` to `'resources`. Sound because:
     // - BleHost is covariant in 'd so the types differ only in a lifetime (identical layout).
     // - The returned StackBuilder/Stack exclusively borrows the HostResources for 'resources,
@@ -599,11 +618,14 @@ pub fn new<
     //   through the original `'static` type — even if the StackBuilder/Stack is mem::forget'd.
     let host: &'resources mut MaybeUninit<ManuallyDrop<BleHost<'resources, C, P>>> =
         unsafe { core::mem::transmute(&mut resources.host) };
+
     let host: &'resources mut ManuallyDrop<BleHost<'resources, C, P>> = host.write(ManuallyDrop::new(BleHost::new(
         controller,
         connections,
         channels,
         advertise_handles,
+        #[cfg(feature = "security")]
+        bond_storage,
     )));
 
     StackBuilder { host: Some(host) }
@@ -842,9 +864,9 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     }
 
     #[cfg(feature = "security")]
-    /// Get bonded devices
-    pub fn get_bond_information(&self) -> Vec<BondInformation, BI_COUNT> {
-        self.host.connections.security_manager.get_bond_information()
+    /// Access bonded devices
+    pub fn with_bond_information<R>(&self, f: impl FnOnce(&[BondInformation]) -> R) -> R {
+        f(&self.host.connections.security_manager.get_bond_information())
     }
 
     /// Get a connection by its peer address
