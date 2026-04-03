@@ -1636,7 +1636,7 @@ mod tests {
         let ble = MockController::new();
 
         let builder = crate::new(ble, &mut resources);
-        let ble = builder.host;
+        let ble = &builder.host;
 
         let conn = ConnHandle::new(33);
         ble.connections
@@ -1655,13 +1655,13 @@ mod tests {
             })
             .unwrap();
 
-        let chan = ble.channels.poll_created(conn, idx, &ble, None);
+        let chan = ble.channels.poll_created(conn, idx, ble, None);
         assert!(matches!(chan, Poll::Pending));
 
         ble.connections.disconnected(conn, Status::UNSPECIFIED).unwrap();
         ble.channels.disconnected(conn).unwrap();
 
-        let chan = ble.channels.poll_created(conn, idx, &ble, None);
+        let chan = ble.channels.poll_created(conn, idx, ble, None);
         assert!(matches!(
             chan,
             Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))

@@ -589,14 +589,38 @@ pub fn new<
         .advertise_handles
         .write(RefCell::new([AdvHandleState::None; ADV_SETS]));
 
-    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles);
+    // SAFETY: Narrows the host field's lifetime from `'static` to `'resources`. Sound because:
+    // - BleHost is covariant in 'd so the types differ only in a lifetime (identical layout).
+    // - The returned Stack exclusively borrows the HostResources for 'resources,
+    //   preventing re-entry into this function while the narrowed-lifetime data is live.
+    // - The host field is private, MaybeUninit (no auto-drop), and only ever accessed by this
+    //   function (which overwrites via write()), so the narrowed lifetime can never be observed
+    //   through the original `'static` type — even if the StackBuilder/Stack is mem::forget'd.
+    let host: &'resources mut MaybeUninit<ManuallyDrop<BleHost<'resources, C, P>>> =
+        unsafe { core::mem::transmute(&mut resources.host) };
+    let host: &'resources mut ManuallyDrop<BleHost<'resources, C, P>> = host.write(ManuallyDrop::new(BleHost::new(
+        controller,
+        connections,
+        channels,
+        advertise_handles,
+    )));
 
     Stack { host }
 }
 
 /// Contains the host stack
 pub struct Stack<'stack, C, P: PacketPool> {
-    host: BleHost<'stack, C, P>,
+    host: &'stack mut ManuallyDrop<BleHost<'stack, C, P>>,
+}
+
+impl<'stack, C, P: PacketPool> Drop for Stack<'stack, C, P> {
+    fn drop(&mut self) {
+        // SAFETY: host was fully initialized in new() and has not been dropped.
+        // Stack is the sole owner responsible for dropping BleHost.
+        // All shared &BleHost references (in Runner, Central, etc.) have already
+        // been dropped (reverse drop order), so no aliasing conflict.
+        unsafe { ManuallyDrop::drop(self.host) }
+    }
 }
 
 /// Host components.
@@ -614,7 +638,7 @@ pub struct Host<'stack, C, P: PacketPool> {
 
 impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Set the random address used by this host.
-    pub fn set_random_address(mut self, address: Address) -> Self {
+    pub fn set_random_address(self, address: Address) -> Self {
         self.host.address.replace(address);
         #[cfg(feature = "security")]
         self.host.connections.security_manager.set_local_address(address);
@@ -661,7 +685,7 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     }
 
     /// Build the stack.
-    pub fn build(&'stack self) -> Host<'stack, C, P> {
+    pub fn build(&self) -> Host<'_, C, P> {
         #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
         {
             if !self.host.connections.security_manager.get_random_generator_seeded() {
@@ -672,10 +696,10 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         }
         Host {
             #[cfg(feature = "central")]
-            central: Central::new(&self.host),
+            central: Central::new(self.host),
             #[cfg(feature = "peripheral")]
-            peripheral: Peripheral::new(&self.host),
-            runner: Runner::new(&self.host),
+            peripheral: Peripheral::new(self.host),
+            runner: Runner::new(self.host),
         }
     }
 
@@ -754,17 +778,17 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     }
 
     /// Get a connection by its peer address
-    pub fn get_connection_by_peer_address(&'stack self, peer_address: Address) -> Option<Connection<'stack, P>> {
+    pub fn get_connection_by_peer_address(&self, peer_address: Address) -> Option<Connection<'_, P>> {
         self.host.connections.get_connection_by_peer_address(peer_address)
     }
 
     /// Get a connection by its handle
-    pub fn get_connected_handle(&'stack self, handle: ConnHandle) -> Option<Connection<'stack, P>> {
+    pub fn get_connected_handle(&self, handle: ConnHandle) -> Option<Connection<'_, P>> {
         self.host.connections.get_connected_handle(handle)
     }
 
     /// Iterate over all currently connected connections.
-    pub fn connections(&'stack self) -> connection_manager::ConnectedIter<'stack, P> {
+    pub fn connections(&self) -> connection_manager::ConnectedIter<'_, P> {
         self.host.connections.connections()
     }
 }

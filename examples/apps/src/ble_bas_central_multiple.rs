@@ -28,7 +28,7 @@ where
     let _ = join3(runner.run(), fut1, fut2).await;
 }
 
-async fn scan<'a, C: Controller, P: PacketPool>(stack: &'a Stack<'a, C, P>, addr: [u8; 6]) {
+async fn scan<'a, C: Controller, P: PacketPool>(stack: &'a Stack<'_, C, P>, addr: [u8; 6]) {
     let Host { mut central, .. } = stack.build();
     let target: Address = Address::random(addr);
 

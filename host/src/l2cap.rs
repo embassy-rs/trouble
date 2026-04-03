@@ -122,11 +122,11 @@ impl<'d, P: PacketPool> L2capPendingConnection<'d, P> {
     /// Accept the connection, negotiate parameters, and return an established channel.
     pub async fn accept<T: Controller>(
         self,
-        stack: &'d Stack<'d, T, P>,
+        stack: &'d Stack<'_, T, P>,
         config: &L2capChannelConfig,
     ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
         let index = self.into_index();
-        stack.host.channels.accept_pending(index, config, &stack.host).await
+        stack.host.channels.accept_pending(index, config, stack.host).await
     }
 
     /// Reject the connection with the given result code.
@@ -136,7 +136,7 @@ impl<'d, P: PacketPool> L2capPendingConnection<'d, P> {
         result: LeCreditConnResultCode,
     ) -> Result<(), BleHostError<T::Error>> {
         let index = self.index.take().unwrap();
-        stack.host.channels.reject_pending(index, result, &stack.host).await
+        stack.host.channels.reject_pending(index, result, stack.host).await
     }
 }
 
@@ -212,7 +212,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         stack
             .host
             .channels
-            .send(self.index, buf, p_buf.as_mut(), &stack.host)
+            .send(self.index, buf, p_buf.as_mut(), stack.host)
             .await
     }
 
@@ -231,7 +231,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         stack
             .host
             .channels
-            .try_send(self.index, buf, p_buf.as_mut(), &stack.host)
+            .try_send(self.index, buf, p_buf.as_mut(), stack.host)
     }
 
     /// Receive data on this channel and copy it into the buffer.
@@ -242,7 +242,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         stack: &Stack<'_, T, P>,
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
-        stack.host.channels.receive(self.index, buf, &stack.host).await
+        stack.host.channels.receive(self.index, buf, stack.host).await
     }
 
     /// Receive the next SDU available on this channel.
@@ -252,7 +252,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         &mut self,
         stack: &Stack<'_, T, P>,
     ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
-        stack.host.channels.receive_sdu(self.index, &stack.host).await
+        stack.host.channels.receive_sdu(self.index, stack.host).await
     }
 
     /// Read metrics of the l2cap channel.
@@ -266,7 +266,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
     /// Returns a [`L2capPendingConnection`] that can be inspected, then accepted or rejected.
     /// Returns `Err(Error::AlreadyInUse)` if any of the requested PSMs already have a listener.
     pub async fn listen(
-        stack: &'d Stack<'d, impl Controller, P>,
+        stack: &'d Stack<'_, impl Controller, P>,
         connection: &Connection<'_, P>,
         psm: &[u16],
     ) -> Result<L2capPendingConnection<'d, P>, Error> {
@@ -279,18 +279,18 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
 
     /// Await an incoming connection request matching the list of PSM and accept it.
     pub async fn accept<T: Controller>(
-        stack: &'d Stack<'d, T, P>,
+        stack: &'d Stack<'_, T, P>,
         connection: &Connection<'_, P>,
         psm: &[u16],
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>> {
         let handle = connection.handle();
-        stack.host.channels.accept(handle, psm, config, &stack.host).await
+        stack.host.channels.accept(handle, psm, config, stack.host).await
     }
 
     /// Create a new connection request with the provided PSM.
     pub async fn create<T: Controller>(
-        stack: &'d Stack<'d, T, P>,
+        stack: &'d Stack<'_, T, P>,
         connection: &Connection<'_, P>,
         psm: u16,
         config: &L2capChannelConfig,
@@ -298,7 +298,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         stack
             .host
             .channels
-            .create(connection.handle(), psm, config, &stack.host)
+            .create(connection.handle(), psm, config, stack.host)
             .await
     }
 
@@ -359,7 +359,7 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
         stack: &Stack<'_, T, P>,
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
-        stack.host.channels.receive(self.index, buf, &stack.host).await
+        stack.host.channels.receive(self.index, buf, stack.host).await
     }
 
     /// Receive the next SDU available on this channel.
@@ -369,7 +369,7 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
         &mut self,
         stack: &Stack<'_, T, P>,
     ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
-        stack.host.channels.receive_sdu(self.index, &stack.host).await
+        stack.host.channels.receive_sdu(self.index, stack.host).await
     }
 
     /// Read metrics of the l2cap channel.
@@ -427,7 +427,7 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
         stack
             .host
             .channels
-            .send(self.index, buf, p_buf.as_mut(), &stack.host)
+            .send(self.index, buf, p_buf.as_mut(), stack.host)
             .await
     }
 
@@ -446,7 +446,7 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
         stack
             .host
             .channels
-            .try_send(self.index, buf, p_buf.as_mut(), &stack.host)
+            .try_send(self.index, buf, p_buf.as_mut(), stack.host)
     }
 
     /// Read metrics of the l2cap channel.

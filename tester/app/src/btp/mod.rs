@@ -48,15 +48,15 @@ pub(crate) struct BtpTransport<R, W> {
 }
 
 /// Mutable GAP state tracked across both BTP phases.
-struct GapState<'stack, C, P: PacketPool> {
+struct GapState<'a, 'b, C, P: PacketPool> {
     current_settings: GapSettings,
     filter_accept_list: heapless::Vec<Address, 1>,
-    stack: &'stack Stack<'stack, C, P>,
-    scan_mode: &'stack Cell<ScanMode>,
+    stack: &'a Stack<'b, C, P>,
+    scan_mode: &'a Cell<ScanMode>,
     /// Saved IO capability (for SET_MITM toggling).
     io_capability: IoCapabilities,
     /// Shared OOB state.
-    oob: &'stack crate::OobState,
+    oob: &'a crate::OobState,
 }
 
 /// Result of a BTP command handler, supporting immediate, error, and forwarded outcomes.
@@ -89,9 +89,9 @@ impl<T> From<Result<T, BtpStatus>> for HandlerResult<T> {
 }
 
 /// Result of the pre-server BTP phase.
-pub(crate) struct PreServerResult<'stack, R, W, C: crate::Controller, P: PacketPool> {
+pub(crate) struct PreServerResult<'a, 'b, R, W, C: crate::Controller, P: PacketPool> {
     transport: BtpTransport<R, W>,
-    gap: GapState<'stack, C, P>,
+    gap: GapState<'a, 'b, C, P>,
 }
 
 /// Run the pre-server BTP phase.
@@ -99,15 +99,15 @@ pub(crate) struct PreServerResult<'stack, R, W, C: crate::Controller, P: PacketP
 /// Handles Core, GATT building, and GAP settings commands. Returns when
 /// `StartServer` is received or a runtime command triggers auto-finalize.
 /// The packet retains the unprocessed command for `btp::run` to handle.
-pub(crate) async fn run_pre_server<'stack, R: Read, W: Write, C, P: PacketPool>(
+pub(crate) async fn run_pre_server<'a, 'b, R: Read, W: Write, C, P: PacketPool>(
     transport: BtpTransport<R, W>,
     config: &BtpConfig<'_>,
-    stack: &'stack Stack<'stack, C, P>,
-    scan_mode: &'stack Cell<ScanMode>,
-    oob: &'stack crate::OobState,
-    table: &mut AttributeTable<'stack, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
+    stack: &'a Stack<'b, C, P>,
+    scan_mode: &'a Cell<ScanMode>,
+    oob: &'a crate::OobState,
+    table: &mut AttributeTable<'b, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
     packet: &mut BtpPacket,
-) -> Result<Option<PreServerResult<'stack, R, W, C, P>>, Error>
+) -> Result<Option<PreServerResult<'a, 'b, R, W, C, P>>, Error>
 where
     C: crate::Controller,
 {
@@ -251,7 +251,7 @@ async fn read_with_events<R: Read, W: Write, C, P: PacketPool>(
     packet: &mut BtpPacket,
     reader: &mut R,
     events: &DynamicReceiver<'_, Event>,
-    gap: &mut GapState<'_, C, P>,
+    gap: &mut GapState<'_, '_, C, P>,
     writer: &mut W,
 ) -> Result<(), Error>
 where
@@ -271,11 +271,11 @@ where
     }
 }
 
-pub(crate) async fn run<'stack, R: Read, W: Write, C, P: PacketPool>(
-    pre_server_result: PreServerResult<'stack, R, W, C, P>,
+pub(crate) async fn run<'a, 'b, R: Read, W: Write, C, P: PacketPool>(
+    pre_server_result: PreServerResult<'a, 'b, R, W, C, P>,
     config: &BtpConfig<'_>,
     server: &crate::Server<'_, P>,
-    stack: &'stack Stack<'stack, C, P>,
+    stack: &'a Stack<'b, C, P>,
     events: DynamicReceiver<'_, Event>,
     channels: &CommandChannels<'_>,
     packet: &mut BtpPacket,
@@ -616,9 +616,9 @@ fn handle_core(cmd: CoreCommand) -> CoreResponse {
 /// Returns `Some(result)` if the command was a settings command, `None` for runtime commands.
 fn handle_gap_settings<'a, C, P: PacketPool>(
     header: BtpHeader,
-    cmd: &GapCommand<'a>,
+    cmd: &GapCommand<'_>,
     config: &'a BtpConfig<'a>,
-    gap: &mut GapState<'_, C, P>,
+    gap: &mut GapState<'_, '_, C, P>,
 ) -> Result<GapResponse<'a>, BtpStatus>
 where
     C: crate::Controller,
@@ -743,11 +743,11 @@ where
 ///
 /// Settings commands are delegated to [`handle_gap_settings`]; this function
 /// handles the remaining commands that require async operations or forwarding.
-async fn handle_gap<'a, 'stack, C, P: PacketPool>(
+async fn handle_gap<'a, C, P: PacketPool>(
     header: BtpHeader,
-    cmd: &GapCommand<'a>,
+    cmd: &GapCommand<'_>,
     config: &'a BtpConfig<'a>,
-    gap: &mut GapState<'stack, C, P>,
+    gap: &mut GapState<'_, '_, C, P>,
     channels: &CommandChannels<'_>,
 ) -> HandlerResult<GapResponse<'a>>
 where
@@ -929,10 +929,10 @@ where
 ///
 /// Building commands return errors; StartServer returns the cached table_len.
 /// Client commands are forwarded to the gatt_client task.
-async fn handle_gatt<'a, 's, C: crate::Controller, P: PacketPool>(
+async fn handle_gatt<'a, C: crate::Controller, P: PacketPool>(
     cmd: GattCommand<'a>,
     server: &crate::Server<'_, P>,
-    stack: &'s Stack<'s, C, P>,
+    stack: &Stack<'_, C, P>,
     channels: &CommandChannels<'_>,
 ) -> HandlerResult<GattResponse> {
     use HandlerResult::*;
