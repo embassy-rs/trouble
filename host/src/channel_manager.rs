@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::{Ref, RefCell, RefMut};
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
@@ -26,9 +26,8 @@ use crate::{config, BleHostError, Error, PacketPool};
 
 const BASE_ID: u16 = 0x40;
 
-struct State<'d, P> {
+struct State {
     next_req_id: u8,
-    channels: &'d mut [ChannelStorage<P>],
     accept_waker: WakerRegistration,
     create_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
@@ -38,7 +37,8 @@ struct State<'d, P> {
 
 /// Channel manager for L2CAP channels used directly by clients.
 pub struct ChannelManager<'d, P: PacketPool> {
-    state: RefCell<State<'d, P::Packet>>,
+    state: RefCell<State>,
+    channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
 }
 
 pub(crate) struct PacketChannel<P, const QLEN: usize> {
@@ -75,7 +75,7 @@ impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
     }
 }
 
-impl<P> State<'_, P> {
+impl State {
     /// Register PSMs for listening. Returns Err(AlreadyInUse) if any PSM is already registered.
     fn register_psms(&mut self, psms: &[u16]) -> Result<(), Error> {
         // Validate and check for overlap first
@@ -120,13 +120,6 @@ impl<P> State<'_, P> {
         self.registered_psms[idx] & (1 << bit) != 0
     }
 
-    fn print(&self, verbose: bool) {
-        for (idx, storage) in self.channels.iter().enumerate() {
-            if verbose || storage.state != ChannelState::Disconnected {
-                debug!("[l2cap][idx = {}] {:?}", idx, storage);
-            }
-        }
-    }
     fn next_request_id(&mut self) -> u8 {
         // 0 is an invalid identifier
         if self.next_req_id == 0 {
@@ -136,59 +129,28 @@ impl<P> State<'_, P> {
         self.next_req_id = self.next_req_id.wrapping_add(1);
         next
     }
-
-    fn inc_ref(&mut self, index: ChannelIndex) {
-        let state = &mut self.channels[index.0 as usize];
-        state.refcount = unwrap!(state.refcount.checked_add(1), "Too many references to the same channel");
-    }
-
-    fn alloc<F: FnOnce(&mut ChannelStorage<P>)>(
-        &mut self,
-        conn: ConnHandle,
-        peer_cid: Option<u16>,
-        f: F,
-    ) -> Result<ChannelIndex, Error> {
-        // Check that the peer CID isn't already in use on this connection.
-        if let Some(peer_cid) = peer_cid {
-            let in_use = self.channels.iter().any(|s| {
-                s.conn == Some(conn) && s.peer_cid == peer_cid && !matches!(s.state, ChannelState::Disconnected)
-            });
-            if in_use {
-                return Err(Error::L2capConnectError(LeCreditConnResultCode::ScidAlreadyAllocated));
-            }
-        }
-
-        let idx = self
-            .channels
-            .iter()
-            .position(|s| s.state == ChannelState::Disconnected && s.refcount == 0)
-            .ok_or(Error::NoChannelAvailable)?;
-
-        let storage = &mut self.channels[idx];
-        storage.inbound.clear();
-        #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
-        storage.reassembly.clear();
-        storage.conn = Some(conn);
-        storage.cid = BASE_ID + idx as u16;
-        storage.peer_cid = peer_cid.unwrap_or(0);
-        f(storage);
-
-        Ok(ChannelIndex(idx as u8))
-    }
 }
 
 impl<'d, P: PacketPool> ChannelManager<'d, P> {
-    pub fn new(channels: &'d mut [ChannelStorage<P::Packet>]) -> Self {
+    pub fn new(channels: &'d RefCell<[ChannelStorage<P::Packet>]>) -> Self {
         Self {
             state: RefCell::new(State {
                 next_req_id: 0,
-                channels,
                 accept_waker: WakerRegistration::new(),
                 create_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
                 registered_psms: [0; 8],
             }),
+            channels,
         }
+    }
+
+    fn channel(&self, index: ChannelIndex) -> Ref<'_, ChannelStorage<P::Packet>> {
+        Ref::map(self.channels.borrow(), |x| &x[index.0 as usize])
+    }
+
+    fn channel_mut(&self, index: ChannelIndex) -> RefMut<'_, ChannelStorage<P::Packet>> {
+        RefMut::map(self.channels.borrow_mut(), |x| &mut x[index.0 as usize])
     }
 
     fn next_request_id(&self) -> u8 {
@@ -196,44 +158,35 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     pub(crate) fn psm(&self, index: ChannelIndex) -> u16 {
-        self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
-            chan.psm
-        })
+        self.channel(index).psm
     }
 
     pub(crate) fn mtu(&self, index: ChannelIndex) -> u16 {
-        self.with_mut(|state| state.channels[index.0 as usize].mtu)
+        self.channel(index).mtu
     }
 
     pub(crate) fn mps(&self, index: ChannelIndex) -> u16 {
-        self.with_mut(|state| state.channels[index.0 as usize].mps)
+        self.channel(index).mps
     }
 
     pub(crate) fn peer_mtu(&self, index: ChannelIndex) -> u16 {
-        self.with_mut(|state| state.channels[index.0 as usize].peer_mtu)
+        self.channel(index).peer_mtu
     }
 
     pub(crate) fn peer_mps(&self, index: ChannelIndex) -> u16 {
-        self.with_mut(|state| state.channels[index.0 as usize].peer_mps)
+        self.channel(index).peer_mps
     }
 
     pub(crate) fn disconnect(&self, index: ChannelIndex) {
-        self.with_mut(|state| {
-            state.channels[index.0 as usize].disconnect();
-            state.disconnect_waker.wake();
-        })
+        self.channel_mut(index).disconnect();
+        self.state.borrow_mut().disconnect_waker.wake();
     }
 
     pub(crate) fn disconnect_by_cid(&self, channel: u16) {
-        if channel >= BASE_ID {
-            let chan = (channel - BASE_ID) as usize;
-            self.with_mut(|state| {
-                if chan < state.channels.len() {
-                    state.channels[chan].disconnect();
-                    state.disconnect_waker.wake();
-                }
-            })
+        if channel >= BASE_ID && usize::from(channel - BASE_ID) < self.channels.as_ptr().len() {
+            let index = ChannelIndex((channel - BASE_ID) as u8);
+            self.channel_mut(index).disconnect();
+            self.state.borrow_mut().disconnect_waker.wake();
         }
     }
 
@@ -248,22 +201,15 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         limit: impl FnOnce(&ChannelStorage<P::Packet>) -> u16,
         label: &str,
     ) -> Result<(), Error> {
-        if channel < BASE_ID {
+        if channel < BASE_ID || usize::from(channel - BASE_ID) >= self.channels.as_ptr().len() {
             return Err(Error::InvalidChannelId);
         }
-
-        let chan = (channel - BASE_ID) as usize;
-        self.with_mut(|state| {
-            if chan >= state.channels.len() {
-                return Err(Error::InvalidChannelId);
-            }
-
-            let storage = &mut state.channels[chan];
-            let max = limit(storage);
-            storage
-                .check_len(actual, max, label)
-                .inspect_err(|_| state.disconnect_waker.wake())
-        })
+        let index = ChannelIndex((channel - BASE_ID) as u8);
+        let mut storage = self.channel_mut(index);
+        let max = limit(&storage);
+        storage
+            .check_len(actual, max, label)
+            .inspect_err(|_| self.state.borrow_mut().disconnect_waker.wake())
     }
 
     pub(crate) fn check_sdu_len(&self, channel: u16, sdu_len: u16) -> Result<(), Error> {
@@ -275,8 +221,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     pub(crate) fn disconnected(&self, conn: ConnHandle) -> Result<(), Error> {
-        let mut state = self.state.borrow_mut();
-        for storage in state.channels.iter_mut() {
+        for storage in self.channels.borrow_mut().iter_mut() {
             if Some(conn) == storage.conn {
                 let _ = storage.inbound.close();
                 #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
@@ -286,6 +231,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 storage.close();
             }
         }
+        let mut state = self.state.borrow_mut();
         state.accept_waker.wake();
         state.create_waker.wake();
         Ok(())
@@ -297,7 +243,32 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         peer_cid: Option<u16>,
         f: F,
     ) -> Result<ChannelIndex, Error> {
-        self.state.borrow_mut().alloc(conn, peer_cid, f)
+        // Check that the peer CID isn't already in use on this connection.
+        let mut channels = self.channels.borrow_mut();
+        if let Some(peer_cid) = peer_cid {
+            let in_use = channels.iter().any(|s| {
+                s.conn == Some(conn) && s.peer_cid == peer_cid && !matches!(s.state, ChannelState::Disconnected)
+            });
+            if in_use {
+                return Err(Error::L2capConnectError(LeCreditConnResultCode::ScidAlreadyAllocated));
+            }
+        }
+
+        let idx = channels
+            .iter()
+            .position(|s| s.state == ChannelState::Disconnected && s.refcount == 0)
+            .ok_or(Error::NoChannelAvailable)?;
+
+        let storage = &mut channels[idx];
+        storage.inbound.clear();
+        #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+        storage.reassembly.clear();
+        storage.conn = Some(conn);
+        storage.cid = BASE_ID + idx as u16;
+        storage.peer_cid = peer_cid.unwrap_or(0);
+        f(storage);
+
+        Ok(ChannelIndex(idx as u8))
     }
 
     pub(crate) async fn accept<T: Controller>(
@@ -331,15 +302,18 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
             state.accept_waker.register(cx.waker());
-            for (idx, chan) in state.channels.iter_mut().enumerate() {
+            core::mem::drop(state);
+
+            let mut channels = self.channels.borrow_mut();
+            for (idx, chan) in channels.iter_mut().enumerate() {
                 match chan.state {
                     ChannelState::PeerConnecting(_) if chan.conn == Some(conn) && psm.contains(&chan.psm) => {
                         if chan.refcount != 0 {
-                            state.print(true);
+                            log_status(&channels, true);
                             panic!("unexpected refcount");
                         }
+                        chan.inc_ref();
                         let index = ChannelIndex(idx as u8);
-                        state.inc_ref(index);
                         return Poll::Ready(Ok(L2capPendingConnection::new(index, self, conn)));
                     }
                     _ => {}
@@ -374,8 +348,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
 
         let (conn, req_id, mps, mtu, cid, credits) = {
-            let mut state = self.state.borrow_mut();
-            let chan = &mut state.channels[index.0 as usize];
+            let mut chan = self.channel_mut(index);
             let req_id = match chan.state {
                 ChannelState::PeerConnecting(req_id) => req_id,
                 _ => return Err(Error::NotFound.into()),
@@ -422,17 +395,17 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         result: LeCreditConnResultCode,
         ble: &BleHost<'_, T, P>,
     ) -> Result<(), BleHostError<T::Error>> {
-        let (conn, req_id) = self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
+        let (conn, req_id) = {
+            let mut chan = self.channel_mut(index);
             let req_id = match chan.state {
                 ChannelState::PeerConnecting(req_id) => req_id,
-                _ => return Err(Error::NotFound),
+                _ => return Err(Error::NotFound.into()),
             };
             let conn = chan.conn.unwrap();
             chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
             chan.close();
-            Ok((conn, req_id))
-        })?;
+            (conn, req_id)
+        };
 
         let mut tx = [0; 18];
         ble.l2cap_signal(conn, req_id, &LeCreditConnRes::reject(result), &mut tx[..])
@@ -442,13 +415,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
     /// Drop a pending connection without sending a response (peer will time out).
     pub(crate) fn drop_pending(&self, index: ChannelIndex) {
-        self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
-            if matches!(chan.state, ChannelState::PeerConnecting(_)) {
-                chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
-                chan.close();
-            }
-        });
+        let mut chan = self.channel_mut(index);
+        if matches!(chan.state, ChannelState::PeerConnecting(_)) {
+            chan.refcount = unwrap!(chan.refcount.checked_sub(1), "bug: dropping a channel with refcount 0");
+            chan.close();
+        }
     }
 
     pub(crate) async fn create<T: Controller>(
@@ -498,9 +469,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         ble.l2cap_signal(conn, req_id, &command, &mut tx[..]).await?;
 
         // Clean up the channel slot if the future is dropped before completion.
-        let ondrop = OnDrop::new(|| {
-            self.state.borrow_mut().channels[idx.0 as usize].close();
-        });
+        let ondrop = OnDrop::new(|| self.channel_mut(idx).close());
 
         // Wait until a response is accepted.
         let result = poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))).await;
@@ -515,11 +484,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         ble: &BleHost<'_, T, P>,
         cx: Option<&mut Context<'_>>,
     ) -> Poll<Result<L2capChannel<'d, P>, BleHostError<T::Error>>> {
-        let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
-            state.create_waker.register(cx.waker());
+            self.state.borrow_mut().create_waker.register(cx.waker());
         }
-        let storage = &mut state.channels[idx.0 as usize];
+        let mut storage = self.channel_mut(idx);
         // Check if we've been disconnected while waiting
         if !ble.connections.is_handle_connected(conn) {
             return Poll::Ready(Err(Error::Disconnected.into()));
@@ -538,11 +506,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             }
             ChannelState::Connected => {
                 if storage.refcount != 0 {
-                    state.print(true);
+                    core::mem::drop(storage);
+                    self.log_status(true);
                     panic!("unexpected refcount");
                 }
                 assert_eq!(storage.refcount, 0);
-                state.inc_ref(idx);
+                storage.inc_ref();
                 return Poll::Ready(Ok(L2capChannel::new(idx, self)));
             }
             _ => {}
@@ -551,19 +520,52 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     pub(crate) fn received(&self, channel: u16, credits: u16) -> Result<(), Error> {
-        if channel < BASE_ID {
+        if channel < BASE_ID || usize::from(channel - BASE_ID) >= self.channels.as_ptr().len() {
             return Err(Error::InvalidChannelId);
         }
 
-        let chan = (channel - BASE_ID) as usize;
-        self.with_mut(|state| {
-            if chan >= state.channels.len() {
-                return Err(Error::InvalidChannelId);
+        let index = ChannelIndex((channel - BASE_ID) as u8);
+        let mut storage = self.channel_mut(index);
+        match storage.state {
+            ChannelState::Connected if channel == storage.cid => {
+                if storage.flow_control.available() == 0 {
+                    #[cfg(feature = "channel-metrics")]
+                    storage.metrics.blocked_receive();
+                    // NOTE: This will trigger closing of the link, which might be a bit
+                    // too strict. But it should be controllable via the credits given,
+                    // which the remote should respect.
+                    debug!("[l2cap][cid = {}] no credits available", channel);
+                    return Err(Error::OutOfMemory);
+                }
+                storage.flow_control.confirm_received(1);
+                #[cfg(feature = "channel-metrics")]
+                storage.metrics.received(1);
+                return Ok(());
             }
+            _ => {}
+        }
+        Err(Error::NotFound)
+    }
 
-            let storage = &mut state.channels[chan];
-            match storage.state {
-                ChannelState::Connected if channel == storage.cid => {
+    pub(crate) fn dispatch(&self, channel: u16, pdu: Pdu<P::Packet>) -> Result<(), Error> {
+        if channel < BASE_ID || usize::from(channel - BASE_ID) >= self.channels.as_ptr().len() {
+            return Err(Error::InvalidChannelId);
+        }
+
+        let index = ChannelIndex((channel - BASE_ID) as u8);
+        #[allow(unused_mut)]
+        let mut storage = self.channel_mut(index);
+
+        let mut sdu = None;
+        match storage.state {
+            ChannelState::Connected if channel == storage.cid => {
+                // Reassembly and accounting is already done
+                #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
+                sdu.replace(pdu);
+
+                // Reassembly is done in the channel
+                #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+                {
                     if storage.flow_control.available() == 0 {
                         #[cfg(feature = "channel-metrics")]
                         storage.metrics.blocked_receive();
@@ -573,97 +575,54 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         debug!("[l2cap][cid = {}] no credits available", channel);
                         return Err(Error::OutOfMemory);
                     }
+
                     storage.flow_control.confirm_received(1);
+
                     #[cfg(feature = "channel-metrics")]
                     storage.metrics.received(1);
-                    return Ok(());
-                }
-                _ => {}
-            }
-            Err(Error::NotFound)
-        })
-    }
+                    if !storage.reassembly.in_progress() {
+                        let (first, _) = pdu.as_ref().split_at(2);
+                        let sdu_len: u16 = u16::from_le_bytes([first[0], first[1]]);
 
-    pub(crate) fn dispatch(&self, channel: u16, pdu: Pdu<P::Packet>) -> Result<(), Error> {
-        if channel < BASE_ID {
-            return Err(Error::InvalidChannelId);
-        }
+                        storage
+                            .check_sdu_len(sdu_len)
+                            .inspect_err(|_| self.state.borrow_mut().disconnect_waker.wake())?;
 
-        let chan = (channel - BASE_ID) as usize;
-        self.with_mut(|state| {
-            if chan >= state.channels.len() {
-                return Err(Error::InvalidChannelId);
-            }
+                        let len = pdu.len() - 2;
 
-            let mut sdu = None;
-            let storage = &mut state.channels[chan];
-            match storage.state {
-                ChannelState::Connected if channel == storage.cid => {
-                    // Reassembly and accounting is already done
-                    #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
-                    sdu.replace(pdu);
+                        let mut packet = pdu.into_inner();
+                        packet.as_mut().rotate_left(2);
 
-                    // Reassembly is done in the channel
-                    #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
-                    {
-                        if storage.flow_control.available() == 0 {
-                            #[cfg(feature = "channel-metrics")]
-                            storage.metrics.blocked_receive();
-                            // NOTE: This will trigger closing of the link, which might be a bit
-                            // too strict. But it should be controllable via the credits given,
-                            // which the remote should respect.
-                            debug!("[l2cap][cid = {}] no credits available", channel);
-                            return Err(Error::OutOfMemory);
-                        }
-
-                        storage.flow_control.confirm_received(1);
-
-                        #[cfg(feature = "channel-metrics")]
-                        storage.metrics.received(1);
-                        if !storage.reassembly.in_progress() {
-                            let (first, _) = pdu.as_ref().split_at(2);
-                            let sdu_len: u16 = u16::from_le_bytes([first[0], first[1]]);
-
-                            storage
-                                .check_sdu_len(sdu_len)
-                                .inspect_err(|_| state.disconnect_waker.wake())?;
-
-                            let len = pdu.len() - 2;
-
-                            let mut packet = pdu.into_inner();
-                            packet.as_mut().rotate_left(2);
-
-                            // A complete fragment
-                            if sdu_len as usize == len {
-                                sdu.replace(Pdu::new(packet, sdu_len as usize));
-                            } else {
-                                // Need another fragment
-                                storage.reassembly.init_with_written(channel, sdu_len, packet, len)?;
-                            }
+                        // A complete fragment
+                        if sdu_len as usize == len {
+                            sdu.replace(Pdu::new(packet, sdu_len as usize));
                         } else {
-                            match storage.reassembly.update(pdu.as_ref()) {
-                                Ok(Some((_, pdu))) => {
-                                    sdu.replace(pdu);
-                                }
-                                Ok(None) => {}
-                                Err(e) => {
-                                    storage.disconnect();
-                                    state.disconnect_waker.wake();
-                                    return Err(e);
-                                }
+                            // Need another fragment
+                            storage.reassembly.init_with_written(channel, sdu_len, packet, len)?;
+                        }
+                    } else {
+                        match storage.reassembly.update(pdu.as_ref()) {
+                            Ok(Some((_, pdu))) => {
+                                sdu.replace(pdu);
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                storage.disconnect();
+                                self.state.borrow_mut().disconnect_waker.wake();
+                                return Err(e);
                             }
                         }
                     }
                 }
-                _ => {}
             }
+            _ => {}
+        }
 
-            if let Some(sdu) = sdu {
-                storage.inbound.try_send(sdu)?;
-            }
+        if let Some(sdu) = sdu {
+            storage.inbound.try_send(sdu)?;
+        }
 
-            Ok(())
-        })
+        Ok(())
     }
 
     /// Handle incoming L2CAP signal
@@ -791,7 +750,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             if !state.is_psm_registered(req.psm) {
                 Err(LeCreditConnResultCode::SpsmNotSupported)
             } else {
-                match state.alloc(conn, Some(req.scid), |storage| {
+                match self.alloc(conn, Some(req.scid), |storage| {
                     storage.conn = Some(conn);
                     storage.psm = req.psm;
                     storage.peer_credits = req.credits;
@@ -823,10 +782,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     fn handle_connect_response(&self, conn: ConnHandle, identifier: u8, res: &LeCreditConnRes) -> Result<(), Error> {
-        let mut state = self.state.borrow_mut();
+        let mut channels = self.channels.borrow_mut();
 
         // Find the channel matching this response identifier
-        let matched = state.channels.iter_mut().find(|storage| {
+        let matched = channels.iter_mut().find(|storage| {
             matches!(storage.state, ChannelState::Connecting(req_id) if identifier == req_id && Some(conn) == storage.conn)
         });
 
@@ -834,7 +793,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             // No channel matched this identifier. Clean up any Connecting channels
             // on this connection — the peer has sent a response (with a wrong identifier),
             // so the connection attempt has effectively failed.
-            for storage in state.channels.iter_mut() {
+            for storage in channels.iter_mut() {
                 if let ChannelState::Connecting(_) = storage.state {
                     if Some(conn) == storage.conn {
                         debug!(
@@ -846,7 +805,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     }
                 }
             }
-            state.create_waker.wake();
+            self.state.borrow_mut().create_waker.wake();
             return Err(Error::NotFound);
         };
 
@@ -857,21 +816,20 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 storage.peer_mps = res.mps;
                 storage.peer_mtu = res.mtu;
                 storage.state = ChannelState::Connected;
-                state.create_waker.wake();
+                self.state.borrow_mut().create_waker.wake();
                 Ok(())
             }
             other => {
                 warn!("Channel open request failed: {:?}", other);
                 storage.state = ChannelState::ConnectFailed(other);
-                state.create_waker.wake();
+                self.state.borrow_mut().create_waker.wake();
                 Err(Error::L2capConnectError(other))
             }
         }
     }
 
     fn handle_credit_flow(&self, conn: ConnHandle, req: &LeCreditFlowInd) -> Result<(), Error> {
-        let mut state = self.state.borrow_mut();
-        for storage in state.channels.iter_mut() {
+        for storage in self.channels.borrow_mut().iter_mut() {
             match storage.state {
                 ChannelState::Connected if storage.peer_cid == req.cid && Some(conn) == storage.conn => {
                     trace!(
@@ -891,7 +849,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                                 req.cid, storage.peer_credits, req.credits
                             );
                             storage.disconnect();
-                            state.disconnect_waker.wake();
+                            self.state.borrow_mut().disconnect_waker.wake();
                             return Err(Error::InvalidValue);
                         }
                     }
@@ -911,12 +869,11 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         cid: u16,
         manager: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
-        let mut state = self.state.borrow_mut();
-        for storage in state.channels.iter_mut() {
+        for storage in self.channels.borrow_mut().iter_mut() {
             if cid == storage.cid {
                 storage.state = ChannelState::PeerDisconnecting(identifier);
                 let _ = storage.inbound.close();
-                state.disconnect_waker.wake();
+                self.state.borrow_mut().disconnect_waker.wake();
                 return Ok(());
             }
         }
@@ -928,8 +885,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     fn handle_disconnect_response(&self, cid: u16) -> Result<(), Error> {
-        let mut state = self.state.borrow_mut();
-        for storage in state.channels.iter_mut() {
+        for storage in self.channels.borrow_mut().iter_mut() {
             if storage.state == ChannelState::Disconnecting && cid == storage.cid {
                 storage.close();
                 break;
@@ -978,8 +934,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         chan: ChannelIndex,
     ) -> Result<Pdu<P::Packet>, Error> {
         poll_fn(|cx| {
-            let state = self.state.borrow();
-            let chan = &state.channels[chan.0 as usize];
+            let chan = self.channel(chan);
             if chan.state == ChannelState::Connected {
                 let conn = chan.conn.unwrap();
                 match chan.inbound.poll_receive(cx) {
@@ -1130,8 +1085,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     fn connected_channel_params(&self, index: ChannelIndex) -> Result<(ConnHandle, u16, u16, u16), Error> {
-        let state = self.state.borrow();
-        let chan = &state.channels[index.0 as usize];
+        let chan = self.channel(index);
         if chan.state == ChannelState::Connected {
             return Ok((chan.conn.unwrap(), chan.peer_mps, chan.peer_mtu, chan.peer_cid));
         }
@@ -1147,14 +1101,15 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         ble: &BleHost<'d, T, P>,
         p_buf: &mut [u8],
     ) -> Result<(), BleHostError<T::Error>> {
-        let (conn, cid, credits) = self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
+        let (conn, cid, credits) = {
+            let mut chan = self.channel_mut(index);
             if chan.state == ChannelState::Connected {
-                return Ok((chan.conn.unwrap(), chan.cid, chan.flow_control.process()));
+                (chan.conn.unwrap(), chan.cid, chan.flow_control.process())
+            } else {
+                debug!("[l2cap][flow_control_process] channel {:?} not found", index);
+                return Err(Error::NotFound.into());
             }
-            debug!("[l2cap][flow_control_process] channel {:?} not found", index);
-            Err(Error::NotFound)
-        })?;
+        };
 
         if let Some(credits) = credits {
             let identifier = self.next_request_id();
@@ -1163,22 +1118,17 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
             // Reuse packet buffer for signalling data to save the extra TX buffer
             ble.l2cap_signal(conn, identifier, &signal, p_buf).await?;
-            self.with_mut(|state| {
-                let chan = &mut state.channels[index.0 as usize];
-                if chan.state == ChannelState::Connected {
-                    chan.flow_control.confirm_granted(credits);
-                    return Ok(());
-                }
+
+            let mut chan = self.channel_mut(index);
+            if chan.state == ChannelState::Connected {
+                chan.flow_control.confirm_granted(credits);
+                return Ok(());
+            } else {
                 debug!("[l2cap][flow_control_grant] channel {:?} not found", index);
-                Err(Error::NotFound)
-            })?;
+                return Err(Error::NotFound.into());
+            }
         }
         Ok(())
-    }
-
-    fn with_mut<F: FnOnce(&mut State<'d, P::Packet>) -> R, R>(&self, f: F) -> R {
-        let mut state = self.state.borrow_mut();
-        f(&mut state)
     }
 
     fn poll_request_to_send(
@@ -1186,9 +1136,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         index: ChannelIndex,
         credits: u16,
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<Result<CreditGrant<'_, 'd, P::Packet>, Error>> {
-        let mut state = self.state.borrow_mut();
-        let chan = &mut state.channels[index.0 as usize];
+    ) -> Poll<Result<CreditGrant<'_, P::Packet>, Error>> {
+        let mut chan = self.channel_mut(index);
         if chan.state == ChannelState::Connected {
             if let Some(cx) = cx {
                 chan.credit_waker.register(cx.waker());
@@ -1197,7 +1146,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 chan.peer_credits -= credits;
                 #[cfg(feature = "channel-metrics")]
                 chan.metrics.sent(credits as usize);
-                return Poll::Ready(Ok(CreditGrant::new(&self.state, index, credits)));
+                return Poll::Ready(Ok(CreditGrant::new(self.channels, index, credits)));
             } else {
                 #[cfg(feature = "channel-metrics")]
                 chan.metrics.blocked_send();
@@ -1208,18 +1157,19 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Poll::Ready(Err(Error::NotFound))
     }
 
-    pub(crate) fn poll_disconnecting<'m>(&'m self, cx: Option<&mut Context<'_>>) -> Poll<DisconnectRequest<'m, 'd, P>> {
+    pub(crate) fn poll_disconnecting<'m>(&'m self, cx: Option<&mut Context<'_>>) -> Poll<DisconnectRequest<'m, P>> {
         let mut state = self.state.borrow_mut();
         if let Some(cx) = cx {
             state.disconnect_waker.register(cx.waker());
         }
-        for (idx, storage) in state.channels.iter().enumerate() {
+        for (idx, storage) in self.channels.borrow().iter().enumerate() {
             match storage.state {
                 ChannelState::Disconnecting | ChannelState::PeerDisconnecting(_) => {
                     return Poll::Ready(DisconnectRequest {
                         index: ChannelIndex(idx as u8),
                         handle: storage.conn.unwrap(),
                         state: &self.state,
+                        channels: self.channels,
                     });
                 }
                 _ => {}
@@ -1229,64 +1179,62 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     }
 
     pub(crate) fn inc_ref(&self, index: ChannelIndex) {
-        self.with_mut(|state| {
-            state.inc_ref(index);
-        });
+        self.channel_mut(index).inc_ref();
     }
 
     pub(crate) fn dec_ref(&self, index: ChannelIndex) {
-        self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
-            chan.refcount = unwrap!(
-                chan.refcount.checked_sub(1),
-                "bug: dropping a channel (i = {}) with refcount 0",
-                index.0
-            );
-            if chan.refcount == 0 {
-                chan.disconnect();
-                state.disconnect_waker.wake();
-            }
-        });
+        let mut chan = self.channel_mut(index);
+        chan.refcount = unwrap!(
+            chan.refcount.checked_sub(1),
+            "bug: dropping a channel (i = {}) with refcount 0",
+            index.0
+        );
+        if chan.refcount == 0 {
+            chan.disconnect();
+            self.state.borrow_mut().disconnect_waker.wake();
+        }
     }
 
     pub(crate) fn log_status(&self, verbose: bool) {
-        let state = self.state.borrow();
-        state.print(verbose);
+        log_status(&self.channels.borrow(), verbose);
     }
 
     #[cfg(feature = "defmt")]
     pub(crate) fn print(&self, index: ChannelIndex, f: defmt::Formatter) {
         use defmt::Format;
-        self.with_mut(|state| {
-            let chan = &mut state.channels[index.0 as usize];
-            chan.format(f);
-        })
+        self.channel(index).format(f);
     }
 
     #[cfg(feature = "channel-metrics")]
     pub(crate) fn metrics<F: FnOnce(&Metrics) -> R, R>(&self, index: ChannelIndex, f: F) -> R {
-        self.with_mut(|state| {
-            let state = &state.channels[index.0 as usize];
-            f(&state.metrics)
-        })
+        f(&self.channel(index).metrics)
     }
 }
 
-pub struct DisconnectRequest<'a, 'd, P: PacketPool> {
-    index: ChannelIndex,
-    handle: ConnHandle,
-    state: &'a RefCell<State<'d, P::Packet>>,
+fn log_status<P>(channels: &[ChannelStorage<P>], verbose: bool) {
+    for (idx, storage) in channels.iter().enumerate() {
+        if verbose || storage.state != ChannelState::Disconnected {
+            debug!("[l2cap][idx = {}] {:?}", idx, storage);
+        }
+    }
 }
 
-impl<'a, 'd, P: PacketPool> DisconnectRequest<'a, 'd, P> {
+pub struct DisconnectRequest<'a, P: PacketPool> {
+    index: ChannelIndex,
+    handle: ConnHandle,
+    state: &'a RefCell<State>,
+    channels: &'a RefCell<[ChannelStorage<P::Packet>]>,
+}
+
+impl<'a, P: PacketPool> DisconnectRequest<'a, P> {
     pub fn handle(&self) -> ConnHandle {
         self.handle
     }
 
     pub async fn send<T: Controller>(&self, host: &BleHost<'_, T, P>) -> Result<(), BleHostError<T::Error>> {
         let (state, conn, our_cid, peer_cid) = {
-            let state = self.state.borrow();
-            let chan = &state.channels[self.index.0 as usize];
+            let state = self.channels.borrow();
+            let chan = &state[self.index.0 as usize];
             (chan.state.clone(), chan.conn, chan.cid, chan.peer_cid)
         };
 
@@ -1325,7 +1273,7 @@ impl<'a, 'd, P: PacketPool> DisconnectRequest<'a, 'd, P> {
     }
 
     pub fn confirm(self) {
-        self.state.borrow_mut().channels[self.index.0 as usize].state = ChannelState::Disconnected;
+        self.channels.borrow_mut()[self.index.0 as usize].state = ChannelState::Disconnected;
     }
 }
 
@@ -1499,6 +1447,10 @@ impl<P> ChannelStorage<P> {
         }
     }
 
+    fn inc_ref(&mut self) {
+        self.refcount = unwrap!(self.refcount.checked_add(1), "Too many references to the same channel");
+    }
+
     /// Check a received length against a limit. If exceeded, log a warning and disconnect.
     /// Returns `Err(Error::InvalidValue)` on violation.
     /// Callers must wake `State::disconnect_waker` on error.
@@ -1624,15 +1576,19 @@ impl CreditFlowControl {
     }
 }
 
-pub struct CreditGrant<'reference, 'state, P> {
-    state: &'reference RefCell<State<'state, P>>,
+pub struct CreditGrant<'reference, P> {
+    channels: &'reference RefCell<[ChannelStorage<P>]>,
     index: ChannelIndex,
     credits: u16,
 }
 
-impl<'reference, 'state, P> CreditGrant<'reference, 'state, P> {
-    fn new(state: &'reference RefCell<State<'state, P>>, index: ChannelIndex, credits: u16) -> Self {
-        Self { state, index, credits }
+impl<'reference, P> CreditGrant<'reference, P> {
+    fn new(channels: &'reference RefCell<[ChannelStorage<P>]>, index: ChannelIndex, credits: u16) -> Self {
+        Self {
+            channels,
+            index,
+            credits,
+        }
     }
 
     pub(crate) fn confirm(&mut self, sent: u16) {
@@ -1648,11 +1604,11 @@ impl<'reference, 'state, P> CreditGrant<'reference, 'state, P> {
     }
 }
 
-impl<P> Drop for CreditGrant<'_, '_, P> {
+impl<P> Drop for CreditGrant<'_, P> {
     fn drop(&mut self) {
         if self.credits > 0 {
-            let mut state = self.state.borrow_mut();
-            let chan = &mut state.channels[self.index.0 as usize];
+            let mut channels = self.channels.borrow_mut();
+            let chan = &mut channels[self.index.0 as usize];
             if chan.state == ChannelState::Connected {
                 chan.peer_credits += self.credits;
                 chan.credit_waker.wake();

@@ -199,7 +199,7 @@ where
     pub(crate) fn new(
         controller: T,
         connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
-        channels: &'d mut [ChannelStorage<P::Packet>],
+        channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
         advertise_handles: &'d mut [AdvHandleState],
     ) -> Self {
         Self {

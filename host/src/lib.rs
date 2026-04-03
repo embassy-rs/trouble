@@ -531,7 +531,7 @@ pub trait PacketPool: 'static {
 /// incoming packets and dispatching to the appropriate connection and channel.
 pub struct HostResources<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize = 1> {
     connections: MaybeUninit<RefCell<[ConnectionStorage<P::Packet>; CONNS]>>,
-    channels: MaybeUninit<[ChannelStorage<P::Packet>; CHANNELS]>,
+    channels: MaybeUninit<RefCell<[ChannelStorage<P::Packet>; CHANNELS]>>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
 }
 
@@ -583,8 +583,9 @@ pub fn new<
         .connections
         .write(RefCell::new([const { ConnectionStorage::new() }; CONNS]));
 
-    let channels = &mut *resources.channels.write([const { ChannelStorage::new() }; CHANNELS]);
-    let channels: &'static mut [ChannelStorage<P::Packet>] = unsafe { transmute_slice(channels) };
+    let channels: &'resources RefCell<[ChannelStorage<P::Packet>]> = resources
+        .channels
+        .write(RefCell::new([const { ChannelStorage::new() }; CHANNELS]));
 
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
