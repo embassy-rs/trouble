@@ -532,7 +532,7 @@ pub trait PacketPool: 'static {
 pub struct HostResources<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize = 1> {
     connections: MaybeUninit<RefCell<[ConnectionStorage<P::Packet>; CONNS]>>,
     channels: MaybeUninit<RefCell<[ChannelStorage<P::Packet>; CHANNELS]>>,
-    advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
+    advertise_handles: MaybeUninit<RefCell<[AdvHandleState; ADV_SETS]>>,
 }
 
 impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize> Default
@@ -569,16 +569,6 @@ pub fn new<
     controller: C,
     resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS>,
 ) -> Stack<'resources, C, P> {
-    unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
-        unsafe { core::mem::transmute(x) }
-    }
-
-    // Safety:
-    // - HostResources has the exceeding lifetime as the returned Stack.
-    // - Internal lifetimes are elided (made 'static) to simplify API usage
-    // - This _should_ be OK, because there are no references held to the resources
-    //   when the stack is shut down.
-
     let connections: &'resources RefCell<[ConnectionStorage<P::Packet>]> = resources
         .connections
         .write(RefCell::new([const { ConnectionStorage::new() }; CONNS]));
@@ -587,8 +577,10 @@ pub fn new<
         .channels
         .write(RefCell::new([const { ChannelStorage::new() }; CHANNELS]));
 
-    let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
-    let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
+    let advertise_handles: &'resources RefCell<[AdvHandleState]> = resources
+        .advertise_handles
+        .write(RefCell::new([AdvHandleState::None; ADV_SETS]));
+
     let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles);
 
     Stack { host }

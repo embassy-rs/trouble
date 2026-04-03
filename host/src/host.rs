@@ -90,37 +90,29 @@ pub(crate) enum AdvHandleState {
     Terminated(AdvHandle),
 }
 
-pub(crate) struct AdvInnerState<'d> {
-    handles: &'d mut [AdvHandleState],
-    waker: WakerRegistration,
-}
-
 pub(crate) struct AdvState<'d> {
-    state: RefCell<AdvInnerState<'d>>,
+    handles: &'d RefCell<[AdvHandleState]>,
+    waker: RefCell<WakerRegistration>,
 }
 
 impl<'d> AdvState<'d> {
-    pub(crate) fn new(handles: &'d mut [AdvHandleState]) -> Self {
+    pub(crate) fn new(handles: &'d RefCell<[AdvHandleState]>) -> Self {
         Self {
-            state: RefCell::new(AdvInnerState {
-                handles,
-                waker: WakerRegistration::new(),
-            }),
+            handles,
+            waker: RefCell::new(WakerRegistration::new()),
         }
     }
 
     pub(crate) fn reset(&self) {
-        let mut state = self.state.borrow_mut();
-        for entry in state.handles.iter_mut() {
+        for entry in self.handles.borrow_mut().iter_mut() {
             *entry = AdvHandleState::None;
         }
-        state.waker.wake();
+        self.waker.borrow_mut().wake();
     }
 
     // Terminate handle
     pub(crate) fn terminate(&self, handle: AdvHandle) {
-        let mut state = self.state.borrow_mut();
-        for entry in state.handles.iter_mut() {
+        for entry in self.handles.borrow_mut().iter_mut() {
             match entry {
                 AdvHandleState::Advertising(h) if *h == handle => {
                     *entry = AdvHandleState::Terminated(handle);
@@ -128,33 +120,31 @@ impl<'d> AdvState<'d> {
                 _ => {}
             }
         }
-        state.waker.wake();
+        self.waker.borrow_mut().wake();
     }
 
     pub(crate) fn len(&self) -> usize {
-        let state = self.state.borrow();
-        state.handles.len()
+        self.handles.as_ptr().len()
     }
 
     pub(crate) fn start(&self, sets: &[AdvSet]) {
-        let mut state = self.state.borrow_mut();
-        assert!(sets.len() <= state.handles.len());
-        for handle in state.handles.iter_mut() {
+        assert!(sets.len() <= self.handles.as_ptr().len());
+        let mut handles = self.handles.borrow_mut();
+        for handle in handles.iter_mut() {
             *handle = AdvHandleState::None;
         }
 
         for (idx, entry) in sets.iter().enumerate() {
-            state.handles[idx] = AdvHandleState::Advertising(entry.adv_handle);
+            handles[idx] = AdvHandleState::Advertising(entry.adv_handle);
         }
     }
 
     pub async fn wait(&self) {
         poll_fn(|cx| {
-            let mut state = self.state.borrow_mut();
-            state.waker.register(cx.waker());
+            self.waker.borrow_mut().register(cx.waker());
 
             let mut terminated = 0;
-            for entry in state.handles.iter() {
+            for entry in self.handles.borrow().iter() {
                 match entry {
                     AdvHandleState::Terminated(_) => {
                         terminated += 1;
@@ -165,7 +155,7 @@ impl<'d> AdvState<'d> {
                     _ => {}
                 }
             }
-            if terminated == state.handles.len() {
+            if terminated == self.handles.as_ptr().len() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -200,7 +190,7 @@ where
         controller: T,
         connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
         channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
-        advertise_handles: &'d mut [AdvHandleState],
+        advertise_handles: &'d RefCell<[AdvHandleState]>,
     ) -> Self {
         Self {
             address: None,
