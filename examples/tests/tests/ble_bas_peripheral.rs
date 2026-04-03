@@ -1,7 +1,7 @@
 use futures::future::join;
 use std::time::Duration;
 use tokio::select;
-use trouble_example_tests::{TestContext, serial};
+use trouble_example_tests::{serial, TestContext};
 use trouble_host::prelude::*;
 
 #[tokio::test]
@@ -32,7 +32,7 @@ async fn run_bas_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     let peripheral_address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     let central = tokio::task::spawn_local(async move {
         let controller_central = serial::create_controller(&central).await;
-        let mut resources: HostResources<DefaultPacketPool, 2, 4> = HostResources::new();
+        let mut resources: HostResources<_, DefaultPacketPool, 2, 4> = HostResources::new();
         let stack = trouble_host::new(controller_central, &mut resources);
         let Host {
             mut central,

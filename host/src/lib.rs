@@ -6,7 +6,7 @@
 #![warn(missing_docs)]
 
 use core::cell::RefCell;
-use core::mem::MaybeUninit;
+use core::mem::{ManuallyDrop, MaybeUninit};
 
 use advertise::AdvertisementDataError;
 use bt_hci::cmd::le::LeReadMinimumSupportedConnectionInterval;
@@ -529,26 +529,34 @@ pub trait PacketPool: 'static {
 ///
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
-pub struct HostResources<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize = 1> {
+pub struct HostResources<
+    C: Controller,
+    P: PacketPool,
+    const CONNS: usize,
+    const CHANNELS: usize,
+    const ADV_SETS: usize = 1,
+> {
+    host: MaybeUninit<ManuallyDrop<BleHost<'static, C, P>>>,
     connections: MaybeUninit<RefCell<[ConnectionStorage<P::Packet>; CONNS]>>,
     channels: MaybeUninit<RefCell<[ChannelStorage<P::Packet>; CHANNELS]>>,
     advertise_handles: MaybeUninit<RefCell<[AdvHandleState; ADV_SETS]>>,
 }
 
-impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize> Default
-    for HostResources<P, CONNS, CHANNELS, ADV_SETS>
+impl<C: Controller, P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize> Default
+    for HostResources<C, P, CONNS, CHANNELS, ADV_SETS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>
-    HostResources<P, CONNS, CHANNELS, ADV_SETS>
+impl<C: Controller, P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize>
+    HostResources<C, P, CONNS, CHANNELS, ADV_SETS>
 {
     /// Create a new instance of host resources.
     pub const fn new() -> Self {
         Self {
+            host: MaybeUninit::uninit(),
             connections: MaybeUninit::uninit(),
             channels: MaybeUninit::uninit(),
             advertise_handles: MaybeUninit::uninit(),
@@ -567,7 +575,7 @@ pub fn new<
     const ADV_SETS: usize,
 >(
     controller: C,
-    resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS>,
+    resources: &'resources mut HostResources<C, P, CONNS, CHANNELS, ADV_SETS>,
 ) -> Stack<'resources, C, P> {
     let connections: &'resources RefCell<[ConnectionStorage<P::Packet>]> = resources
         .connections

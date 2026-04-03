@@ -1632,7 +1632,7 @@ mod tests {
 
     #[test]
     fn channel_refcount() {
-        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let mut resources: HostResources<_, DefaultPacketPool, 2, 2> = HostResources::new();
         let ble = MockController::new();
 
         let builder = crate::new(ble, &mut resources);

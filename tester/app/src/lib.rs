@@ -312,7 +312,7 @@ where
         "run() can only be called once per program execution"
     );
     info!("BTP run: name={:?} addr={:?}", config.device_name, config.address);
-    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+    let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
 
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(config.address)
