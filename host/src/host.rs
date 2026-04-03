@@ -198,7 +198,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
-        connections: &'d mut [ConnectionStorage<P::Packet>],
+        connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
         channels: &'d mut [ChannelStorage<P::Packet>],
         advertise_handles: &'d mut [AdvHandleState],
     ) -> Self {
@@ -647,7 +647,7 @@ where
         handle: ConnHandle,
         len: u16,
         n_packets: u16,
-    ) -> Result<L2capSender<'_, 'd, T, P::Packet>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, T, P::Packet>, BleHostError<T::Error>> {
         // Take into account l2cap header.
         let acl_max = self.initialized.get().await.acl_max as u16;
         let len = len + (4 * n_packets);
@@ -671,7 +671,7 @@ where
         handle: ConnHandle,
         len: u16,
         n_packets: u16,
-    ) -> Result<L2capSender<'_, 'd, T, P::Packet>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, T, P::Packet>, BleHostError<T::Error>> {
         let acl_max = self.initialized.try_get().map(|i| i.acl_max).unwrap_or(27) as u16;
         let len = len + (4 * n_packets);
         let n_acl = len.div_ceil(acl_max);
@@ -1402,14 +1402,14 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     }
 }
 
-pub struct L2capSender<'a, 'd, T: Controller, P> {
+pub struct L2capSender<'a, T: Controller, P> {
     pub(crate) controller: &'a T,
     pub(crate) handle: ConnHandle,
-    pub(crate) grant: PacketGrant<'a, 'd, P>,
+    pub(crate) grant: PacketGrant<'a, P>,
     pub(crate) fragment_size: u16,
 }
 
-impl<'a, 'd, T: Controller, P> L2capSender<'a, 'd, T, P> {
+impl<'a, T: Controller, P> L2capSender<'a, T, P> {
     pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
     where
         T: blocking::Controller,

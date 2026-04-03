@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use defmt::{error, info, unwrap, warn};
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_nrf::buffered_uarte::{self, BufferedUarte};
 use embassy_nrf::gpio::{Input, Pull};
@@ -13,12 +14,12 @@ use embassy_nrf::{bind_interrupts, rng};
 use embedded_alloc::LlffHeap as Heap;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
+use panic_probe as _;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 use trouble_tester_app::BtpConfig;
-use {defmt_rtt as _, panic_probe as _};
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();

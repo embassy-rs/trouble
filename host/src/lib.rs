@@ -5,6 +5,7 @@
 #![doc = include_str!(concat!("../", env!("CARGO_PKG_README")))]
 #![warn(missing_docs)]
 
+use core::cell::RefCell;
 use core::mem::MaybeUninit;
 
 use advertise::AdvertisementDataError;
@@ -529,7 +530,7 @@ pub trait PacketPool: 'static {
 /// The l2cap packet pool is used by the host to handle inbound data, by allocating space for
 /// incoming packets and dispatching to the appropriate connection and channel.
 pub struct HostResources<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize = 1> {
-    connections: MaybeUninit<[ConnectionStorage<P::Packet>; CONNS]>,
+    connections: MaybeUninit<RefCell<[ConnectionStorage<P::Packet>; CONNS]>>,
     channels: MaybeUninit<[ChannelStorage<P::Packet>; CHANNELS]>,
     advertise_handles: MaybeUninit<[AdvHandleState; ADV_SETS]>,
 }
@@ -578,9 +579,9 @@ pub fn new<
     // - This _should_ be OK, because there are no references held to the resources
     //   when the stack is shut down.
 
-    let connections: &mut [ConnectionStorage<P::Packet>] =
-        &mut *resources.connections.write([const { ConnectionStorage::new() }; CONNS]);
-    let connections: &'resources mut [ConnectionStorage<P::Packet>] = unsafe { transmute_slice(connections) };
+    let connections: &'resources RefCell<[ConnectionStorage<P::Packet>]> = resources
+        .connections
+        .write(RefCell::new([const { ConnectionStorage::new() }; CONNS]));
 
     let channels = &mut *resources.channels.write([const { ChannelStorage::new() }; CHANNELS]);
     let channels: &'static mut [ChannelStorage<P::Packet>] = unsafe { transmute_slice(channels) };
