@@ -75,12 +75,11 @@ async fn main(spawner: Spawner) {
 
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let stack = trouble_host::new(sdc, &mut resources).set_random_address(address);
-    let Host {
-        mut peripheral,
-        mut runner,
-        ..
-    } = stack.build();
+    let stack = trouble_host::new(sdc, &mut resources)
+        .set_random_address(address)
+        .build();
+    let mut runner = stack.runner();
+    let mut peripheral = stack.peripheral();
 
     let mut adv_data = [0; 31];
     let adv_data_len = unwrap!(AdStructure::encode_slice(

@@ -22,12 +22,11 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<_, P, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
-    let Host {
-        mut peripheral,
-        mut runner,
-        ..
-    } = stack.build();
+    let stack = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .build();
+    let mut peripheral = stack.peripheral();
+    let mut runner = stack.runner();
 
     let mut adv_data = [0; 31];
     let adv_data_len = AdStructure::encode_slice(

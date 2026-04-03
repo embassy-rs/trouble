@@ -316,14 +316,11 @@ where
 
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(config.address)
-        .set_random_generator_seed(&mut random_generator);
-
-    let Host {
-        peripheral,
-        central,
-        runner,
-        ..
-    } = stack.build();
+        .set_random_generator_seed(&mut random_generator)
+        .build();
+    let runner = stack.runner();
+    let peripheral = stack.peripheral();
+    let central = stack.central();
 
     let scan_mode = Cell::new(ScanMode::default());
     let oob = OobState::new();

@@ -68,31 +68,28 @@ let mut resources: HostResources<DefaultPacketPool, 4, 2, 1> = HostResources::ne
 
 == Creating the stack
 
-With the resources defined, an instance of Trouble can be created using the `trouble_host::new()` function:
+With the resources defined, an instance of Trouble can be created using the `trouble_host::new()` function, which returns a `StackBuilder`:
 
 ```
-let stack: Stack<'_, MyController> = trouble_host::new(controller, &mut resources);
+let stack = trouble_host::new(controller, &mut resources)
+    .set_random_address(address)
+    .build();
 ```
 
-The `MyController` is the type for your particular hardware, for instance `SoftdeviceController` from the `nrf-sdc` crate.
-
-The `Stack` is a builder allowing you to set some properties of the host before creating it:
+The `StackBuilder` allows you to set some properties of the host before creating it:
 
 * `set_random_address` for specifying a BLE random address (see xref:_random_address).
 * `set_random_generator_seed` for specifying the random seed used by the security manager (if enabled).
 
-
-Once properties are set, you can build the host:
+Once properties are set, call `.build()` to obtain the `Stack`. Then use the stack to obtain handles for the roles you need:
 
 ```
-let Host {
-    central,
-    peripheral,
-    runner,
-} = stack.build();
+let runner = stack.runner();
+let central = stack.central();
+let peripheral = stack.peripheral();
 ```
 
-The presence `central` and `peripheral` fields depends on whether the corresponding cargo features are enabled.
+The availability of `central()` and `peripheral()` depends on whether the corresponding cargo features are enabled.
 
 The `runner` is responsible for running the BLE host stack, and should be passed to an async task that typically runs forever. It will only
 consume CPU resources when there are work to do (accepting connections/channels, creating connections/channels, sending/receiving data).

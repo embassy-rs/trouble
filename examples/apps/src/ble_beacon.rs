@@ -37,12 +37,11 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<_, DefaultPacketPool, 0, 0, 27> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
-    let Host {
-        mut peripheral,
-        mut runner,
-        ..
-    } = stack.build();
+    let stack = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .build();
+    let mut peripheral = stack.peripheral();
+    let mut runner = stack.runner();
 
     let mut adv_data = [0; 64];
     let mut update_count = 0u32;

@@ -18,8 +18,10 @@ where
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
-    let Host { mut runner, .. } = stack.build();
+    let stack = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .build();
+    let mut runner = stack.runner();
 
     info!("Scanning for peripheral...");
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
@@ -29,7 +31,7 @@ where
 }
 
 async fn scan<'a, C: Controller, P: PacketPool>(stack: &'a Stack<'_, C, P>, addr: [u8; 6]) {
-    let Host { mut central, .. } = stack.build();
+    let mut central = stack.central();
     let target: Address = Address::random(addr);
 
     let config = ConnectConfig {

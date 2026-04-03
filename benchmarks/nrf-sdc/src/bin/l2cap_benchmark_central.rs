@@ -78,12 +78,11 @@ async fn main(spawner: Spawner) {
 
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let stack = trouble_host::new(sdc, &mut resources).set_random_address(address);
-    let Host {
-        mut central,
-        mut runner,
-        ..
-    } = stack.build();
+    let stack = trouble_host::new(sdc, &mut resources)
+        .set_random_address(address)
+        .build();
+    let mut runner = stack.runner();
+    let mut central = stack.central();
 
     let target: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     let config = ConnectConfig {

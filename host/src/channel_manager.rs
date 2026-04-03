@@ -1635,8 +1635,8 @@ mod tests {
         let mut resources: HostResources<_, DefaultPacketPool, 2, 2> = HostResources::new();
         let ble = MockController::new();
 
-        let builder = crate::new(ble, &mut resources);
-        let ble = &builder.host;
+        let mut builder = crate::new(ble, &mut resources);
+        let ble = builder.host();
 
         let conn = ConnHandle::new(33);
         ble.connections

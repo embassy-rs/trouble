@@ -77,7 +77,8 @@ where
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator);
+        .set_random_generator_seed(random_generator)
+        .build();
 
     let mut map_storage =
         MapStorage::<(), _, _>::new(storage, MapConfig::new(0..S::ERASE_SIZE as u32 * 2), NoCache::new());
@@ -92,9 +93,8 @@ where
             false
         };
 
-    let Host {
-        mut peripheral, runner, ..
-    } = stack.build();
+    let runner = stack.runner();
+    let mut peripheral = stack.peripheral();
 
     info!("Starting advertising and GATT service");
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {

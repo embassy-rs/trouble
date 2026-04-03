@@ -5,7 +5,7 @@
 #![doc = include_str!(concat!("../", env!("CARGO_PKG_README")))]
 #![warn(missing_docs)]
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::mem::{ManuallyDrop, MaybeUninit};
 
 use advertise::AdvertisementDataError;
@@ -17,6 +17,7 @@ use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::Vec;
+#[cfg(feature = "security")]
 use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
@@ -86,7 +87,7 @@ pub mod prelude {
     pub use trouble_host_macros::*;
 
     pub use super::att::AttErrorCode;
-    pub use super::{BleHostError, Controller, Error, Host, HostResources, Packet, PacketPool, Stack};
+    pub use super::{BleHostError, Controller, Error, HostResources, Packet, PacketPool, Stack, StackBuilder};
     #[cfg(feature = "peripheral")]
     pub use crate::advertise::*;
     #[cfg(feature = "gatt")]
@@ -576,7 +577,7 @@ pub fn new<
 >(
     controller: C,
     resources: &'resources mut HostResources<C, P, CONNS, CHANNELS, ADV_SETS>,
-) -> Stack<'resources, C, P> {
+) -> StackBuilder<'resources, C, P> {
     let connections: &'resources RefCell<[ConnectionStorage<P::Packet>]> = resources
         .connections
         .write(RefCell::new([const { ConnectionStorage::new() }; CONNS]));
@@ -591,7 +592,7 @@ pub fn new<
 
     // SAFETY: Narrows the host field's lifetime from `'static` to `'resources`. Sound because:
     // - BleHost is covariant in 'd so the types differ only in a lifetime (identical layout).
-    // - The returned Stack exclusively borrows the HostResources for 'resources,
+    // - The returned StackBuilder/Stack exclusively borrows the HostResources for 'resources,
     //   preventing re-entry into this function while the narrowed-lifetime data is live.
     // - The host field is private, MaybeUninit (no auto-drop), and only ever accessed by this
     //   function (which overwrites via write()), so the narrowed lifetime can never be observed
@@ -605,12 +606,13 @@ pub fn new<
         advertise_handles,
     )));
 
-    Stack { host }
+    StackBuilder { host: Some(host) }
 }
 
 /// Contains the host stack
 pub struct Stack<'stack, C, P: PacketPool> {
     host: &'stack mut ManuallyDrop<BleHost<'stack, C, P>>,
+    runner_taken: Cell<bool>,
 }
 
 impl<'stack, C, P: PacketPool> Drop for Stack<'stack, C, P> {
@@ -623,51 +625,138 @@ impl<'stack, C, P: PacketPool> Drop for Stack<'stack, C, P> {
     }
 }
 
-/// Host components.
-#[non_exhaustive]
-pub struct Host<'stack, C, P: PacketPool> {
-    /// Central role
-    #[cfg(feature = "central")]
-    pub central: Central<'stack, C, P>,
-    /// Peripheral role
-    #[cfg(feature = "peripheral")]
-    pub peripheral: Peripheral<'stack, C, P>,
-    /// Host runner
-    pub runner: Runner<'stack, C, P>,
+/// Builder for configuring the BLE stack before use.
+///
+/// Call [`build()`](StackBuilder::build) to finalize configuration and obtain the [`Stack`].
+pub struct StackBuilder<'stack, C, P: PacketPool> {
+    host: Option<&'stack mut ManuallyDrop<BleHost<'stack, C, P>>>,
 }
 
-impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
+impl<'stack, C, P: PacketPool> Drop for StackBuilder<'stack, C, P> {
+    fn drop(&mut self) {
+        if let Some(host) = &mut self.host {
+            // SAFETY: host was fully initialized in new() and has not been dropped.
+            // `build()` was never called, leaving StackBuilder as the sole owner
+            // responsible for dropping BleHost.
+            unsafe { ManuallyDrop::drop(host) }
+        }
+    }
+}
+
+impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
+    fn host(&mut self) -> &mut BleHost<'stack, C, P> {
+        self.host.as_mut().unwrap()
+    }
+
     /// Set the random address used by this host.
-    pub fn set_random_address(self, address: Address) -> Self {
-        self.host.address.replace(address);
+    pub fn set_random_address(mut self, address: Address) -> Self {
+        self.host().address.replace(address);
         #[cfg(feature = "security")]
-        self.host.connections.security_manager.set_local_address(address);
+        self.host().connections.security_manager.set_local_address(address);
         self
     }
-    /// Set the random generator seed for random generator used by security manager
-    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(self, _random_generator: &mut RNG) -> Self {
-        #[cfg(feature = "security")]
+
+    /// Set the random generator seed for random generator used by security manager.
+    #[cfg(feature = "security")]
+    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(mut self, _random_generator: &mut RNG) -> Self {
         {
             let mut random_seed = [0u8; 32];
             _random_generator.fill_bytes(&mut random_seed);
-            self.host
+            self.host()
                 .connections
                 .security_manager
                 .set_random_generator_seed(random_seed);
         }
         self
     }
+
     /// Set the IO capabilities used by the security manager.
     ///
     /// Only relevant if the feature `security` is enabled.
-    pub fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
-        #[cfg(feature = "security")]
-        {
-            self.host
-                .connections
-                .security_manager
-                .set_io_capabilities(io_capabilities);
+    #[cfg(feature = "security")]
+    pub fn set_io_capabilities(mut self, io_capabilities: IoCapabilities) -> Self {
+        self.host()
+            .connections
+            .security_manager
+            .set_io_capabilities(io_capabilities);
+        self
+    }
+
+    /// Enable or disable secure connections only mode.
+    ///
+    /// When enabled, legacy pairing is rejected even if the `legacy-pairing` feature is compiled in.
+    /// This matches the BLE spec's "Secure Connections Only Mode" (Vol 3, Part C, Section 10.2.4).
+    ///
+    /// Only relevant if the feature `legacy-pairing` is enabled.
+    #[cfg(feature = "legacy-pairing")]
+    pub fn set_secure_connections_only(mut self, enabled: bool) -> Self {
+        self.host()
+            .connections
+            .security_manager
+            .set_secure_connections_only(enabled);
+        self
+    }
+
+    /// Finalize configuration and return the stack.
+    ///
+    /// Use the returned [`Stack`] for runtime operations: obtain a [`Runner`] via
+    /// [`Stack::runner()`], and [`Central`](central::Central) or
+    /// [`Peripheral`](peripheral::Peripheral) handles via [`Stack::central()`] and
+    /// [`Stack::peripheral()`].
+    pub fn build(mut self) -> Stack<'stack, C, P> {
+        #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
+        if !self.host().connections.security_manager.get_random_generator_seeded() {
+            panic!(
+                "The security manager random number generator has not been seeded from a cryptographically secure random number generator"
+            )
         }
+
+        Stack {
+            host: self.host.take().unwrap(),
+            runner_taken: Cell::new(false),
+        }
+    }
+}
+
+impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
+    /// Obtain a [`Runner`] to drive the BLE host.
+    ///
+    /// The runner must be polled (e.g. via [`Runner::run()`]) to drive the BLE host.
+    pub fn runner(&self) -> Runner<'_, C, P> {
+        assert!(
+            !self.runner_taken.replace(true),
+            "runner() can only be called once per Stack"
+        );
+        Runner::new(self.host)
+    }
+
+    /// Obtain a [`Central`](central::Central) handle for the central BLE role.
+    ///
+    /// This is a lightweight handle that can be created multiple times.
+    /// Concurrent connect operations are serialized internally.
+    #[cfg(feature = "central")]
+    pub fn central(&self) -> Central<'_, C, P> {
+        Central::new(self.host)
+    }
+
+    /// Obtain a [`Peripheral`](peripheral::Peripheral) handle for the peripheral BLE role.
+    ///
+    /// This is a lightweight handle that can be created multiple times.
+    /// Concurrent advertise operations are serialized internally.
+    #[cfg(feature = "peripheral")]
+    pub fn peripheral(&self) -> Peripheral<'_, C, P> {
+        Peripheral::new(self.host)
+    }
+
+    /// Set the IO capabilities used by the security manager.
+    ///
+    /// Only relevant if the feature `security` is enabled.
+    #[cfg(feature = "security")]
+    pub fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
+        self.host
+            .connections
+            .security_manager
+            .set_io_capabilities(io_capabilities);
     }
 
     /// Enable or disable secure connections only mode.
@@ -682,25 +771,6 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
             .connections
             .security_manager
             .set_secure_connections_only(enabled);
-    }
-
-    /// Build the stack.
-    pub fn build(&self) -> Host<'_, C, P> {
-        #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
-        {
-            if !self.host.connections.security_manager.get_random_generator_seeded() {
-                panic!(
-                    "The security manager random number generator has not been seeded from a cryptographically secure random number generator"
-                )
-            }
-        }
-        Host {
-            #[cfg(feature = "central")]
-            central: Central::new(self.host),
-            #[cfg(feature = "peripheral")]
-            peripheral: Peripheral::new(self.host),
-            runner: Runner::new(self.host),
-        }
     }
 
     /// Run a HCI command and return the response.
