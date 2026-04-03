@@ -42,7 +42,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        let host = &self.central.stack.host;
+        let host = &self.central.host;
         let drop = crate::host::OnDrop::new(|| {
             host.scan_command_state.cancel(true);
         });
@@ -55,7 +55,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             scan_window: bt_hci_duration(config.window),
         };
         let phy_params = crate::central::create_phy_params(scanning, config.phys);
-        let host = &self.central.stack.host;
+        let host = &self.central.host;
         host.command(LeSetExtScanParams::new(
             host.address.map(|s| s.kind).unwrap_or(AddrKind::PUBLIC),
             if config.filter_accept_list.is_empty() {
@@ -76,7 +76,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         .await?;
         drop.defuse();
         Ok(ScanSession {
-            command_state: &self.central.stack.host.scan_command_state,
+            command_state: &self.central.host.scan_command_state,
             deadline: if config.timeout.as_ticks() == 0 {
                 None
             } else {
@@ -96,7 +96,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        let host = &self.central.stack.host;
+        let host = self.central.host;
         let drop = crate::host::OnDrop::new(|| {
             host.scan_command_state.cancel(false);
         });
@@ -124,7 +124,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         host.command(LeSetScanEnable::new(true, true)).await?;
         drop.defuse();
         Ok(ScanSession {
-            command_state: &self.central.stack.host.scan_command_state,
+            command_state: &self.central.host.scan_command_state,
             deadline: if config.timeout.as_ticks() == 0 {
                 None
             } else {

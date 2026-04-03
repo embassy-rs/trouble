@@ -812,7 +812,7 @@ const ATT_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// A GATT client capable of using the GATT protocol.
 pub struct GattClient<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> {
     known_services: RefCell<Vec<ServiceHandle, MAX_SERVICES>>,
-    stack: &'reference Stack<'reference, T, P>,
+    _phantom: PhantomData<T>,
     connection: Connection<'reference, P>,
     response_channel: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), 1>,
 
@@ -934,7 +934,7 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattClient<'reference, C, P, MAX_SERVICES> {
     /// Creates a GATT client capable of processing the GATT protocol using the provided table of attributes.
     pub async fn new(
-        stack: &'reference Stack<'reference, C, P>,
+        _stack: &Stack<'_, C, P>,
         connection: &Connection<'reference, P>,
     ) -> Result<GattClient<'reference, C, P, MAX_SERVICES>, BleHostError<C::Error>> {
         let l2cap = L2capHeader { channel: 4, length: 3 };
@@ -982,7 +982,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         Ok(Self {
             known_services: RefCell::new(heapless::Vec::new()),
-            stack,
+            _phantom: PhantomData,
             connection: connection.clone(),
 
             response_channel: Channel::new(),

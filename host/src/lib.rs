@@ -664,10 +664,10 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         }
         Host {
             #[cfg(feature = "central")]
-            central: Central::new(self),
+            central: Central::new(&self.host),
             #[cfg(feature = "peripheral")]
-            peripheral: Peripheral::new(self),
-            runner: Runner::new(self),
+            peripheral: Peripheral::new(&self.host),
+            runner: Runner::new(&self.host),
         }
     }
 

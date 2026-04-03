@@ -55,7 +55,7 @@ use crate::types::l2cap::{
     ConnParamUpdateReq, ConnParamUpdateRes, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT,
     L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
 };
-use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
+use crate::{att, Address, BleHostError, Error, PacketPool};
 
 /// A BLE Host.
 ///
@@ -721,17 +721,17 @@ pub struct Runner<'d, C, P: PacketPool> {
 
 /// The receiver part of the host runner.
 pub struct RxRunner<'d, C, P: PacketPool> {
-    stack: &'d Stack<'d, C, P>,
+    host: &'d BleHost<'d, C, P>,
 }
 
 /// The control part of the host runner.
 pub struct ControlRunner<'d, C, P: PacketPool> {
-    stack: &'d Stack<'d, C, P>,
+    host: &'d BleHost<'d, C, P>,
 }
 
 /// The transmit part of the host runner.
 pub struct TxRunner<'d, C, P: PacketPool> {
-    stack: &'d Stack<'d, C, P>,
+    host: &'d BleHost<'d, C, P>,
 }
 
 /// Event handler.
@@ -756,11 +756,11 @@ struct DummyHandler;
 impl EventHandler for DummyHandler {}
 
 impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
-    pub(crate) fn new(stack: &'d Stack<'d, C, P>) -> Self {
+    pub(crate) fn new(host: &'d BleHost<'d, C, P>) -> Self {
         Self {
-            rx: RxRunner { stack },
-            control: ControlRunner { stack },
-            tx: TxRunner { stack },
+            rx: RxRunner { host },
+            control: ControlRunner { host },
+            tx: TxRunner { host },
         }
     }
 
@@ -859,7 +859,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
         C: ControllerCmdSync<Disconnect>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
-        let host = &self.stack.host;
+        let host = &self.host;
         // use embassy_time::Instant;
         // let mut last = Instant::now();
         loop {
@@ -1174,7 +1174,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + ControllerCmdAsync<LeEnableEncryption>
             + ControllerCmdSync<ReadBdAddr>,
     {
-        let host = &self.stack.host;
+        let host = &self.host;
         Reset::new().exec(&host.controller).await?;
 
         if let Some(addr) = host.address {
@@ -1366,7 +1366,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
 impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     /// Run the transmit loop for the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
-        let host = &self.stack.host;
+        let host = &self.host;
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;
