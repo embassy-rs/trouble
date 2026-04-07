@@ -44,11 +44,11 @@ impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
             + ControllerCmdSync<LeClearFilterAcceptList>
             + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        let host = &self.central.host;
+        let host = self.central.host;
         let drop = crate::host::OnDrop::new(|| {
-            host.scan_command_state.cancel(true);
+            host.scan_command_state().cancel(true);
         });
-        host.request_operation(&host.scan_command_state, true).await;
+        host.request_operation(host.scan_command_state(), true).await;
         self.central.set_accept_filter(config.filter_accept_list).await?;
 
         let scanning = ScanningPhy {
@@ -69,7 +69,7 @@ impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
         ))
         .await?;
 
-        host.scan_timeout.reset();
+        host.scan_timeout().reset();
         host.command(LeSetExtScanEnable::new(
             true,
             config.filter_duplicates,
@@ -79,13 +79,13 @@ impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
         .await?;
         drop.defuse();
         Ok(ScanSession {
-            command_state: &self.central.host.scan_command_state,
+            command_state: self.central.host.scan_command_state(),
             deadline: if config.timeout.as_ticks() == 0 {
                 None
             } else {
                 Some(Instant::now() + config.timeout)
             },
-            timeout: &host.scan_timeout,
+            timeout: host.scan_timeout(),
             done: false,
         })
     }
@@ -102,9 +102,9 @@ impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
     {
         let host = self.central.host;
         let drop = crate::host::OnDrop::new(|| {
-            host.scan_command_state.cancel(false);
+            host.scan_command_state().cancel(false);
         });
-        host.request_operation(&host.scan_command_state, false).await;
+        host.request_operation(host.scan_command_state(), false).await;
 
         if !config.filter_accept_list.is_empty() {
             self.central.set_accept_filter(config.filter_accept_list).await?;
@@ -131,13 +131,13 @@ impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
         host.command(LeSetScanEnable::new(true, filter_duplicates)).await?;
         drop.defuse();
         Ok(ScanSession {
-            command_state: &self.central.host.scan_command_state,
+            command_state: self.central.host.scan_command_state(),
             deadline: if config.timeout.as_ticks() == 0 {
                 None
             } else {
                 Some(Instant::now() + config.timeout)
             },
-            timeout: &host.scan_timeout,
+            timeout: host.scan_timeout(),
             done: false,
         })
     }

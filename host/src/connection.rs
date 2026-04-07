@@ -343,10 +343,14 @@ impl ConnectionParamsRequest {
             return self.reject(stack).await;
         }
 
-        match stack.host.async_command(into_le_conn_update(self.handle, params)).await {
+        match stack
+            .host()
+            .async_command(into_le_conn_update(self.handle, params))
+            .await
+        {
             Ok(()) => {
                 let param = ConnParamUpdateRes { result: 0 };
-                stack.host.send_conn_param_update_res(self.handle, &param).await
+                stack.host().send_conn_param_update_res(self.handle, &param).await
             }
             Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                 Err(crate::Error::Disconnected.into())
@@ -368,7 +372,7 @@ impl ConnectionParamsRequest {
     {
         self.responded = true;
         let param = ConnParamUpdateRes { result: 1 };
-        stack.host.send_conn_param_update_res(self.handle, &param).await
+        stack.host().send_conn_param_update_res(self.handle, &param).await
     }
 }
 
@@ -394,18 +398,22 @@ impl ConnectionParamsRequest {
             return self.reject(stack).await;
         }
 
-        match stack.host.async_command(into_le_conn_update(self.handle, params)).await {
+        match stack
+            .host()
+            .async_command(into_le_conn_update(self.handle, params))
+            .await
+        {
             Ok(()) => {
                 if self.l2cap {
                     // Use L2CAP signaling to update connection parameters
                     let param = ConnParamUpdateRes { result: 0 };
-                    stack.host.send_conn_param_update_res(self.handle, &param).await
+                    stack.host().send_conn_param_update_res(self.handle, &param).await
                 } else {
                     let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);
                     let interval_max: bt_hci::param::Duration<1_250> = bt_hci_duration(params.max_connection_interval);
                     let timeout: bt_hci::param::Duration<10_000> = bt_hci_duration(params.supervision_timeout);
                     stack
-                        .host
+                        .host()
                         .async_command(LeRemoteConnectionParameterRequestReply::new(
                             self.handle,
                             interval_min,
@@ -439,10 +447,10 @@ impl ConnectionParamsRequest {
         self.responded = true;
         if self.l2cap {
             let param = ConnParamUpdateRes { result: 1 };
-            stack.host.send_conn_param_update_res(self.handle, &param).await
+            stack.host().send_conn_param_update_res(self.handle, &param).await
         } else {
             stack
-                .host
+                .host()
                 .async_command(LeRemoteConnectionParameterRequestNegativeReply::new(
                     self.handle,
                     RemoteConnectionParamsRejectReason::UnacceptableConnParameters,
@@ -769,7 +777,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         T: ControllerCmdSync<ReadRssi>,
     {
         let handle = self.handle();
-        let ret = stack.host.command(ReadRssi::new(handle)).await?;
+        let ret = stack.host().command(ReadRssi::new(handle)).await?;
         Ok(ret.rssi)
     }
 
@@ -806,7 +814,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
             }
         }
         stack
-            .host
+            .host()
             .async_command(LeSetPhy::new(self.handle(), all_phys, mask, mask, options))
             .await?;
         Ok(())
@@ -817,7 +825,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     where
         T: ControllerCmdSync<LeReadPhy>,
     {
-        let res = stack.host.command(LeReadPhy::new(self.handle())).await?;
+        let res = stack.host().command(LeReadPhy::new(self.handle())).await?;
         Ok((res.tx_phy, res.rx_phy))
     }
 
@@ -833,9 +841,13 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     {
         let handle = self.handle();
         // First, check the local supported features to ensure that the connection update is supported.
-        let features = stack.host.command(LeReadLocalSupportedFeatures::new()).await?;
+        let features = stack.host().command(LeReadLocalSupportedFeatures::new()).await?;
         if length <= 27 || features.supports_le_data_packet_length_extension() {
-            match stack.host.command(LeSetDataLength::new(handle, length, time_us)).await {
+            match stack
+                .host()
+                .command(LeSetDataLength::new(handle, length, time_us))
+                .await
+            {
                 Ok(_) => Ok(()),
                 Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                     Err(crate::Error::Disconnected.into())
@@ -858,9 +870,9 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     {
         let handle = self.handle();
         // First, check the local supported features to ensure that the connection update is supported.
-        let features = stack.host.command(LeReadLocalSupportedFeatures::new()).await?;
+        let features = stack.host().command(LeReadLocalSupportedFeatures::new()).await?;
         if features.supports_conn_parameters_request_procedure() || self.role() == LeConnRole::Central {
-            match stack.host.async_command(into_le_conn_update(handle, params)).await {
+            match stack.host().async_command(into_le_conn_update(handle, params)).await {
                 Ok(_) => return Ok(()),
                 Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                     return Err(crate::Error::Disconnected.into());
@@ -890,7 +902,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                 latency: params.max_latency,
                 timeout: timeout.as_u16(),
             };
-            stack.host.send_conn_param_update_req(handle, &param).await?;
+            stack.host().send_conn_param_update_req(handle, &param).await?;
         }
         Ok(())
     }
@@ -911,7 +923,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         let frame_space_min_dur = bt_hci_duration(frame_space_min);
         let frame_space_max_dur = bt_hci_duration(frame_space_max);
         match stack
-            .host
+            .host()
             .command(LeFrameSpaceUpdate::new(
                 handle,
                 frame_space_min_dur,
@@ -945,7 +957,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         let min_ce = bt_hci_duration(conn_rate_params.min_ce_length);
         let max_ce = bt_hci_duration(conn_rate_params.max_ce_length);
         match stack
-            .host
+            .host()
             .command(LeConnectionRateRequest::new(
                 handle,
                 min_interval,

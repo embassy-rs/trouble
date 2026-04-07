@@ -17,11 +17,11 @@ use crate::{bt_hci_duration, bt_hci_ext_duration, Address, BleHostError, Error, 
 
 /// Type which implements the BLE peripheral role.
 pub struct Peripheral<'d, C, P: PacketPool> {
-    host: &'d BleHost<'d, C, P>,
+    host: BleHost<'d, C, P>,
 }
 
 impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
-    pub(crate) fn new(host: &'d BleHost<'d, C, P>) -> Self {
+    pub(crate) fn new(host: BleHost<'d, C, P>) -> Self {
         Self { host }
     }
 
@@ -62,12 +62,12 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
 
         // Ensure no other advertise ongoing.
         let drop = crate::host::OnDrop::new(|| {
-            host.advertise_command_state.cancel(false);
+            host.advertise_command_state().cancel(false);
         });
-        host.request_operation(&host.advertise_command_state, false).await;
+        host.request_operation(host.advertise_command_state(), false).await;
 
         // Clear current advertising terminations
-        host.advertise_state.reset();
+        host.advertise_state().reset();
 
         let data: RawAdvertisement = data.into();
         if !data.props.legacy_adv() {
@@ -120,7 +120,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         }];
 
         trace!("[host] enabling advertising");
-        host.advertise_state.start(&advset[..]);
+        host.advertise_state().start(&advset[..]);
         host.command(LeSetAdvEnable::new(true)).await?;
         drop.defuse();
         Ok(Advertiser {
@@ -200,19 +200,19 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         // Check host supports the required advertisement sets
         {
             let result = host.command(LeReadNumberOfSupportedAdvSets::new()).await?;
-            if result < sets.len() as u8 || host.advertise_state.len() < sets.len() {
+            if result < sets.len() as u8 || host.advertise_state().len() < sets.len() {
                 return Err(Error::InsufficientSpace.into());
             }
         }
 
         // Ensure no other advertise ongoing.
         let drop = crate::host::OnDrop::new(|| {
-            host.advertise_command_state.cancel(true);
+            host.advertise_command_state().cancel(true);
         });
-        host.request_operation(&host.advertise_command_state, true).await;
+        host.request_operation(host.advertise_command_state(), true).await;
 
         // Clear current advertising terminations
-        host.advertise_state.reset();
+        host.advertise_state().reset();
 
         for (i, set) in sets.iter().enumerate() {
             let handle = AdvHandle::new(i as u8);
@@ -223,7 +223,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             let random_addr = if let Some(addr) = set.address {
                 Some(addr)
             } else {
-                host.address.as_ref().map(|a| a.addr)
+                host.address().as_ref().map(|a| a.addr)
             };
 
             host.command(LeSetExtAdvParams::new(
@@ -274,7 +274,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         }
 
         trace!("[host] enabling extended advertising");
-        host.advertise_state.start(handles);
+        host.advertise_state().start(handles);
         host.command(LeSetExtAdvEnable::new(true, handles)).await?;
         drop.defuse();
         Ok(Advertiser {
@@ -332,7 +332,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     ///
     /// Accepts the next pending connection if there are any.
     pub fn try_accept(&mut self) -> Option<Connection<'d, P>> {
-        if let Poll::Ready(conn) = self.host.connections.poll_accept(LeConnRole::Peripheral, &[], None) {
+        if let Poll::Ready(conn) = self.host.connections().poll_accept(LeConnRole::Peripheral, &[], None) {
             Some(conn)
         } else {
             None
@@ -342,7 +342,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
 
 /// Handle to an active advertiser which can accept connections.
 pub struct Advertiser<'d, C, P: PacketPool> {
-    host: &'d BleHost<'d, C, P>,
+    host: BleHost<'d, C, P>,
     extended: bool,
     done: bool,
 }
@@ -353,8 +353,8 @@ impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
     /// Returns Error::Timeout if advertiser stopped.
     pub async fn accept(mut self) -> Result<Connection<'d, P>, Error> {
         let result = match select(
-            self.host.connections.accept(LeConnRole::Peripheral, &[]),
-            self.host.advertise_state.wait(),
+            self.host.connections().accept(LeConnRole::Peripheral, &[]),
+            self.host.advertise_state().wait(),
         )
         .await
         {
@@ -369,9 +369,9 @@ impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
 impl<C, P: PacketPool> Drop for Advertiser<'_, C, P> {
     fn drop(&mut self) {
         if !self.done {
-            self.host.advertise_command_state.cancel(self.extended);
+            self.host.advertise_command_state().cancel(self.extended);
         } else {
-            self.host.advertise_command_state.canceled();
+            self.host.advertise_command_state().canceled();
         }
     }
 }

@@ -9,11 +9,11 @@ use crate::{BleHostError, PacketPool};
 
 /// A type for running isochronous-stream HCI commands and data.
 pub struct Iso<'stack, C, P: PacketPool> {
-    host: &'stack BleHost<'stack, C, P>,
+    host: BleHost<'stack, C, P>,
 }
 
 impl<'stack, C: Controller, P: PacketPool> Iso<'stack, C, P> {
-    pub(crate) fn new(host: &'stack BleHost<'stack, C, P>) -> Self {
+    pub(crate) fn new(host: BleHost<'stack, C, P>) -> Self {
         Self { host }
     }
 
@@ -38,6 +38,6 @@ impl<'stack, C: Controller, P: PacketPool> Iso<'stack, C, P> {
 
     /// Write a raw HCI ISO data packet to the controller.
     pub async fn send(&self, packet: &IsoPacket<'_>) -> Result<(), C::Error> {
-        self.host.controller.write_iso_data(packet).await
+        self.host.write_iso_data(packet).await
     }
 }

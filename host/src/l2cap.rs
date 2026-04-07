@@ -127,7 +127,11 @@ impl<'d, P: PacketPool> L2capPendingConnection<'d, P> {
         config: &L2capChannelConfig,
     ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
         let index = self.into_index();
-        stack.host.channels.accept_pending(index, config, stack.host).await
+        stack
+            .host()
+            .channels()
+            .accept_pending(index, config, stack.host())
+            .await
     }
 
     /// Reject the connection with the given result code.
@@ -137,7 +141,11 @@ impl<'d, P: PacketPool> L2capPendingConnection<'d, P> {
         result: LeCreditConnResultCode,
     ) -> Result<(), BleHostError<T::Error>> {
         let index = self.index.take().unwrap();
-        stack.host.channels.reject_pending(index, result, stack.host).await
+        stack
+            .host()
+            .channels()
+            .reject_pending(index, result, stack.host())
+            .await
     }
 }
 
@@ -211,9 +219,9 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = P::allocate().ok_or(Error::OutOfMemory)?;
         stack
-            .host
-            .channels
-            .send(self.index, buf, p_buf.as_mut(), stack.host)
+            .host()
+            .channels()
+            .send(self.index, buf, p_buf.as_mut(), stack.host())
             .await
     }
 
@@ -230,9 +238,9 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = P::allocate().ok_or(Error::OutOfMemory)?;
         stack
-            .host
-            .channels
-            .try_send(self.index, buf, p_buf.as_mut(), stack.host)
+            .host()
+            .channels()
+            .try_send(self.index, buf, p_buf.as_mut(), stack.host())
     }
 
     /// Receive data on this channel and copy it into the buffer.
@@ -243,7 +251,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         stack: &Stack<'_, T, P>,
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
-        stack.host.channels.receive(self.index, buf, stack.host).await
+        stack.host().channels().receive(self.index, buf, stack.host()).await
     }
 
     /// Receive the next SDU available on this channel.
@@ -253,7 +261,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         &mut self,
         stack: &Stack<'_, T, P>,
     ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
-        stack.host.channels.receive_sdu(self.index, stack.host).await
+        stack.host().channels().receive_sdu(self.index, stack.host()).await
     }
 
     /// Read metrics of the l2cap channel.
@@ -274,7 +282,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         connection.set_l2cap_listening(true);
         L2capChannelListener {
             conn: connection.clone(),
-            host: stack.host,
+            host: stack.host(),
         }
     }
 
@@ -286,9 +294,9 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>> {
         stack
-            .host
-            .channels
-            .create(connection.handle(), spsm, config, stack.host)
+            .host()
+            .channels()
+            .create(connection.handle(), spsm, config, stack.host())
             .await
     }
 
@@ -349,7 +357,7 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
         stack: &Stack<'_, T, P>,
         buf: &mut [u8],
     ) -> Result<usize, BleHostError<T::Error>> {
-        stack.host.channels.receive(self.index, buf, stack.host).await
+        stack.host().channels().receive(self.index, buf, stack.host()).await
     }
 
     /// Receive the next SDU available on this channel.
@@ -359,7 +367,7 @@ impl<'d, P: PacketPool> L2capChannelReader<'d, P> {
         &mut self,
         stack: &Stack<'_, T, P>,
     ) -> Result<Sdu<P::Packet>, BleHostError<T::Error>> {
-        stack.host.channels.receive_sdu(self.index, stack.host).await
+        stack.host().channels().receive_sdu(self.index, stack.host()).await
     }
 
     /// Read metrics of the l2cap channel.
@@ -415,9 +423,9 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = P::allocate().ok_or(Error::OutOfMemory)?;
         stack
-            .host
-            .channels
-            .send(self.index, buf, p_buf.as_mut(), stack.host)
+            .host()
+            .channels()
+            .send(self.index, buf, p_buf.as_mut(), stack.host())
             .await
     }
 
@@ -434,9 +442,9 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
     ) -> Result<(), BleHostError<T::Error>> {
         let mut p_buf = P::allocate().ok_or(Error::OutOfMemory)?;
         stack
-            .host
-            .channels
-            .try_send(self.index, buf, p_buf.as_mut(), stack.host)
+            .host()
+            .channels()
+            .try_send(self.index, buf, p_buf.as_mut(), stack.host())
     }
 
     /// Read metrics of the l2cap channel.
@@ -462,7 +470,7 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
 /// yet been returned by [`next`](Self::next) or [`accept`](Self::accept).
 pub struct L2capChannelListener<'d, T: Controller, P: PacketPool> {
     conn: Connection<'d, P>,
-    host: &'d BleHost<'d, T, P>,
+    host: BleHost<'d, T, P>,
 }
 
 impl<'d, T: Controller, P: PacketPool> L2capChannelListener<'d, T, P> {
@@ -471,8 +479,8 @@ impl<'d, T: Controller, P: PacketPool> L2capChannelListener<'d, T, P> {
     /// Returns a [`L2capPendingConnection`] that can be inspected, then accepted or rejected.
     pub async fn next(&self) -> Result<L2capPendingConnection<'d, P>, Error> {
         self.host
-            .channels
-            .next_pending(self.conn.handle(), &self.host.connections)
+            .channels()
+            .next_pending(self.conn.handle(), self.host.connections())
             .await
     }
 
@@ -483,7 +491,7 @@ impl<'d, T: Controller, P: PacketPool> L2capChannelListener<'d, T, P> {
     pub async fn accept(&self, config: &L2capChannelConfig) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
         let pending = self.next().await?;
         let index = pending.into_index();
-        self.host.channels.accept_pending(index, config, self.host).await
+        self.host.channels().accept_pending(index, config, self.host).await
     }
 
     /// Get a reference to the connection this listener is bound to.
@@ -496,7 +504,7 @@ impl<T: Controller, P: PacketPool> Drop for L2capChannelListener<'_, T, P> {
     fn drop(&mut self) {
         self.conn.set_l2cap_listening(false);
         self.host
-            .channels
-            .reject_all_pending(self.conn.handle(), &self.host.connections);
+            .channels()
+            .reject_all_pending(self.conn.handle(), self.host.connections());
     }
 }

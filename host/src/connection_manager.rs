@@ -1015,7 +1015,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             crate::security_manager::SecurityEventData::TimerChange => (),
             #[cfg(feature = "security")]
             crate::security_manager::SecurityEventData::BondAdded(handle, identity) => {
-                host.resolving_list_state
+                host.resolving_list_state()
                     .borrow_mut()
                     .push(crate::host::ResolvingListUpdate::Add(identity));
                 // Update the connection's stored peer identity to reflect the identity
