@@ -38,6 +38,9 @@ pub mod opcodes {
     pub const PASSKEY_CONFIRM: Opcode = Opcode(0x14);
     pub const START_DIRECTED_ADVERTISING: Opcode = Opcode(0x15);
     pub const CONN_PARAM_UPDATE: Opcode = Opcode(0x16);
+    pub const OOB_LEGACY_SET_DATA: Opcode = Opcode(0x18);
+    pub const OOB_SC_GET_LOCAL_DATA: Opcode = Opcode(0x19);
+    pub const OOB_SC_SET_REMOTE_DATA: Opcode = Opcode(0x1a);
     pub const SET_MITM: Opcode = Opcode(0x1b);
     pub const SET_FILTER_ACCEPT_LIST: Opcode = Opcode(0x1c);
     pub const SET_SC_ONLY: Opcode = Opcode(0x1e);
@@ -77,6 +80,9 @@ pub const SUPPORTED_COMMANDS: [u8; 4] = super::supported_commands_bitmask(&[
     opcodes::PASSKEY_CONFIRM,
     opcodes::START_DIRECTED_ADVERTISING,
     opcodes::CONN_PARAM_UPDATE,
+    opcodes::OOB_LEGACY_SET_DATA,
+    opcodes::OOB_SC_GET_LOCAL_DATA,
+    opcodes::OOB_SC_SET_REMOTE_DATA,
     opcodes::SET_MITM,
     opcodes::SET_FILTER_ACCEPT_LIST,
     opcodes::SET_SC_ONLY,
@@ -467,6 +473,15 @@ pub enum GapCommand<'a> {
     /// Connection parameter update (0x16).
     ConnParamUpdate(ConnParamUpdateCommand<'a>),
 
+    /// Set legacy OOB data (0x18).
+    OobLegacySetData([u8; 16]),
+
+    /// Get local SC OOB data (0x19).
+    OobScGetLocalData,
+
+    /// Set remote SC OOB data (0x1a).
+    OobScSetRemoteData { random: [u8; 16], confirm: [u8; 16] },
+
     /// Set MITM flag (0x1b).
     SetMitm(bool),
 
@@ -560,6 +575,16 @@ impl<'a> GapCommand<'a> {
                 let address = cursor.read_address()?;
                 let params = cursor.read_exact(8)?;
                 Ok(GapCommand::ConnParamUpdate(ConnParamUpdateCommand { address, params }))
+            }
+            opcodes::OOB_LEGACY_SET_DATA => {
+                let data: [u8; 16] = cursor.read_exact(16)?.try_into().unwrap();
+                Ok(GapCommand::OobLegacySetData(data))
+            }
+            opcodes::OOB_SC_GET_LOCAL_DATA => Ok(GapCommand::OobScGetLocalData),
+            opcodes::OOB_SC_SET_REMOTE_DATA => {
+                let random: [u8; 16] = cursor.read_exact(16)?.try_into().unwrap();
+                let confirm: [u8; 16] = cursor.read_exact(16)?.try_into().unwrap();
+                Ok(GapCommand::OobScSetRemoteData { random, confirm })
             }
             opcodes::SET_MITM => {
                 let val = cursor.read_u8()?;
@@ -715,6 +740,12 @@ pub enum GapResponse<'a> {
 
     /// Current settings (used for most setting change responses).
     CurrentSettings(GapSettings),
+
+    /// Local SC OOB data (rand + confirm, 32 bytes).
+    OobScLocalData {
+        random: [u8; 16],
+        confirm: [u8; 16],
+    },
 }
 
 impl GapResponse<'_> {
@@ -729,6 +760,7 @@ impl GapResponse<'_> {
             GapResponse::ControllerIndexList(rsp) => 1 + rsp.indices.len() as u16,
             GapResponse::ControllerInfo(..) => Self::CONTROLLER_INFO_LEN,
             GapResponse::CurrentSettings(..) => 4,
+            GapResponse::OobScLocalData { .. } => 32,
         }
     }
 
@@ -764,6 +796,10 @@ impl GapResponse<'_> {
                 writer.write_all(&short_padding[..padding]).await
             }
             GapResponse::CurrentSettings(settings) => writer.write_all(&settings.bits().to_le_bytes()).await,
+            GapResponse::OobScLocalData { random, confirm } => {
+                writer.write_all(random).await?;
+                writer.write_all(confirm).await
+            }
         }
     }
 }
@@ -1587,5 +1623,51 @@ mod tests {
     fn test_write_success_response() {
         let resp = GapResponse::Success;
         assert_eq!(resp.data_len(), 0);
+    }
+
+    #[test]
+    fn test_read_oob_legacy_set_data() {
+        let data: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let header = make_header(opcodes::OOB_LEGACY_SET_DATA, Some(0));
+        let mut cursor = Cursor::new(&data);
+        let cmd = GapCommand::parse(&header, &mut cursor).unwrap();
+        assert!(matches!(cmd, GapCommand::OobLegacySetData(d) if d == data));
+    }
+
+    #[test]
+    fn test_read_oob_sc_get_local_data() {
+        let header = make_header(opcodes::OOB_SC_GET_LOCAL_DATA, Some(0));
+        let mut cursor = Cursor::new(&[]);
+        let cmd = GapCommand::parse(&header, &mut cursor).unwrap();
+        assert!(matches!(cmd, GapCommand::OobScGetLocalData));
+    }
+
+    #[test]
+    fn test_read_oob_sc_set_remote_data() {
+        let mut data = [0u8; 32];
+        data[..16].copy_from_slice(&[1; 16]);
+        data[16..].copy_from_slice(&[2; 16]);
+        let header = make_header(opcodes::OOB_SC_SET_REMOTE_DATA, Some(0));
+        let mut cursor = Cursor::new(&data);
+        let cmd = GapCommand::parse(&header, &mut cursor).unwrap();
+        if let GapCommand::OobScSetRemoteData { random, confirm } = cmd {
+            assert_eq!(random, [1; 16]);
+            assert_eq!(confirm, [2; 16]);
+        } else {
+            panic!("Expected OobScSetRemoteData");
+        }
+    }
+
+    #[test]
+    fn test_write_oob_sc_local_data() {
+        let resp = GapResponse::OobScLocalData {
+            random: [0xAA; 16],
+            confirm: [0xBB; 16],
+        };
+        assert_eq!(resp.data_len(), 32);
+        let mut buf = [0u8; 32];
+        block_on(resp.write(&mut buf.as_mut_slice())).unwrap();
+        assert_eq!(&buf[..16], &[0xAA; 16]);
+        assert_eq!(&buf[16..], &[0xBB; 16]);
     }
 }

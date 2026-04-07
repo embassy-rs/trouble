@@ -20,6 +20,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
+pub use pairing::OobData;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
 use types::Command;
@@ -49,6 +50,7 @@ pub(crate) enum SecurityEventData {
 }
 
 /// Bond Information
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct BondInformation {
     /// Long Term Key (LTK)
@@ -188,6 +190,10 @@ impl<P: PacketPool> TxPacket<P> {
 struct Inner<const BOND_COUNT: usize> {
     /// Random generator
     rng: ChaCha12Rng,
+    /// Persistent LESC keypair (generated once when RNG is seeded)
+    secret_key: crypto::SecretKey,
+    /// Corresponding public key
+    public_key: crypto::PublicKey,
     /// Security manager data
     state: SecurityManagerData<BOND_COUNT>,
     /// State of an ongoing pairing
@@ -294,6 +300,8 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
         let mut ops = PairingOpsImpl {
             state: &mut self.state,
             events,
+            secret_key: &self.secret_key,
+            public_key: &self.public_key,
             conn_handle: handle,
             connections,
             storage,
@@ -360,6 +368,8 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
         let mut ops = PairingOpsImpl {
             state: &mut self.state,
             events,
+            secret_key: &self.secret_key,
+            public_key: &self.public_key,
             conn_handle: handle,
             connections,
             storage,
@@ -382,6 +392,8 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
             let mut ops = PairingOpsImpl {
                 state: &mut self.state,
                 events,
+                secret_key: &self.secret_key,
+                public_key: &self.public_key,
                 peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
                 conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
                 connections,
@@ -408,6 +420,8 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
             let mut ops = PairingOpsImpl {
                 state: &mut self.state,
                 events,
+                secret_key: &self.secret_key,
+                public_key: &self.public_key,
                 peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
                 connections,
                 storage,
@@ -473,6 +487,8 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
                 &mut PairingOpsImpl {
                     state: &mut self.state,
                     events,
+                    secret_key: &self.secret_key,
+                    public_key: &self.public_key,
                     peer_identity: storage.peer_identity.unwrap_or_default(),
                     connections,
                     storage,
@@ -529,6 +545,8 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
         let mut ops = PairingOpsImpl {
             state: &mut self.state,
             events,
+            secret_key: &self.secret_key,
+            public_key: &self.public_key,
             conn_handle: handle,
             connections,
             storage,
@@ -566,9 +584,14 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
 impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Create a new SecurityManager
     pub(crate) fn new() -> Self {
+        let mut rng = ChaCha12Rng::from_seed([0u8; 32]);
+        let secret_key = crypto::SecretKey::new(&mut rng);
+        let public_key = secret_key.public_key();
         Self {
             inner: RefCell::new(Inner {
-                rng: ChaCha12Rng::from_seed([0u8; 32]),
+                rng,
+                secret_key,
+                public_key,
                 state: SecurityManagerData::new(),
                 pairing_sm: None,
                 finished_waker: WakerRegistration::new(),
@@ -596,6 +619,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn set_random_generator_seed(&self, random_seed: [u8; 32]) {
         let mut inner = self.inner.borrow_mut();
         inner.rng = ChaCha12Rng::from_seed(random_seed);
+        inner.secret_key = crypto::SecretKey::new(&mut inner.rng);
+        inner.public_key = inner.secret_key.public_key();
         inner.state.random_generator_seeded = true;
     }
 
@@ -660,6 +685,26 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Has the random generator been seeded?
     pub(crate) fn get_random_generator_seeded(&self) -> bool {
         self.inner.borrow().state.random_generator_seeded
+    }
+
+    /// Generate local OOB data for LESC pairing.
+    ///
+    /// The returned data should be exchanged with the peer via an out-of-band channel.
+    /// The persistent keypair is used so the confirm value matches the public key
+    /// that will be sent during pairing.
+    pub(crate) fn get_local_oob_data(&self) -> pairing::OobData {
+        let mut inner = self.inner.borrow_mut();
+        let r = crypto::Nonce::new(&mut inner.rng);
+        let c = r.f4(inner.public_key.x(), inner.public_key.x(), 0);
+        pairing::OobData {
+            random: r.0.to_le_bytes(),
+            confirm: c.0.to_le_bytes(),
+        }
+    }
+
+    /// Get the current local address.
+    pub(crate) fn get_local_address(&self) -> Option<Address> {
+        self.inner.borrow().state.local_address
     }
 
     /// Add a bonded device
@@ -965,6 +1010,23 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.handle_event(pairing::Event::PassKeyInput(input), connections, storage)
     }
 
+    pub(crate) fn handle_oob_data_received<P: PacketPool>(
+        &self,
+        local_oob: pairing::OobData,
+        peer_oob: pairing::OobData,
+        connections: &ConnectionManager<'_, P>,
+        storage: &ConnectionStorage<P::Packet>,
+    ) -> Result<(), Error> {
+        self.handle_event(
+            pairing::Event::OobDataReceived {
+                local: local_oob,
+                peer: peer_oob,
+            },
+            connections,
+            storage,
+        )
+    }
+
     pub(crate) fn handle_pass_key_confirm<P: PacketPool>(
         &self,
         confirmed: bool,
@@ -1024,6 +1086,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> {
     state: &'sm mut SecurityManagerData<B>,
     events: &'sm Channel<NoopRawMutex, SecurityEventData, 2>,
+    secret_key: &'sm crypto::SecretKey,
+    public_key: &'sm crypto::PublicKey,
     connections: &'cm ConnectionManager<'cm2, P>,
     storage: &'cs ConnectionStorage<P::Packet>,
     conn_handle: ConnHandle,
@@ -1116,5 +1180,17 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
             let _ = self.events.try_send(SecurityEventData::TimerChange);
         }
         Ok(())
+    }
+
+    fn oob_available(&self) -> bool {
+        self.storage.oob_available
+    }
+
+    fn secret_key(&self) -> &crypto::SecretKey {
+        self.secret_key
+    }
+
+    fn public_key(&self) -> &crypto::PublicKey {
+        self.public_key
     }
 }

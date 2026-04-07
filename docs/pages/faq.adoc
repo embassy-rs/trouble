@@ -3,3 +3,49 @@
 These are a list of unsorted, commonly asked questions and answers.
 
 Please feel free to add items to link:https://github.com/embassy-rs/trouble/edit/main/docs/pages/faq.adoc[this page], especially if someone in the chat answered a question for you!
+
+== How do I set the MTU?
+
+The MTU is configured through two mechanisms:
+
+1. *Packet pool MTU* - Set via the `default-packet-pool-mtu-N` cargo feature (e.g., `default-packet-pool-mtu-251`). This determines the maximum size of each packet buffer.
+2. *L2CAP channel MTU* - Set per-channel via `L2capChannelConfig::mtu` when creating L2CAP CoC channels.
+
+For GATT, the ATT MTU is automatically negotiated based on the packet pool MTU. For best throughput, align these values with the PDU size; see the xref:_performance[Performance] section.
+
+== Why are queue sizes configured via feature flags instead of const generics?
+
+Using const generics for queue sizes would add many generic parameters to most API types, making the API harder to use and read. Feature flags keep the common case simple while still allowing customization when needed. The defaults work well for most applications.
+
+== How many L2CAP channels do I need?
+
+The `L2CAP_CHANNELS_MAX` parameter on `HostResources` counts the total number of L2CAP channels, including internal ones:
+
+* *1* for the signaling channel (always required)
+* *1* for ATT/GATT (if using GATT)
+* *1* per L2CAP CoC channel you want to use concurrently
+
+For a typical GATT-only application: `2` (signal + ATT). For GATT plus one CoC channel: `3`.
+
+== How do I use multiple connections?
+
+Increase the `CONNECTIONS_MAX` parameter on `HostResources` and configure your controller to support multiple connections (e.g., `central_count(N)` or `peripheral_count(N)` on the nrf-sdc builder). You will also need to increase `L2CAP_CHANNELS_MAX` proportionally, since each connection needs its own ATT and signal channels.
+
+== My connection keeps dropping, what should I check?
+
+* *Supervision timeout* - If the devices are far apart or in a noisy environment, the default supervision timeout may be too short. Try increasing it via connection parameters.
+* *Connection interval* - A very short connection interval may cause the controller to miss events under load. Try a longer interval.
+* *Packet pool exhaustion* - If the pool runs out of buffers, the stack cannot process incoming data. Increase `default-packet-pool-size-N` or reduce queue depths.
+* *Runner task not running* - The `runner.run()` future must be polled continuously. Ensure it is running concurrently with your application logic using `join` or a spawned task.
+
+== Can I use Trouble without Embassy?
+
+Trouble uses Embassy async primitives (`embassy-sync`, `embassy-time`) but does not require the Embassy executor. You can use it with any async executor that provides an `embassy-time` driver. The Linux examples use `tokio` as the executor.
+
+== What is the `ExternalController` wrapper?
+
+`ExternalController<T, N>` wraps any transport implementing `embedded-io` read/write traits and provides an HCI controller interface. The generic parameter `N` is the number of concurrent HCI command slots. Use it when your controller communicates over a byte-stream transport (UART, USB, etc.) rather than providing a native `Controller` implementation.
+
+== How do I enable logging?
+
+Use either the `defmt` feature (for embedded, with the defmt framework) or the `log` feature (for std environments, with the `log` crate). These are mutually exclusive. On Linux, pair the `log` feature with `env_logger` and set the `RUST_LOG` environment variable.

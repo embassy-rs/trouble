@@ -99,7 +99,35 @@ consume CPU resources when there are work to do (accepting connections/channels,
 
 For instance, an `embassy` application would use it like this:
 
+```rust
+// As a generic async function using join:
+use embassy_futures::join::join;
+
+let _ = join(
+    async {
+        loop {
+            if let Err(e) = runner.run().await {
+                panic!("BLE runner error: {:?}", e);
+            }
+        }
+    },
+    async {
+        // Your application logic here (advertise, connect, etc.)
+    },
+).await;
 ```
+
+Alternatively, if your application doesn't need the runner to be generic, you can spawn it as a static embassy task:
+
+```rust
+#[embassy_executor::task]
+async fn ble_task(mut runner: Runner<'static, SoftdeviceController<'static>>) {
+    loop {
+        runner.run().await.ok();
+    }
+}
+
+spawner.must_spawn(ble_task(runner));
 ```
 
 == Summary

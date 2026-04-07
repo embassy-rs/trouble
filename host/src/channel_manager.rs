@@ -82,7 +82,7 @@ impl<P> State<'_, P> {
         for &psm in psms {
             if !(1..=255).contains(&psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
                 return Err(Error::InvalidValue);
-            } else if self.is_psm_registered(psm) {
+            } else if self.is_psm_registered(psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
                 return Err(Error::AlreadyInUse);
             }
         }

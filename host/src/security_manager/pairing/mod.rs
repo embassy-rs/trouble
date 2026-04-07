@@ -77,6 +77,12 @@ pub trait PairingOps<P: PacketPool> {
     fn connection_handle(&mut self) -> ConnHandle;
     fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error>;
     fn bonding_flag(&self) -> BondingFlag;
+    /// Whether OOB data is available for this connection.
+    fn oob_available(&self) -> bool;
+    /// The persistent LESC secret key.
+    fn secret_key(&self) -> &crate::security_manager::crypto::SecretKey;
+    /// The persistent LESC public key.
+    fn public_key(&self) -> &crate::security_manager::crypto::PublicKey;
 }
 
 #[derive(Debug)]
@@ -337,11 +343,25 @@ impl Pairing {
     }
 }
 
+/// OOB data for BLE pairing, exchanged via an out-of-band channel.
+///
+/// For LESC: `random` is the random nonce r, `confirm` is c = f4(PKx, PKx, r, 0).
+/// For legacy: `random` is the TK value, `confirm` is unused (set to zero).
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct OobData {
+    /// Random nonce (LESC) or TK value (legacy).
+    pub random: [u8; 16],
+    /// Confirm value (LESC only, zero for legacy).
+    pub confirm: [u8; 16],
+}
+
 pub enum Event {
     LinkEncryptedResult(bool),
     PassKeyConfirm,
     PassKeyCancel,
     PassKeyInput(u32),
+    OobDataReceived { local: OobData, peer: OobData },
 }
 
 #[cfg(test)]
@@ -387,13 +407,33 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
     pub(crate) struct TestOps<const N: usize> {
         pub(crate) sent_packets: heapless::Vec<TxPacket<HeaplessPool>, N>,
         pub(crate) encryptions: heapless::Vec<LongTermKey, 10>,
         pub(crate) connection_events: heapless::Vec<ConnectionEvent, 10>,
         pub(crate) bond_information: Option<BondInformation>,
         pub(crate) bondable: bool,
+        pub(crate) oob_available: bool,
+        pub(crate) secret_key: crate::security_manager::crypto::SecretKey,
+        pub(crate) public_key: crate::security_manager::crypto::PublicKey,
+    }
+
+    impl<const N: usize> TestOps<N> {
+        pub(crate) fn new(seed: u64) -> Self {
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(seed).into();
+            let secret_key = crate::security_manager::crypto::SecretKey::new(&mut rng);
+            let public_key = secret_key.public_key();
+            Self {
+                sent_packets: heapless::Vec::new(),
+                encryptions: heapless::Vec::new(),
+                connection_events: heapless::Vec::new(),
+                bond_information: None,
+                bondable: false,
+                oob_available: false,
+                secret_key,
+                public_key,
+            }
+        }
     }
 
     impl<const N: usize> PairingOps<HeaplessPool> for TestOps<N> {
@@ -458,6 +498,18 @@ mod tests {
                 BondingFlag::NoBonding
             }
         }
+
+        fn oob_available(&self) -> bool {
+            self.oob_available
+        }
+
+        fn secret_key(&self) -> &crate::security_manager::crypto::SecretKey {
+            &self.secret_key
+        }
+
+        fn public_key(&self) -> &crate::security_manager::crypto::PublicKey {
+            &self.public_key
+        }
     }
 
     #[test]
@@ -465,8 +517,8 @@ mod tests {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
-        let mut peripheral_ops = TestOps::<10>::default();
-        let mut central_ops = TestOps::<10>::default();
+        let mut peripheral_ops = TestOps::<10>::new(0xDEAD);
+        let mut central_ops = TestOps::<10>::new(0xBEEF);
 
         let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::NoInputNoOutput);
         let mut central_pairing = Pairing::initiate_central(
@@ -522,8 +574,8 @@ mod tests {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
-        let mut peripheral_ops = TestOps::<10>::default();
-        let mut central_ops = TestOps::<10>::default();
+        let mut peripheral_ops = TestOps::<10>::new(0xDEAD);
+        let mut central_ops = TestOps::<10>::new(0xBEEF);
 
         let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::DisplayYesNo);
         let mut central_pairing = Pairing::initiate_central(
@@ -614,8 +666,8 @@ mod tests {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
-        let mut peripheral_ops = TestOps::<80>::default();
-        let mut central_ops = TestOps::<80>::default();
+        let mut peripheral_ops = TestOps::<80>::new(0xDEAD);
+        let mut central_ops = TestOps::<80>::new(0xBEEF);
 
         let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::KeyboardOnly);
         let mut central_pairing = Pairing::initiate_central(
@@ -700,8 +752,8 @@ mod tests {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
-        let mut peripheral_ops = TestOps::<80>::default();
-        let mut central_ops = TestOps::<80>::default();
+        let mut peripheral_ops = TestOps::<80>::new(0xDEAD);
+        let mut central_ops = TestOps::<80>::new(0xBEEF);
 
         let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::DisplayOnly);
         let mut central_pairing = Pairing::initiate_central(
@@ -784,8 +836,8 @@ mod tests {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
-        let mut peripheral_ops = TestOps::<80>::default();
-        let mut central_ops = TestOps::<80>::default();
+        let mut peripheral_ops = TestOps::<80>::new(0xDEAD);
+        let mut central_ops = TestOps::<80>::new(0xBEEF);
 
         let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::KeyboardOnly);
         let mut central_pairing =
@@ -863,8 +915,8 @@ mod tests {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
-        let mut peripheral_ops = TestOps::<80>::default();
-        let mut central_ops = TestOps::<80>::default();
+        let mut peripheral_ops = TestOps::<80>::new(0xDEAD);
+        let mut central_ops = TestOps::<80>::new(0xBEEF);
         peripheral_ops.bondable = true;
         central_ops.bondable = true;
 
@@ -930,8 +982,8 @@ mod tests {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
-        let mut peripheral_ops = TestOps::<80>::default();
-        let mut central_ops = TestOps::<80>::default();
+        let mut peripheral_ops = TestOps::<80>::new(0xDEAD);
+        let mut central_ops = TestOps::<80>::new(0xBEEF);
         central_ops.bond_information = Some(BondInformation {
             security_level: SecurityLevel::EncryptedAuthenticated,
             is_bonded: true,
@@ -1015,8 +1067,8 @@ mod tests {
         let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
         let central = Address::random([0xff, 2, 2, 3, 4, 5]);
 
-        let mut peripheral_ops = TestOps::<80>::default();
-        let mut central_ops = TestOps::<80>::default();
+        let mut peripheral_ops = TestOps::<80>::new(0xDEAD);
+        let mut central_ops = TestOps::<80>::new(0xBEEF);
         central_ops.bond_information = Some(BondInformation {
             security_level: SecurityLevel::EncryptedAuthenticated,
             is_bonded: true,
@@ -1157,5 +1209,452 @@ mod tests {
                 panic!("Too many loops");
             }
         }
+    }
+
+    #[test]
+    fn oob_lesc_bilateral() {
+        use crate::security_manager::crypto::Nonce;
+
+        let peripheral_addr = Address::random([0xff, 1, 2, 3, 4, 5]);
+        let central_addr = Address::random([0xff, 2, 2, 3, 4, 5]);
+
+        let mut peripheral_ops = TestOps::<10>::new(0xDEAD);
+        let mut central_ops = TestOps::<10>::new(0xBEEF);
+        peripheral_ops.oob_available = true;
+        central_ops.oob_available = true;
+
+        // Generate OOB data for each side from their persistent keypair
+        let central_oob = {
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(100).into();
+            let r = Nonce::new(&mut rng);
+            let c = r.f4(central_ops.public_key.x(), central_ops.public_key.x(), 0);
+            OobData {
+                random: r.0.to_le_bytes(),
+                confirm: c.0.to_le_bytes(),
+            }
+        };
+        let peripheral_oob = {
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(200).into();
+            let r = Nonce::new(&mut rng);
+            let c = r.f4(peripheral_ops.public_key.x(), peripheral_ops.public_key.x(), 0);
+            OobData {
+                random: r.0.to_le_bytes(),
+                confirm: c.0.to_le_bytes(),
+            }
+        };
+
+        let mut peripheral_pairing =
+            Pairing::new_peripheral(peripheral_addr, central_addr, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = Pairing::initiate_central(
+            central_addr,
+            peripheral_addr,
+            &mut central_ops,
+            IoCapabilities::NoInputNoOutput,
+            true,
+        )
+        .unwrap();
+
+        let mut num_central_data_sent = 0;
+        let mut num_peripheral_data_sent = 0;
+        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+
+        // Exchange packets until both sides pause for OOB data
+        transmit_packets(
+            &mut peripheral_ops,
+            &mut central_ops,
+            &mut rng,
+            &mut peripheral_pairing,
+            &mut central_pairing,
+            &mut num_central_data_sent,
+            &mut num_peripheral_data_sent,
+        );
+
+        // Both sides should have sent OobRequest
+        assert!(peripheral_ops
+            .connection_events
+            .iter()
+            .any(|e| matches!(e, ConnectionEvent::OobRequest)));
+        assert!(central_ops
+            .connection_events
+            .iter()
+            .any(|e| matches!(e, ConnectionEvent::OobRequest)));
+
+        // Provide OOB data to both sides
+        // Central gets: local=central_oob, peer=peripheral_oob
+        central_pairing
+            .handle_event(
+                Event::OobDataReceived {
+                    local: central_oob.clone(),
+                    peer: peripheral_oob.clone(),
+                },
+                &mut central_ops,
+                &mut rng,
+            )
+            .unwrap();
+        // Peripheral gets: local=peripheral_oob, peer=central_oob
+        peripheral_pairing
+            .handle_event(
+                Event::OobDataReceived {
+                    local: peripheral_oob,
+                    peer: central_oob,
+                },
+                &mut peripheral_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        // Continue packet exchange
+        transmit_packets(
+            &mut peripheral_ops,
+            &mut central_ops,
+            &mut rng,
+            &mut peripheral_pairing,
+            &mut central_pairing,
+            &mut num_central_data_sent,
+            &mut num_peripheral_data_sent,
+        );
+
+        // Both sides should agree on the LTK
+        assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
+
+        // Simulate encryption success
+        central_pairing
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .unwrap();
+        peripheral_pairing
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .unwrap();
+
+        // OOB is authenticated
+        assert!(central_ops.connection_events.iter().any(|e| matches!(
+            e,
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                ..
+            }
+        )));
+        assert!(peripheral_ops.connection_events.iter().any(|e| matches!(
+            e,
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                ..
+            }
+        )));
+    }
+
+    /// OOB pairing where only the central has OOB data (central OOB=1, peripheral OOB=0).
+    /// Per spec 2.3.5.6.3, the peripheral skips the confirm check for the central's OOB
+    /// and sets ra=0 since it didn't receive the central's OOB data.
+    #[test]
+    fn oob_lesc_central_only() {
+        use crate::security_manager::crypto::Nonce;
+
+        let peripheral_addr = Address::random([0xff, 1, 2, 3, 4, 5]);
+        let central_addr = Address::random([0xff, 2, 2, 3, 4, 5]);
+
+        let mut peripheral_ops = TestOps::<10>::new(0xDEAD);
+        let mut central_ops = TestOps::<10>::new(0xBEEF);
+        // Only central has OOB
+        peripheral_ops.oob_available = false;
+        central_ops.oob_available = true;
+
+        // Generate OOB data for central (the side that has it)
+        let central_oob = {
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(100).into();
+            let r = Nonce::new(&mut rng);
+            let c = r.f4(central_ops.public_key.x(), central_ops.public_key.x(), 0);
+            OobData {
+                random: r.0.to_le_bytes(),
+                confirm: c.0.to_le_bytes(),
+            }
+        };
+        // Peripheral generates local OOB but has no peer OOB data
+        let peripheral_oob = {
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(200).into();
+            let r = Nonce::new(&mut rng);
+            let c = r.f4(peripheral_ops.public_key.x(), peripheral_ops.public_key.x(), 0);
+            OobData {
+                random: r.0.to_le_bytes(),
+                confirm: c.0.to_le_bytes(),
+            }
+        };
+        let no_oob = OobData {
+            random: [0; 16],
+            confirm: [0; 16],
+        };
+
+        let mut peripheral_pairing =
+            Pairing::new_peripheral(peripheral_addr, central_addr, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = Pairing::initiate_central(
+            central_addr,
+            peripheral_addr,
+            &mut central_ops,
+            IoCapabilities::NoInputNoOutput,
+            true,
+        )
+        .unwrap();
+
+        let mut num_central_data_sent = 0;
+        let mut num_peripheral_data_sent = 0;
+        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+
+        transmit_packets(
+            &mut peripheral_ops,
+            &mut central_ops,
+            &mut rng,
+            &mut peripheral_pairing,
+            &mut central_pairing,
+            &mut num_central_data_sent,
+            &mut num_peripheral_data_sent,
+        );
+
+        // Central has peripheral's OOB data (received out of band)
+        central_pairing
+            .handle_event(
+                Event::OobDataReceived {
+                    local: central_oob,
+                    peer: peripheral_oob,
+                },
+                &mut central_ops,
+                &mut rng,
+            )
+            .unwrap();
+        // Peripheral has no peer OOB data — zeros for peer
+        peripheral_pairing
+            .handle_event(
+                Event::OobDataReceived {
+                    local: peripheral_oob,
+                    peer: no_oob,
+                },
+                &mut peripheral_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        transmit_packets(
+            &mut peripheral_ops,
+            &mut central_ops,
+            &mut rng,
+            &mut peripheral_pairing,
+            &mut central_pairing,
+            &mut num_central_data_sent,
+            &mut num_peripheral_data_sent,
+        );
+
+        assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
+
+        central_pairing
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .unwrap();
+        peripheral_pairing
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .unwrap();
+
+        assert!(central_ops.connection_events.iter().any(|e| matches!(
+            e,
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                ..
+            }
+        )));
+        assert!(peripheral_ops.connection_events.iter().any(|e| matches!(
+            e,
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                ..
+            }
+        )));
+    }
+
+    /// OOB pairing where only the peripheral has OOB data (central OOB=0, peripheral OOB=1).
+    #[test]
+    fn oob_lesc_peripheral_only() {
+        use crate::security_manager::crypto::Nonce;
+
+        let peripheral_addr = Address::random([0xff, 1, 2, 3, 4, 5]);
+        let central_addr = Address::random([0xff, 2, 2, 3, 4, 5]);
+
+        let mut peripheral_ops = TestOps::<10>::new(0xDEAD);
+        let mut central_ops = TestOps::<10>::new(0xBEEF);
+        // Only peripheral has OOB
+        peripheral_ops.oob_available = true;
+        central_ops.oob_available = false;
+
+        // Peripheral generates local OOB data
+        let peripheral_oob = {
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(200).into();
+            let r = Nonce::new(&mut rng);
+            let c = r.f4(peripheral_ops.public_key.x(), peripheral_ops.public_key.x(), 0);
+            OobData {
+                random: r.0.to_le_bytes(),
+                confirm: c.0.to_le_bytes(),
+            }
+        };
+        // Central generates local OOB but has no peer OOB data
+        let central_oob = {
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(100).into();
+            let r = Nonce::new(&mut rng);
+            let c = r.f4(central_ops.public_key.x(), central_ops.public_key.x(), 0);
+            OobData {
+                random: r.0.to_le_bytes(),
+                confirm: c.0.to_le_bytes(),
+            }
+        };
+        let no_oob = OobData {
+            random: [0; 16],
+            confirm: [0; 16],
+        };
+
+        let mut peripheral_pairing =
+            Pairing::new_peripheral(peripheral_addr, central_addr, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = Pairing::initiate_central(
+            central_addr,
+            peripheral_addr,
+            &mut central_ops,
+            IoCapabilities::NoInputNoOutput,
+            true,
+        )
+        .unwrap();
+
+        let mut num_central_data_sent = 0;
+        let mut num_peripheral_data_sent = 0;
+        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+
+        transmit_packets(
+            &mut peripheral_ops,
+            &mut central_ops,
+            &mut rng,
+            &mut peripheral_pairing,
+            &mut central_pairing,
+            &mut num_central_data_sent,
+            &mut num_peripheral_data_sent,
+        );
+
+        // Central has no peer OOB data — zeros for peer
+        central_pairing
+            .handle_event(
+                Event::OobDataReceived {
+                    local: central_oob,
+                    peer: no_oob,
+                },
+                &mut central_ops,
+                &mut rng,
+            )
+            .unwrap();
+        // Peripheral has central's OOB data (received out of band)
+        peripheral_pairing
+            .handle_event(
+                Event::OobDataReceived {
+                    local: peripheral_oob,
+                    peer: central_oob,
+                },
+                &mut peripheral_ops,
+                &mut rng,
+            )
+            .unwrap();
+
+        transmit_packets(
+            &mut peripheral_ops,
+            &mut central_ops,
+            &mut rng,
+            &mut peripheral_pairing,
+            &mut central_pairing,
+            &mut num_central_data_sent,
+            &mut num_peripheral_data_sent,
+        );
+
+        assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
+
+        central_pairing
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .unwrap();
+        peripheral_pairing
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .unwrap();
+
+        assert!(central_ops.connection_events.iter().any(|e| matches!(
+            e,
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                ..
+            }
+        )));
+        assert!(peripheral_ops.connection_events.iter().any(|e| matches!(
+            e,
+            ConnectionEvent::PairingComplete {
+                security_level: SecurityLevel::EncryptedAuthenticated,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn oob_lesc_confirm_mismatch() {
+        use crate::security_manager::crypto::Nonce;
+
+        let peripheral_addr = Address::random([0xff, 1, 2, 3, 4, 5]);
+        let central_addr = Address::random([0xff, 2, 2, 3, 4, 5]);
+
+        let mut peripheral_ops = TestOps::<10>::new(0xDEAD);
+        let mut central_ops = TestOps::<10>::new(0xBEEF);
+        peripheral_ops.oob_available = true;
+        central_ops.oob_available = true;
+
+        // Generate valid central OOB
+        let central_oob = {
+            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(100).into();
+            let r = Nonce::new(&mut rng);
+            let c = r.f4(central_ops.public_key.x(), central_ops.public_key.x(), 0);
+            OobData {
+                random: r.0.to_le_bytes(),
+                confirm: c.0.to_le_bytes(),
+            }
+        };
+
+        // Generate peripheral OOB with WRONG confirm
+        let peripheral_oob = OobData {
+            random: [1; 16],
+            confirm: [2; 16], // Wrong confirm
+        };
+
+        let mut peripheral_pairing =
+            Pairing::new_peripheral(peripheral_addr, central_addr, IoCapabilities::NoInputNoOutput);
+        let mut central_pairing = Pairing::initiate_central(
+            central_addr,
+            peripheral_addr,
+            &mut central_ops,
+            IoCapabilities::NoInputNoOutput,
+            true,
+        )
+        .unwrap();
+
+        let mut num_central_data_sent = 0;
+        let mut num_peripheral_data_sent = 0;
+        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+
+        transmit_packets(
+            &mut peripheral_ops,
+            &mut central_ops,
+            &mut rng,
+            &mut peripheral_pairing,
+            &mut central_pairing,
+            &mut num_central_data_sent,
+            &mut num_peripheral_data_sent,
+        );
+
+        // Central tries to verify the bad peripheral OOB — should fail
+        let result = central_pairing.handle_event(
+            Event::OobDataReceived {
+                local: central_oob,
+                peer: peripheral_oob,
+            },
+            &mut central_ops,
+            &mut rng,
+        );
+
+        assert!(matches!(
+            result,
+            Err(Error::Security(crate::security_manager::Reason::ConfirmValueFailed))
+        ));
     }
 }

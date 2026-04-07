@@ -11,7 +11,7 @@ use advertise::AdvertisementDataError;
 use bt_hci::cmd::le::LeReadMinimumSupportedConnectionInterval;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
-use bt_hci::param::{AddrKind, BdAddr};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle};
 use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
@@ -23,7 +23,9 @@ use crate::channel_manager::ChannelStorage;
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason};
+pub use crate::security_manager::{
+    BondInformation, IdentityResolvingKey, LongTermKey, OobData, Reason as PairingFailedReason,
+};
 pub use crate::types::capabilities::IoCapabilities;
 
 /// Number of bonding information stored
@@ -108,7 +110,7 @@ pub mod prelude {
     pub use crate::scan::*;
     #[cfg(feature = "security")]
     pub use crate::security_manager::{
-        BondInformation, IdentityResolvingKey, LongTermKey, Reason as PairingFailedReason,
+        BondInformation, IdentityResolvingKey, LongTermKey, OobData, Reason as PairingFailedReason,
     };
     pub use crate::types::capabilities::IoCapabilities;
     #[cfg(feature = "gatt")]
@@ -196,6 +198,7 @@ impl defmt::Format for Address {
 /// Because sometimes the peer uses the static or public address even though the IRK is sent.
 /// In this case, the IRK exists but the used address is not RPA.
 /// Should `Address` be used instead?
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Identity {
     /// Random static or public address
@@ -713,6 +716,21 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     }
 
     #[cfg(feature = "security")]
+    /// Generate local OOB data for LESC pairing.
+    ///
+    /// The returned data should be transferred to the peer device via an out-of-band
+    /// channel (NFC, QR code, etc.) before pairing begins.
+    pub fn get_local_oob_data(&self) -> OobData {
+        self.host.connections.security_manager.get_local_oob_data()
+    }
+
+    #[cfg(feature = "security")]
+    /// Get the local address configured on the security manager.
+    pub fn get_local_address(&self) -> Option<Address> {
+        self.host.connections.security_manager.get_local_address()
+    }
+
+    #[cfg(feature = "security")]
     /// Get bonded devices
     pub fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
         self.host
@@ -738,6 +756,11 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         self.host.connections.get_connection_by_peer_address(peer_address)
     }
 
+    /// Get a connection by its handle
+    pub fn get_connected_handle(&'stack self, handle: ConnHandle) -> Option<Connection<'stack, P>> {
+        self.host.connections.get_connected_handle(handle)
+    }
+
     /// Iterate over all currently connected connections.
     pub fn connections(&'stack self) -> connection_manager::ConnectedIter<'stack, P> {
         self.host.connections.connections()
@@ -750,4 +773,10 @@ pub(crate) fn bt_hci_duration<const US: u32>(d: Duration) -> bt_hci::param::Dura
 
 pub(crate) fn bt_hci_ext_duration<const US: u16>(d: Duration) -> bt_hci::param::ExtDuration<US> {
     bt_hci::param::ExtDuration::from_micros(d.as_micros())
+}
+
+// Re-export our version of embassy-sync for the macros
+#[doc(hidden)]
+pub mod __export {
+    pub use embassy_sync;
 }

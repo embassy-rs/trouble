@@ -34,3 +34,64 @@ A Random Address can be *static* or *dynamic*:
 - *Private Random Address*: Changes periodically for privacy purposes. It can be *Resolvable* (can be linked to the original device using an Identity Resolving Key) or *Non-Resolvable* (completely anonymous).
 
 Random addresses enhance privacy by preventing device tracking.
+
+== GATT
+
+The *Generic Attribute Profile (GATT)* defines how data is organized and exchanged over a BLE connection. It is the most common way BLE devices expose functionality.
+
+=== Services
+
+A *service* groups related data into a logical unit, identified by a UUID. For example, the Battery Service (`0x180F`) exposes battery-related data. Services can be standard (defined by the Bluetooth SIG) or custom (using a 128-bit UUID).
+
+=== Characteristics
+
+A *characteristic* is an individual data value within a service. Each characteristic has:
+
+* A *UUID* identifying what it represents (e.g., Battery Level `0x2A19`).
+* *Properties* defining permitted operations: read, write, write without response, notify, and indicate.
+* A *value* that holds the actual data.
+* Optional *descriptors* providing additional metadata.
+
+=== Notifications and Indications
+
+The server can push data to connected clients without the client polling:
+
+* *Notifications* are fire-and-forget; the server sends data without waiting for confirmation.
+* *Indications* require the client to acknowledge receipt.
+
+Both require the client to opt in by writing to the characteristic's *CCCD (Client Characteristic Configuration Descriptor)*.
+
+=== Server and Client Roles
+
+The *GATT server* hosts the attribute database (services and characteristics) and responds to requests. The *GATT client* discovers services and reads/writes characteristics. Either the central or peripheral can be server or client, though peripherals are typically servers.
+
+== L2CAP
+
+The *Logical Link Control and Adaptation Protocol (L2CAP)* provides the data transport layer for BLE. GATT and other protocols run on top of L2CAP.
+
+In addition to the fixed channels used by GATT and signaling, BLE supports *Connection-Oriented Channels (CoC)* for transferring arbitrary data with credit-based flow control. CoC channels are useful when GATT's attribute-based model is too restrictive, such as bulk data transfer or custom protocols.
+
+Each CoC is identified by a *PSM (Protocol/Service Multiplexer)* value, similar to a port number.
+
+== Security
+
+BLE security protects data in transit and authenticates devices.
+
+=== Pairing
+
+*Pairing* is the process of establishing encryption keys between two devices. BLE supports two pairing modes:
+
+* *LE Secure Connections (LESC)* - Uses ECDH key exchange. Recommended for new designs.
+* *Legacy Pairing* - Uses a simpler key exchange. Required for compatibility with BLE 4.0/4.1 devices.
+
+The pairing method (JustWorks, Numeric Comparison, PassKey Entry) is determined by the IO capabilities of both devices.
+
+=== Bonding
+
+*Bonding* is the process of storing the encryption keys from pairing so they can be reused in future connections. This allows reconnecting devices to re-encrypt immediately without re-pairing. Bond information includes a *Long Term Key (LTK)* and optionally an *Identity Resolving Key (IRK)* for resolving private addresses.
+
+=== Security Levels
+
+* *No Encryption* - No protection. Default for new connections.
+* *Encrypted* - Link is encrypted but the peer is not authenticated (JustWorks pairing).
+* *Encrypted and Authenticated* - Link is encrypted and the peer's identity is verified via MITM-protected pairing (PassKey or Numeric Comparison).
