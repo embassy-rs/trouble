@@ -47,16 +47,115 @@ pub(crate) struct BtpTransport<R, W> {
     pub writer: W,
 }
 
-/// Mutable GAP state tracked across both BTP phases.
-struct GapState<'stack, C, P: PacketPool> {
+/// Trait abstracting GAP operations that differ between pre-server and post-server phases.
+trait GapOps {
+    fn set_io_capabilities(&self, capability: IoCapabilities);
+    fn set_mitm(&self, enabled: bool, real_capability: IoCapabilities);
+    fn set_secure_connections_only(&self, enabled: bool);
+    fn get_local_oob_data(&self) -> Result<OobData, BtpStatus>;
+}
+
+/// Pre-server GAP backend that stores deferred settings for later application to a StackBuilder.
+pub(crate) struct PreServerGap {
+    /// Whether MITM protection is enabled (determines effective IO capability).
+    mitm: Cell<bool>,
+    /// Deferred secure-connections-only setting.
+    sc_only: Cell<bool>,
+}
+
+impl GapOps for PreServerGap {
+    fn set_io_capabilities(&self, _capability: IoCapabilities) {
+        self.mitm.set(true);
+    }
+
+    fn set_mitm(&self, enabled: bool, _real_capability: IoCapabilities) {
+        self.mitm.set(enabled);
+    }
+
+    fn set_secure_connections_only(&self, enabled: bool) {
+        self.sc_only.set(enabled);
+    }
+
+    fn get_local_oob_data(&self) -> Result<OobData, BtpStatus> {
+        Err(BtpStatus::NotReady)
+    }
+}
+
+/// Post-server GAP backend that delegates operations to a live Stack.
+pub(crate) struct StackGap<'a, 'b, C, P: PacketPool> {
+    stack: &'a Stack<'b, C, P>,
+}
+
+impl<'a, 'b, C, P: PacketPool> GapOps for StackGap<'a, 'b, C, P>
+where
+    C: crate::Controller,
+{
+    fn set_io_capabilities(&self, capability: IoCapabilities) {
+        self.stack.set_io_capabilities(capability);
+    }
+
+    fn set_mitm(&self, enabled: bool, real_capability: IoCapabilities) {
+        if enabled {
+            self.stack.set_io_capabilities(real_capability);
+        } else {
+            self.stack.set_io_capabilities(IoCapabilities::NoInputNoOutput);
+        }
+    }
+
+    fn set_secure_connections_only(&self, enabled: bool) {
+        self.stack.set_secure_connections_only(enabled);
+    }
+
+    fn get_local_oob_data(&self) -> Result<OobData, BtpStatus> {
+        Ok(self.stack.get_local_oob_data())
+    }
+}
+
+/// Mutable GAP state tracked across both BTP phases, generic over a backend.
+pub(crate) struct GapState<'a, B> {
     current_settings: GapSettings,
     filter_accept_list: heapless::Vec<Address, 1>,
-    stack: &'stack Stack<'stack, C, P>,
-    scan_mode: &'stack Cell<ScanMode>,
+    scan_mode: &'a Cell<ScanMode>,
     /// Saved IO capability (for SET_MITM toggling).
     io_capability: IoCapabilities,
     /// Shared OOB state.
-    oob: &'stack crate::OobState,
+    oob: &'a crate::OobState,
+    backend: B,
+}
+
+impl<'a> GapState<'a, PreServerGap> {
+    /// Apply deferred settings to a StackBuilder, returning the configured builder.
+    pub(crate) fn apply_to_builder<'b, C, P: PacketPool>(
+        &self,
+        builder: StackBuilder<'b, C, P>,
+    ) -> StackBuilder<'b, C, P>
+    where
+        C: crate::Controller,
+    {
+        let effective_io = if self.backend.mitm.get() {
+            self.io_capability
+        } else {
+            IoCapabilities::NoInputNoOutput
+        };
+        builder
+            .set_io_capabilities(effective_io)
+            .set_secure_connections_only(self.backend.sc_only.get())
+    }
+
+    /// Convert this pre-server GapState into a post-server GapState backed by a Stack.
+    pub(crate) fn into_stack_gap<'b, C, P: PacketPool>(
+        self,
+        stack: &'a Stack<'b, C, P>,
+    ) -> GapState<'a, StackGap<'a, 'b, C, P>> {
+        GapState {
+            current_settings: self.current_settings,
+            filter_accept_list: self.filter_accept_list,
+            scan_mode: self.scan_mode,
+            io_capability: self.io_capability,
+            oob: self.oob,
+            backend: StackGap { stack },
+        }
+    }
 }
 
 /// Result of a BTP command handler, supporting immediate, error, and forwarded outcomes.
@@ -89,9 +188,9 @@ impl<T> From<Result<T, BtpStatus>> for HandlerResult<T> {
 }
 
 /// Result of the pre-server BTP phase.
-pub(crate) struct PreServerResult<'stack, R, W, C: crate::Controller, P: PacketPool> {
-    transport: BtpTransport<R, W>,
-    gap: GapState<'stack, C, P>,
+pub(crate) struct PreServerResult<'a, R, W> {
+    pub transport: BtpTransport<R, W>,
+    pub gap: GapState<'a, PreServerGap>,
 }
 
 /// Run the pre-server BTP phase.
@@ -99,18 +198,15 @@ pub(crate) struct PreServerResult<'stack, R, W, C: crate::Controller, P: PacketP
 /// Handles Core, GATT building, and GAP settings commands. Returns when
 /// `StartServer` is received or a runtime command triggers auto-finalize.
 /// The packet retains the unprocessed command for `btp::run` to handle.
-pub(crate) async fn run_pre_server<'stack, R: Read, W: Write, C, P: PacketPool>(
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_pre_server<'a, R: Read, W: Write>(
     transport: BtpTransport<R, W>,
     config: &BtpConfig<'_>,
-    stack: &'stack Stack<'stack, C, P>,
-    scan_mode: &'stack Cell<ScanMode>,
-    oob: &'stack crate::OobState,
-    table: &mut AttributeTable<'stack, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
+    scan_mode: &'a Cell<ScanMode>,
+    oob: &'a crate::OobState,
+    table: &mut AttributeTable<'a, NoopRawMutex, ATTRIBUTE_TABLE_SIZE>,
     packet: &mut BtpPacket,
-) -> Result<Option<PreServerResult<'stack, R, W, C, P>>, Error>
-where
-    C: crate::Controller,
-{
+) -> Result<Option<PreServerResult<'a, R, W>>, Error> {
     let BtpTransport { mut reader, mut writer } = transport;
 
     static SERVICE_BUILDER: StaticCell<ServiceBuilder> = StaticCell::new();
@@ -119,10 +215,13 @@ where
     let mut gap = GapState {
         current_settings: DEFAULT_SETTINGS,
         filter_accept_list: heapless::Vec::new(),
-        stack,
         scan_mode,
         io_capability: IoCapabilities::NoInputNoOutput,
         oob,
+        backend: PreServerGap {
+            mitm: Cell::new(true),
+            sc_only: Cell::new(false),
+        },
     };
 
     // Send IUT Ready event before entering the main loop
@@ -247,23 +346,20 @@ fn handle_gatt_pre_server<'a>(
 }
 
 /// Read the next packet while interleaving event delivery.
-async fn read_with_events<R: Read, W: Write, C, P: PacketPool>(
+async fn read_with_events<R: Read, W: Write>(
     packet: &mut BtpPacket,
     reader: &mut R,
     events: &DynamicReceiver<'_, Event>,
-    gap: &mut GapState<'_, C, P>,
+    current_settings: &mut GapSettings,
     writer: &mut W,
-) -> Result<(), Error>
-where
-    C: crate::Controller,
-{
+) -> Result<(), Error> {
     trace!("read_with_events");
     let mut read_fut = pin!(packet.read(&mut *reader));
     loop {
         match select(&mut read_fut, events.receive()).await {
             Either::First(result) => break result,
             Either::Second(event) => {
-                let btp_event = convert_event(&event, &mut gap.current_settings);
+                let btp_event = convert_event(&event, current_settings);
                 info!("BTP event (while reading): {:?}", btp_event);
                 btp_event.write(&mut *writer).await?;
             }
@@ -271,11 +367,13 @@ where
     }
 }
 
-pub(crate) async fn run<'stack, R: Read, W: Write, C, P: PacketPool>(
-    pre_server_result: PreServerResult<'stack, R, W, C, P>,
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run<'a, 'b, R: Read, W: Write, C, P: PacketPool>(
+    transport: BtpTransport<R, W>,
+    mut gap: GapState<'a, StackGap<'a, 'b, C, P>>,
     config: &BtpConfig<'_>,
     server: &crate::Server<'_, P>,
-    stack: &'stack Stack<'stack, C, P>,
+    stack: &'a Stack<'b, C, P>,
     events: DynamicReceiver<'_, Event>,
     channels: &CommandChannels<'_>,
     packet: &mut BtpPacket,
@@ -285,9 +383,7 @@ where
 {
     info!("btp::run");
 
-    let BtpTransport { mut reader, mut writer } = pre_server_result.transport;
-
-    let mut gap = pre_server_result.gap;
+    let BtpTransport { mut reader, mut writer } = transport;
 
     // Process-then-read loop: the packet already contains a command from
     // run_pre_server on the first iteration (StartServer or a runtime command
@@ -306,7 +402,7 @@ where
                 );
                 packet.header.write_err(e.into(), &mut writer).await?;
                 // Read next packet and continue
-                read_with_events(packet, &mut reader, &events, &mut gap, &mut writer).await?;
+                read_with_events(packet, &mut reader, &events, &mut gap.current_settings, &mut writer).await?;
                 continue;
             }
         };
@@ -412,7 +508,7 @@ where
         }
 
         // 3. Read next packet (with event interleaving)
-        read_with_events(packet, &mut reader, &events, &mut gap, &mut writer).await?;
+        read_with_events(packet, &mut reader, &events, &mut gap.current_settings, &mut writer).await?;
     }
 }
 
@@ -614,15 +710,12 @@ fn handle_core(cmd: CoreCommand) -> CoreResponse {
 
 /// Handle GAP settings commands shared between pre-server and post-server phases.
 /// Returns `Some(result)` if the command was a settings command, `None` for runtime commands.
-fn handle_gap_settings<'a, C, P: PacketPool>(
+fn handle_gap_settings<'a, B: GapOps>(
     header: BtpHeader,
-    cmd: &GapCommand<'a>,
+    cmd: &GapCommand<'_>,
     config: &'a BtpConfig<'a>,
-    gap: &mut GapState<'_, C, P>,
-) -> Result<GapResponse<'a>, BtpStatus>
-where
-    C: crate::Controller,
-{
+    gap: &mut GapState<'_, B>,
+) -> Result<GapResponse<'a>, BtpStatus> {
     use protocol::gap::GapCommand::*;
     use protocol::gap::SUPPORTED_COMMANDS;
 
@@ -678,17 +771,11 @@ where
         )),
         SetIoCapability(capability) => {
             gap.io_capability = *capability;
-            gap.stack.set_io_capabilities(*capability);
+            gap.backend.set_io_capabilities(*capability);
             Ok(GapResponse::Success)
         }
         SetMitm(mitm) => {
-            if *mitm {
-                // Restore the real IO capability so MITM-based pairing methods are selected.
-                gap.stack.set_io_capabilities(gap.io_capability);
-            } else {
-                // Override to NoInputNoOutput so JustWorks (no MITM) is selected.
-                gap.stack.set_io_capabilities(IoCapabilities::NoInputNoOutput);
-            }
+            gap.backend.set_mitm(*mitm, gap.io_capability);
             Ok(GapResponse::Success)
         }
         SetFilterAcceptList(cmd) => {
@@ -701,7 +788,7 @@ where
             Ok(GapResponse::Success)
         }
         SetScOnly(enabled) => {
-            gap.stack.set_secure_connections_only(*enabled);
+            gap.backend.set_secure_connections_only(*enabled);
             Ok(change_current_settings(
                 &mut gap.current_settings,
                 GapSettings::SC_ONLY,
@@ -713,11 +800,14 @@ where
             Ok(GapResponse::Success)
         }
         OobScGetLocalData => {
-            let oob_data = gap.oob.sc_local.get().unwrap_or_else(|| {
-                let data = gap.stack.get_local_oob_data();
-                gap.oob.sc_local.set(Some(data));
-                data
-            });
+            let oob_data = match gap.oob.sc_local.get() {
+                Some(data) => data,
+                None => {
+                    let data = gap.backend.get_local_oob_data()?;
+                    gap.oob.sc_local.set(Some(data));
+                    data
+                }
+            };
             Ok(GapResponse::OobScLocalData {
                 random: oob_data.random,
                 confirm: oob_data.confirm,
@@ -731,7 +821,8 @@ where
             // Auto-generate local OOB data if not already present, so the OOB flag
             // is set in the pairing request.
             if gap.oob.sc_local.get().is_none() {
-                gap.oob.sc_local.set(Some(gap.stack.get_local_oob_data()));
+                let data = gap.backend.get_local_oob_data()?;
+                gap.oob.sc_local.set(Some(data));
             }
             Ok(GapResponse::Success)
         }
@@ -743,11 +834,11 @@ where
 ///
 /// Settings commands are delegated to [`handle_gap_settings`]; this function
 /// handles the remaining commands that require async operations or forwarding.
-async fn handle_gap<'a, 'stack, C, P: PacketPool>(
+async fn handle_gap<'a, 'b, C, P: PacketPool>(
     header: BtpHeader,
-    cmd: &GapCommand<'a>,
+    cmd: &GapCommand<'_>,
     config: &'a BtpConfig<'a>,
-    gap: &mut GapState<'stack, C, P>,
+    gap: &mut GapState<'_, StackGap<'_, 'b, C, P>>,
     channels: &CommandChannels<'_>,
 ) -> HandlerResult<GapResponse<'a>>
 where
@@ -834,7 +925,7 @@ where
             Forwarded
         }
         Disconnect(address) => {
-            if let Some(conn) = gap.stack.get_connection_by_peer_address(*address) {
+            if let Some(conn) = gap.backend.stack.get_connection_by_peer_address(*address) {
                 conn.disconnect();
             } else {
                 warn!("Disconnect: no connection for {:?} (already disconnected)", address);
@@ -842,7 +933,7 @@ where
             Ready(GapResponse::Success)
         }
         Pair(address) => {
-            if let Some(conn) = gap.stack.get_connection_by_peer_address(*address) {
+            if let Some(conn) = gap.backend.stack.get_connection_by_peer_address(*address) {
                 if let Err(err) = conn.set_bondable(gap.current_settings.contains(GapSettings::BONDABLE)) {
                     warn!("Pair: failed to set bondable flag for {:?}: {:?}", address, err);
                 }
@@ -859,7 +950,7 @@ where
             }
         }
         Unpair(address) => {
-            let identity = if let Some(conn) = gap.stack.get_connection_by_peer_address(*address) {
+            let identity = if let Some(conn) = gap.backend.stack.get_connection_by_peer_address(*address) {
                 conn.disconnect();
                 conn.peer_identity()
             } else {
@@ -869,11 +960,11 @@ where
                 }
             };
             // Treat "not found" as success — the intent is to ensure no bond exists.
-            let _ = gap.stack.remove_bond_information(identity);
+            let _ = gap.backend.stack.remove_bond_information(identity);
             Ready(GapResponse::Success)
         }
         PasskeyEntry(cmd) => {
-            if let Some(conn) = gap.stack.get_connection_by_peer_address(cmd.address) {
+            if let Some(conn) = gap.backend.stack.get_connection_by_peer_address(cmd.address) {
                 match conn.pass_key_input(cmd.passkey) {
                     Ok(()) => Ready(GapResponse::Success),
                     Err(_) => Error(BtpStatus::Fail),
@@ -883,7 +974,7 @@ where
             }
         }
         PasskeyConfirm(cmd) => {
-            if let Some(conn) = gap.stack.get_connection_by_peer_address(cmd.address) {
+            if let Some(conn) = gap.backend.stack.get_connection_by_peer_address(cmd.address) {
                 let res = if cmd.confirmed {
                     conn.pass_key_confirm()
                 } else {
@@ -899,8 +990,8 @@ where
             }
         }
         ConnParamUpdate(cmd) => {
-            if let Some(conn) = gap.stack.get_connection_by_peer_address(cmd.address) {
-                match conn.update_connection_params(gap.stack, &cmd.params()).await {
+            if let Some(conn) = gap.backend.stack.get_connection_by_peer_address(cmd.address) {
+                match conn.update_connection_params(gap.backend.stack, &cmd.params()).await {
                     Ok(()) => Ready(GapResponse::Success),
                     Err(_) => Error(BtpStatus::Fail),
                 }
@@ -929,10 +1020,10 @@ where
 ///
 /// Building commands return errors; StartServer returns the cached table_len.
 /// Client commands are forwarded to the gatt_client task.
-async fn handle_gatt<'a, 's, C: crate::Controller, P: PacketPool>(
+async fn handle_gatt<'a, C: crate::Controller, P: PacketPool>(
     cmd: GattCommand<'a>,
     server: &crate::Server<'_, P>,
-    stack: &'s Stack<'s, C, P>,
+    stack: &Stack<'_, C, P>,
     channels: &CommandChannels<'_>,
 ) -> HandlerResult<GattResponse> {
     use HandlerResult::*;

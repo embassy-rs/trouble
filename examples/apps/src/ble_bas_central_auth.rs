@@ -23,18 +23,15 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+    let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator);
+        .set_random_generator_seed(random_generator)
+        .set_io_capabilities(IoCapabilities::DisplayYesNo)
+        .build();
 
-    stack.set_io_capabilities(IoCapabilities::DisplayYesNo);
-
-    let Host {
-        mut central,
-        mut runner,
-        ..
-    } = stack.build();
+    let mut runner = stack.runner();
+    let mut central = stack.central();
 
     // NOTE: Modify this to match the address of the peripheral you want to connect to.
     // Currently it matches the address used by the peripheral examples

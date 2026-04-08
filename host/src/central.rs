@@ -7,16 +7,17 @@ use bt_hci::param::{AddrKind, BdAddr, InitiatingPhy, LeConnRole, PhyParams};
 use embassy_futures::select::{select, Either};
 
 use crate::connection::{ConnectConfig, ConnectRateParams, Connection, PhySet};
-use crate::{bt_hci_duration, BleHostError, Error, PacketPool, Stack};
+use crate::host::BleHost;
+use crate::{bt_hci_duration, BleHostError, Error, PacketPool};
 
 /// A type implementing the BLE central role.
 pub struct Central<'stack, C, P: PacketPool> {
-    pub(crate) stack: &'stack Stack<'stack, C, P>,
+    pub(crate) host: &'stack BleHost<'stack, C, P>,
 }
 
 impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
-    pub(crate) fn new(stack: &'stack Stack<'stack, C, P>) -> Self {
-        Self { stack }
+    pub(crate) fn new(host: &'stack BleHost<'stack, C, P>) -> Self {
+        Self { host }
     }
 
     /// Attempt to create a connection with the provided config.
@@ -30,7 +31,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
             return Err(Error::ConfigFilterAcceptListIsEmpty.into());
         }
 
-        let host = &self.stack.host;
+        let host = self.host;
         let _drop = crate::host::OnDrop::new(|| {
             host.connect_command_state.cancel(true);
         });
@@ -83,7 +84,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
             return Err(Error::ConfigFilterAcceptListIsEmpty.into());
         }
 
-        let host = &self.stack.host;
+        let host = self.host;
         // Ensure no other connect ongoing.
         let _drop = crate::host::OnDrop::new(|| {
             host.connect_command_state.cancel(true);
@@ -136,7 +137,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
     where
         C: ControllerCmdSync<LeClearFilterAcceptList> + ControllerCmdSync<LeAddDeviceToFilterAcceptList>,
     {
-        let host = &self.stack.host;
+        let host = self.host;
         host.command(LeClearFilterAcceptList::new()).await?;
         for entry in filter_accept_list {
             host.command(LeAddDeviceToFilterAcceptList::new(entry.0, *entry.1))
@@ -159,7 +160,6 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         let min_ce = bt_hci_duration(conn_rate_params.min_ce_length);
         let max_ce = bt_hci_duration(conn_rate_params.max_ce_length);
         match self
-            .stack
             .host
             .command(LeSetDefaultRateParameters::new(
                 min_interval,

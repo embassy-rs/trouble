@@ -221,7 +221,7 @@ impl From<Response> for command_channel::Response {
 /// after subscriptions were previously established), then creates a `GattClient`
 /// and processes commands until the connection drops, at which point it returns to idle.
 pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
-    stack: &'stack Stack<'stack, C, P>,
+    stack: &'stack Stack<'_, C, P>,
     commands: CommandReceiver<'_, Command>,
     events: DynamicSender<'_, Event>,
     conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,

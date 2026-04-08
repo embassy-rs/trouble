@@ -24,7 +24,13 @@ struct BatteryService {
     #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, name = "hello", read, value = "Battery Level", type = &'static str)]
     #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10, permissions(encrypted))]
     level: u8,
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", write, read, notify, permissions(encrypted))]
+    #[characteristic(
+        uuid = "408813df-5dd4-1f87-ec11-cdb001100000",
+        write,
+        read,
+        notify,
+        permissions(encrypted)
+    )]
     status: bool,
 }
 
@@ -39,13 +45,13 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {}", address);
 
-    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+    let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator);
-    let Host {
-        mut peripheral, runner, ..
-    } = stack.build();
+        .set_random_generator_seed(random_generator)
+        .build();
+    let runner = stack.runner();
+    let mut peripheral = stack.peripheral();
 
     info!("Starting advertising and GATT service");
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
@@ -111,7 +117,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
             #[cfg(feature = "security")]
-            GattConnectionEvent::PairingComplete { security_level, ..} => {
+            GattConnectionEvent::PairingComplete { security_level, .. } => {
                 info!("[gatt] pairing complete: {:?}", security_level);
             }
             #[cfg(feature = "security")]

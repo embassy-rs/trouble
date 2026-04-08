@@ -55,7 +55,7 @@ use crate::types::l2cap::{
     ConnParamUpdateReq, ConnParamUpdateRes, L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT,
     L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
 };
-use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
+use crate::{att, Address, BleHostError, Error, PacketPool};
 
 /// A BLE Host.
 ///
@@ -90,37 +90,29 @@ pub(crate) enum AdvHandleState {
     Terminated(AdvHandle),
 }
 
-pub(crate) struct AdvInnerState<'d> {
-    handles: &'d mut [AdvHandleState],
-    waker: WakerRegistration,
-}
-
 pub(crate) struct AdvState<'d> {
-    state: RefCell<AdvInnerState<'d>>,
+    handles: &'d RefCell<[AdvHandleState]>,
+    waker: RefCell<WakerRegistration>,
 }
 
 impl<'d> AdvState<'d> {
-    pub(crate) fn new(handles: &'d mut [AdvHandleState]) -> Self {
+    pub(crate) fn new(handles: &'d RefCell<[AdvHandleState]>) -> Self {
         Self {
-            state: RefCell::new(AdvInnerState {
-                handles,
-                waker: WakerRegistration::new(),
-            }),
+            handles,
+            waker: RefCell::new(WakerRegistration::new()),
         }
     }
 
     pub(crate) fn reset(&self) {
-        let mut state = self.state.borrow_mut();
-        for entry in state.handles.iter_mut() {
+        for entry in self.handles.borrow_mut().iter_mut() {
             *entry = AdvHandleState::None;
         }
-        state.waker.wake();
+        self.waker.borrow_mut().wake();
     }
 
     // Terminate handle
     pub(crate) fn terminate(&self, handle: AdvHandle) {
-        let mut state = self.state.borrow_mut();
-        for entry in state.handles.iter_mut() {
+        for entry in self.handles.borrow_mut().iter_mut() {
             match entry {
                 AdvHandleState::Advertising(h) if *h == handle => {
                     *entry = AdvHandleState::Terminated(handle);
@@ -128,33 +120,31 @@ impl<'d> AdvState<'d> {
                 _ => {}
             }
         }
-        state.waker.wake();
+        self.waker.borrow_mut().wake();
     }
 
     pub(crate) fn len(&self) -> usize {
-        let state = self.state.borrow();
-        state.handles.len()
+        self.handles.as_ptr().len()
     }
 
     pub(crate) fn start(&self, sets: &[AdvSet]) {
-        let mut state = self.state.borrow_mut();
-        assert!(sets.len() <= state.handles.len());
-        for handle in state.handles.iter_mut() {
+        assert!(sets.len() <= self.handles.as_ptr().len());
+        let mut handles = self.handles.borrow_mut();
+        for handle in handles.iter_mut() {
             *handle = AdvHandleState::None;
         }
 
         for (idx, entry) in sets.iter().enumerate() {
-            state.handles[idx] = AdvHandleState::Advertising(entry.adv_handle);
+            handles[idx] = AdvHandleState::Advertising(entry.adv_handle);
         }
     }
 
     pub async fn wait(&self) {
         poll_fn(|cx| {
-            let mut state = self.state.borrow_mut();
-            state.waker.register(cx.waker());
+            self.waker.borrow_mut().register(cx.waker());
 
             let mut terminated = 0;
-            for entry in state.handles.iter() {
+            for entry in self.handles.borrow().iter() {
                 match entry {
                     AdvHandleState::Terminated(_) => {
                         terminated += 1;
@@ -165,7 +155,7 @@ impl<'d> AdvState<'d> {
                     _ => {}
                 }
             }
-            if terminated == state.handles.len() {
+            if terminated == self.handles.as_ptr().len() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -198,16 +188,22 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         controller: T,
-        connections: &'d mut [ConnectionStorage<P::Packet>],
-        channels: &'d mut [ChannelStorage<P::Packet>],
-        advertise_handles: &'d mut [AdvHandleState],
+        connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
+        channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
+        advertise_handles: &'d RefCell<[AdvHandleState]>,
+        #[cfg(feature = "security")] bond_storage: &'d RefCell<heapless::VecView<crate::BondInformation>>,
     ) -> Self {
         Self {
             address: None,
             initialized: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             controller,
-            connections: ConnectionManager::new(connections, P::MTU as u16 - 4),
+            connections: ConnectionManager::new(
+                connections,
+                P::MTU as u16 - 4,
+                #[cfg(feature = "security")]
+                bond_storage,
+            ),
             channels: ChannelManager::new(channels),
             advertise_state: AdvState::new(advertise_handles),
             advertise_command_state: CommandState::new(),
@@ -647,7 +643,7 @@ where
         handle: ConnHandle,
         len: u16,
         n_packets: u16,
-    ) -> Result<L2capSender<'_, 'd, T, P::Packet>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, T, P::Packet>, BleHostError<T::Error>> {
         // Take into account l2cap header.
         let acl_max = self.initialized.get().await.acl_max as u16;
         let len = len + (4 * n_packets);
@@ -671,7 +667,7 @@ where
         handle: ConnHandle,
         len: u16,
         n_packets: u16,
-    ) -> Result<L2capSender<'_, 'd, T, P::Packet>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, T, P::Packet>, BleHostError<T::Error>> {
         let acl_max = self.initialized.try_get().map(|i| i.acl_max).unwrap_or(27) as u16;
         let len = len + (4 * n_packets);
         let n_acl = len.div_ceil(acl_max);
@@ -731,17 +727,17 @@ pub struct Runner<'d, C, P: PacketPool> {
 
 /// The receiver part of the host runner.
 pub struct RxRunner<'d, C, P: PacketPool> {
-    stack: &'d Stack<'d, C, P>,
+    host: &'d BleHost<'d, C, P>,
 }
 
 /// The control part of the host runner.
 pub struct ControlRunner<'d, C, P: PacketPool> {
-    stack: &'d Stack<'d, C, P>,
+    host: &'d BleHost<'d, C, P>,
 }
 
 /// The transmit part of the host runner.
 pub struct TxRunner<'d, C, P: PacketPool> {
-    stack: &'d Stack<'d, C, P>,
+    host: &'d BleHost<'d, C, P>,
 }
 
 /// Event handler.
@@ -766,11 +762,11 @@ struct DummyHandler;
 impl EventHandler for DummyHandler {}
 
 impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
-    pub(crate) fn new(stack: &'d Stack<'d, C, P>) -> Self {
+    pub(crate) fn new(host: &'d BleHost<'d, C, P>) -> Self {
         Self {
-            rx: RxRunner { stack },
-            control: ControlRunner { stack },
-            tx: TxRunner { stack },
+            rx: RxRunner { host },
+            control: ControlRunner { host },
+            tx: TxRunner { host },
         }
     }
 
@@ -869,7 +865,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
         C: ControllerCmdSync<Disconnect>,
     {
         const MAX_HCI_PACKET_LEN: usize = 259;
-        let host = &self.stack.host;
+        let host = &self.host;
         // use embassy_time::Instant;
         // let mut last = Instant::now();
         loop {
@@ -1184,7 +1180,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + ControllerCmdAsync<LeEnableEncryption>
             + ControllerCmdSync<ReadBdAddr>,
     {
-        let host = &self.stack.host;
+        let host = &self.host;
         Reset::new().exec(&host.controller).await?;
 
         if let Some(addr) = host.address {
@@ -1376,7 +1372,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
 impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     /// Run the transmit loop for the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
-        let host = &self.stack.host;
+        let host = &self.host;
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;
@@ -1402,14 +1398,14 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     }
 }
 
-pub struct L2capSender<'a, 'd, T: Controller, P> {
+pub struct L2capSender<'a, T: Controller, P> {
     pub(crate) controller: &'a T,
     pub(crate) handle: ConnHandle,
-    pub(crate) grant: PacketGrant<'a, 'd, P>,
+    pub(crate) grant: PacketGrant<'a, P>,
     pub(crate) fragment_size: u16,
 }
 
-impl<'a, 'd, T: Controller, P> L2capSender<'a, 'd, T, P> {
+impl<'a, T: Controller, P> L2capSender<'a, T, P> {
     pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
     where
         T: blocking::Controller,

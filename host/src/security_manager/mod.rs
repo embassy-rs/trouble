@@ -6,7 +6,7 @@ mod constants;
 pub(crate) mod crypto;
 mod pairing;
 mod types;
-use core::cell::RefCell;
+use core::cell::{Ref, RefCell};
 use core::future::{poll_fn, Future};
 use core::task::Poll;
 
@@ -19,7 +19,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
-use heapless::Vec;
+use heapless::VecView;
 pub use pairing::OobData;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
@@ -104,39 +104,35 @@ impl defmt::Format for BondInformation {
 }
 
 /// Security manager data
-struct SecurityManagerData<const BOND_COUNT: usize> {
+struct SecurityManagerData {
     /// Local device address
     local_address: Option<Address>,
-    /// Current bonds with other devices
-    bond: Vec<BondInformation, BOND_COUNT>,
     /// Random generator seeded
     random_generator_seeded: bool,
 }
 
-impl<const BOND_COUNT: usize> SecurityManagerData<BOND_COUNT> {
+impl SecurityManagerData {
     /// Create a new security manager data structure
     fn new() -> Self {
         Self {
             local_address: None,
-            bond: Vec::new(),
             random_generator_seeded: false,
         }
     }
+}
 
-    /// Add or replace a bond
-    fn add_bond(&mut self, bond_information: BondInformation) -> Result<(), Error> {
-        trace!("[security manager] Add bond for {:?}", bond_information.identity);
-        if let Some(idx) = self
-            .bond
-            .iter()
-            .position(|bond| bond_information.identity.match_identity(&bond.identity))
-        {
-            self.bond[idx] = bond_information;
-        } else {
-            self.bond.push(bond_information).map_err(|_| Error::OutOfMemory)?;
-        }
-        Ok(())
+/// Add or replace a bond in the given bond storage.
+fn add_bond(bond: &mut VecView<BondInformation>, bond_information: BondInformation) -> Result<(), Error> {
+    trace!("[security manager] Add bond for {:?}", bond_information.identity);
+    if let Some(idx) = bond
+        .iter()
+        .position(|b| bond_information.identity.match_identity(&b.identity))
+    {
+        bond[idx] = bond_information;
+    } else {
+        bond.push(bond_information).map_err(|_| Error::OutOfMemory)?;
     }
+    Ok(())
 }
 
 /// Packet structure for sending security manager protocol (SMP) commands
@@ -187,7 +183,7 @@ impl<P: PacketPool> TxPacket<P> {
 // TODO: IRK exchange, HCI_LE_­Add_­Device_­To_­Resolving_­List
 
 /// Inner mutable state of the security manager
-struct Inner<const BOND_COUNT: usize> {
+struct Inner {
     /// Random generator
     rng: ChaCha12Rng,
     /// Persistent LESC keypair (generated once when RNG is seeded)
@@ -195,7 +191,7 @@ struct Inner<const BOND_COUNT: usize> {
     /// Corresponding public key
     public_key: crypto::PublicKey,
     /// Security manager data
-    state: SecurityManagerData<BOND_COUNT>,
+    state: SecurityManagerData,
     /// State of an ongoing pairing
     pairing_sm: Option<Pairing>,
     /// Waker for pairing finished
@@ -216,13 +212,14 @@ struct SmpCommand<'a> {
     peer_identity: Identity,
 }
 
-impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
+impl Inner {
     fn is_idle(&self) -> bool {
         self.pairing_sm.as_ref().map(|sm| sm.result().is_some()).unwrap_or(true)
     }
 
     fn handle_peripheral<P: PacketPool>(
         &mut self,
+        bonds: &mut VecView<BondInformation>,
         events: &Channel<NoopRawMutex, SecurityEventData, 2>,
         cmd: &SmpCommand<'_>,
         connections: &ConnectionManager<'_, P>,
@@ -298,7 +295,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
         }
 
         let mut ops = PairingOpsImpl {
-            state: &mut self.state,
+            bonds,
             events,
             secret_key: &self.secret_key,
             public_key: &self.public_key,
@@ -315,6 +312,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
 
     fn handle_central<P: PacketPool>(
         &mut self,
+        bonds: &mut VecView<BondInformation>,
         events: &Channel<NoopRawMutex, SecurityEventData, 2>,
         cmd: &SmpCommand<'_>,
         connections: &ConnectionManager<'_, P>,
@@ -366,7 +364,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
         }
 
         let mut ops = PairingOpsImpl {
-            state: &mut self.state,
+            bonds,
             events,
             secret_key: &self.secret_key,
             public_key: &self.public_key,
@@ -383,6 +381,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
 
     fn handle_pairing_event<P: PacketPool>(
         &mut self,
+        bonds: &mut VecView<BondInformation>,
         events: &Channel<NoopRawMutex, SecurityEventData, 2>,
         pairing_event: pairing::Event,
         connections: &ConnectionManager<'_, P>,
@@ -390,7 +389,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
     ) -> Result<(), Error> {
         if let Some(sm) = self.pairing_sm.as_mut() {
             let mut ops = PairingOpsImpl {
-                state: &mut self.state,
+                bonds,
                 events,
                 secret_key: &self.secret_key,
                 public_key: &self.public_key,
@@ -411,6 +410,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
 
     fn handle_encryption_success<P: PacketPool>(
         &mut self,
+        bonds: &mut VecView<BondInformation>,
         events: &Channel<NoopRawMutex, SecurityEventData, 2>,
         encrypted: bool,
         connections: &ConnectionManager<'_, P>,
@@ -418,7 +418,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
     ) -> Result<(), Error> {
         if let Some(sm) = self.pairing_sm.as_mut() {
             let mut ops = PairingOpsImpl {
-                state: &mut self.state,
+                bonds,
                 events,
                 secret_key: &self.secret_key,
                 public_key: &self.public_key,
@@ -442,9 +442,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
             }
             return res;
         } else if let Some(identity) = storage.peer_identity.as_ref() {
-            match self
-                .state
-                .bond
+            match bonds
                 .iter()
                 .find(|bond| bond.identity.match_identity(identity))
                 .cloned()
@@ -471,6 +469,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
 
     fn handle_encryption_failure<P: PacketPool>(
         &mut self,
+        bonds: &mut VecView<BondInformation>,
         events: &Channel<NoopRawMutex, SecurityEventData, 2>,
         connections: &ConnectionManager<'_, P>,
         storage: &mut ConnectionStorage<P::Packet>,
@@ -485,7 +484,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
             let _res = sm.handle_event(
                 pairing::Event::LinkEncryptedResult(false),
                 &mut PairingOpsImpl {
-                    state: &mut self.state,
+                    bonds,
                     events,
                     secret_key: &self.secret_key,
                     public_key: &self.public_key,
@@ -508,6 +507,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
 
     fn initiate<P: PacketPool>(
         &mut self,
+        bonds: &mut VecView<BondInformation>,
         events: &Channel<NoopRawMutex, SecurityEventData, 2>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
@@ -543,7 +543,7 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
         };
         let local_io = self.io_capabilities;
         let mut ops = PairingOpsImpl {
-            state: &mut self.state,
+            bonds,
             events,
             secret_key: &self.secret_key,
             public_key: &self.public_key,
@@ -574,16 +574,18 @@ impl<const BOND_COUNT: usize> Inner<BOND_COUNT> {
 }
 
 /// Security manager that handles SM packet
-pub struct SecurityManager<const BOND_COUNT: usize> {
+pub struct SecurityManager<'d> {
     /// Inner mutable state
-    inner: RefCell<Inner<BOND_COUNT>>,
+    inner: RefCell<Inner>,
+    /// Bond storage (externally owned by HostResources)
+    bonds: &'d RefCell<VecView<BondInformation>>,
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
 }
 
-impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
+impl<'d> SecurityManager<'d> {
     /// Create a new SecurityManager
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(bonds: &'d RefCell<VecView<BondInformation>>) -> Self {
         let mut rng = ChaCha12Rng::from_seed([0u8; 32]);
         let secret_key = crypto::SecretKey::new(&mut rng);
         let public_key = secret_key.public_key();
@@ -599,6 +601,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 #[cfg(feature = "legacy-pairing")]
                 secure_connections_only: false,
             }),
+            bonds,
             events: Channel::new(),
         }
     }
@@ -673,7 +676,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     pub(crate) fn get_peer_bond_information(&self, identity: &Identity) -> Option<BondInformation> {
         trace!("[security manager] Find long term key for {:?}", identity);
-        self.inner.borrow().state.bond.iter().find_map(|bond| {
+        self.bonds.borrow().iter().find_map(|bond| {
             if bond.identity.match_identity(identity) {
                 Some(bond.clone())
             } else {
@@ -709,21 +712,17 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     /// Add a bonded device
     pub(crate) fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
-        self.inner.borrow_mut().state.add_bond(bond_information)
+        add_bond(&mut self.bonds.borrow_mut(), bond_information)
     }
 
     /// Remove a bonded device
     pub(crate) fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
         trace!("[security manager] Remove bond for {:?}", identity);
-        let mut inner = self.inner.borrow_mut();
-        let index = inner
-            .state
-            .bond
-            .iter()
-            .position(|bond| bond.identity.match_identity(&identity));
+        let mut bonds = self.bonds.borrow_mut();
+        let index = bonds.iter().position(|bond| bond.identity.match_identity(&identity));
         match index {
             Some(index) => {
-                inner.state.bond.remove(index);
+                bonds.remove(index);
                 Ok(())
             }
             None => Err(Error::NotFound),
@@ -731,8 +730,18 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Get bonded devices
-    pub(crate) fn get_bond_information(&self) -> Vec<BondInformation, BOND_COUNT> {
-        Vec::from_slice(self.inner.borrow().state.bond.as_slice()).unwrap()
+    pub(crate) fn get_bond_information(&self) -> Ref<'_, VecView<BondInformation>> {
+        self.bonds.borrow()
+    }
+
+    /// Get the number of bonded devices
+    pub(crate) fn bond_count(&self) -> usize {
+        self.bonds.borrow().len()
+    }
+
+    /// Get the identity of a bonded device by index
+    pub(crate) fn get_bond_identity(&self, index: usize) -> Option<Identity> {
+        self.bonds.borrow().get(index).map(|b| b.identity)
     }
 
     fn parse_smp_command<P: PacketPool>(pdu: Pdu<P::Packet>) -> Result<(Command, [u8; 72], usize), Error> {
@@ -777,9 +786,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             handle: storage.handle.ok_or(Error::InvalidValue)?,
             peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
         };
-        self.inner
-            .borrow_mut()
-            .handle_peripheral(&self.events, &cmd, connections, storage)
+        self.inner.borrow_mut().handle_peripheral(
+            &mut self.bonds.borrow_mut(),
+            &self.events,
+            &cmd,
+            connections,
+            storage,
+        )
     }
 
     fn handle_central<P: PacketPool>(
@@ -801,7 +814,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
         self.inner
             .borrow_mut()
-            .handle_central(&self.events, &cmd, connections, storage)
+            .handle_central(&mut self.bonds.borrow_mut(), &self.events, &cmd, connections, storage)
     }
 
     /// Handle packet
@@ -885,9 +898,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         if storage.security_level != SecurityLevel::NoEncryption {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
-        self.inner
-            .borrow_mut()
-            .initiate(&self.events, connections, storage, user_initiated)
+        self.inner.borrow_mut().initiate(
+            &mut self.bonds.borrow_mut(),
+            &self.events,
+            connections,
+            storage,
+            user_initiated,
+        )
     }
 
     /// Cancel pairing after timeout
@@ -901,16 +918,20 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     /// Channel disconnected
     pub(crate) fn disconnect(&self, identity: &Identity) {
-        let mut inner = self.inner.borrow_mut();
-        if inner
-            .pairing_sm
-            .as_ref()
-            .is_some_and(|sm| sm.peer_address().addr == identity.bd_addr)
         {
-            inner.pairing_sm = None;
-            inner.finished_waker.wake();
+            let mut inner = self.inner.borrow_mut();
+            if inner
+                .pairing_sm
+                .as_ref()
+                .is_some_and(|sm| sm.peer_address().addr == identity.bd_addr)
+            {
+                inner.pairing_sm = None;
+                inner.finished_waker.wake();
+            }
         }
-        inner.state.bond.retain(|x| x.is_bonded || x.identity != *identity);
+        self.bonds
+            .borrow_mut()
+            .retain(|x| x.is_bonded || x.identity != *identity);
     }
 
     /// Handle recevied events from HCI
@@ -960,6 +981,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     trace!("[smp] Encryption event (encrypted={})", encrypted);
                     connections.with_connected_handle(handle, |storage| {
                         let res = self.inner.borrow_mut().handle_encryption_success(
+                            &mut self.bonds.borrow_mut(),
                             &self.events,
                             encrypted,
                             connections,
@@ -972,9 +994,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 Err(error) => {
                     error!("[security manager] Encryption event error {:?}", error);
                     connections.with_connected_handle(handle, |storage| {
-                        self.inner
-                            .borrow_mut()
-                            .handle_encryption_failure(&self.events, connections, storage);
+                        self.inner.borrow_mut().handle_encryption_failure(
+                            &mut self.bonds.borrow_mut(),
+                            &self.events,
+                            connections,
+                            storage,
+                        );
                         Ok(())
                     })?;
                 }
@@ -989,10 +1014,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
-        let res = self
-            .inner
-            .borrow_mut()
-            .handle_pairing_event(&self.events, pairing_event, connections, storage);
+        let res = self.inner.borrow_mut().handle_pairing_event(
+            &mut self.bonds.borrow_mut(),
+            &self.events,
+            pairing_event,
+            connections,
+            storage,
+        );
         if res.is_err() {
             if let Err(e) = self.handle_security_error(connections, storage, &res) {
                 error!("[security manager] Failed sending pairing failed message! {:?}", e);
@@ -1068,9 +1096,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Poll for security manager work
-    pub(crate) fn poll_events(
-        &self,
-    ) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_, BOND_COUNT> {
+    pub(crate) fn poll_events(&self) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_, 'd> {
         let deadline = self
             .inner
             .borrow()
@@ -1083,8 +1109,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 }
 
-struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> {
-    state: &'sm mut SecurityManagerData<B>,
+struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> {
+    bonds: &'sm mut VecView<BondInformation>,
     events: &'sm Channel<NoopRawMutex, SecurityEventData, 2>,
     secret_key: &'sm crypto::SecretKey,
     public_key: &'sm crypto::PublicKey,
@@ -1094,7 +1120,7 @@ struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> {
     peer_identity: Identity,
 }
 
-impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, B, P> {
+impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, P> {
     fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error> {
         let len = packet.total_size();
         trace!("[security manager] Send {} {}", packet.command, len);
@@ -1104,12 +1130,11 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
     }
 
     fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error> {
-        self.state.add_bond(bond.clone())
+        add_bond(self.bonds, bond.clone())
     }
 
     fn find_bond(&self) -> Option<BondInformation> {
-        self.state
-            .bond
+        self.bonds
             .iter()
             .find(|x| x.identity.match_identity(&self.peer_identity))
             .cloned()

@@ -10,7 +10,8 @@ Security requires a cryptographically secure random seed:
 ----
 let stack = trouble_host::new(controller, &mut resources)
     .set_random_address(address)
-    .set_random_generator_seed(&mut rng);  // Must implement RngCore + CryptoRng
+    .set_random_generator_seed(&mut rng)  // Must implement RngCore + CryptoRng
+    .build();
 ----
 
 WARNING: The stack will panic at build time if the random generator is not seeded (unless the `dev-disable-csprng-seed-requirement` feature is enabled for development).
@@ -190,5 +191,7 @@ stack.add_bond_information(bond)?;
 stack.remove_bond_information(identity)?;
 
 // List all bonds
-let bonds = stack.get_bond_information();
+stack.with_bond_information(|bonds| {
+    // ...
+});
 ----

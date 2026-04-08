@@ -131,7 +131,7 @@ type NotifyChannel<'stack, P> = embassy_sync::channel::Channel<NoopRawMutex, Cha
 /// requests and all active channel futures. Channel futures run to completion
 /// (never cancelled) — they are only removed when they return.
 async fn poll_channels<'stack, C: crate::Controller, P: PacketPool>(
-    stack: &'stack Stack<'stack, C, P>,
+    stack: &'stack Stack<'_, C, P>,
     rx: &embassy_sync::channel::Channel<NoopRawMutex, (ChannelOp<'stack, P>, u8), MAX_CHANNELS>,
     notify: &NotifyChannel<'stack, P>,
     events: &DynamicSender<'_, Event>,
@@ -174,7 +174,7 @@ async fn poll_channels<'stack, C: crate::Controller, P: PacketPool>(
 /// incoming L2CAP channels. When a connection disconnects, listen() returns an error and
 /// the inner loop breaks, waiting for the next connection.
 async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
-    stack: &'stack Stack<'stack, C, P>,
+    stack: &'stack Stack<'_, C, P>,
     listener_signal: &Signal<NoopRawMutex, ListenerArgs>,
     conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,
     notify: &NotifyChannel<'stack, P>,
@@ -242,7 +242,7 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
 
 /// Run one L2CAP channel lifecycle: create or receive data, exit on disconnect.
 async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
-    stack: &'stack Stack<'stack, C, P>,
+    stack: &'stack Stack<'_, C, P>,
     op: ChannelOp<'stack, P>,
     chan_id: u8,
     notify: &NotifyChannel<'stack, P>,
@@ -319,7 +319,7 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
 ///
 /// Loops forever, accepting commands and managing L2CAP connection-oriented channels.
 pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
-    stack: &'stack Stack<'stack, C, P>,
+    stack: &'stack Stack<'_, C, P>,
     commands: CommandReceiver<'_, Command>,
     events: DynamicSender<'_, Event>,
     conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,

@@ -312,18 +312,6 @@ where
         "run() can only be called once per program execution"
     );
     info!("BTP run: name={:?} addr={:?}", config.device_name, config.address);
-    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-
-    let stack = trouble_host::new(controller, &mut resources)
-        .set_random_address(config.address)
-        .set_random_generator_seed(&mut random_generator);
-
-    let Host {
-        peripheral,
-        central,
-        runner,
-        ..
-    } = stack.build();
 
     let scan_mode = Cell::new(ScanMode::default());
     let oob = OobState::new();
@@ -335,15 +323,26 @@ where
     let transport = btp::BtpTransport { reader, writer };
     let mut packet = btp::protocol::BtpPacket::new();
     info!("Entering pre-server phase");
-    let Some(pre) = btp::run_pre_server(transport, &config, &stack, &scan_mode, &oob, &mut table, &mut packet).await?
-    else {
+    let Some(pre) = btp::run_pre_server(transport, &config, &scan_mode, &oob, &mut table, &mut packet).await? else {
         info!("Clean shutdown from pre-server phase");
         return Ok(());
     };
 
-    info!("Pre-server phase complete, creating server");
+    info!("Pre-server phase complete, building stack and creating server");
 
-    // Between phases: Create server on this stack frame
+    // Build the stack, applying deferred GAP settings to the builder
+    let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+    let builder = trouble_host::new(controller, &mut resources)
+        .set_random_address(config.address)
+        .set_random_generator_seed(&mut random_generator);
+    let builder = pre.gap.apply_to_builder(builder);
+    let stack = builder.build();
+    let runner = stack.runner();
+    let gap = pre.gap.into_stack_gap(&stack);
+    let peripheral = stack.peripheral();
+    let central = stack.central();
+
+    // Create server on this stack frame
     let server = Server::new(table);
 
     // Phase 2: Full concurrent operation
@@ -402,7 +401,8 @@ where
                 &mut gatt_client_rx,
             ),
             btp::run(
-                pre,
+                pre.transport,
+                gap,
                 &config,
                 &server,
                 &stack,

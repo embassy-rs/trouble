@@ -51,7 +51,7 @@ impl From<Response> for command_channel::Response {
 /// When a connection is established, enters a GATT connection event loop until
 /// the peer disconnects.
 pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
-    stack: &Stack<'stack, C, P>,
+    stack: &Stack<'_, C, P>,
     mut central: Central<'stack, C, P>,
     commands: CommandReceiver<'_, Command>,
     server: &Server<'_, P>,

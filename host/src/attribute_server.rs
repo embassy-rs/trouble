@@ -1030,9 +1030,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     /// connection is checked for notification/indication subscriptions and
     /// sent the appropriate PDU.
     #[cfg(feature = "gatt")]
-    pub async fn write_and_notify<'s, C: crate::Controller>(
+    pub async fn write_and_notify<C: crate::Controller>(
         &self,
-        stack: &'s crate::Stack<'s, C, P>,
+        stack: &crate::Stack<'_, C, P>,
         value_handle: u16,
         data: &[u8],
     ) -> Result<(), Error> {
