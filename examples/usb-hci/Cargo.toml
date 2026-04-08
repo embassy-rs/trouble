@@ -1,0 +1,32 @@
+[package]
+name = "trouble-usb-hci-examples"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+bt-hci = "0.8"
+bt-hci-usb = { version = "0.1.0", path = "../../bt-hci-usb" }
+critical-section = { version = "1", features = ["std"] }
+embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
+embedded-io = { version = "0.7", features = ["std"] }
+env_logger = "0.11"
+log = "0.4"
+nusb = { version = "0.2.3", features = ["tokio"] }
+rand = { version = "0.8.5", features = ["getrandom"] }
+tokio = { version = "1", features = ["io-util", "net", "rt", "macros", "signal", "sync"] }
+trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "std"] }
+trouble-host = { path = "../../host", features = ["scan"] }
+
+[features]
+security = [
+    "trouble-example-apps/security",
+]
+
+[[bin]]
+name = "ble_bas_central_sec"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_sec"
+required-features = ["security"]

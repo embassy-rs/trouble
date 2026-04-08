@@ -30,6 +30,7 @@ cargo batch \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,controller-host-flow-control,connection-metrics,channel-metrics,l2cap-sdu-reassembly-optimization \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,controller-host-flow-control,connection-metrics,channel-metrics,l2cap-sdu-reassembly-optimization,connection-params-update \
     --- build --release --manifest-path bt-hci-linux/Cargo.toml \
+    --- build --release --manifest-path bt-hci-usb/Cargo.toml \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840,security \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52833 --artifact-dir tests/nrf52 \
@@ -39,6 +40,8 @@ cargo batch \
     --- build --release --manifest-path examples/serial-hci/Cargo.toml \
     --- build --release --manifest-path examples/linux/Cargo.toml \
     --- build --release --manifest-path examples/linux/Cargo.toml --features security \
+    --- build --release --manifest-path examples/usb-hci/Cargo.toml \
+    --- build --release --manifest-path examples/usb-hci/Cargo.toml --features security \
     --- build --release --manifest-path examples/tests/Cargo.toml \
     --- build --release --manifest-path benchmarks/nrf-sdc/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
     --- build --release --manifest-path examples/rp-pico-w/Cargo.toml --target thumbv6m-none-eabi --features skip-cyw43-firmware \

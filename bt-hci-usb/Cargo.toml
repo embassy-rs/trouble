@@ -1,0 +1,15 @@
+[package]
+name = "bt-hci-usb"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/embassy-rs/trouble"
+keywords = ["no-std"]
+categories = ["embedded", "hardware-support", "no-std"]
+
+[dependencies]
+bt-hci = "0.8"
+embedded-io = { version = "0.7.1", features = ["std"] }
+futures = { version = "0.3.32", default-features = false }
+nusb = { version = "0.2.3", features = ["tokio"] }
+tokio = { version = "1", features = ["io-util", "rt", "sync"] }
