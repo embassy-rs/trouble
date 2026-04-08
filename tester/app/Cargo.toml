@@ -14,7 +14,7 @@ bitflags = "2"
 bt-hci = { version = "0.8", default-features = false, features = ["uuid"] }
 defmt = { version = "1.0.1", optional = true, features = ["alloc"] }
 embassy-futures = "0.1"
-embassy-sync = "0.7"
+embassy-sync = "0.8"
 embassy-time = "0.5"
 embedded-io = "0.7.1"
 embedded-io-async = "0.7.0"
