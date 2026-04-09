@@ -1,4 +1,5 @@
-use anyhow::anyhow;
+use std::time::Duration;
+
 use hilbench_agent::ProbeConfig;
 use probe::DeviceUnderTest;
 
@@ -23,11 +24,11 @@ impl TestContext {
         }
     }
 
-    pub fn find_dut(&self, labels: &[(&str, &str)]) -> Result<DeviceUnderTest<'static>, anyhow::Error> {
-        let selector = hilbench_agent::init(self.probe_config.clone());
-        let target = selector
-            .select(labels)
-            .ok_or(anyhow!("Unable to find DUT for {:?}", labels))?;
-        Ok(DeviceUnderTest::new(target))
+    pub async fn find_dut(&self, labels: &[(&str, &str)]) -> Result<DeviceUnderTest, anyhow::Error> {
+        let db_path = std::env::temp_dir().join("hilbench-probes.db");
+        let selector =
+            hilbench_agent::init(&db_path, self.probe_config.clone(), Duration::from_secs(300))?;
+        let target = selector.select(labels).await?;
+        Ok(DeviceUnderTest::new(target, selector.server().cloned()))
     }
 }
