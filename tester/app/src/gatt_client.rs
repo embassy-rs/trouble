@@ -263,10 +263,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
 
         // Run client.task() concurrently with command processing.
         // When client.task() completes (connection dropped), we return to Phase 1.
-        let conn_address = Address {
-            kind: connection.peer_addr_kind(),
-            addr: connection.peer_address(),
-        };
+        let conn_address = connection.peer_address();
         info!("GattClient created for {:?}", conn_address);
         let mut cache = DiscoveryCache::new();
         let mut listener = match client.listen_all() {
@@ -308,7 +305,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
 
             match select(
                 client.task(),
-                execute_command(&client, &command, &mut cache, &mut had_subscriptions),
+                execute_command(&client, &connection, &command, &mut cache, &mut had_subscriptions),
             )
             .await
             {
@@ -488,9 +485,20 @@ fn disconnect_response(cmd: &command_channel::Command<'_, Command>) -> Response 
     }
 }
 
+/// Check if an error is INSUFFICIENT_AUTHENTICATION and request security if so.
+fn maybe_request_security<E>(err: &BleHostError<E>, connection: &Connection<'_, impl PacketPool>) {
+    if matches!(err, BleHostError::BleHost(Error::Att(code)) if *code == AttErrorCode::INSUFFICIENT_AUTHENTICATION) {
+        info!("INSUFFICIENT_AUTHENTICATION, requesting security");
+        if let Err(e) = connection.request_security() {
+            warn!("request_security failed: {:?}", e);
+        }
+    }
+}
+
 /// Execute a single GATT client command, returning the response.
 async fn execute_command<C: crate::Controller, P: PacketPool>(
     client: &GattClient<'_, C, P, MAX_SERVICES>,
+    connection: &Connection<'_, P>,
     cmd: &command_channel::Command<'_, Command>,
     cache: &mut DiscoveryCache,
     had_subscriptions: &mut bool,
@@ -583,6 +591,7 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                     })
                 }
                 Err(ref e) if att_error_code(e).is_some() => {
+                    maybe_request_security(e, connection);
                     let code = att_error_code(e).unwrap();
                     warn!("Read returned ATT error: {:#x}", code);
                     Response::ReadData(gatt::ReadDataResponse {
@@ -608,6 +617,7 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                     })
                 }
                 Err(ref e) if att_error_code(e).is_some() => {
+                    maybe_request_security(e, connection);
                     let code = att_error_code(e).unwrap();
                     warn!("ReadLong returned ATT error: {:#x}", code);
                     Response::ReadData(gatt::ReadDataResponse {
@@ -653,6 +663,7 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
                     })
                 }
                 Err(ref e) if att_error_code(e).is_some() => {
+                    maybe_request_security(e, connection);
                     let code = att_error_code(e).unwrap();
                     warn!("ReadUuid returned ATT error: {:#x}", code);
                     Response::ReadUuidData(gatt::ReadUuidDataResponse {
@@ -671,6 +682,7 @@ async fn execute_command<C: crate::Controller, P: PacketPool>(
             match result {
                 Ok(()) => Response::WriteResult(0x00),
                 Err(ref e) if att_error_code(e).is_some() => {
+                    maybe_request_security(e, connection);
                     let code = att_error_code(e).unwrap();
                     warn!("Write returned ATT error: {:#x}", code);
                     Response::WriteResult(code)

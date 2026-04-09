@@ -3,7 +3,7 @@ use core::future::poll_fn;
 use core::task::{Context, Poll};
 
 use bt_hci::controller::{blocking, Controller};
-use bt_hci::param::ConnHandle;
+use bt_hci::param::{ConnHandle, LeConnRole};
 use bt_hci::{FromHciBytes, WriteHci};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -678,6 +678,15 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     self.handle_disconnect_response(res.scid)
                 }
                 L2capSignalCode::CONN_PARAM_UPDATE_REQ => {
+                    if manager.role_by_handle(conn) != Some(LeConnRole::Central) {
+                        warn!(
+                            "[l2cap][conn = {:?}] rejecting connection param update request: not Central",
+                            conn
+                        );
+                        Self::try_send_signal(conn, header.identifier, &CommandRejectRes { reason: 0 }, manager)?;
+                        return Ok(());
+                    }
+
                     let req = ConnParamUpdateReq::from_hci_bytes_complete(signal_data)?;
                     debug!("[l2cap][conn = {:?}] connection param update request: {:?}", conn, req);
                     let interval_min: bt_hci::param::Duration<1_250> =
@@ -1628,7 +1637,7 @@ mod tests {
     use super::*;
     use crate::mock_controller::MockController;
     use crate::prelude::{ConnParams, DefaultPacketPool};
-    use crate::HostResources;
+    use crate::{Address, HostResources};
 
     #[test]
     fn channel_refcount() {
@@ -1642,8 +1651,7 @@ mod tests {
         ble.connections
             .connect(
                 conn,
-                AddrKind::PUBLIC,
-                BdAddr::new([0; 6]),
+                Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
                 LeConnRole::Central,
                 ConnParams::new(),
             )

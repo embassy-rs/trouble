@@ -4,7 +4,7 @@ use bt_hci::cmd::le::{
     LeSetScanParams,
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
-use bt_hci::param::{AddrKind, FilterDuplicates, ScanningPhy};
+use bt_hci::param::{FilterDuplicates, ScanningPhy};
 pub use bt_hci::param::{LeAdvReportsIter, LeExtAdvReportsIter};
 use embassy_time::Instant;
 
@@ -57,7 +57,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         let phy_params = crate::central::create_phy_params(scanning, config.phys);
         let host = &self.central.host;
         host.command(LeSetExtScanParams::new(
-            host.address.map(|s| s.kind).unwrap_or(AddrKind::PUBLIC),
+            host.own_addr_kind(),
             if config.filter_accept_list.is_empty() {
                 bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
             } else {
@@ -112,7 +112,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             },
             bt_hci_duration(config.interval),
             bt_hci_duration(config.window),
-            host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            host.own_addr_kind(),
             if config.filter_accept_list.is_empty() {
                 bt_hci::param::ScanningFilterPolicy::BasicUnfiltered
             } else {

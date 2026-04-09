@@ -92,12 +92,19 @@ impl<CTX: Clone + Copy> CommandState<CTX> {
         self.with_inner(|inner| {
             inner.state = State::Idle;
             inner.host.wake();
+            inner.controller.wake();
         })
+    }
+
+    /// Check if the command state is idle.
+    pub fn is_idle(&self) -> bool {
+        self.with_inner(|inner| matches!(inner.state, State::Idle))
     }
 
     pub fn done(&self) {
         self.with_inner(|inner| {
             inner.state = State::Idle;
+            inner.controller.wake();
         })
     }
 }

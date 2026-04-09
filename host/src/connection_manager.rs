@@ -4,7 +4,9 @@ use core::future::poll_fn;
 use core::future::Future;
 use core::task::{Context, Poll};
 
-use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
+#[cfg(feature = "security")]
+use bt_hci::param::BdAddr;
+use bt_hci::param::{ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
@@ -18,6 +20,31 @@ use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::{config, Address, Error, Identity, PacketPool};
+
+/// Resolvable private addresses used on a connection.
+///
+/// Holds the Resolvable Private Addresses (RPAs) for a connection that were
+/// resolved by the controller.
+#[cfg(feature = "security")]
+#[derive(Debug, Default, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) struct ResolvablePrivateAddrs {
+    /// The local resolvable private address used on this connection, if any.
+    pub(crate) local: Option<BdAddr>,
+    /// The peer's resolvable private address used on this connection, if any.
+    pub(crate) peer: Option<BdAddr>,
+}
+
+#[cfg(feature = "security")]
+impl ResolvablePrivateAddrs {
+    /// Create an empty `ResolvablePrivateAddrs` with no addresses set.
+    pub(crate) const fn none() -> Self {
+        Self {
+            local: None,
+            peer: None,
+        }
+    }
+}
 
 #[cfg(feature = "att-queued-writes")]
 pub(crate) struct PrepareWriteState {
@@ -145,6 +172,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         self.connection(index).role.unwrap()
     }
 
+    pub(crate) fn role_by_handle(&self, handle: ConnHandle) -> Option<LeConnRole> {
+        self.connection_by_handle(handle).and_then(|connection| connection.role)
+    }
+
     pub(crate) fn handle(&self, index: u8) -> ConnHandle {
         self.connection(index).handle.unwrap()
     }
@@ -229,15 +260,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         .await
     }
 
-    pub(crate) fn peer_addr_kind(&self, index: u8) -> AddrKind {
-        self.connection(index).peer_addr_kind.unwrap_or_default()
-    }
-
-    pub(crate) fn peer_address(&self, index: u8) -> BdAddr {
-        self.connection(index)
-            .peer_identity
-            .map(|id| id.bd_addr)
-            .unwrap_or_default()
+    pub(crate) fn peer_address(&self, index: u8) -> Address {
+        self.connection(index).peer_identity.map(|i| i.addr).unwrap_or_default()
     }
 
     pub(crate) fn peer_identity(&self, index: u8) -> Identity {
@@ -314,9 +338,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn get_connection_by_peer_address(&'d self, peer_address: Address) -> Option<Connection<'d, P>> {
         for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-            if storage.state == ConnectionState::Connected && storage.peer_addr_kind == Some(peer_address.kind) {
+            if storage.state == ConnectionState::Connected {
                 if let Some(peer) = &storage.peer_identity {
-                    if peer.match_address(&peer_address.addr) {
+                    if peer.match_address(&peer_address) {
                         storage.inc_ref();
                         return Some(Connection::new(index as u8, self));
                     }
@@ -389,10 +413,27 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn connect(
         &self,
         handle: ConnHandle,
-        peer_addr_kind: AddrKind,
-        peer_addr: BdAddr,
+        peer_addr: Address,
         role: LeConnRole,
         params: ConnParams,
+    ) -> Result<(), Error> {
+        self.connect_with_rpas(
+            handle,
+            peer_addr,
+            role,
+            params,
+            #[cfg(feature = "security")]
+            ResolvablePrivateAddrs::none(),
+        )
+    }
+
+    pub(crate) fn connect_with_rpas(
+        &self,
+        handle: ConnHandle,
+        peer_addr: Address,
+        role: LeConnRole,
+        params: ConnParams,
+        #[cfg(feature = "security")] resolvable_addrs: ResolvablePrivateAddrs,
     ) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         let default_credits = state.default_link_credits;
@@ -406,18 +447,25 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 // Default ATT MTU is 23
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
-                storage.peer_addr_kind.replace(peer_addr_kind);
-                storage.peer_identity.replace(Identity {
-                    bd_addr: peer_addr,
-                    #[cfg(feature = "security")]
-                    irk: None,
-                });
+                #[cfg(feature = "security")]
+                let identity = self
+                    .security_manager
+                    .get_peer_bond_information(&peer_addr.into())
+                    .map(|bond| bond.identity)
+                    .unwrap_or(peer_addr.into());
+                #[cfg(not(feature = "security"))]
+                let identity = Identity::from(peer_addr);
+                storage.peer_identity.replace(identity);
                 storage.role.replace(role);
                 storage.params = params;
                 #[cfg(feature = "security")]
                 {
                     storage.bond_rejected = false;
                     storage.smp_timeout = false;
+                }
+                #[cfg(feature = "security")]
+                {
+                    storage.resolvable_addrs = resolvable_addrs;
                 }
 
                 match role {
@@ -438,7 +486,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn poll_accept(
         &'d self,
         role: LeConnRole,
-        peers: &[(AddrKind, &BdAddr)],
+        peers: &[Address],
         cx: Option<&mut Context<'_>>,
     ) -> Poll<Connection<'d, P>> {
         let mut state = self.state.borrow_mut();
@@ -460,10 +508,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 if r == role {
                     if !peers.is_empty() {
                         for peer in peers.iter() {
-                            // TODO: Accept advertsing peers which use IRK
-                            if storage.peer_addr_kind.unwrap() == peer.0
-                                && storage.peer_identity.unwrap().bd_addr == *peer.1
-                            {
+                            if storage.peer_identity.unwrap().match_address(peer) {
                                 storage.state = ConnectionState::Connected;
                                 debug!("[link][poll_accept] connection accepted: state: {:?}", storage);
                                 assert_eq!(storage.refcount, 0);
@@ -503,7 +548,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             .dec_ref(&mut self.state.borrow_mut().disconnect_waker);
     }
 
-    pub(crate) async fn accept(&'d self, role: LeConnRole, peers: &[(AddrKind, &BdAddr)]) -> Connection<'d, P> {
+    pub(crate) async fn accept(&'d self, role: LeConnRole, peers: &[Address]) -> Connection<'d, P> {
         poll_fn(|cx| self.poll_accept(role, peers, Some(cx))).await
     }
 
@@ -680,11 +725,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             } else if storage.security_level != SecurityLevel::NoEncryption {
                 return Ok(());
             }
-            match (storage.peer_addr_kind, storage.peer_identity.as_ref()) {
-                (Some(kind), Some(identity)) => Address {
-                    kind,
-                    addr: identity.bd_addr,
-                },
+            match storage.peer_identity.as_ref() {
+                Some(identity) => identity.addr,
                 _ => return Err(Error::InvalidValue),
             }
         };
@@ -897,11 +939,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 warn!("[host] Pairing timeout");
                 if let Some(peer_address) = self.security_manager.peer_address() {
                     for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-                        if storage.state == ConnectionState::Connected
-                            && storage.peer_addr_kind == Some(peer_address.kind)
-                        {
+                        if storage.state == ConnectionState::Connected {
                             if let Some(peer) = &storage.peer_identity {
-                                if peer.match_address(&peer_address.addr) {
+                                if peer.match_address(&peer_address) {
                                     storage.smp_timeout = true;
                                     break;
                                 }
@@ -912,6 +952,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 self.security_manager.cancel_timeout();
             }
             crate::security_manager::SecurityEventData::TimerChange => (),
+            #[cfg(feature = "security")]
+            crate::security_manager::SecurityEventData::BondAdded(identity) => {
+                host.resolving_list_state
+                    .borrow_mut()
+                    .push(crate::host::ResolvingListUpdate::Add(identity));
+            }
         }
         Ok(())
     }
@@ -1000,7 +1046,6 @@ pub struct ConnectionStorage<P> {
     pub state: ConnectionState,
     pub handle: Option<ConnHandle>,
     pub role: Option<LeConnRole>,
-    pub peer_addr_kind: Option<AddrKind>,
     pub peer_identity: Option<Identity>,
     pub params: ConnParams,
     pub att_mtu: u16,
@@ -1019,6 +1064,8 @@ pub struct ConnectionStorage<P> {
     pub bond_rejected: bool,
     #[cfg(feature = "security")]
     pub smp_timeout: bool,
+    #[cfg(feature = "security")]
+    pub resolvable_addrs: ResolvablePrivateAddrs,
     #[cfg(feature = "legacy-pairing")]
     pub encryption_key_len: u8,
     pub events: EventChannel,
@@ -1101,7 +1148,6 @@ impl<P> ConnectionStorage<P> {
             state: ConnectionState::Disconnected,
             handle: None,
             role: None,
-            peer_addr_kind: None,
             peer_identity: None,
             params: ConnParams::new(),
             att_mtu: 23,
@@ -1116,6 +1162,8 @@ impl<P> ConnectionStorage<P> {
             bond_rejected: false,
             #[cfg(feature = "security")]
             smp_timeout: false,
+            #[cfg(feature = "security")]
+            resolvable_addrs: ResolvablePrivateAddrs::none(),
             #[cfg(feature = "legacy-pairing")]
             encryption_key_len: 0,
             events: EventChannel::new(),
@@ -1262,6 +1310,7 @@ pub(crate) mod tests {
 
     use std::boxed::Box;
 
+    use bt_hci::param::{AddrKind, BdAddr};
     use embassy_futures::block_on;
 
     use crate::prelude::*;
@@ -1292,8 +1341,7 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(0),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new(),
         ));
@@ -1302,7 +1350,10 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(handle.role(), LeConnRole::Peripheral);
-        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(
+            handle.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1))
+        );
 
         handle.disconnect();
     }
@@ -1315,8 +1366,7 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(0),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Central,
             ConnParams::new(),
         ));
@@ -1325,7 +1375,10 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(handle.role(), LeConnRole::Central);
-        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_2));
+        assert_eq!(
+            handle.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2))
+        );
     }
 
     #[test]
@@ -1334,16 +1387,14 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Central,
             ConnParams::new(),
         ));
 
         unwrap!(mgr.connect(
             ConnHandle::new(2),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Peripheral,
             ConnParams::new(),
         ));
@@ -1388,16 +1439,14 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Central,
             ConnParams::new(),
         ));
 
         unwrap!(mgr.connect(
             ConnHandle::new(2),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Peripheral,
             ConnParams::new(),
         ));
@@ -1452,8 +1501,7 @@ pub(crate) mod tests {
         let handle = ConnHandle::new(42);
         unwrap!(mgr.connect(
             handle,
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1462,7 +1510,7 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(conn.role(), LeConnRole::Peripheral);
-        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(conn.peer_address(), Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)));
 
         unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
 
@@ -1470,8 +1518,7 @@ pub(crate) mod tests {
         let handle = ConnHandle::new(42);
         unwrap!(mgr.connect(
             handle,
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1483,12 +1530,15 @@ pub(crate) mod tests {
         // Ensure existing connection doesnt panic things
         assert_eq!(conn.handle(), ConnHandle::new(42));
         assert_eq!(conn.role(), LeConnRole::Peripheral);
-        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(conn.peer_address(), Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)));
         assert!(!conn.is_connected());
 
         assert_eq!(conn2.handle(), ConnHandle::new(42));
         assert_eq!(conn2.role(), LeConnRole::Peripheral);
-        assert_eq!(conn2.peer_address(), BdAddr::new(ADDR_2));
+        assert_eq!(
+            conn2.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2))
+        );
         assert!(conn2.is_connected());
     }
 
@@ -1501,8 +1551,7 @@ pub(crate) mod tests {
         let handle = ConnHandle::new(42);
         unwrap!(mgr.connect(
             handle,
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1511,7 +1560,7 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(conn.role(), LeConnRole::Peripheral);
-        assert_eq!(conn.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(conn.peer_address(), Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)));
 
         unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
 
@@ -1519,8 +1568,7 @@ pub(crate) mod tests {
         let handle = ConnHandle::new(42);
         unwrap!(mgr.connect(
             handle,
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1531,7 +1579,10 @@ pub(crate) mod tests {
 
         assert_eq!(conn2.handle(), ConnHandle::new(42));
         assert_eq!(conn2.role(), LeConnRole::Peripheral);
-        assert_eq!(conn2.peer_address(), BdAddr::new(ADDR_2));
+        assert_eq!(
+            conn2.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2))
+        );
         assert!(conn2.is_connected());
 
         unwrap!(mgr.disconnected(handle, Status::UNSPECIFIED));
@@ -1547,8 +1598,7 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));
@@ -1557,7 +1607,10 @@ pub(crate) mod tests {
             panic!("expected connection to be accepted");
         };
         assert_eq!(handle.role(), LeConnRole::Peripheral);
-        assert_eq!(handle.peer_address(), BdAddr::new(ADDR_1));
+        assert_eq!(
+            handle.peer_address(),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1))
+        );
 
         assert!(mgr.poll_disconnecting(None).is_pending());
 
@@ -1584,8 +1637,7 @@ pub(crate) mod tests {
 
         unwrap!(mgr.connect(
             ConnHandle::new(3),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new()
         ));

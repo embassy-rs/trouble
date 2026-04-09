@@ -9,6 +9,9 @@ use trouble_host::prelude::*;
 use crate::command_channel::{self, CommandReceiver, HasResponse};
 use crate::{Event, OobState, Server};
 
+/// Filter accept list for advertising scan request filtering.
+pub type FilterAcceptList = heapless::Vec<Address, 1>;
+
 /// Heap-backed mirror of `Advertisement` that owns its byte data via `Box<[u8]>`.
 ///
 /// Constructing an `Advertisement<'_>` via `as_advertisement()` borrows from `&self`,
@@ -102,14 +105,14 @@ impl AdvertisementParams {
 
 /// Commands sent to the peripheral task from the BTP dispatcher.
 pub enum Command {
-    StartAdvertising(AdvertisementParams, Option<Duration>),
+    StartAdvertising(AdvertisementParams, Option<Duration>, FilterAcceptList),
     StopAdvertising,
 }
 
 impl core::fmt::Debug for Command {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::StartAdvertising(_, timeout) => write!(f, "StartAdvertising(timeout={:?})", timeout),
+            Self::StartAdvertising(_, timeout, _) => write!(f, "StartAdvertising(timeout={:?})", timeout),
             Self::StopAdvertising => write!(f, "StopAdvertising"),
         }
     }
@@ -119,7 +122,7 @@ impl core::fmt::Debug for Command {
 impl defmt::Format for Command {
     fn format(&self, fmt: defmt::Formatter<'_>) {
         match self {
-            Self::StartAdvertising(_, timeout) => defmt::write!(fmt, "StartAdvertising(timeout={:?})", timeout),
+            Self::StartAdvertising(_, timeout, _) => defmt::write!(fmt, "StartAdvertising(timeout={:?})", timeout),
             Self::StopAdvertising => defmt::write!(fmt, "StopAdvertising"),
         }
     }
@@ -165,15 +168,28 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
         info!("peripheral command: {:?}", *cmd);
         match &*cmd {
             Command::StopAdvertising => cmd.reply(Response::StoppedAdvertising).await,
-            Command::StartAdvertising(params, timeout) => {
+            Command::StartAdvertising(params, timeout, filter_accept_list) => {
                 let bondable = params.is_bondable();
+                let filter_policy = if filter_accept_list.is_empty() {
+                    AdvFilterPolicy::default()
+                } else {
+                    AdvFilterPolicy::FilterScan
+                };
+                if let Err(e) = peripheral.set_filter_accept_list(filter_accept_list).await {
+                    error!("Failed to set filter accept list: {:?}", e);
+                    cmd.reply(Response::Fail).await;
+                    cmd = commands.receive().await;
+                    continue;
+                }
                 let adv_params = AdvertisementParameters {
                     timeout: *timeout,
+                    filter_policy,
                     ..Default::default()
                 };
                 let sets = [AdvertisementSet {
                     params: adv_params,
                     data: params.as_advertisement(),
+                    address: None,
                 }];
                 let mut handles = AdvertisementSet::handles(&sets);
                 let advertiser = match peripheral.advertise_ext(&sets, &mut handles).await {
@@ -236,7 +252,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
 
                 events.send(Event::AdvertisingStopped).await;
 
-                let address = crate::connection::peer_address(&conn);
+                let address = conn.peer_address();
                 let conn_params = conn.params();
 
                 events.send(Event::DeviceConnected { address, conn_params }).await;

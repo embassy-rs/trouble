@@ -1764,6 +1764,7 @@ mod tests {
     use crate::cursor::WriteCursor;
     use crate::pdu::Pdu;
     use crate::prelude::*;
+    use crate::Address;
 
     /// Build a ReadByType ATT request PDU (ATT payload only, no L2CAP header).
     fn build_read_by_type_pdu(start: u16, end: u16, uuid: &Uuid) -> (<DefaultPacketPool as PacketPool>::Packet, usize) {
@@ -1833,8 +1834,7 @@ mod tests {
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
         unwrap!(mgr.connect(
             ConnHandle::new(0),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new(),
         ));

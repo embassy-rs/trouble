@@ -193,7 +193,7 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
                 mps: Some(64),
                 ..Default::default()
             };
-            let address = crate::connection::peer_address(&conn);
+            let address = conn.peer_address();
             let psm_list = [psm];
 
             let pending = match L2capChannel::listen(stack, &conn, &psm_list).await {
@@ -255,7 +255,7 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
                 mps: Some(64),
                 ..Default::default()
             };
-            let address = crate::connection::peer_address(&conn);
+            let address = conn.peer_address();
 
             let channel = match L2capChannel::create(stack, &conn, psm, &config).await {
                 Ok(ch) => ch,
