@@ -1,9 +1,0 @@
-on:
-  issue_comment:
-    - if:
-        - command: "test"
-        - user_is: ["MEMBER", "OWNER", "COLLABORATOR"]
-        - is_pr
-      steps:
-        - run: |
-            gh workflow run tests.yaml -R embassy-rs/trouble -F prNr=${{ github.event.issue.number }}
