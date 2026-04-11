@@ -36,7 +36,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
     let ctx = TestContext::new();
     let peripheral = ctx.serial_adapters[0].clone();
 
-    let dut = ctx.find_dut(labels).unwrap();
+    let dut = ctx.find_dut(labels).await.unwrap();
     let token = dut.token();
     let token2 = token.clone();
 
