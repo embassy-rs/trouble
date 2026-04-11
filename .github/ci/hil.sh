@@ -27,6 +27,11 @@ fi
 
 cargo install probe-rs-tools --git https://github.com/probe-rs/probe-rs --locked --features remote
 
+if [ -f /ci/cache/lockfiles.tar ]; then
+    echo Restoring lockfiles...
+    tar xf /ci/cache/lockfiles.tar
+fi
+
 # Build firmware for targets
 cargo batch \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52833 --artifact-dir examples/tests/bins/nrf52 \
