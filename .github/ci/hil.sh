@@ -11,7 +11,7 @@
 set -euxo pipefail
 
 export CARGO_TARGET_DIR=/ci/cache/target
-export RUST_LOG=trace
+export RUST_LOG=info
 export DEFMT_LOG=trace
 export RUST_TEST_THREADS=1
 
