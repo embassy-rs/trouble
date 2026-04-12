@@ -3,15 +3,19 @@
 ## on pull_request
 ## priority 10
 ## dedup kill
+## device /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_265650C6A0739A40-if00 /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_265650C6A0739A40-if00 
+## device /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_CBBC59EDA8BA738E-if00 /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_CBBC59EDA8BA738E-if00
 ## cooldown 30s
 
 set -euxo pipefail
 
 export CARGO_TARGET_DIR=/ci/cache/target
-
-# needed for "dumb HTTP" transport support
-# used when pointing stm32-metapac to a CI-built one.
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
+
+# Read probe-rs token from bender's mounted secrets directory
+if [[ -f /ci/secrets/probe-rs-token ]]; then
+    export HIL_TOKEN=$(cat /ci/secrets/probe-rs-token)
+fi
 
 # Restore lockfiles
 if [ -f /ci/cache/lockfiles.tar ]; then
@@ -25,29 +29,3 @@ fi
 # Save lockfiles
 echo Saving lockfiles...
 find . -type f -name Cargo.lock -exec tar -cf /ci/cache/lockfiles.tar '{}' \+
-
-# TODO Binary size report for PRs
-# if [[ -n "${CI_PR_NUMBER:-}" ]]; then
-#     rustup target add thumbv7em-none-eabihf
-#     rustup component add llvm-tools
-# 
-#     if ! command -v cargo-size &> /dev/null; then
-#         cargo install cargo-binutils
-#     fi
-# 
-#     NEW_ELF="${CARGO_TARGET_DIR}/thumbv7em-none-eabihf/release/ble_bas_peripheral"
-#     mkdir -p ~/artifacts
-#     cargo size --release --manifest-path examples/nrf52/Cargo.toml --features nrf52840 --bin ble_bas_peripheral > ~/artifacts/size-new.txt 2>&1
-# 
-#     if [[ -n "${CI_BASE_SHA:-}" ]]; then
-#         cp "$NEW_ELF" /tmp/new.elf
-#         git checkout "$CI_BASE_SHA"
-#         cargo build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 --bin ble_bas_peripheral
-#         if command -v bloaty &> /dev/null; then
-#             echo '## Binary size diff' > ~/comment.md
-#             echo '```' >> ~/comment.md
-#             bloaty /tmp/new.elf -- "$NEW_ELF" >> ~/comment.md
-#             echo '```' >> ~/comment.md
-#         fi
-#     fi
-# fi
