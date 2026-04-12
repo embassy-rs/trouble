@@ -96,6 +96,8 @@ impl DeviceUnderTest {
         }
         log::info!("waiting for process exit");
         flasher.wait().await.unwrap();
+        log::info!("probe-rs process exited");
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         Ok(FirmwareLogs { lines })
     }
 }

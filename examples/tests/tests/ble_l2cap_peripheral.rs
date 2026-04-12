@@ -1,5 +1,5 @@
 use tokio::select;
-use trouble_example_tests::{await_test, serial, TestContext};
+use trouble_example_tests::{TestContext, await_test, serial};
 use trouble_host::prelude::*;
 
 #[tokio::test]

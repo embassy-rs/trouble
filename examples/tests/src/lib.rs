@@ -28,8 +28,7 @@ impl TestContext {
 
     pub async fn find_dut(&self, labels: &[(&str, &str)]) -> Result<DeviceUnderTest, anyhow::Error> {
         let db_path = std::env::temp_dir().join("hilbench-probes.db");
-        let selector =
-            hilbench_agent::init(&db_path, self.probe_config.clone(), Duration::from_secs(300))?;
+        let selector = hilbench_agent::init(&db_path, self.probe_config.clone(), Duration::from_secs(300))?;
         let target = selector.select(labels).await?;
         Ok(DeviceUnderTest::new(target, selector.server().cloned()))
     }
@@ -63,4 +62,5 @@ pub async fn await_test<E: Debug>(
             other_result.unwrap();
         }
     }
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 }
