@@ -683,7 +683,7 @@ checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 [[package]]
 name = "hilbench-agent"
 version = "0.1.0"
-source = "git+https://github.com/lulf/hilbench.git?rev=eb395d854bb6aa9ce8ba0b70c1fab4bc784ddf2f#eb395d854bb6aa9ce8ba0b70c1fab4bc784ddf2f"
+source = "git+https://github.com/lulf/hilbench.git?rev=82a5348f2494e3bd380ba60b316275aae56e8d9e#82a5348f2494e3bd380ba60b316275aae56e8d9e"
 dependencies = [
  "anyhow",
  "log",

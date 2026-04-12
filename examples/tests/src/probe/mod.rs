@@ -103,3 +103,13 @@ impl DeviceUnderTest {
 pub struct FirmwareLogs {
     pub lines: Vec<String>,
 }
+
+impl FirmwareLogs {
+    pub fn print(&self) {
+        println!("=== DUT output ===");
+        for line in &self.lines {
+            println!("{}", line);
+        }
+        println!("=== End DUT output ===");
+    }
+}

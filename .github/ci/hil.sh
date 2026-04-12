@@ -10,7 +10,6 @@
 
 set -euxo pipefail
 
-
 export CARGO_TARGET_DIR=/ci/cache/target
 export RUST_LOG=trace
 export DEFMT_LOG=trace
