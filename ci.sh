@@ -12,6 +12,7 @@ export RUSTFLAGS=-Dwarnings
 export DEFMT_LOG=trace
 export RUST_LOG=info
 
+
 cargo batch \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features peripheral \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features central \
