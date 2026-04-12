@@ -17,8 +17,8 @@ impl TestContext {
     pub fn new() -> Self {
         let serial_adapters = serial::find_controllers();
         let config = std::env::var("PROBE_CONFIG").unwrap();
-        log::info!("Using probe config {}", config);
         let probe_config = serde_json::from_str(&config).unwrap();
+        log::info!("Using probe config {:?}", probe_config);
 
         Self {
             serial_adapters,
