@@ -5,6 +5,7 @@ host-macros/Cargo.lock
 bt-hci-linux/Cargo.lock
 bt-hci-usb/Cargo.lock
 examples/apps/Cargo.lock
+examples/tests/bins
 tester/app/Cargo.lock
 .idea
 /tests/
