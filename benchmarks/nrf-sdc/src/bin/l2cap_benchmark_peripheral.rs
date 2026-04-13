@@ -77,7 +77,7 @@ async fn main(spawner: Spawner) {
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(sdc, &mut resources)
         .set_random_address(address)
-        .register_l2cap_psm(0xF2)
+        .register_l2cap_spsm(0xF2)
         .build();
     let mut runner = stack.runner();
     let mut peripheral = stack.peripheral();

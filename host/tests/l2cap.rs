@@ -28,7 +28,7 @@ async fn l2cap_connection_oriented_channels() {
         let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address)
-            .register_l2cap_psm(0xf2)
+            .register_l2cap_spsm(0xf2)
             .build();
         let mut runner = stack.runner();
         let mut peripheral = stack.peripheral();

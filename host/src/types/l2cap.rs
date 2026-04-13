@@ -151,7 +151,7 @@ impl L2capSignalCode {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct LeCreditConnReq {
-    pub psm: u16,
+    pub spsm: u16,
     pub scid: u16,
     pub mtu: u16,
     pub mps: u16,

@@ -748,9 +748,9 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
         self.host.as_mut().unwrap()
     }
 
-    /// Register an L2CAP PSM (Protocol/Service Multiplexer) for accepting incoming connections.
-    pub fn register_l2cap_psm(mut self, psm: u16) -> Self {
-        self.host().channels.register_psm(psm);
+    /// Register an L2CAP SPSM (Simplified Protocol/Service Multiplexer) for accepting incoming connections.
+    pub fn register_l2cap_spsm(mut self, spsm: u16) -> Self {
+        self.host().channels.register_spsm(spsm);
         self
     }
 

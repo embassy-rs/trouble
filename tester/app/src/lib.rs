@@ -205,7 +205,7 @@ pub(crate) enum Event {
     },
     L2capConnected {
         chan_id: u8,
-        psm: u16,
+        spsm: u16,
         peer_mtu: u16,
         peer_mps: u16,
         our_mtu: u16,
@@ -214,7 +214,7 @@ pub(crate) enum Event {
     },
     L2capDisconnected {
         chan_id: u8,
-        psm: u16,
+        spsm: u16,
         address: Address,
     },
     L2capDataReceived {
@@ -352,7 +352,7 @@ where
         .set_random_generator_seed(&mut random_generator);
 
     if let Some(ref listener_config) = pre.l2cap_listener {
-        builder = builder.register_l2cap_psm(listener_config.psm);
+        builder = builder.register_l2cap_spsm(listener_config.spsm);
     }
 
     let builder = pre.gap.apply_to_builder(builder);

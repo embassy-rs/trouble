@@ -220,7 +220,7 @@ impl<T> From<Result<T, BtpStatus>> for HandlerResult<T> {
 
 /// L2CAP listener configuration captured during the pre-server phase.
 pub(crate) struct L2capListenerConfig {
-    pub psm: u16,
+    pub spsm: u16,
     pub mtu: Option<u16>,
     pub response: LeCreditConnResultCode,
 }
@@ -308,7 +308,7 @@ pub(crate) async fn run_pre_server<'a, R: Read, W: Write>(
                 L2capCommand::Listen(listen) => {
                     let mtu = if listen.mtu > 0 { Some(listen.mtu) } else { None };
                     l2cap_listener = Some(L2capListenerConfig {
-                        psm: listen.psm,
+                        spsm: listen.psm,
                         mtu,
                         response: listen.response,
                     });
@@ -716,7 +716,7 @@ fn convert_event<'a>(event: &'a Event, current_settings: &mut GapSettings) -> Bt
         }
         Event::L2capConnected {
             chan_id,
-            psm,
+            spsm,
             peer_mtu,
             peer_mps,
             our_mtu,
@@ -724,18 +724,18 @@ fn convert_event<'a>(event: &'a Event, current_settings: &mut GapSettings) -> Bt
             address,
         } => BtpEvent::L2cap(L2capEvent::Connected(protocol::l2cap::ConnectedEvent {
             chan_id: *chan_id,
-            psm: *psm,
+            psm: *spsm,
             peer_mtu: *peer_mtu,
             peer_mps: *peer_mps,
             our_mtu: *our_mtu,
             our_mps: *our_mps,
             address: *address,
         })),
-        Event::L2capDisconnected { chan_id, psm, address } => {
+        Event::L2capDisconnected { chan_id, spsm, address } => {
             BtpEvent::L2cap(L2capEvent::Disconnected(protocol::l2cap::DisconnectedEvent {
                 result: 0,
                 chan_id: *chan_id,
-                psm: *psm,
+                psm: *spsm,
                 address: *address,
             }))
         }
@@ -1350,7 +1350,7 @@ async fn handle_l2cap(cmd: L2capCommand<'_>, channels: &CommandChannels<'_>) -> 
                 .l2cap
                 .send(l2cap::Command::Connect {
                     address: connect.address,
-                    psm: connect.psm,
+                    spsm: connect.psm,
                     mtu: connect.mtu,
                     num: connect.num,
                 })

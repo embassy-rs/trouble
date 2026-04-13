@@ -110,9 +110,9 @@ impl<'d, P: PacketPool> L2capPendingConnection<'d, P> {
         self.index.take().unwrap()
     }
 
-    /// Get the PSM of the incoming connection request.
-    pub fn psm(&self) -> u16 {
-        self.manager.psm(self.index.unwrap())
+    /// Get the SPSM of the incoming connection request.
+    pub fn spsm(&self) -> u16 {
+        self.manager.spsm(self.index.unwrap())
     }
 
     /// Get the peer's requested MTU.
@@ -173,9 +173,9 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         self.manager.disconnect(self.index);
     }
 
-    /// Get the PSM for this channel.
-    pub fn psm(&self) -> u16 {
-        self.manager.psm(self.index)
+    /// Get the SPSM for this channel.
+    pub fn spsm(&self) -> u16 {
+        self.manager.spsm(self.index)
     }
 
     /// Get the negotiated MTU for this channel.
@@ -264,7 +264,7 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
 
     /// Start listening for incoming L2CAP connection requests on the given connection.
     ///
-    /// PSMs must be registered globally via [`StackBuilder::register_l2cap_psm`].
+    /// SPSMs must be registered globally via [`StackBuilder::register_l2cap_spsm`].
     ///
     /// Returns `Err(Error::AlreadyInUse)` if this connection already has an active listener.
     pub fn listen<T: Controller>(
@@ -278,17 +278,17 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         }
     }
 
-    /// Create a new connection request with the provided PSM.
+    /// Create a new connection request with the provided SPSM.
     pub async fn create<T: Controller>(
         stack: &'d Stack<'_, T, P>,
         connection: &Connection<'_, P>,
-        psm: u16,
+        spsm: u16,
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>> {
         stack
             .host
             .channels
-            .create(connection.handle(), psm, config, stack.host)
+            .create(connection.handle(), spsm, config, stack.host)
             .await
     }
 

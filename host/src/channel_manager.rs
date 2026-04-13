@@ -31,8 +31,8 @@ struct State {
     accept_waker: WakerRegistration,
     create_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
-    /// Bitmask tracking which PSMs (0x0001..=0x00FF) have active listeners.
-    registered_psms: [u32; 8],
+    /// Bitmask tracking which SPSMs (0x0001..=0x00FF) have active listeners.
+    registered_spsms: [u32; 8],
 }
 
 /// Channel manager for L2CAP channels used directly by clients.
@@ -76,24 +76,24 @@ impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
 }
 
 impl State {
-    /// Register a PSM for listening.
-    fn register_psm(&mut self, psm: u16) {
-        if (1..=255).contains(&psm) {
-            let idx = psm as usize / 32;
-            let bit = psm as usize % 32;
-            self.registered_psms[idx] |= 1 << bit;
+    /// Register a SPSM for listening.
+    fn register_spsm(&mut self, spsm: u16) {
+        if (1..=255).contains(&spsm) {
+            let idx = spsm as usize / 32;
+            let bit = spsm as usize % 32;
+            self.registered_spsms[idx] |= 1 << bit;
         }
     }
 
-    /// Check if a PSM has an active listener.
-    fn is_psm_registered(&self, psm: u16) -> bool {
-        if !(1..=255).contains(&psm) {
+    /// Check if a SPSM has an active listener.
+    fn is_spsm_registered(&self, spsm: u16) -> bool {
+        if !(1..=255).contains(&spsm) {
             // When the allow-reserved-l2ca-psu feature is enable, treat all reserved PSUs as registered
             return cfg!(feature = "allow-reserved-l2cap-psu");
         }
-        let idx = psm as usize / 32;
-        let bit = psm as usize % 32;
-        self.registered_psms[idx] & (1 << bit) != 0
+        let idx = spsm as usize / 32;
+        let bit = spsm as usize % 32;
+        self.registered_spsms[idx] & (1 << bit) != 0
     }
 
     fn next_request_id(&mut self) -> u8 {
@@ -115,7 +115,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 accept_waker: WakerRegistration::new(),
                 create_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
-                registered_psms: [0; 8],
+                registered_spsms: [0; 8],
             }),
             channels,
         }
@@ -129,16 +129,16 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         RefMut::map(self.channels.borrow_mut(), |x| &mut x[index.0 as usize])
     }
 
-    pub(crate) fn register_psm(&self, psm: u16) {
-        self.state.borrow_mut().register_psm(psm);
+    pub(crate) fn register_spsm(&self, spsm: u16) {
+        self.state.borrow_mut().register_spsm(spsm);
     }
 
     fn next_request_id(&self) -> u8 {
         self.state.borrow_mut().next_request_id()
     }
 
-    pub(crate) fn psm(&self, index: ChannelIndex) -> u16 {
-        self.channel(index).psm
+    pub(crate) fn spsm(&self, index: ChannelIndex) -> u16 {
+        self.channel(index).spsm
     }
 
     pub(crate) fn mtu(&self, index: ChannelIndex) -> u16 {
@@ -254,7 +254,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     /// Wait for an incoming L2CAP connection request on the given connection.
     ///
     /// Returns a [`L2capPendingConnection`] that can be inspected and then accepted or rejected.
-    /// PSMs must be registered globally via [`StackBuilder::register_l2cap_psm`].
+    /// SPSMs must be registered globally via [`StackBuilder::register_l2cap_spsm`].
     pub(crate) async fn next_pending(
         &'d self,
         conn: ConnHandle,
@@ -411,7 +411,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     pub(crate) async fn create<T: Controller>(
         &'d self,
         conn: ConnHandle,
-        psm: u16,
+        spsm: u16,
         config: &L2capChannelConfig,
         ble: &BleHost<'_, T, P>,
     ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
@@ -436,7 +436,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let idx = self.alloc(conn, None, |storage| {
             cid = storage.cid;
             credits = initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16);
-            storage.psm = psm;
+            storage.spsm = spsm;
             storage.mtu = mtu;
             storage.mps = mps;
             storage.flow_control = CreditFlowControl::new(*flow_policy, credits);
@@ -446,7 +446,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let mut tx = [0; 18];
         // Send the initial connect request.
         let command = LeCreditConnReq {
-            psm,
+            spsm,
             mps,
             scid: cid,
             mtu,
@@ -742,14 +742,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     ) -> Result<(), Error> {
         let result = {
             let mut state = self.state.borrow_mut();
-            if !state.is_psm_registered(req.psm) {
+            if !state.is_spsm_registered(req.spsm) {
                 Err(LeCreditConnResultCode::SpsmNotSupported)
             } else if !manager.is_l2cap_listening(conn) {
                 Err(LeCreditConnResultCode::NoResources)
             } else {
                 match self.alloc(conn, Some(req.scid), |storage| {
                     storage.conn = Some(conn);
-                    storage.psm = req.psm;
+                    storage.spsm = req.spsm;
                     storage.peer_credits = req.credits;
                     storage.peer_mps = req.mps;
                     storage.peer_mtu = req.mtu;
@@ -770,8 +770,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             Ok(()) => Ok(()),
             Err(result) => {
                 debug!(
-                    "[l2cap][conn = {:?}] rejecting connection for PSM 0x{:04x}: {:?}",
-                    conn, req.psm, result
+                    "[l2cap][conn = {:?}] rejecting connection for SPSM 0x{:04x}: {:?}",
+                    conn, req.spsm, result
                 );
                 Self::try_send_signal(conn, identifier, &LeCreditConnRes::reject(result), manager)
             }
@@ -1295,7 +1295,7 @@ pub struct ChannelStorage<P> {
     state: ChannelState,
     conn: Option<ConnHandle>,
     cid: u16,
-    psm: u16,
+    spsm: u16,
     mps: u16,
     mtu: u16,
     flow_control: CreditFlowControl,
@@ -1427,7 +1427,7 @@ impl<P> ChannelStorage<P> {
             cid: 0,
             mps: 0,
             mtu: 0,
-            psm: 0,
+            spsm: 0,
 
             flow_control: CreditFlowControl::new(CreditFlowPolicy::Every(1), 0),
             peer_cid: 0,
@@ -1484,7 +1484,7 @@ impl<P> ChannelStorage<P> {
         self.conn = None;
         self.mps = 0;
         self.mtu = 0;
-        self.psm = 0;
+        self.spsm = 0;
         self.peer_cid = 0;
         self.peer_mps = 0;
         self.peer_mtu = 0;

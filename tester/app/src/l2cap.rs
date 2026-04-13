@@ -21,7 +21,7 @@ use crate::command_channel::{self, CommandReceiver, HasResponse};
 pub enum Command {
     Connect {
         address: Address,
-        psm: u16,
+        spsm: u16,
         mtu: u16,
         num: u8,
     },
@@ -75,12 +75,12 @@ impl<P: PacketPool> ChannelSlot<'_, P> {
 enum ChannelOp<'stack, P: PacketPool> {
     Connect {
         conn: Connection<'stack, P>,
-        psm: u16,
+        spsm: u16,
         mtu: Option<u16>,
     },
     Accepted {
         reader: L2capChannelReader<'stack, P>,
-        psm: u16,
+        spsm: u16,
         address: Address,
     },
 }
@@ -97,7 +97,7 @@ enum ChannelNotification<'stack, P: PacketPool> {
     Accepted {
         writer: L2capChannelWriter<'stack, P>,
         reader: L2capChannelReader<'stack, P>,
-        psm: u16,
+        spsm: u16,
         our_mtu: u16,
         our_mps: u16,
         peer_mtu: u16,
@@ -105,7 +105,7 @@ enum ChannelNotification<'stack, P: PacketPool> {
         address: Address,
     },
     Rejected {
-        psm: u16,
+        spsm: u16,
         address: Address,
     },
 }
@@ -166,12 +166,12 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
     conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,
     notify: &NotifyChannel<'stack, P>,
 ) {
-    let L2capListenerConfig { psm, mtu, response } = args;
+    let L2capListenerConfig { spsm, mtu, response } = args;
 
     loop {
         // Wait for a connection to become available
         let conn = conn_rx.changed().await;
-        info!("listener_task: connection available, listening on PSM {}", psm);
+        info!("listener_task: connection available, listening on SPSM {}", spsm);
 
         let listener = L2capChannel::listen(stack, &conn);
 
@@ -196,7 +196,7 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
                 if let Err(e) = pending.reject(stack, response).await {
                     error!("L2CAP reject failed: {:?}", e);
                 }
-                notify.send(ChannelNotification::Rejected { psm, address }).await;
+                notify.send(ChannelNotification::Rejected { spsm, address }).await;
             } else {
                 match pending.accept(stack, &config).await {
                     Ok(channel) => {
@@ -209,7 +209,7 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
                             .send(ChannelNotification::Accepted {
                                 writer,
                                 reader,
-                                psm,
+                                spsm,
                                 our_mtu,
                                 our_mps,
                                 peer_mtu,
@@ -220,7 +220,7 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
                     }
                     Err(e) => {
                         error!("L2CAP accept failed: {:?}", e);
-                        notify.send(ChannelNotification::Rejected { psm, address }).await;
+                        notify.send(ChannelNotification::Rejected { spsm, address }).await;
                     }
                 }
             }
@@ -236,8 +236,8 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
     notify: &NotifyChannel<'stack, P>,
     events: &DynamicSender<'_, Event>,
 ) {
-    let (mut reader, psm, address) = match op {
-        ChannelOp::Connect { conn, psm, mtu } => {
+    let (mut reader, spsm, address) = match op {
+        ChannelOp::Connect { conn, spsm, mtu } => {
             let config = L2capChannelConfig {
                 mtu,
                 mps: Some(64),
@@ -245,11 +245,11 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
             };
             let address = conn.peer_address();
 
-            let channel = match L2capChannel::create(stack, &conn, psm, &config).await {
+            let channel = match L2capChannel::create(stack, &conn, spsm, &config).await {
                 Ok(ch) => ch,
                 Err(e) => {
                     error!("L2CAP create failed: {:?}", e);
-                    events.send(Event::L2capDisconnected { chan_id, psm, address }).await;
+                    events.send(Event::L2capDisconnected { chan_id, spsm, address }).await;
                     notify.send(ChannelNotification::Done { chan_id }).await;
                     return;
                 }
@@ -266,7 +266,7 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
             events
                 .send(Event::L2capConnected {
                     chan_id,
-                    psm,
+                    spsm,
                     peer_mtu,
                     peer_mps,
                     our_mtu,
@@ -275,9 +275,9 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
                 })
                 .await;
 
-            (reader, psm, address)
+            (reader, spsm, address)
         }
-        ChannelOp::Accepted { reader, psm, address } => (reader, psm, address),
+        ChannelOp::Accepted { reader, spsm, address } => (reader, spsm, address),
     };
 
     let mut buf = [0u8; proto::MAX_DATA_SIZE];
@@ -299,7 +299,7 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
         }
     }
 
-    events.send(Event::L2capDisconnected { chan_id, psm, address }).await;
+    events.send(Event::L2capDisconnected { chan_id, spsm, address }).await;
     notify.send(ChannelNotification::Done { chan_id }).await;
 }
 
@@ -326,7 +326,12 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 Either::First(cmd) => {
                     info!("l2cap command: {:?}", *cmd);
                     match &*cmd {
-                        Command::Connect { address, psm, mtu, num } => {
+                        Command::Connect {
+                            address,
+                            spsm,
+                            mtu,
+                            num,
+                        } => {
                             let conn = match stack.get_connection_by_peer_address(*address) {
                                 Some(conn) => conn,
                                 None => {
@@ -351,7 +356,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                     .send((
                                         ChannelOp::Connect {
                                             conn: conn.clone(),
-                                            psm: *psm,
+                                            spsm: *spsm,
                                             mtu: mtu_opt,
                                         },
                                         free_idx as u8,
@@ -420,7 +425,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     ChannelNotification::Accepted {
                         writer,
                         reader,
-                        psm,
+                        spsm,
                         our_mtu,
                         our_mps,
                         peer_mtu,
@@ -440,7 +445,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                         events
                             .send(Event::L2capConnected {
                                 chan_id,
-                                psm,
+                                spsm,
                                 peer_mtu,
                                 peer_mps,
                                 our_mtu,
@@ -450,14 +455,14 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                             .await;
 
                         args_tx
-                            .send((ChannelOp::Accepted { reader, psm, address }, chan_id))
+                            .send((ChannelOp::Accepted { reader, spsm, address }, chan_id))
                             .await;
                     }
-                    ChannelNotification::Rejected { psm, address } => {
+                    ChannelNotification::Rejected { spsm, address } => {
                         events
                             .send(Event::L2capDisconnected {
                                 chan_id: 0,
-                                psm,
+                                spsm,
                                 address,
                             })
                             .await;
