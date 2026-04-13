@@ -5,26 +5,23 @@ use tokio::process::Command;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
-use hilbench_agent::ProbeConfig;
-use hilbench_agent::Target;
-
-pub fn init(config: ProbeConfig) {
-    hilbench_agent::init(config);
-}
+use hilbench_agent::{ProbeServer, Target};
 
 pub struct Firmware {
     pub data: Vec<u8>,
 }
 
-pub struct DeviceUnderTest<'d> {
-    target: Target<'d>,
+pub struct DeviceUnderTest {
+    target: Target,
+    server: Option<ProbeServer>,
     token: CancellationToken,
 }
 
-impl<'d> DeviceUnderTest<'d> {
-    pub(crate) fn new(target: Target<'d>) -> Self {
+impl DeviceUnderTest {
+    pub(crate) fn new(target: Target, server: Option<ProbeServer>) -> Self {
         Self {
             target,
+            server,
             token: CancellationToken::new(),
         }
     }
@@ -33,27 +30,49 @@ impl<'d> DeviceUnderTest<'d> {
     }
 
     pub async fn run(self, firmware: String) -> Result<FirmwareLogs, anyhow::Error> {
+        const MAX_FLASH_ATTEMPTS: usize = 3;
+        for attempt in 1..=MAX_FLASH_ATTEMPTS {
+            match self.try_run(&firmware).await {
+                Ok(logs) => return Ok(logs),
+                Err(e) => {
+                    if attempt == MAX_FLASH_ATTEMPTS || self.token.is_cancelled() {
+                        return Err(e);
+                    }
+                    log::warn!("Flash attempt {}/{} failed: {}, retrying...", attempt, MAX_FLASH_ATTEMPTS, e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                }
+            }
+        }
+        unreachable!()
+    }
+
+    async fn try_run(&self, firmware: &str) -> Result<FirmwareLogs, anyhow::Error> {
         let mut flasher = if self.target.config().chip.starts_with("esp32") {
             Command::new("espflash")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .arg("flash")
-                .arg(&firmware)
+                .arg(firmware)
                 .arg("--monitor")
                 .spawn()
                 .unwrap()
         } else {
-            Command::new("probe-rs")
-                .stdout(Stdio::piped())
+            let mut cmd = Command::new("probe-rs");
+            cmd.stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .arg("run")
-                .arg(&firmware)
+                .arg(firmware)
                 .arg("--chip")
                 .arg(&self.target.config().chip)
                 .arg("--probe")
-                .arg(&self.target.config().probe)
-                .spawn()
-                .unwrap()
+                .arg(&self.target.config().probe);
+
+            if let Some(server) = self.server.as_ref() {
+                cmd.arg("--host").arg(&server.url);
+                cmd.arg("--token").arg(&server.token);
+            }
+
+            cmd.spawn().unwrap()
         };
 
         let stdout = flasher.stdout.take().unwrap();
@@ -94,10 +113,22 @@ impl<'d> DeviceUnderTest<'d> {
         }
         log::info!("waiting for process exit");
         flasher.wait().await.unwrap();
+        log::info!("probe-rs process exited");
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         Ok(FirmwareLogs { lines })
     }
 }
 
 pub struct FirmwareLogs {
     pub lines: Vec<String>,
+}
+
+impl FirmwareLogs {
+    pub fn print(&self) {
+        println!("=== DUT output ===");
+        for line in &self.lines {
+            println!("{}", line);
+        }
+        println!("=== End DUT output ===");
+    }
 }

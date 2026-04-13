@@ -10,10 +10,8 @@ fi
 
 export RUSTFLAGS=-Dwarnings
 export DEFMT_LOG=trace
-export CARGO_NET_GIT_FETCH_WITH_CLI=true
-if [[ -z "${CARGO_TARGET_DIR}" ]]; then
-    export CARGO_TARGET_DIR=target_ci
-fi
+export RUST_LOG=info
+
 
 cargo batch \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features peripheral \
@@ -34,10 +32,10 @@ cargo batch \
     --- build --release --manifest-path bt-hci-usb/Cargo.toml \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840,security \
-    --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52833 --artifact-dir tests/nrf52 \
+    --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52833 --artifact-dir examples/tests/bins/nrf52 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52832 \
     --- build --release --manifest-path examples/nrf54/Cargo.toml --target thumbv8m.main-none-eabihf --features nrf54l15 \
-    --- build --release --manifest-path examples/esp32/Cargo.toml --features esp32c3 --target riscv32imc-unknown-none-elf --artifact-dir tests/esp32 \
+    --- build --release --manifest-path examples/esp32/Cargo.toml --features esp32c3 --target riscv32imc-unknown-none-elf --artifact-dir examples/tests/bins/esp32 \
     --- build --release --manifest-path examples/serial-hci/Cargo.toml \
     --- build --release --manifest-path examples/linux/Cargo.toml \
     --- build --release --manifest-path examples/linux/Cargo.toml --features security \
@@ -60,3 +58,21 @@ cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,
 cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./examples/tests/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./tester/app/Cargo.toml --lib -- --nocapture
+
+
+if [[ -z "${HIL_TOKEN}" ]]; then
+    echo "No HIL token found, skipping running HIL tests"
+    exit
+fi
+
+export RUST_TEST_THREADS=1
+
+echo "Integration tests"
+cargo test --manifest-path host/Cargo.toml --features log --test '*' -- --nocapture
+
+echo "Example tests"
+
+export PROBE_CONFIG=$(jq --arg token "$HIL_TOKEN" '.server.token = $token' .ci/config.json)
+
+echo "Example tests"
+cargo test --manifest-path examples/tests/Cargo.toml -- --nocapture

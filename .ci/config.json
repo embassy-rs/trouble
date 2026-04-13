@@ -1,4 +1,8 @@
 {
+  "server": {
+    "url": "ws://192.168.10.54:3000",
+    "token": ""
+  },
   "targets": [
     {
       "chip": "nRF52833_xxAA",
@@ -6,14 +10,6 @@
       "labels": {
         "target": "nrf52",
         "board": "microbit"
-      }
-    },
-    {
-      "chip": "esp32c3",
-      "probe": "303a:1001:60:55:F9:BF:A9:44",
-      "labels": {
-        "target": "esp32",
-	"board": "esp-rust-board"
       }
     }
   ]
