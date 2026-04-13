@@ -273,3 +273,15 @@ impl<'a> defmt::Format for Bytes<'a> {
         defmt::write!(fmt, "{:02x}", self.0)
     }
 }
+
+#[cfg(not(feature = "defmt"))]
+pub trait Format: Debug {}
+
+#[cfg(not(feature = "defmt"))]
+impl<T: Debug> Format for T {}
+
+#[cfg(feature = "defmt")]
+pub trait Format: defmt::Format {}
+
+#[cfg(feature = "defmt")]
+impl<T: defmt::Format> Format for T {}

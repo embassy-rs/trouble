@@ -8,8 +8,8 @@ use embedded_io_async::Write;
 use trouble_host::IoCapabilities;
 use trouble_host::prelude::RequestedConnParams;
 
-use super::Cursor;
 use super::header::BtpHeader;
+use super::{Cursor, write_btp_address};
 use crate::btp::error::Error;
 use crate::btp::types::{AddrKind, Address, BdAddr, ServiceId};
 use crate::peripheral::AdvertisementParams;
@@ -43,7 +43,9 @@ pub mod opcodes {
     pub const OOB_SC_SET_REMOTE_DATA: Opcode = Opcode(0x1a);
     pub const SET_MITM: Opcode = Opcode(0x1b);
     pub const SET_FILTER_ACCEPT_LIST: Opcode = Opcode(0x1c);
+    pub const SET_PRIVACY: Opcode = Opcode(0x1d);
     pub const SET_SC_ONLY: Opcode = Opcode(0x1e);
+    pub const SET_RPA_TIMEOUT: Opcode = Opcode(0x30);
 
     // Events
     pub const EVENT_NEW_SETTINGS: Opcode = Opcode(0x80);
@@ -60,7 +62,7 @@ pub mod opcodes {
 }
 
 /// Supported commands bitmask for GAP service.
-pub const SUPPORTED_COMMANDS: [u8; 4] = super::supported_commands_bitmask(&[
+pub const SUPPORTED_COMMANDS: [u8; 7] = super::supported_commands_bitmask(&[
     opcodes::READ_SUPPORTED_COMMANDS,
     opcodes::READ_CONTROLLER_INDEX_LIST,
     opcodes::READ_CONTROLLER_INFO,
@@ -85,7 +87,9 @@ pub const SUPPORTED_COMMANDS: [u8; 4] = super::supported_commands_bitmask(&[
     opcodes::OOB_SC_SET_REMOTE_DATA,
     opcodes::SET_MITM,
     opcodes::SET_FILTER_ACCEPT_LIST,
+    opcodes::SET_PRIVACY,
     opcodes::SET_SC_ONLY,
+    opcodes::SET_RPA_TIMEOUT,
 ]);
 
 /// GAP settings flags (bitfield). Bits 0-18 are defined by the BTP spec.
@@ -126,6 +130,8 @@ impl GapSettings {
         .union(Self::LE)
         .union(Self::ADVERTISING)
         .union(Self::SECURE_CONNECTIONS)
+        .union(Self::PRIVACY)
+        .union(Self::STATIC_ADDRESS)
         .union(Self::SC_ONLY);
 }
 
@@ -488,8 +494,14 @@ pub enum GapCommand<'a> {
     /// Set filter accept list (0x1c).
     SetFilterAcceptList(SetFilterAcceptListCommand<'a>),
 
+    /// Set privacy (0x1d).
+    SetPrivacy(bool),
+
     /// Set Secure Connections Only mode (0x1e).
     SetScOnly(bool),
+
+    /// Set RPA timeout in seconds (0x30).
+    SetRpaTimeout(u16),
 }
 
 impl<'a> GapCommand<'a> {
@@ -597,9 +609,17 @@ impl<'a> GapCommand<'a> {
                     addresses,
                 }))
             }
+            opcodes::SET_PRIVACY => {
+                let val = cursor.read_u8()?;
+                Ok(GapCommand::SetPrivacy(val != 0))
+            }
             opcodes::SET_SC_ONLY => {
                 let val = cursor.read_u8()?;
                 Ok(GapCommand::SetScOnly(val != 0))
+            }
+            opcodes::SET_RPA_TIMEOUT => {
+                let secs = cursor.read_u16_le()?;
+                Ok(GapCommand::SetRpaTimeout(secs))
             }
             _ => Err(Error::UnknownCommand {
                 service: ServiceId::GAP,
@@ -730,7 +750,7 @@ pub enum GapResponse<'a> {
     Success,
 
     /// Supported commands bitmask.
-    SupportedCommands([u8; 4]),
+    SupportedCommands([u8; 7]),
 
     /// Controller index list.
     ControllerIndexList(ControllerIndexListResponse),
@@ -805,6 +825,9 @@ impl GapResponse<'_> {
 }
 
 /// Device found event data.
+///
+/// During active scanning, `adv_data` contains advertising data and `scan_data` contains
+/// scan response data. Both are concatenated on the wire.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DeviceFoundEvent<'a> {
@@ -812,6 +835,7 @@ pub struct DeviceFoundEvent<'a> {
     pub rssi: i8,
     pub flags: DeviceFoundFlags,
     pub adv_data: &'a [u8],
+    pub scan_data: &'a [u8],
 }
 
 /// Device connected event data.
@@ -909,7 +933,10 @@ impl GapEvent<'_> {
     pub fn header(&self) -> BtpHeader {
         let (opcode, data_len) = match self {
             GapEvent::NewSettings(..) => (opcodes::EVENT_NEW_SETTINGS, 4),
-            GapEvent::DeviceFound(evt) => (opcodes::EVENT_DEVICE_FOUND, 11 + evt.adv_data.len() as u16),
+            GapEvent::DeviceFound(evt) => (
+                opcodes::EVENT_DEVICE_FOUND,
+                11 + evt.adv_data.len() as u16 + evt.scan_data.len() as u16,
+            ),
             GapEvent::DeviceConnected(..) => (opcodes::EVENT_DEVICE_CONNECTED, 13),
             GapEvent::DeviceDisconnected(..) => (opcodes::EVENT_DEVICE_DISCONNECTED, 7),
             GapEvent::PasskeyDisplay(..) => (opcodes::EVENT_PASSKEY_DISPLAY, 11),
@@ -928,57 +955,44 @@ impl GapEvent<'_> {
         match self {
             GapEvent::NewSettings(current_settings) => writer.write_all(&current_settings.bits().to_le_bytes()).await,
             GapEvent::DeviceFound(evt) => {
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await?;
+                write_btp_address(&mut writer, &evt.address).await?;
                 writer.write_all(&[evt.rssi as u8]).await?;
                 writer.write_all(&[evt.flags.bits()]).await?;
-                writer.write_all(&(evt.adv_data.len() as u16).to_le_bytes()).await?;
-                writer.write_all(evt.adv_data).await
+                writer
+                    .write_all(&((evt.adv_data.len() + evt.scan_data.len()) as u16).to_le_bytes())
+                    .await?;
+                writer.write_all(evt.adv_data).await?;
+                writer.write_all(evt.scan_data).await
             }
             GapEvent::DeviceConnected(evt) => {
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await?;
+                write_btp_address(&mut writer, &evt.address).await?;
                 writer.write_all(&evt.interval.to_le_bytes()).await?;
                 writer.write_all(&evt.latency.to_le_bytes()).await?;
                 writer.write_all(&evt.timeout.to_le_bytes()).await
             }
-            GapEvent::DeviceDisconnected(address) => {
-                writer.write_all(&[address.kind.as_raw()]).await?;
-                writer.write_all(address.addr.raw()).await
-            }
+            GapEvent::DeviceDisconnected(address) => write_btp_address(&mut writer, address).await,
             GapEvent::PasskeyDisplay(evt) => {
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await?;
+                write_btp_address(&mut writer, &evt.address).await?;
                 writer.write_all(&evt.passkey.to_le_bytes()).await
             }
-            GapEvent::PasskeyEntryRequest(address) => {
-                writer.write_all(&[address.kind.as_raw()]).await?;
-                writer.write_all(address.addr.raw()).await
-            }
+            GapEvent::PasskeyEntryRequest(address) => write_btp_address(&mut writer, address).await,
             GapEvent::PasskeyConfirmRequest(evt) => {
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await?;
+                write_btp_address(&mut writer, &evt.address).await?;
                 writer.write_all(&evt.passkey.to_le_bytes()).await
             }
             GapEvent::ConnParamUpdate(evt) => {
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await?;
+                write_btp_address(&mut writer, &evt.address).await?;
                 writer.write_all(&evt.interval.to_le_bytes()).await?;
                 writer.write_all(&evt.latency.to_le_bytes()).await?;
                 writer.write_all(&evt.timeout.to_le_bytes()).await
             }
             GapEvent::SecLevelChanged(evt) => {
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await?;
+                write_btp_address(&mut writer, &evt.address).await?;
                 writer.write_all(&[evt.sec_level]).await
             }
-            GapEvent::BondLost(address) => {
-                writer.write_all(&[address.kind.as_raw()]).await?;
-                writer.write_all(address.addr.raw()).await
-            }
+            GapEvent::BondLost(address) => write_btp_address(&mut writer, address).await,
             GapEvent::PairingFailed(evt) => {
-                writer.write_all(&[evt.address.kind.as_raw()]).await?;
-                writer.write_all(evt.address.addr.raw()).await?;
+                write_btp_address(&mut writer, &evt.address).await?;
                 writer.write_all(&[evt.reason]).await
             }
         }
@@ -1573,6 +1587,7 @@ mod tests {
             rssi: -50,
             flags: DeviceFoundFlags::RSSI_VALID | DeviceFoundFlags::ADV_DATA,
             adv_data: &[0x02, 0x01, 0x06],
+            scan_data: &[],
         });
         let header = evt.header();
         assert_eq!(header.opcode, opcodes::EVENT_DEVICE_FOUND);
@@ -1584,6 +1599,28 @@ mod tests {
         let data_len = u16::from_le_bytes([buf[9], buf[10]]);
         assert_eq!(data_len, 3);
         assert_eq!(&buf[11..14], &[0x02, 0x01, 0x06]);
+    }
+
+    #[test]
+    fn test_write_device_found_event_combined() {
+        let evt = GapEvent::DeviceFound(DeviceFoundEvent {
+            address: Address {
+                kind: AddrKind::PUBLIC,
+                addr: BdAddr::new([1, 2, 3, 4, 5, 6]),
+            },
+            rssi: -40,
+            flags: DeviceFoundFlags::RSSI_VALID | DeviceFoundFlags::ADV_DATA | DeviceFoundFlags::SCAN_RSP,
+            adv_data: &[0x02, 0x01, 0x06],
+            scan_data: &[0x03, 0x03, 0x78, 0xFE],
+        });
+        let header = evt.header();
+        assert_eq!(header.data_len, 11 + 3 + 4);
+        let mut buf = [0u8; 32];
+        block_on(evt.write(&mut buf.as_mut_slice())).unwrap();
+        let data_len = u16::from_le_bytes([buf[9], buf[10]]);
+        assert_eq!(data_len, 7);
+        assert_eq!(&buf[11..14], &[0x02, 0x01, 0x06]);
+        assert_eq!(&buf[14..18], &[0x03, 0x03, 0x78, 0xFE]);
     }
 
     #[test]
@@ -1613,10 +1650,10 @@ mod tests {
     #[test]
     fn test_write_supported_commands() {
         let resp = GapResponse::SupportedCommands(SUPPORTED_COMMANDS);
-        assert_eq!(resp.data_len(), 4);
+        assert_eq!(resp.data_len(), 7);
         let mut buf = [0u8; 8];
         block_on(resp.write(&mut buf.as_mut_slice())).unwrap();
-        assert_eq!(&buf[..4], &SUPPORTED_COMMANDS);
+        assert_eq!(&buf[..7], &SUPPORTED_COMMANDS);
     }
 
     #[test]
@@ -1669,5 +1706,32 @@ mod tests {
         block_on(resp.write(&mut buf.as_mut_slice())).unwrap();
         assert_eq!(&buf[..16], &[0xAA; 16]);
         assert_eq!(&buf[16..], &[0xBB; 16]);
+    }
+
+    #[test]
+    fn test_parse_set_privacy_on() {
+        let data: &[u8] = &[0x01];
+        let header = make_header(opcodes::SET_PRIVACY, Some(0));
+        let mut cursor = Cursor::new(data);
+        let cmd = GapCommand::parse(&header, &mut cursor).unwrap();
+        assert!(matches!(cmd, GapCommand::SetPrivacy(true)));
+    }
+
+    #[test]
+    fn test_parse_set_privacy_off() {
+        let data: &[u8] = &[0x00];
+        let header = make_header(opcodes::SET_PRIVACY, Some(0));
+        let mut cursor = Cursor::new(data);
+        let cmd = GapCommand::parse(&header, &mut cursor).unwrap();
+        assert!(matches!(cmd, GapCommand::SetPrivacy(false)));
+    }
+
+    #[test]
+    fn test_parse_set_rpa_timeout() {
+        let data: &[u8] = &[0x84, 0x03]; // 900 seconds in LE
+        let header = make_header(opcodes::SET_RPA_TIMEOUT, Some(0));
+        let mut cursor = Cursor::new(data);
+        let cmd = GapCommand::parse(&header, &mut cursor).unwrap();
+        assert!(matches!(cmd, GapCommand::SetRpaTimeout(900)));
     }
 }

@@ -49,12 +49,13 @@
 
 extern crate alloc;
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn,
-    LeReadLocalSupportedFeatures, LeReadNumberOfSupportedAdvSets, LeSetAdvSetRandomAddr, LeSetExtAdvData,
-    LeSetExtAdvParams, LeSetExtScanResponseData, LeSetScanParams,
+    LeExtCreateConn, LeReadLocalSupportedFeatures, LeReadNumberOfSupportedAdvSets, LeSetAdvSetRandomAddr,
+    LeSetExtAdvData, LeSetExtAdvParams, LeSetExtScanEnable, LeSetExtScanParams, LeSetExtScanResponseData,
+    LeSetScanParams,
 };
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::LeAdvEventKind;
@@ -110,8 +111,12 @@ pub trait Controller:
     + ControllerCmdSync<LeSetAdvSetRandomAddr>
     + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
     + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>
+    + ControllerCmdSync<LeSetExtScanParams>
+    + ControllerCmdSync<LeSetExtScanEnable>
     + ControllerCmdAsync<LeCreateConn>
+    + ControllerCmdAsync<LeExtCreateConn>
     + ControllerCmdAsync<LeConnUpdate>
+    + trouble_host::SecurityCmds
     + embedded_io::ErrorType<Error: ErrorFormat>
 {
 }
@@ -128,8 +133,12 @@ impl<T> Controller for T where
         + ControllerCmdSync<LeSetAdvSetRandomAddr>
         + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
         + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>
+        + ControllerCmdSync<LeSetExtScanParams>
+        + ControllerCmdSync<LeSetExtScanEnable>
         + ControllerCmdAsync<LeCreateConn>
+        + ControllerCmdAsync<LeExtCreateConn>
         + ControllerCmdAsync<LeConnUpdate>
+        + trouble_host::SecurityCmds
         + embedded_io::ErrorType<Error: ErrorFormat>
 {
 }
@@ -146,8 +155,8 @@ pub(crate) enum Event {
     DeviceFound {
         address: Address,
         rssi: i8,
-        scan_response: bool,
-        adv_data: alloc::boxed::Box<[u8]>,
+        adv_data: Option<alloc::rc::Rc<[u8]>>,
+        scan_data: alloc::boxed::Box<[u8]>,
     },
     DeviceConnected {
         address: Address,
@@ -222,8 +231,8 @@ const L2CAP_CHANNELS_MAX: usize = 14;
 const ATTRIBUTE_TABLE_SIZE: usize = 64;
 /// Maximum number of CCCD (Client Characteristic Configuration Descriptor) entries.
 const CCCD_TABLE_SIZE: usize = 10;
-/// Number of attributes used by the GAP service (service + device name + appearance).
-const GAP_ATTRIBUTE_COUNT: usize = 5;
+/// Number of attributes used by the GAP service (service + device name + appearance + central address resolution).
+const GAP_ATTRIBUTE_COUNT: usize = 7;
 /// Number of attributes used by the GATT service (service + service_changed + client_supported_features + database_hash).
 const GATT_ATTRIBUTE_COUNT: usize = 8;
 
@@ -316,6 +325,11 @@ where
     let scan_mode = Cell::new(ScanMode::default());
     let oob = OobState::new();
 
+    // Generate an IRK for privacy support (used when SET_PRIVACY is received)
+    let mut irk_bytes = [0u8; 16];
+    random_generator.fill_bytes(&mut irk_bytes);
+    let irk = trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk_bytes).unwrap();
+
     let mut table = AttributeTable::<NoopRawMutex, ATTRIBUTE_TABLE_SIZE>::new();
     init_table(&mut table, &config);
 
@@ -323,7 +337,8 @@ where
     let transport = btp::BtpTransport { reader, writer };
     let mut packet = btp::protocol::BtpPacket::new();
     info!("Entering pre-server phase");
-    let Some(pre) = btp::run_pre_server(transport, &config, &scan_mode, &oob, &mut table, &mut packet).await? else {
+    let Some(pre) = btp::run_pre_server(transport, &config, &scan_mode, &oob, irk, &mut table, &mut packet).await?
+    else {
         info!("Clean shutdown from pre-server phase");
         return Ok(());
     };
@@ -431,6 +446,11 @@ fn init_table<'d>(table: &mut AttributeTable<'d, NoopRawMutex, ATTRIBUTE_TABLE_S
     let mut gap_builder = table.add_service(Service::new(service::GAP));
     gap_builder.add_characteristic_ro(characteristic::DEVICE_NAME, config.device_name);
     gap_builder.add_characteristic_ro(characteristic::APPEARANCE, &config.appearance);
+    gap_builder.add_characteristic_small(
+        characteristic::CENTRAL_ADDRESS_RESOLUTION,
+        [CharacteristicProp::Read],
+        1u8,
+    );
     gap_builder.build();
 
     let mut gatt_builder = table.add_service(Service::new(service::GATT));
@@ -504,9 +524,16 @@ impl OobState {
 }
 
 /// HCI event handler that forwards advertising reports to the event channel.
+///
+/// During active scanning the controller reports advertising data and scan response data as
+/// separate HCI events. This handler caches advertising data so that when the subsequent scan
+/// response arrives, a combined `DeviceFound` event is emitted with both `adv_data` and
+/// `scan_data` populated.
 struct BleEventHandler<'a> {
     events: DynamicSender<'a, Event>,
     scan_mode: &'a Cell<ScanMode>,
+    /// Cached advertising data from the most recent non-scan-response report.
+    last_adv: RefCell<Option<(Address, alloc::rc::Rc<[u8]>)>>,
 }
 
 impl BleEventHandler<'_> {
@@ -533,24 +560,56 @@ impl BleEventHandler<'_> {
     }
 }
 
+impl BleEventHandler<'_> {
+    fn handle_report(&self, address: Address, rssi: i8, scan_response: bool, data: &[u8]) {
+        let (adv_data, scan_data) = if scan_response {
+            // Check if we have cached advertising data for this address.
+            let cached = self.last_adv.borrow_mut().take();
+            match cached {
+                Some((cached_addr, cached_data)) if cached_addr == address => {
+                    // Filter scan responses based on cached adv data when in a discovery mode.
+                    if !self.passes_filter(&cached_data) {
+                        return;
+                    }
+                    (Some(cached_data), alloc::boxed::Box::<[u8]>::from(data))
+                }
+                _ => return, // No cached adv data for this address; ignore the scan response.
+            }
+        } else {
+            // Always cache adv data so scan responses can be filtered against it.
+            let rc: alloc::rc::Rc<[u8]> = alloc::rc::Rc::from(data);
+            *self.last_adv.borrow_mut() = Some((address, rc.clone()));
+            if !self.passes_filter(data) {
+                return;
+            }
+            (Some(rc), alloc::boxed::Box::from(&[] as &[u8]))
+        };
+
+        if let Err(e) = self.events.try_send(Event::DeviceFound {
+            address,
+            rssi,
+            adv_data,
+            scan_data,
+        }) {
+            error!("Failed to send DeviceFound event: {:?}", e);
+        }
+    }
+}
+
 impl EventHandler for BleEventHandler<'_> {
     fn on_adv_reports(&self, reports: bt_hci::param::LeAdvReportsIter) {
         for report in reports {
             let Ok(report) = report else { continue };
             trace!("adv report: addr={:?}", report.addr);
-            if self.passes_filter(report.data)
-                && let Err(e) = self.events.try_send(Event::DeviceFound {
-                    address: Address {
-                        kind: report.addr_kind,
-                        addr: report.addr,
-                    },
-                    rssi: report.rssi,
-                    scan_response: report.event_kind == LeAdvEventKind::ScanRsp,
-                    adv_data: alloc::boxed::Box::from(report.data),
-                })
-            {
-                error!("Failed to send DeviceFound event: {:?}", e);
-            }
+            self.handle_report(
+                Address {
+                    kind: report.addr_kind,
+                    addr: report.addr,
+                },
+                report.rssi,
+                report.event_kind == LeAdvEventKind::ScanRsp,
+                report.data,
+            );
         }
     }
 
@@ -558,19 +617,15 @@ impl EventHandler for BleEventHandler<'_> {
         for report in reports {
             let Ok(report) = report else { continue };
             trace!("ext adv report: addr={:?}", report.addr);
-            if self.passes_filter(report.data)
-                && let Err(e) = self.events.try_send(Event::DeviceFound {
-                    address: Address {
-                        kind: report.addr_kind,
-                        addr: report.addr,
-                    },
-                    rssi: report.rssi,
-                    scan_response: report.event_kind.scan_response(),
-                    adv_data: alloc::boxed::Box::from(report.data),
-                })
-            {
-                error!("Failed to send DeviceFound event: {:?}", e);
-            }
+            self.handle_report(
+                Address {
+                    kind: report.addr_kind,
+                    addr: report.addr,
+                },
+                report.rssi,
+                report.event_kind.scan_response(),
+                report.data,
+            );
         }
     }
 }
@@ -582,7 +637,11 @@ async fn ble_task<C: Controller, P: PacketPool>(
     scan_mode: &Cell<ScanMode>,
 ) -> Result<(), BleHostError<C::Error>> {
     trace!("ble_task");
-    let handler = BleEventHandler { events, scan_mode };
+    let handler = BleEventHandler {
+        events,
+        scan_mode,
+        last_adv: RefCell::new(None),
+    };
     loop {
         runner.run_with_handler(&handler).await?;
     }

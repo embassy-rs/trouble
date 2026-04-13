@@ -1,3 +1,5 @@
+use core::ops::Range;
+
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
 use embedded_storage_async::nor_flash::NorFlash;
@@ -17,7 +19,7 @@ const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 struct StoredBondInformation(BondInformation);
 impl<'a> PostcardValue<'a> for StoredBondInformation {}
 
-pub async fn run<C, RNG, S>(controller: C, random_generator: &mut RNG, storage: &mut S)
+pub async fn run<C, RNG, S>(controller: C, random_generator: &mut RNG, storage: &mut S, storage_range: Range<u32>)
 where
     C: Controller,
     RNG: RngCore + CryptoRng,
@@ -34,9 +36,8 @@ where
         .set_random_generator_seed(random_generator)
         .build();
 
-    let mut map_storage =
-        MapStorage::<(), _, _>::new(storage, MapConfig::new(0..S::ERASE_SIZE as u32 * 2), NoCache::new());
-    let mut data_buffer = [0; 32];
+    let mut map_storage = MapStorage::<(), _, _>::new(storage, MapConfig::new(storage_range), NoCache::new());
+    let mut data_buffer = [0; 64];
     let mut has_bond_info =
         if let Some(StoredBondInformation(bond_info)) = map_storage.fetch_item(&mut data_buffer, &()).await.unwrap() {
             info!("Bond stored. Adding to stack.");
@@ -57,7 +58,7 @@ where
     let config = ConnectConfig {
         connect_params: Default::default(),
         scan_config: ScanConfig {
-            filter_accept_list: &[(target.kind, &target.addr)],
+            filter_accept_list: &[target],
             ..Default::default()
         },
     };

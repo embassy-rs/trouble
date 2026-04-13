@@ -143,7 +143,7 @@ async fn gatt_client_server() {
                     connect_params: Default::default(),
                     scan_config: ScanConfig {
                         active: true,
-                        filter_accept_list: &[(peripheral_address.kind, &peripheral_address.addr)],
+                        filter_accept_list: &[peripheral_address],
                         ..Default::default()
                     },
                 };

@@ -1,6 +1,8 @@
 #![warn(missing_docs)]
 // This file contains code from Blackrock User-Mode Bluetooth LE Library (https://github.com/mxk/burble)
 
+use core::num::NonZeroU128;
+
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
 use bt_hci::param::BdAddr;
@@ -57,28 +59,31 @@ impl defmt::Format for LongTermKey {
 
 /// Identity Resolving Key.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 #[repr(transparent)]
-pub struct IdentityResolvingKey(pub u128);
+pub struct IdentityResolvingKey(pub NonZeroU128);
 
 impl IdentityResolvingKey {
     /// Creates an Identity Resolving Key from a `u128` value.
     #[inline(always)]
-    pub const fn new(k: u128) -> Self {
-        Self(k)
+    pub const fn new(k: u128) -> Option<Self> {
+        match NonZeroU128::new(k) {
+            Some(k) => Some(Self(k)),
+            None => None,
+        }
     }
 
     /// Creates an Identity Resolving Key from a `[u8; 16]` value in little endian.
     #[inline(always)]
-    pub const fn from_le_bytes(k: [u8; 16]) -> Self {
-        Self(u128::from_le_bytes(k))
+    pub const fn from_le_bytes(k: [u8; 16]) -> Option<Self> {
+        Self::new(u128::from_le_bytes(k))
     }
 
     /// Returns the Identity Resolving Key as `[u8; 16]` value in little endian.
     #[inline(always)]
     pub const fn to_le_bytes(self) -> [u8; 16] {
-        self.0.to_le_bytes()
+        self.0.get().to_le_bytes()
     }
 
     /// Generates a resolvable private address using this key.
@@ -137,7 +142,7 @@ impl IdentityResolvingKey {
         let mut r_prime = [0u8; 16];
         r_prime[13..].copy_from_slice(&r);
 
-        let cipher = Aes128::new_from_slice(&self.0.to_be_bytes()).unwrap();
+        let cipher = Aes128::new_from_slice(&self.0.get().to_be_bytes()).unwrap();
         cipher.encrypt_block((&mut r_prime).into());
         // Extract least significant 24 bits (3 bytes) as the result
         r_prime[13..16].try_into().unwrap()
@@ -147,7 +152,7 @@ impl IdentityResolvingKey {
 impl From<&IdentityResolvingKey> for u128 {
     #[inline(always)]
     fn from(k: &IdentityResolvingKey) -> Self {
-        k.0
+        k.0.get()
     }
 }
 
@@ -773,14 +778,8 @@ mod tests {
         );
         let n1 = Nonce(0xd5cb8454_d177733e_ffffb2ec_712baeab);
         let n2 = Nonce(0xa6e8e7cc_25a75f6e_216583f7_ff3dc4cf);
-        let a1 = Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0xce, 0xbf, 0x37, 0x37, 0x12, 0x56]),
-        };
-        let a2 = Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7]),
-        };
+        let a1 = Address::new(AddrKind::PUBLIC, BdAddr::new([0xce, 0xbf, 0x37, 0x37, 0x12, 0x56]));
+        let a2 = Address::new(AddrKind::PUBLIC, BdAddr::new([0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7]));
         let (mk, ltk) = w.f5(n1, n2, a1, a2);
         assert_eq!(ltk.0, 0x69867911_69d7cd23_980522b5_94750a38);
         assert_eq!(u128::from(&mk.0), 0x2965f176_a1084a02_fd3f6a20_ce636e20);
@@ -870,14 +869,8 @@ mod tests {
         let n2 = Nonce(0xa6e8e7cc_25a75f6e_216583f7_ff3dc4cf);
         let r = 0x12a3343b_b453bb54_08da42d2_0c2d0fc8;
         let io_cap = IoCap([0x01, 0x01, 0x02]);
-        let a1 = Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0xce, 0xbf, 0x37, 0x37, 0x12, 0x56]),
-        };
-        let a2 = Address {
-            kind: AddrKind::PUBLIC,
-            addr: BdAddr::new([0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7]),
-        };
+        let a1 = Address::new(AddrKind::PUBLIC, BdAddr::new([0xce, 0xbf, 0x37, 0x37, 0x12, 0x56]));
+        let a2 = Address::new(AddrKind::PUBLIC, BdAddr::new([0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7]));
         let c = k.f6(n1, n2, r, io_cap, a1, a2);
         assert_eq!(c.0, 0xe3c47398_9cd0e8c5_d26c0b09_da958f61);
     }
@@ -925,7 +918,7 @@ mod tests {
 
     #[test]
     pub fn irk_test() {
-        let irk = IdentityResolvingKey::new(0xec0234a3_57c8ad05_341010a6_0a397d9b);
+        let irk = IdentityResolvingKey::new(0xec0234a3_57c8ad05_341010a6_0a397d9b).unwrap();
         let prand = [0x70, 0x81, 0x94];
 
         let hash = irk.ah(prand);
@@ -934,7 +927,7 @@ mod tests {
 
     #[test]
     pub fn rpa_test() {
-        let irk = IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d);
+        let irk = IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d).unwrap();
         let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
         let re = irk.resolve_address(&address);
         assert_eq!(re, true);

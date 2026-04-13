@@ -70,8 +70,8 @@ enum Step {
     WaitingDHKeyEb(DhKeyCheckData),
     WaitingLinkEncrypted,
     WaitingBondedLinkEncryption,
-    ReceivingKeys(i32),
-    SendingKeys(i32),
+    WaitingIdentitityInformation,
+    WaitingIdentitityAddressInformation,
     BondLost,
     Success,
     Error(Error),
@@ -146,6 +146,14 @@ impl Pairing {
                 .local_features
                 .responder_key_distribution
                 .set_encryption_key();
+            pairing_data
+                .local_features
+                .initiator_key_distribution
+                .set_identity_key();
+            pairing_data
+                .local_features
+                .responder_key_distribution
+                .set_identity_key();
         }
         let current_step = if let Some(bond) = ops.try_enable_bonded_encryption()? {
             pairing_data.bond_information = Some(bond);
@@ -165,10 +173,16 @@ impl Pairing {
     }
 
     pub(crate) fn is_encrypted(&self) -> bool {
-        matches!(
+        if matches!(&self.current_step, Step::Success) {
+            return true;
+        }
+        if matches!(
             &self.current_step,
-            Step::SendingKeys(_) | Step::ReceivingKeys(_) | Step::Success
-        )
+            Step::WaitingIdentitityInformation | Step::WaitingIdentitityAddressInformation
+        ) {
+            return true;
+        }
+        false
     }
 
     // --- FSM core ---
@@ -249,6 +263,13 @@ impl Pairing {
             (Step::WaitingDHKeyEb(check_data), Input::Command(Command::PairingDhKeyCheck, payload)) => {
                 Self::handle_dhkey_eb_command(payload, &check_data, pairing_data, ops)
             }
+            (Step::WaitingIdentitityInformation, Input::Command(Command::IdentityInformation, payload)) => {
+                Self::handle_identity_information(payload, pairing_data)
+            }
+            (
+                Step::WaitingIdentitityAddressInformation,
+                Input::Command(Command::IdentityAddressInformation, payload),
+            ) => Self::handle_identity_address_information(payload, pairing_data, ops),
             (current, Input::Command(Command::KeypressNotification, _)) => Ok(current),
 
             // --- Event transitions ---
@@ -257,7 +278,11 @@ impl Pairing {
             }
             (Step::WaitingLinkEncrypted, Input::Event(Event::LinkEncryptedResult(true))) => {
                 info!("Link encrypted!");
-                Ok(Step::Success)
+                if pairing_data.peer_features.responder_key_distribution.identity_key() {
+                    Ok(Step::WaitingIdentitityInformation)
+                } else {
+                    Self::send_initiator_keys(pairing_data, ops)
+                }
             }
             (Step::WaitingLinkEncrypted, Input::Event(Event::LinkEncryptedResult(false))) => {
                 error!("Link encryption failed!");
@@ -284,6 +309,12 @@ impl Pairing {
                 Input::Event(Event::PassKeyInput(input)),
             ) => Self::handle_pass_key_input(input, phase_data, confirm_bytes, ops, rng),
             (current, Input::Event(Event::PassKeyConfirm | Event::PassKeyCancel)) => Ok(current),
+            // Handle PairingFailed from peer in any state
+            (_, Input::Command(Command::PairingFailed, payload)) => {
+                let reason = Reason::try_from(payload[0]).unwrap_or(Reason::UnspecifiedReason);
+                warn!("[smp central] Peer sent PairingFailed: {:?}", reason);
+                Err(Error::Security(reason))
+            }
 
             // --- Catch-all ---
             _ => Err(Error::InvalidState),
@@ -339,6 +370,25 @@ impl Pairing {
         pairing_data.local_features.security_properties = auth_req;
         if ops.oob_available() {
             pairing_data.local_features.use_oob = crate::security_manager::types::UseOutOfBand::Present;
+        }
+        if matches!(ops.bonding_flag(), BondingFlag::Bonding) {
+            pairing_data
+                .local_features
+                .initiator_key_distribution
+                .set_encryption_key();
+            pairing_data
+                .local_features
+                .responder_key_distribution
+                .set_encryption_key();
+            // Always request the peer's IRK so we can resolve their RPAs
+            pairing_data
+                .local_features
+                .initiator_key_distribution
+                .set_identity_key();
+            pairing_data
+                .local_features
+                .responder_key_distribution
+                .set_identity_key();
         }
 
         // Per Core Spec Vol 3, Part H, Section 3.6.7: if the existing bond
@@ -785,5 +835,77 @@ impl Pairing {
         }
         phase_data.peer_nonce = peer_nonce;
         Ok(())
+    }
+
+    fn handle_identity_information(payload: &[u8], pairing_data: &mut PairingData) -> Result<Step, Error> {
+        let irk = crate::IdentityResolvingKey::new(u128::from_le_bytes(
+            payload.try_into().map_err(|_| Error::InvalidValue)?,
+        ));
+        if let Some(ref mut bond) = &mut pairing_data.bond_information {
+            bond.identity.irk = irk;
+        }
+        trace!("Identity information: IRK: {:?}", irk);
+        Ok(Step::WaitingIdentitityAddressInformation)
+    }
+
+    fn handle_identity_address_information<P: PacketPool, OPS: PairingOps<P>>(
+        payload: &[u8],
+        pairing_data: &mut PairingData,
+        ops: &mut OPS,
+    ) -> Result<Step, Error> {
+        let addr_type = payload[0];
+        let kind = if addr_type == 0 {
+            bt_hci::param::AddrKind::PUBLIC
+        } else if addr_type == 1 {
+            bt_hci::param::AddrKind::RANDOM
+        } else {
+            error!("[smp] Invalid address type: {:?}", addr_type);
+            return Err(Error::InvalidValue);
+        };
+        let addr = bt_hci::param::BdAddr::new(payload[1..7].try_into().map_err(|_| Error::InvalidValue)?);
+        pairing_data.peer_address = crate::Address { kind, addr };
+
+        if let Some(ref mut bond) = &mut pairing_data.bond_information {
+            bond.identity.addr = crate::Address { kind, addr };
+        }
+
+        trace!(
+            "Identity address information: addr_type: {:?}, addr: {:?}",
+            addr_type,
+            addr
+        );
+
+        // Now send initiator's keys (initiator distributes second per BLE spec)
+        Self::send_initiator_keys(pairing_data, ops)
+    }
+
+    /// Send initiator's identity keys if negotiated.
+    fn send_initiator_keys<P: PacketPool, OPS: PairingOps<P>>(
+        pairing_data: &PairingData,
+        ops: &mut OPS,
+    ) -> Result<Step, Error> {
+        // Use peer_features (from PairingResponse) to determine which keys the responder
+        // agreed for the initiator to distribute.
+        if pairing_data.peer_features.initiator_key_distribution.identity_key() {
+            // Always distribute our identity address so the peer can direct advertisements
+            // to us. Use the real IRK if we have one, otherwise send a zero IRK (which tells
+            // the peer we don't use RPAs but still provides our identity address).
+            let irk = ops.local_irk();
+            Self::send_irk_distribution(ops, &irk)?;
+        }
+        Ok(Step::Success)
+    }
+
+    /// Send local IRK and identity address to the peer.
+    fn send_irk_distribution<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, irk: &[u8; 16]) -> Result<(), Error> {
+        use crate::security_manager::pairing::util::{
+            make_identity_address_information_packet, make_identity_information_packet,
+        };
+        let packet = make_identity_information_packet(irk)?;
+        ops.try_send_packet(packet)?;
+        // Send the identity address (public or static random), not the RPA used for pairing.
+        let identity_address = ops.local_identity_address()?;
+        let packet = make_identity_address_information_packet(&identity_address)?;
+        ops.try_send_packet(packet)
     }
 }

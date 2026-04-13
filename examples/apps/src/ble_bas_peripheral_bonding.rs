@@ -1,3 +1,5 @@
+use core::ops::Range;
+
 use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::Timer;
@@ -63,7 +65,7 @@ struct StoredBondInformation(BondInformation);
 impl<'a> PostcardValue<'a> for StoredBondInformation {}
 
 /// Run the BLE stack.
-pub async fn run<C, RNG, S>(controller: C, random_generator: &mut RNG, storage: &mut S)
+pub async fn run<C, RNG, S>(controller: C, random_generator: &mut RNG, storage: &mut S, storage_range: Range<u32>)
 where
     C: Controller,
     RNG: RngCore + CryptoRng,
@@ -80,9 +82,8 @@ where
         .set_random_generator_seed(random_generator)
         .build();
 
-    let mut map_storage =
-        MapStorage::<(), _, _>::new(storage, MapConfig::new(0..S::ERASE_SIZE as u32 * 2), NoCache::new());
-    let mut data_buffer = [0; 32];
+    let mut map_storage = MapStorage::<(), _, _>::new(storage, MapConfig::new(storage_range), NoCache::new());
+    let mut data_buffer = [0; 64];
     let mut bond_stored =
         if let Some(StoredBondInformation(bond_info)) = map_storage.fetch_item(&mut data_buffer, &()).await.unwrap() {
             info!("Bond stored. Adding to stack.");
@@ -107,8 +108,7 @@ where
         loop {
             match advertise("Trouble Example", &mut peripheral, &server).await {
                 Ok(conn) => {
-                    // Allow bondable if no bond is stored.
-                    conn.raw().set_bondable(!bond_stored).unwrap();
+                    conn.raw().set_bondable(true).unwrap();
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
                     let a = gatt_events_task(&mut map_storage, &mut data_buffer, &server, &conn, &mut bond_stored);
                     let b = custom_task(&server, &conn, &stack);

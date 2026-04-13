@@ -135,7 +135,8 @@ pub mod gatt;
 /// - *Private Random Address*: Changes periodically for privacy purposes. It can be *Resolvable* (can be linked to the original device using an Identity Resolving Key) or *Non-Resolvable* (completely anonymous).
 ///
 /// Random addresses enhance privacy by preventing device tracking.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Address {
     /// Address type.
     pub kind: AddrKind,
@@ -143,7 +144,24 @@ pub struct Address {
     pub addr: BdAddr,
 }
 
+impl PartialEq for Address {
+    /// Compare two addresses, normalizing HCI identity address types.
+    ///
+    /// In HCI events the controller may report a peer's address type as 0x02 (Public Identity) or
+    /// 0x03 (Random Static Identity) when it resolved the peer's RPA via the resolving list. These
+    /// are semantically equivalent to 0x00 (Public) and 0x01 (Random) respectively, so this
+    /// implementation treats them as equal when comparing.
+    fn eq(&self, other: &Self) -> bool {
+        self.addr == other.addr && self.kind.as_raw() & 1 == other.kind.as_raw() & 1
+    }
+}
+
 impl Address {
+    /// Create a new address with the given kind and value.
+    pub const fn new(kind: AddrKind, addr: BdAddr) -> Self {
+        Self { kind, addr }
+    }
+
     /// Create a new random address.
     pub fn random(val: [u8; 6]) -> Self {
         Self {
@@ -196,12 +214,11 @@ impl defmt::Format for Address {
 /// Sometimes we have to save both the address and the IRK.
 /// Because sometimes the peer uses the static or public address even though the IRK is sent.
 /// In this case, the IRK exists but the used address is not RPA.
-/// Should `Address` be used instead?
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Identity {
-    /// Random static or public address
-    pub bd_addr: BdAddr,
+    /// Identity address (random static or public)
+    pub addr: Address,
 
     /// Identity Resolving Key
     #[cfg(feature = "security")]
@@ -211,36 +228,58 @@ pub struct Identity {
 #[cfg(feature = "defmt")]
 impl defmt::Format for Identity {
     fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "BdAddr({:X}) ", self.bd_addr);
+        defmt::write!(fmt, "Addr({}) ", self.addr);
         #[cfg(feature = "security")]
         defmt::write!(fmt, "Irk({:X})", self.irk);
     }
 }
 
+impl From<Address> for Identity {
+    fn from(addr: Address) -> Self {
+        Self {
+            addr,
+            #[cfg(feature = "security")]
+            irk: None,
+        }
+    }
+}
+
 impl Identity {
-    /// Check whether the address matches the identity
-    pub fn match_address(&self, address: &BdAddr) -> bool {
-        if self.bd_addr == *address {
+    /// Check whether the address matches the identity.
+    ///
+    /// Matches if the address is an exact match (kind + addr) or if the IRK can resolve it.
+    pub fn match_address(&self, address: &Address) -> bool {
+        if self.addr == *address {
             return true;
         }
         #[cfg(feature = "security")]
         if let Some(irk) = self.irk {
-            return irk.resolve_address(address);
+            return irk.resolve_address(&address.addr);
         }
         false
     }
 
     /// Check whether the given identity matches current identity
     pub fn match_identity(&self, identity: &Identity) -> bool {
-        if self.match_address(&identity.bd_addr) {
+        if self.addr == identity.addr {
             return true;
         }
         #[cfg(feature = "security")]
-        if let Some(irk) = identity.irk {
-            if let Some(current_irk) = self.irk {
-                return irk == current_irk;
-            } else {
-                return irk.resolve_address(&self.bd_addr);
+        {
+            if let Some(irk) = self.irk {
+                if irk.resolve_address(&identity.addr.addr) {
+                    return true;
+                }
+            }
+            if let Some(irk) = identity.irk {
+                if let Some(current_irk) = self.irk {
+                    if irk == current_irk {
+                        return true;
+                    }
+                }
+                if irk.resolve_address(&self.addr.addr) {
+                    return true;
+                }
             }
         }
         false
@@ -422,12 +461,53 @@ use bt_hci::cmd::le::*;
 use bt_hci::cmd::link_control::*;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 
+/// Trait for security-related controller commands.
+///
+/// When the `security` feature is enabled, this requires the controller to support
+/// encryption, resolving list and address resolution HCI commands. When disabled, this is
+/// automatically implemented for all controllers.
+#[cfg(feature = "security")]
+pub trait SecurityCmds:
+    bt_hci::controller::Controller
+    + ControllerCmdSync<LeLongTermKeyRequestReply>
+    + ControllerCmdAsync<LeEnableEncryption>
+    + ControllerCmdSync<LeAddDeviceToResolvingList>
+    + ControllerCmdSync<LeRemoveDeviceFromResolvingList>
+    + ControllerCmdSync<LeClearResolvingList>
+    + ControllerCmdSync<LeSetAddrResolutionEnable>
+    + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
+    + ControllerCmdSync<LeSetPrivacyMode>
+{
+}
+
+#[cfg(feature = "security")]
+impl<
+        C: bt_hci::controller::Controller
+            + ControllerCmdSync<LeLongTermKeyRequestReply>
+            + ControllerCmdAsync<LeEnableEncryption>
+            + ControllerCmdSync<LeAddDeviceToResolvingList>
+            + ControllerCmdSync<LeRemoveDeviceFromResolvingList>
+            + ControllerCmdSync<LeClearResolvingList>
+            + ControllerCmdSync<LeSetAddrResolutionEnable>
+            + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
+            + ControllerCmdSync<LeSetPrivacyMode>,
+    > SecurityCmds for C
+{
+}
+
+/// Auto-implemented when security is not enabled.
+#[cfg(not(feature = "security"))]
+pub trait SecurityCmds: bt_hci::controller::Controller {}
+
+#[cfg(not(feature = "security"))]
+impl<C: bt_hci::controller::Controller> SecurityCmds for C {}
+
 /// Trait that defines the controller implementation required by the host.
 ///
 /// The controller must implement the required commands and events to be able to be used with Trouble.
 pub trait Controller:
     bt_hci::controller::Controller
-    + embedded_io::ErrorType
+    + embedded_io::ErrorType<Error: crate::fmt::Format>
     + ControllerCmdSync<LeReadBufferSize>
     + ControllerCmdSync<Disconnect>
     + ControllerCmdSync<SetEventMask>
@@ -454,15 +534,14 @@ pub trait Controller:
     + ControllerCmdSync<LeSetAdvParams>
     + for<'t> ControllerCmdSync<LeSetAdvEnable>
     + for<'t> ControllerCmdSync<LeSetScanResponseData>
-    + ControllerCmdSync<LeLongTermKeyRequestReply>
-    + ControllerCmdAsync<LeEnableEncryption>
     + ControllerCmdSync<ReadBdAddr>
+    + SecurityCmds
 {
 }
 
 impl<
         C: bt_hci::controller::Controller
-            + embedded_io::ErrorType
+            + embedded_io::ErrorType<Error: crate::fmt::Format>
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -489,9 +568,8 @@ impl<
             + ControllerCmdSync<LeSetAdvParams>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetScanResponseData>
-            + ControllerCmdSync<LeLongTermKeyRequestReply>
-            + ControllerCmdAsync<LeEnableEncryption>
-            + ControllerCmdSync<ReadBdAddr>,
+            + ControllerCmdSync<ReadBdAddr>
+            + SecurityCmds,
     > Controller for C
 {
 }
@@ -678,6 +756,35 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
         self
     }
 
+    /// Enable BLE address privacy with the given Identity Resolving Key (IRK).
+    ///
+    /// When privacy is enabled, the controller generates Resolvable Private Addresses (RPAs)
+    /// that rotate periodically, preventing device tracking while allowing bonded peers to
+    /// resolve the device's identity.
+    ///
+    /// The IRK should be persisted across reboots so bonded peers can continue to resolve
+    /// our RPAs. Generate a new IRK using a CSPRNG for first-time setup.
+    ///
+    /// After bonds are added or removed (either directly or via pairing), the controller's
+    /// resolving list is updated automatically the next time advertising, scanning, and
+    /// connecting are all idle. Applications should ensure periodic idle windows to allow
+    /// resolving list updates to take effect.
+    #[cfg(feature = "security")]
+    pub fn enable_privacy(mut self, irk: IdentityResolvingKey) -> Self {
+        self.host().connections.security_manager.set_local_irk(irk);
+        self
+    }
+
+    /// Set the RPA (Resolvable Private Address) rotation timeout.
+    ///
+    /// The controller will automatically generate a new RPA after this duration.
+    /// Default is 900 seconds (15 minutes) per the BLE specification.
+    #[cfg(feature = "security")]
+    pub fn set_rpa_timeout(mut self, timeout: Duration) -> Self {
+        self.host().rpa_timeout.set(timeout);
+        self
+    }
+
     /// Set the random generator seed for random generator used by security manager.
     #[cfg(feature = "security")]
     pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(mut self, _random_generator: &mut RNG) -> Self {
@@ -795,6 +902,30 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
             .set_secure_connections_only(enabled);
     }
 
+    /// Set the RPA (Resolvable Private Address) rotation timeout.
+    ///
+    /// Updates the stored timeout. If the host is already initialized, also sends
+    /// the `LeSetResolvablePrivateAddrTimeout` HCI command to the controller.
+    /// If called before initialization (e.g. during pre-server setup), the value
+    /// will be used when the controller is initialized.
+    ///
+    /// Valid range is 1s to 3600s.
+    #[cfg(feature = "security")]
+    pub async fn set_rpa_timeout(&self, timeout: Duration) -> Result<(), BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>,
+    {
+        self.host.rpa_timeout.set(timeout);
+        if self.host.is_initialized() {
+            self.host
+                .command(LeSetResolvablePrivateAddrTimeout::new(
+                    bt_hci::param::Duration::from_secs(timeout.as_secs() as u32),
+                ))
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Run a HCI command and return the response.
     pub async fn command<T>(&self, cmd: T) -> Result<T::Return, BleHostError<C::Error>>
     where
@@ -848,19 +979,53 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
         self.host.connections.security_manager.get_local_address()
     }
 
+    /// Check whether BLE address privacy is enabled.
     #[cfg(feature = "security")]
-    /// Get bonded devices
-    pub fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
-        self.host
-            .connections
-            .security_manager
-            .add_bond_information(bond_information)
+    pub fn is_privacy_enabled(&self) -> bool {
+        self.host.is_privacy_enabled()
     }
 
     #[cfg(feature = "security")]
-    /// Remove a bonded device
+    /// Add bond information for a peer device.
+    ///
+    /// After bonds are added or removed (either directly or via pairing), the controller's
+    /// resolving list is updated automatically the next time advertising, scanning, and
+    /// connecting are all idle. Applications should ensure periodic idle windows to allow
+    /// resolving list updates to take effect.
+    pub fn add_bond_information(&self, bond_information: BondInformation) -> Result<(), Error> {
+        let identity = bond_information.identity;
+        let result = self
+            .host
+            .connections
+            .security_manager
+            .add_bond_information(bond_information);
+        #[cfg(feature = "security")]
+        if result.is_ok() {
+            self.host
+                .resolving_list_state
+                .borrow_mut()
+                .push(crate::host::ResolvingListUpdate::Add(identity));
+        }
+        result
+    }
+
+    #[cfg(feature = "security")]
+    /// Remove a bonded device.
+    ///
+    /// After bonds are added or removed (either directly or via pairing), the controller's
+    /// resolving list is updated automatically the next time advertising, scanning, and
+    /// connecting are all idle. Applications should ensure periodic idle windows to allow
+    /// resolving list updates to take effect.
     pub fn remove_bond_information(&self, identity: Identity) -> Result<(), Error> {
-        self.host.connections.security_manager.remove_bond_information(identity)
+        let result = self.host.connections.security_manager.remove_bond_information(identity);
+        #[cfg(feature = "security")]
+        if result.is_ok() {
+            self.host
+                .resolving_list_state
+                .borrow_mut()
+                .push(crate::host::ResolvingListUpdate::Remove(identity));
+        }
+        result
     }
 
     #[cfg(feature = "security")]

@@ -52,12 +52,14 @@ where
             data: Advertisement::ExtNonconnectableScannableUndirected {
                 scan_data: &adv_data[..len],
             },
+            address: None,
         },
         AdvertisementSet {
             params: params_coded,
             data: Advertisement::ExtNonconnectableScannableUndirected {
                 scan_data: &adv_data[..len],
             },
+            address: None,
         },
     ];
     let mut handles = AdvertisementSet::handles(&sets);

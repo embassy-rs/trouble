@@ -35,8 +35,12 @@ async fn main(_s: Spawner) {
     let connector = BleConnector::new(bluetooth, Default::default()).unwrap();
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
-    // Initialize the flash
-    let mut flash = embassy_embedded_hal::adapter::BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
+    let flash_storage = FlashStorage::new(peripherals.FLASH);
+    use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
+    let erase_size = <FlashStorage as NorFlash>::ERASE_SIZE as u32;
+    let capacity = flash_storage.capacity() as u32;
+    let storage_range = (capacity - erase_size * 2)..capacity;
+    let mut flash = embassy_embedded_hal::adapter::BlockingAsync::new(flash_storage);
 
-    ble_bas_peripheral_bonding::run(controller, &mut trng, &mut flash).await;
+    ble_bas_peripheral_bonding::run(controller, &mut trng, &mut flash, storage_range).await;
 }

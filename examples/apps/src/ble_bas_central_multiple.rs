@@ -37,7 +37,7 @@ async fn scan<'a, C: Controller, P: PacketPool>(stack: &'a Stack<'_, C, P>, addr
     let config = ConnectConfig {
         connect_params: Default::default(),
         scan_config: ScanConfig {
-            filter_accept_list: &[(target.kind, &target.addr)],
+            filter_accept_list: &[target],
             ..Default::default()
         },
     };

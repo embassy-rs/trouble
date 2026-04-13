@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+use core::ops::Range;
+
 use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_nrf::mode::Async;
@@ -14,6 +16,19 @@ use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_peripheral_bonding;
 use {defmt_rtt as _, panic_probe as _};
+
+extern "C" {
+    static __storage_start: u8;
+    static __storage_end: u8;
+}
+
+fn storage_range() -> Range<u32> {
+    unsafe {
+        let start = &__storage_start as *const u8 as u32;
+        let end = &__storage_end as *const u8 as u32;
+        start..end
+    }
+}
 
 bind_interrupts!(struct Irqs {
     RNG => rng::InterruptHandler<RNG>;
@@ -88,5 +103,5 @@ async fn main(spawner: Spawner) {
     // Use internal Flash as the storage
     let mut flash = Flash::take(mpsl, p.NVMC);
 
-    ble_bas_peripheral_bonding::run(sdc, &mut rng_2, &mut flash).await;
+    ble_bas_peripheral_bonding::run(sdc, &mut rng_2, &mut flash, storage_range()).await;
 }

@@ -176,17 +176,13 @@ pub fn make_central_identification_packet<P: PacketPool>(ediv: u16, rand: &[u8; 
     Ok(packet)
 }
 
-#[cfg(feature = "legacy-pairing")]
-pub fn make_identity_information_packet<P: PacketPool>(
-    irk: &crate::IdentityResolvingKey,
-) -> Result<TxPacket<P>, Error> {
+pub fn make_identity_information_packet<P: PacketPool>(irk: &[u8; 16]) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet::<P>(Command::IdentityInformation)?;
     let payload = packet.payload_mut();
-    payload.copy_from_slice(&irk.to_le_bytes());
+    payload.copy_from_slice(irk);
     Ok(packet)
 }
 
-#[cfg(feature = "legacy-pairing")]
 pub fn make_identity_address_information_packet<P: PacketPool>(addr: &Address) -> Result<TxPacket<P>, Error> {
     let mut packet = prepare_packet::<P>(Command::IdentityAddressInformation)?;
     let payload = packet.payload_mut();
