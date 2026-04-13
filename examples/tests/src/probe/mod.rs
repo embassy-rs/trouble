@@ -30,12 +30,29 @@ impl DeviceUnderTest {
     }
 
     pub async fn run(self, firmware: String) -> Result<FirmwareLogs, anyhow::Error> {
+        const MAX_FLASH_ATTEMPTS: usize = 3;
+        for attempt in 1..=MAX_FLASH_ATTEMPTS {
+            match self.try_run(&firmware).await {
+                Ok(logs) => return Ok(logs),
+                Err(e) => {
+                    if attempt == MAX_FLASH_ATTEMPTS || self.token.is_cancelled() {
+                        return Err(e);
+                    }
+                    log::warn!("Flash attempt {}/{} failed: {}, retrying...", attempt, MAX_FLASH_ATTEMPTS, e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                }
+            }
+        }
+        unreachable!()
+    }
+
+    async fn try_run(&self, firmware: &str) -> Result<FirmwareLogs, anyhow::Error> {
         let mut flasher = if self.target.config().chip.starts_with("esp32") {
             Command::new("espflash")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .arg("flash")
-                .arg(&firmware)
+                .arg(firmware)
                 .arg("--monitor")
                 .spawn()
                 .unwrap()
@@ -44,7 +61,7 @@ impl DeviceUnderTest {
             cmd.stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .arg("run")
-                .arg(&firmware)
+                .arg(firmware)
                 .arg("--chip")
                 .arg(&self.target.config().chip)
                 .arg("--probe")
