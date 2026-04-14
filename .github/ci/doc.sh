@@ -1,0 +1,30 @@
+#!/bin/bash
+## on push branch=main
+## priority -100
+## dedup dequeue
+## cooldown 15m
+
+set -euxo pipefail
+
+export RUSTUP_HOME=/ci/cache/rustup
+export CARGO_HOME=/ci/cache/cargo
+export CARGO_TARGET_DIR=/ci/cache/target
+export PATH=$CARGO_HOME/bin:$PATH
+export KUBECONFIG=/ci/secrets/kubeconfig.yml
+
+pushd docs
+make
+popd
+
+echo "Build book"
+mkdir -p build
+mv docs/book build/trouble
+tar -C build -cf trouble.tar trouble
+.ci/book.sh
+
+echo "Build api doc"
+mv rust-toolchain-nightly.toml rust-toolchain.toml
+cargo install --git https://github.com/embassy-rs/docserver --locked --rev e16c30dcc60a41641fd73bd4ad1a8c4bd57d792d
+
+docserver-builder -i host -o crates/trouble-host/git.zup
+.ci/doc.sh
