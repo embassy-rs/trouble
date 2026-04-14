@@ -553,12 +553,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                 let expected_len = value.len();
                 let actual_len = input.len();
 
-                if expected_len == actual_len {
-                    value.copy_from_slice(input);
-                    Ok(())
-                } else if *variable_len && actual_len <= expected_len {
+                if *variable_len && actual_len <= expected_len {
                     value[..input.len()].copy_from_slice(input);
                     *len = input.len() as u16;
+                    Ok(())
+                } else if expected_len == actual_len {
+                    value.copy_from_slice(input);
                     Ok(())
                 } else {
                     Err(Error::UnexpectedDataLength {
@@ -577,12 +577,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                 let expected_len = usize::from(*capacity);
                 let actual_len = input.len();
 
-                if expected_len == actual_len {
-                    value[..expected_len].copy_from_slice(input);
-                    Ok(())
-                } else if *variable_len && actual_len <= expected_len {
+                if *variable_len && actual_len <= expected_len {
                     value[..input.len()].copy_from_slice(input);
                     *len = input.len() as u8;
+                    Ok(())
+                } else if expected_len == actual_len {
+                    value[..expected_len].copy_from_slice(input);
                     Ok(())
                 } else {
                     Err(Error::UnexpectedDataLength {
@@ -1881,5 +1881,61 @@ mod tests {
             "\nexpected: {:#032x}\n  actual: {:#032x}",
             expected, actual
         );
+    }
+
+    #[test]
+    fn set_updates_variable_length_when_value_fills_backing_storage() {
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+        use heapless::Vec;
+
+        use super::*;
+
+        let mut storage = [0u8; 4];
+        let mut table: AttributeTable<'_, NoopRawMutex, 4> = AttributeTable::new();
+        let initial = Vec::<u8, 4>::from_slice(b"ab").unwrap();
+        let characteristic = table
+            .add_service(Service {
+                uuid: Uuid::new_long([0x10; 16]),
+            })
+            .add_characteristic(
+                Uuid::new_long([0x11; 16]),
+                [CharacteristicProp::Read, CharacteristicProp::Write],
+                initial,
+                &mut storage,
+            )
+            .build();
+
+        let replacement = Vec::<u8, 4>::from_slice(b"wxyz").unwrap();
+        table.set(&characteristic, &replacement).unwrap();
+
+        let stored: Vec<u8, 4> = table.get(&characteristic).unwrap();
+        assert_eq!(stored.as_slice(), b"wxyz");
+    }
+
+    #[test]
+    fn set_updates_small_variable_length_when_value_reaches_capacity() {
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+        use heapless::String;
+
+        use super::*;
+
+        let mut table: AttributeTable<'_, NoopRawMutex, 4> = AttributeTable::new();
+        let initial = String::<8>::try_from("hi").unwrap();
+        let characteristic = table
+            .add_service(Service {
+                uuid: Uuid::new_long([0x12; 16]),
+            })
+            .add_characteristic_small(
+                Uuid::new_long([0x13; 16]),
+                [CharacteristicProp::Read, CharacteristicProp::Write],
+                initial,
+            )
+            .build();
+
+        let replacement = String::<8>::try_from("12345678").unwrap();
+        table.set(&characteristic, &replacement).unwrap();
+
+        let stored: String<8> = table.get(&characteristic).unwrap();
+        assert_eq!(stored.as_str(), "12345678");
     }
 }
