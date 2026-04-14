@@ -1909,7 +1909,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_without_response_surfaces_gatt_write_event() {
+    fn test_write_command_surfaces_gatt_write_event_without_att_response() {
         let _ = env_logger::try_init();
 
         const MAX_ATTRIBUTES: usize = 16;
@@ -1956,11 +1956,11 @@ mod tests {
                 let reply = write.accept().unwrap();
                 assert!(
                     reply.att_payload().is_none(),
-                    "write without response must not generate an ATT response"
+                    "write command must not generate an ATT response"
                 );
                 core::mem::forget(reply);
             }
-            _ => panic!("expected write event for write_without_response"),
+            _ => panic!("expected write event for write command"),
         }
 
         let stored: u8 = server.table().get(&characteristic).unwrap();

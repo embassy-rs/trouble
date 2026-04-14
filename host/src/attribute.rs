@@ -608,11 +608,12 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 
     /// Set the value of a characteristic
     ///
-    /// The provided data must exactly match the size of the storage for the characteristic,
-    /// otherwise this function will panic.
+    /// For fixed-length values, the provided data must exactly match the storage size.
+    /// For variable-length values, any length up to the configured capacity is accepted.
     ///
-    /// If the characteristic for the handle cannot be found, or the shape of the data does not match the type of the characterstic,
-    /// an error is returned
+    /// Returns an error if the characteristic cannot be found, if the input length is
+    /// incompatible with the characteristic storage, or if the data shape does not
+    /// match the characteristic type.
     pub fn set<T: AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
         let gatt_value = input.as_gatt();
         self.set_raw(attribute_handle.handle(), gatt_value)
