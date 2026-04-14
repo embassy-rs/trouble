@@ -12,9 +12,9 @@ export CARGO_TARGET_DIR=/ci/cache/target
 export PATH=$CARGO_HOME/bin:$PATH
 
 # Read probe-rs token from bender's mounted secrets directory
-if [[ -f /ci/secrets/kubeconfig.yaml ]]; then
+if [[ -f /ci/secrets/kubeconfig.yml ]]; then
     echo "Got kubeconfig token!"
-    export KUBECONFIG=$(cat /ci/secrets/kubeconfig.yaml)
+    export KUBECONFIG=$(cat /ci/secrets/kubeconfig.yml)
 fi
 
 pushd docs
