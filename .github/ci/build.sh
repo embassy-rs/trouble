@@ -1,5 +1,5 @@
 #!/bin/bash
-## on push branch=main
+## on push branch~=gh-readonly-queue/main/.*
 ## on pull_request
 ## priority 10
 ## dedup kill
@@ -14,6 +14,7 @@ export CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # Read probe-rs token from bender's mounted secrets directory
 if [[ -f /ci/secrets/probe-rs-token ]]; then
+    echo "Got HIL token!"
     export HIL_TOKEN=$(cat /ci/secrets/probe-rs-token)
 fi
 
