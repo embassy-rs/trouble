@@ -19,14 +19,14 @@ use crate::att::{
     self, Att, AttCfm, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_IND,
     ATT_HANDLE_VALUE_NTF,
 };
-use crate::attribute::{AttributeData, Characteristic, CharacteristicProps, Descriptor, Uuid};
+use crate::attribute::{Characteristic, CharacteristicProps, Descriptor, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 #[cfg(feature = "security")]
 use crate::connection::SecurityLevel;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
-use crate::prelude::{ConnectionEvent, ConnectionParamsRequest};
+use crate::prelude::{CharacteristicDeclaration, ConnectionEvent, ConnectionParamsRequest};
 #[cfg(feature = "security")]
 use crate::security_manager::PassKey;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
@@ -1147,19 +1147,15 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     return ControlFlow::Break(());
                 }
 
-                match AttributeData::decode_declaration(item) {
-                    Ok(AttributeData::Declaration {
-                        props,
-                        handle,
-                        uuid: decl_uuid,
-                    }) => {
+                match CharacteristicDeclaration::try_from(item) {
+                    Ok(decl) => {
                         if characteristics
                             .push(Characteristic {
-                                handle,
+                                handle: decl.value_handle,
                                 end_handle: 0,
-                                props,
+                                props: decl.props,
                                 cccd_handle: None,
-                                uuid: decl_uuid,
+                                uuid: decl.uuid,
                                 phantom: PhantomData,
                             })
                             .is_err()
@@ -1169,7 +1165,6 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         }
                         ControlFlow::Continue(())
                     }
-                    Ok(_) => unreachable!(),
                     Err(e) => {
                         err = Some(e.into());
                         ControlFlow::Break(())
@@ -1233,29 +1228,24 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         }));
                     }
 
-                    match AttributeData::decode_declaration(item) {
-                        Ok(AttributeData::Declaration {
-                            props,
-                            handle: value_handle,
-                            uuid: decl_uuid,
-                        }) => {
+                    match CharacteristicDeclaration::try_from(item) {
+                        Ok(decl) => {
                             if found.is_some() {
                                 // We already found our match; this is the next declaration,
                                 // so we can determine end_handle.
                                 return ControlFlow::Break(Ok(declaration_handle));
                             }
 
-                            if *uuid == decl_uuid {
-                                found = Some((value_handle, props));
+                            if *uuid == decl.uuid {
+                                found = Some((decl.value_handle, decl.props));
                             }
 
-                            if value_handle == 0xFFFF && found.is_some() {
+                            if decl.value_handle == 0xFFFF && found.is_some() {
                                 return ControlFlow::Break(Ok(declaration_handle));
                             }
 
                             ControlFlow::Continue(())
                         }
-                        Ok(_) => ControlFlow::Break(Err(Error::InvalidCharacteristicDeclarationData)),
                         Err(e) => ControlFlow::Break(Err(e)),
                     }
                 },

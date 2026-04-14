@@ -121,9 +121,9 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         let mut values: [(Client, CccdTable<CCCD_MAX>); CONN_MAX] =
             core::array::from_fn(|_| (Client::default(), CccdTable::default()));
         let mut base_cccd_table = CccdTable::default();
-        att_table.iterate(|mut at| {
-            while let Some((handle, att)) = at.next() {
-                if let AttributeData::Cccd { .. } = att.data {
+        att_table.iterate(|at| {
+            for (handle, att) in at {
+                if matches!(att.data, AttributeData::ClientSpecific) {
                     base_cccd_table.add_handle(handle);
                 }
             }
@@ -456,17 +456,27 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         connection: &Connection<'_, P>,
         handle: u16,
         offset: usize,
-        att: &mut Attribute<'values>,
+        att: &Attribute<'values>,
         data: &mut [u8],
     ) -> Result<usize, AttErrorCode> {
         self.can_read(connection, att)?;
-        if let AttributeData::Cccd { .. } = att.data {
-            // CCCD values for each connected client are held in the CCCD tables:
-            // the value is written back into att.data so att.read() has the final
-            // say when parsing at the requested offset.
-            if let Some(value) = self.cccd_tables.get_value(&connection.peer_identity(), handle) {
-                let _ = att.write(0, value.as_slice());
+        if matches!(att.data, AttributeData::ClientSpecific) {
+            // CCCD values are per-connection; read directly from the CCCD table
+            let value = self
+                .cccd_tables
+                .get_value(&connection.peer_identity(), handle)
+                .unwrap_or_default();
+            let bytes = value.as_slice();
+            if offset >= bytes.len() {
+                return if offset == 0 {
+                    Ok(0)
+                } else {
+                    Err(AttErrorCode::INVALID_OFFSET)
+                };
             }
+            let n = data.len().min(bytes.len() - offset);
+            data[..n].copy_from_slice(&bytes[offset..offset + n]);
+            return Ok(n);
         }
         att.read(offset, data)
     }
@@ -480,21 +490,22 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         data: &[u8],
     ) -> Result<(), AttErrorCode> {
         self.can_write(connection, att)?;
-        let err = att.write(offset, data);
-        if err.is_ok() {
-            if let AttributeData::Cccd {
-                notifications,
-                indications,
-                ..
-            } = att.data
-            {
-                self.cccd_tables
-                    .set_notify(&connection.peer_identity(), handle, notifications);
-                self.cccd_tables
-                    .set_indicate(&connection.peer_identity(), handle, indications);
+        if matches!(att.data, AttributeData::ClientSpecific) {
+            if offset > 0 {
+                return Err(AttErrorCode::INVALID_OFFSET);
             }
+            if data.is_empty() {
+                return Err(AttErrorCode::UNLIKELY_ERROR);
+            }
+            let notifications = data[0] & 0x01 != 0;
+            let indications = data[0] & 0x02 != 0;
+            self.cccd_tables
+                .set_notify(&connection.peer_identity(), handle, notifications);
+            self.cccd_tables
+                .set_indicate(&connection.peer_identity(), handle, indications);
+            return Ok(());
         }
-        err
+        att.write(offset, data)
     }
 
     fn handle_read_by_type_req(
@@ -513,9 +524,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         }
 
         let (mut header, mut body) = data.split(2)?;
-        let err = self.att_table.iterate_from(start, |mut it| {
+        let err = self.att_table.iterate_from(start, |it| {
             let mut ret = Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
-            while let Some((att_handle, att)) = it.next() {
+            for (att_handle, att) in it {
                 // trace!("[read_by_type] Check attribute {:?} {}", att.uuid, att.handle);
                 if &att.uuid == attribute_type && att_handle <= end {
                     body.write(att_handle)?;
@@ -603,14 +614,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
                 if &att.uuid == group_type && att_handle <= end {
                     // debug!("[read_by_group] found! {:x?} handle: {}", att.uuid, att.handle);
                     handle = att_handle;
-
-                    let AttributeData::Service {
-                        last_handle_in_group, ..
-                    } = att.data
-                    else {
-                        ret = Err(AttErrorCode::UNSUPPORTED_GROUP_TYPE);
-                        break;
-                    };
+                    let last_handle_in_group = it.service_group_end();
 
                     body.write(att_handle)?;
                     body.write(last_handle_in_group)?;
@@ -703,7 +707,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         handle: u16,
         data: &[u8],
     ) -> Result<usize, codec::Error> {
-        self.att_table.with_attribute(handle, |att| {
+        self.att_table.with_attribute_mut(handle, |att| {
             // Write commands can't respond with an error.
             let _ = self.write_attribute_data(connection, handle, 0, att, data);
         });
@@ -719,7 +723,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     ) -> Result<usize, codec::Error> {
         let err = self
             .att_table
-            .with_attribute(handle, |att| {
+            .with_attribute_mut(handle, |att| {
                 self.write_attribute_data(connection, handle, 0, att, data)
             })
             .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND));
@@ -753,18 +757,13 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         self.att_table.iterate_from(start, |mut it| {
             while let Some((handle, att)) = it.next() {
                 if handle <= end && att.uuid == attr_type {
-                    if let AttributeData::Service {
-                        uuid,
-                        last_handle_in_group,
-                    } = &att.data
-                    {
-                        if uuid.as_raw() == attr_value {
-                            if w.available() < 4 {
-                                break;
-                            }
-                            w.write(handle)?;
-                            w.write(*last_handle_in_group)?;
+                    let value = att.data.value();
+                    if value == Some(attr_value) {
+                        if w.available() < 4 {
+                            break;
                         }
+                        w.write(handle)?;
+                        w.write(it.service_group_end())?;
                     }
                 }
             }
@@ -794,8 +793,8 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         header.write(att::ATT_FIND_INFORMATION_RSP)?;
         let mut t = 0;
 
-        self.att_table.iterate_from(start, |mut it| {
-            while let Some((handle, att)) = it.next() {
+        self.att_table.iterate_from(start, |it| {
+            for (handle, att) in it {
                 if handle <= end {
                     if t == 0 {
                         t = att.uuid.get_type();
@@ -891,7 +890,9 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
                 }
                 let data = &pw.buf[..pw.len as usize];
                 self.att_table
-                    .with_attribute(pw.handle, |att| att.write(pw.offset as usize, data))
+                    .with_attribute_mut(pw.handle, |att| {
+                        self.write_attribute_data(connection, pw.handle, pw.offset as usize, att, data)
+                    })
                     .unwrap_or(Err(AttErrorCode::ATTRIBUTE_NOT_FOUND))
             });
             connection.clear_prepare_write();
@@ -1085,6 +1086,7 @@ mod tests {
     use core::task::Poll;
 
     use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+    use bt_hci::uuid::declarations::{PRIMARY_SERVICE, SECONDARY_SERVICE};
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
     use super::*;
@@ -1159,20 +1161,11 @@ mod tests {
             }
 
             // Print the table for debugging.
-            table.iterate(|mut it| {
-                while let Some((handle, att)) = it.next() {
+            table.iterate(|it| {
+                for (handle, att) in it {
                     let uuid = &att.uuid;
-                    if let AttributeData::Service {
-                        uuid,
-                        last_handle_in_group,
-                    } = &att.data
-                    {
-                        trace!(
-                            "last_handle_in_group for 0x{:0>4x?}, 0x{:0>2x?} 0x{:0>2x?}",
-                            handle,
-                            uuid,
-                            last_handle_in_group
-                        );
+                    if *uuid == PRIMARY_SERVICE.into() || *uuid == SECONDARY_SERVICE.into() {
+                        trace!("service 0x{:0>4x?}, 0x{:0>2x?}", handle, uuid,);
                     } else {
                         trace!("  0x{:0>4x?}, 0x{:0>2x?}", handle, uuid,);
                     }
