@@ -173,12 +173,12 @@ impl ServiceBuilder {
             let (#char_name, #(#named_descriptors),*) = {
                 #[allow(clippy::absurd_extreme_comparisons)]
                 let mut builder = if <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE <= 8 {
-                    service.add_characteristic_small(#uuid, &[#(#properties),*], #default_value)
+                    service.add_characteristic_small(#uuid, [#(#properties),*], #default_value)
                 } else {
                     static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
                     let store = #name_screaming.init([0; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]);
                     service
-                        .add_characteristic(#uuid, &[#(#properties),*], #default_value, store)
+                        .add_characteristic(#uuid, [#(#properties),*], #default_value, store)
                 }
                 #permissions;
                 #code_descriptors
