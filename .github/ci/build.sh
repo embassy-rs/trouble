@@ -7,7 +7,7 @@
 ## device /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_CBBC59EDA8BA738E-if00 /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_CBBC59EDA8BA738E-if00
 ## cooldown 30s
 
-set -euxo pipefail
+set -euo pipefail
 
 export CARGO_TARGET_DIR=/ci/cache/target
 export CARGO_NET_GIT_FETCH_WITH_CLI=true

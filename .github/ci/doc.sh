@@ -4,7 +4,7 @@
 ## dedup dequeue
 ## cooldown 15m
 
-set -euxo pipefail
+set -euo pipefail
 
 export RUSTUP_HOME=/ci/cache/rustup
 export CARGO_HOME=/ci/cache/cargo
