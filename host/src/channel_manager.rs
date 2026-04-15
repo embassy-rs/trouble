@@ -8,6 +8,7 @@ use bt_hci::{FromHciBytes, WriteHci};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
+use embassy_time::with_timeout;
 
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
@@ -26,13 +27,16 @@ use crate::{config, BleHostError, Error, PacketPool};
 
 const BASE_ID: u16 = 0x40;
 
+/// BT Core Spec Vol 3, Part A, Section 6.2.1: RTX signaling timeout.
+const L2CAP_RTX_TIMEOUT: embassy_time::Duration = embassy_time::Duration::from_secs(30);
+
 struct State {
     next_req_id: u8,
     accept_waker: WakerRegistration,
     create_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
-    /// Bitmask tracking which PSMs (0x0001..=0x00FF) have active listeners.
-    registered_psms: [u32; 8],
+    /// Bitmask tracking which SPSMs (0x0001..=0x00FF) have active listeners.
+    registered_spsms: [u32; 8],
 }
 
 /// Channel manager for L2CAP channels used directly by clients.
@@ -76,48 +80,24 @@ impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
 }
 
 impl State {
-    /// Register PSMs for listening. Returns Err(AlreadyInUse) if any PSM is already registered.
-    fn register_psms(&mut self, psms: &[u16]) -> Result<(), Error> {
-        // Validate and check for overlap first
-        for &psm in psms {
-            if !(1..=255).contains(&psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
-                return Err(Error::InvalidValue);
-            } else if self.is_psm_registered(psm) && !cfg!(feature = "allow-reserved-l2cap-psu") {
-                return Err(Error::AlreadyInUse);
-            }
-        }
-
-        // All clear, set the bits
-        for &psm in psms {
-            if (1..=255).contains(&psm) {
-                let idx = psm as usize / 32;
-                let bit = psm as usize % 32;
-                self.registered_psms[idx] |= 1 << bit;
-            }
-        }
-        Ok(())
-    }
-
-    /// Unregister PSMs from listening.
-    fn unregister_psms(&mut self, psms: &[u16]) {
-        for &psm in psms {
-            if (1..=255).contains(&psm) {
-                let idx = psm as usize / 32;
-                let bit = psm as usize % 32;
-                self.registered_psms[idx] &= !(1 << bit);
-            }
+    /// Register a SPSM for listening.
+    fn register_spsm(&mut self, spsm: u16) {
+        if (1..=255).contains(&spsm) {
+            let idx = spsm as usize / 32;
+            let bit = spsm as usize % 32;
+            self.registered_spsms[idx] |= 1 << bit;
         }
     }
 
-    /// Check if a PSM has an active listener.
-    fn is_psm_registered(&self, psm: u16) -> bool {
-        if !(1..=255).contains(&psm) {
+    /// Check if a SPSM has an active listener.
+    fn is_spsm_registered(&self, spsm: u16) -> bool {
+        if !(1..=255).contains(&spsm) {
             // When the allow-reserved-l2ca-psu feature is enable, treat all reserved PSUs as registered
             return cfg!(feature = "allow-reserved-l2cap-psu");
         }
-        let idx = psm as usize / 32;
-        let bit = psm as usize % 32;
-        self.registered_psms[idx] & (1 << bit) != 0
+        let idx = spsm as usize / 32;
+        let bit = spsm as usize % 32;
+        self.registered_spsms[idx] & (1 << bit) != 0
     }
 
     fn next_request_id(&mut self) -> u8 {
@@ -139,7 +119,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 accept_waker: WakerRegistration::new(),
                 create_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
-                registered_psms: [0; 8],
+                registered_spsms: [0; 8],
             }),
             channels,
         }
@@ -153,12 +133,16 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         RefMut::map(self.channels.borrow_mut(), |x| &mut x[index.0 as usize])
     }
 
+    pub(crate) fn register_spsm(&self, spsm: u16) {
+        self.state.borrow_mut().register_spsm(spsm);
+    }
+
     fn next_request_id(&self) -> u8 {
         self.state.borrow_mut().next_request_id()
     }
 
-    pub(crate) fn psm(&self, index: ChannelIndex) -> u16 {
-        self.channel(index).psm
+    pub(crate) fn spsm(&self, index: ChannelIndex) -> u16 {
+        self.channel(index).spsm
     }
 
     pub(crate) fn mtu(&self, index: ChannelIndex) -> u16 {
@@ -271,34 +255,15 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         Ok(ChannelIndex(idx as u8))
     }
 
-    pub(crate) async fn accept<T: Controller>(
-        &'d self,
-        conn: ConnHandle,
-        psm: &[u16],
-        config: &L2capChannelConfig,
-        ble: &BleHost<'d, T, P>,
-    ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
-        let pending = self.listen(conn, psm, &ble.connections).await?;
-        let index = pending.into_index();
-        self.accept_pending(index, config, ble).await
-    }
-
-    /// Wait for an incoming L2CAP connection request matching the connection and PSM list.
+    /// Wait for an incoming L2CAP connection request on the given connection.
     ///
     /// Returns a [`L2capPendingConnection`] that can be inspected and then accepted or rejected.
-    /// Returns `Err(Error::AlreadyInUse)` if any of the requested PSMs already have a listener.
-    pub(crate) async fn listen(
+    /// SPSMs must be registered globally via [`StackBuilder::register_l2cap_spsm`].
+    pub(crate) async fn next_pending(
         &'d self,
         conn: ConnHandle,
-        psm: &[u16],
         connections: &ConnectionManager<'_, P>,
     ) -> Result<L2capPendingConnection<'d, P>, Error> {
-        self.state.borrow_mut().register_psms(psm)?;
-
-        let _guard = OnDrop::new(|| {
-            self.state.borrow_mut().unregister_psms(psm);
-        });
-
         poll_fn(|cx| {
             let mut state = self.state.borrow_mut();
             state.accept_waker.register(cx.waker());
@@ -307,7 +272,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             let mut channels = self.channels.borrow_mut();
             for (idx, chan) in channels.iter_mut().enumerate() {
                 match chan.state {
-                    ChannelState::PeerConnecting(_) if chan.conn == Some(conn) && psm.contains(&chan.psm) => {
+                    ChannelState::PeerConnecting(_) if chan.conn == Some(conn) => {
                         if chan.refcount != 0 {
                             log_status(&channels, true);
                             panic!("unexpected refcount");
@@ -325,6 +290,31 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             Poll::Pending
         })
         .await
+    }
+
+    /// Reject all pending L2CAP connections on the given connection that have not yet been
+    /// returned by `next_pending` (refcount == 0). Sends a `NoResources` rejection response
+    /// for each, then closes the channel slot.
+    pub(crate) fn reject_all_pending(&self, conn: ConnHandle, manager: &ConnectionManager<'_, P>) {
+        let mut channels = self.channels.borrow_mut();
+        for chan in channels.iter_mut() {
+            if chan.conn == Some(conn) && chan.refcount == 0 {
+                if let ChannelState::PeerConnecting(identifier) = chan.state {
+                    if let Err(e) = Self::try_send_signal(
+                        conn,
+                        identifier,
+                        &LeCreditConnRes::reject(LeCreditConnResultCode::NoResources),
+                        manager,
+                    ) {
+                        warn!(
+                            "[l2cap] error rejecting pending channel connect request {:?}: {:?}",
+                            identifier, e
+                        );
+                    }
+                    chan.close();
+                }
+            }
+        }
     }
 
     /// Accept a pending L2CAP connection: negotiate parameters, transition to Connected, send success response.
@@ -425,7 +415,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     pub(crate) async fn create<T: Controller>(
         &'d self,
         conn: ConnHandle,
-        psm: u16,
+        spsm: u16,
         config: &L2capChannelConfig,
         ble: &BleHost<'_, T, P>,
     ) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
@@ -450,7 +440,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let idx = self.alloc(conn, None, |storage| {
             cid = storage.cid;
             credits = initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16);
-            storage.psm = psm;
+            storage.spsm = spsm;
             storage.mtu = mtu;
             storage.mps = mps;
             storage.flow_control = CreditFlowControl::new(*flow_policy, credits);
@@ -460,7 +450,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let mut tx = [0; 18];
         // Send the initial connect request.
         let command = LeCreditConnReq {
-            psm,
+            spsm,
             mps,
             scid: cid,
             mtu,
@@ -472,9 +462,17 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let ondrop = OnDrop::new(|| self.channel_mut(idx).close());
 
         // Wait until a response is accepted.
-        let result = poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))).await;
+        let result = with_timeout(
+            L2CAP_RTX_TIMEOUT,
+            poll_fn(|cx| self.poll_created(conn, idx, ble, Some(cx))),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            warn!("[l2cap] RTX timeout waiting for LE Credit Based Connection Response");
+            Err(BleHostError::BleHost(Error::Timeout))
+        })?;
         ondrop.defuse();
-        result
+        Ok(result)
     }
 
     fn poll_created<T: Controller>(
@@ -756,12 +754,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
     ) -> Result<(), Error> {
         let result = {
             let mut state = self.state.borrow_mut();
-            if !state.is_psm_registered(req.psm) {
+            if !state.is_spsm_registered(req.spsm) {
                 Err(LeCreditConnResultCode::SpsmNotSupported)
+            } else if !manager.is_l2cap_listening(conn) {
+                Err(LeCreditConnResultCode::NoResources)
             } else {
                 match self.alloc(conn, Some(req.scid), |storage| {
                     storage.conn = Some(conn);
-                    storage.psm = req.psm;
+                    storage.spsm = req.spsm;
                     storage.peer_credits = req.credits;
                     storage.peer_mps = req.mps;
                     storage.peer_mtu = req.mtu;
@@ -782,8 +782,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             Ok(()) => Ok(()),
             Err(result) => {
                 debug!(
-                    "[l2cap][conn = {:?}] rejecting connection for PSM 0x{:04x}: {:?}",
-                    conn, req.psm, result
+                    "[l2cap][conn = {:?}] rejecting connection for SPSM 0x{:04x}: {:?}",
+                    conn, req.spsm, result
                 );
                 Self::try_send_signal(conn, identifier, &LeCreditConnRes::reject(result), manager)
             }
@@ -1307,7 +1307,7 @@ pub struct ChannelStorage<P> {
     state: ChannelState,
     conn: Option<ConnHandle>,
     cid: u16,
-    psm: u16,
+    spsm: u16,
     mps: u16,
     mtu: u16,
     flow_control: CreditFlowControl,
@@ -1439,7 +1439,7 @@ impl<P> ChannelStorage<P> {
             cid: 0,
             mps: 0,
             mtu: 0,
-            psm: 0,
+            spsm: 0,
 
             flow_control: CreditFlowControl::new(CreditFlowPolicy::Every(1), 0),
             peer_cid: 0,
@@ -1496,7 +1496,7 @@ impl<P> ChannelStorage<P> {
         self.conn = None;
         self.mps = 0;
         self.mtu = 0;
-        self.psm = 0;
+        self.spsm = 0;
         self.peer_cid = 0;
         self.peer_mps = 0;
         self.peer_mtu = 0;

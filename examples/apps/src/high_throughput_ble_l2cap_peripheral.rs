@@ -4,7 +4,7 @@ use embassy_futures::join::join;
 use embassy_time::{Duration, Instant, Timer};
 use trouble_host::prelude::*;
 
-use crate::common::PSM_L2CAP_EXAMPLES;
+use crate::common::SPSM_L2CAP_EXAMPLES;
 
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
@@ -24,6 +24,7 @@ where
     let mut resources: HostResources<_, P, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
+        .register_l2cap_spsm(SPSM_L2CAP_EXAMPLES)
         .build();
     let mut peripheral = stack.peripheral();
     let mut runner = stack.runner();
@@ -74,9 +75,10 @@ where
                 initial_credits: Some(200),
             };
 
-            let mut ch1 = L2capChannel::accept(&stack, &conn, &[PSM_L2CAP_EXAMPLES], &l2cap_channel_config)
+            let mut ch1 = L2capChannel::listen(&stack, &conn)
+                .accept(&l2cap_channel_config)
                 .await
-                .expect("L2capChannel create failed");
+                .expect("L2capChannel accept failed");
 
             info!("L2CAP channel accepted");
 

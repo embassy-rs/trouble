@@ -504,6 +504,10 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.get_att_mtu(self.index)
     }
 
+    pub(crate) fn set_l2cap_listening(&self, listening: bool) {
+        self.manager.set_l2cap_listening(self.index, listening);
+    }
+
     pub(crate) async fn send(&self, pdu: Pdu<P::Packet>) {
         self.manager.send(self.index, pdu).await
     }

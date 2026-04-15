@@ -51,11 +51,21 @@ let config = L2capChannelConfig {
 let mut ch = L2capChannel::create(&stack, &conn, 0x0081, &config).await.unwrap();
 ----
 
-The third argument is the PSM (Protocol/Service Multiplexer). Values in the range `0x0080`-`0x00FF` are available for custom use.
+The third argument is the SPSM (Simplified Protocol/Service Multiplexer). Values in the range `0x0080`-`0x00FF` are available for custom use.
 
 === Peripheral (responder)
 
-The simplest approach accepts any incoming channel request on the given PSMs:
+SPSMs must be registered on the `StackBuilder` before use:
+
+[source,rust]
+----
+let (stack, runner) = trouble_host::new(controller, &mut resources, &mut stack)
+    .set_random_address(address)
+    .register_l2cap_spsm(0x0081)
+    .build();
+----
+
+The simplest approach accepts any incoming channel request:
 
 [source,rust]
 ----
@@ -65,17 +75,19 @@ let config = L2capChannelConfig {
     mtu: Some(PAYLOAD_LEN as u16),
     ..Default::default()
 };
-let mut ch = L2capChannel::accept(&stack, &conn, &[0x0081], &config).await.unwrap();
+let mut ch = L2capChannel::listen(&stack, &conn).accept(&config).await.unwrap();
 ----
 
-For more control, use `listen` to inspect the request before accepting:
+For more control, use `listen` to get a listener, then `next` to inspect each request before accepting:
 
 [source,rust]
 ----
-let pending = L2capChannel::listen(&stack, &conn, &[0x0081]).await.unwrap();
+let listener = L2capChannel::listen(&stack, &conn);
+
+let pending = listener.next().await.unwrap();
 
 // Inspect the incoming request
-let psm = pending.psm();
+let spsm = pending.spsm();
 let peer_mtu = pending.mtu();
 
 // Accept or reject
@@ -152,11 +164,11 @@ let ch = L2capChannel::merge(writer, reader);
 
 [source,rust]
 ----
-ch.mtu()       // Local negotiated MTU
-ch.mps()       // Local negotiated MPS
-ch.peer_mtu()  // Remote device's MTU
-ch.peer_mps()  // Remote device's MPS
-ch.psm()       // Protocol/Service Multiplexer
+ch.mtu()        // Local negotiated MTU
+ch.mps()        // Local negotiated MPS
+ch.peer_mtu()   // Remote device's MTU
+ch.peer_mps()   // Remote device's MPS
+ch.spsm()       // Simplified Protocol/Service Multiplexer
 ch.disconnect() // Disconnect the channel
 ----
 
@@ -179,6 +191,7 @@ pub async fn run<C: Controller>(controller: C) {
         HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
+        .register_l2cap_spsm(0x0081)
         .build();
     let mut runner = stack.runner();
     let mut peripheral = stack.peripheral();
@@ -205,9 +218,7 @@ pub async fn run<C: Controller>(controller: C) {
                 mtu: Some(PAYLOAD_LEN as u16),
                 ..Default::default()
             };
-            let mut ch = L2capChannel::accept(&stack, &conn, &[0x0081], &config)
-                .await
-                .unwrap();
+            let mut ch = L2capChannel::listen(&stack, &conn).accept(&config).await.unwrap();
 
             // Echo received data
             let mut buf = [0; PAYLOAD_LEN];

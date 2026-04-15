@@ -7,11 +7,11 @@ use embassy_futures::join::join3;
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, DynamicSender};
-use embassy_sync::signal::Signal;
 use embassy_sync::watch;
 use trouble_host::prelude::*;
 
 use crate::Event;
+pub(crate) use crate::btp::L2capListenerConfig;
 use crate::btp::protocol::l2cap::{self as proto, MAX_CHANNELS};
 use crate::command_channel::{self, CommandReceiver, HasResponse};
 
@@ -19,14 +19,9 @@ use crate::command_channel::{self, CommandReceiver, HasResponse};
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Command {
-    Listen {
-        psm: u16,
-        mtu: u16,
-        response: LeCreditConnResultCode,
-    },
     Connect {
         address: Address,
-        psm: u16,
+        spsm: u16,
         mtu: u16,
         num: u8,
     },
@@ -43,7 +38,6 @@ pub enum Command {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Response {
-    Listening,
     Connecting(proto::ConnectingResponse),
     Disconnected,
     DataSent,
@@ -77,23 +71,16 @@ impl<P: PacketPool> ChannelSlot<'_, P> {
     }
 }
 
-/// Arguments passed to the listener task via signal (one-time config, no connection).
-struct ListenerArgs {
-    psm: u16,
-    mtu: Option<u16>,
-    response: LeCreditConnResultCode,
-}
-
 /// Whether the channel task should create an outgoing channel or receive on an accepted one.
 enum ChannelOp<'stack, P: PacketPool> {
     Connect {
         conn: Connection<'stack, P>,
-        psm: u16,
+        spsm: u16,
         mtu: Option<u16>,
     },
     Accepted {
         reader: L2capChannelReader<'stack, P>,
-        psm: u16,
+        spsm: u16,
         address: Address,
     },
 }
@@ -110,7 +97,7 @@ enum ChannelNotification<'stack, P: PacketPool> {
     Accepted {
         writer: L2capChannelWriter<'stack, P>,
         reader: L2capChannelReader<'stack, P>,
-        psm: u16,
+        spsm: u16,
         our_mtu: u16,
         our_mps: u16,
         peer_mtu: u16,
@@ -118,7 +105,7 @@ enum ChannelNotification<'stack, P: PacketPool> {
         address: Address,
     },
     Rejected {
-        psm: u16,
+        spsm: u16,
         address: Address,
     },
 }
@@ -170,21 +157,23 @@ async fn poll_channels<'stack, C: crate::Controller, P: PacketPool>(
     .await
 }
 
-/// Listener task: waits for listen config, then loops over connections accepting/rejecting
-/// incoming L2CAP channels. When a connection disconnects, listen() returns an error and
-/// the inner loop breaks, waiting for the next connection.
+/// Listener task: loops over connections accepting/rejecting incoming L2CAP channels.
+/// When a connection disconnects, next() returns an error and the inner loop breaks,
+/// waiting for the next connection.
 async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
     stack: &'stack Stack<'_, C, P>,
-    listener_signal: &Signal<NoopRawMutex, ListenerArgs>,
+    args: L2capListenerConfig,
     conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,
     notify: &NotifyChannel<'stack, P>,
 ) {
-    let ListenerArgs { psm, mtu, response } = listener_signal.wait().await;
+    let L2capListenerConfig { spsm, mtu, response } = args;
 
     loop {
         // Wait for a connection to become available
         let conn = conn_rx.changed().await;
-        info!("listener_task: connection available, listening on PSM {}", psm);
+        info!("listener_task: connection available, listening on SPSM {}", spsm);
+
+        let listener = L2capChannel::listen(stack, &conn);
 
         // Listen on this connection until it disconnects
         loop {
@@ -194,9 +183,8 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
                 ..Default::default()
             };
             let address = conn.peer_address();
-            let psm_list = [psm];
 
-            let pending = match L2capChannel::listen(stack, &conn, &psm_list).await {
+            let pending = match listener.next().await {
                 Ok(pending) => pending,
                 Err(e) => {
                     info!("L2CAP listen ended (connection lost or error): {:?}", e);
@@ -208,7 +196,7 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
                 if let Err(e) = pending.reject(stack, response).await {
                     error!("L2CAP reject failed: {:?}", e);
                 }
-                notify.send(ChannelNotification::Rejected { psm, address }).await;
+                notify.send(ChannelNotification::Rejected { spsm, address }).await;
             } else {
                 match pending.accept(stack, &config).await {
                     Ok(channel) => {
@@ -221,7 +209,7 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
                             .send(ChannelNotification::Accepted {
                                 writer,
                                 reader,
-                                psm,
+                                spsm,
                                 our_mtu,
                                 our_mps,
                                 peer_mtu,
@@ -232,7 +220,7 @@ async fn listener_task<'stack, C: crate::Controller, P: PacketPool>(
                     }
                     Err(e) => {
                         error!("L2CAP accept failed: {:?}", e);
-                        notify.send(ChannelNotification::Rejected { psm, address }).await;
+                        notify.send(ChannelNotification::Rejected { spsm, address }).await;
                     }
                 }
             }
@@ -248,8 +236,8 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
     notify: &NotifyChannel<'stack, P>,
     events: &DynamicSender<'_, Event>,
 ) {
-    let (mut reader, psm, address) = match op {
-        ChannelOp::Connect { conn, psm, mtu } => {
+    let (mut reader, spsm, address) = match op {
+        ChannelOp::Connect { conn, spsm, mtu } => {
             let config = L2capChannelConfig {
                 mtu,
                 mps: Some(64),
@@ -257,11 +245,11 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
             };
             let address = conn.peer_address();
 
-            let channel = match L2capChannel::create(stack, &conn, psm, &config).await {
+            let channel = match L2capChannel::create(stack, &conn, spsm, &config).await {
                 Ok(ch) => ch,
                 Err(e) => {
                     error!("L2CAP create failed: {:?}", e);
-                    events.send(Event::L2capDisconnected { chan_id, psm, address }).await;
+                    events.send(Event::L2capDisconnected { chan_id, spsm, address }).await;
                     notify.send(ChannelNotification::Done { chan_id }).await;
                     return;
                 }
@@ -278,7 +266,7 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
             events
                 .send(Event::L2capConnected {
                     chan_id,
-                    psm,
+                    spsm,
                     peer_mtu,
                     peer_mps,
                     our_mtu,
@@ -287,9 +275,9 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
                 })
                 .await;
 
-            (reader, psm, address)
+            (reader, spsm, address)
         }
-        ChannelOp::Accepted { reader, psm, address } => (reader, psm, address),
+        ChannelOp::Accepted { reader, spsm, address } => (reader, spsm, address),
     };
 
     let mut buf = [0u8; proto::MAX_DATA_SIZE];
@@ -311,7 +299,7 @@ async fn channel_task<'stack, C: crate::Controller, P: PacketPool>(
         }
     }
 
-    events.send(Event::L2capDisconnected { chan_id, psm, address }).await;
+    events.send(Event::L2capDisconnected { chan_id, spsm, address }).await;
     notify.send(ChannelNotification::Done { chan_id }).await;
 }
 
@@ -323,12 +311,12 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
     commands: CommandReceiver<'_, Command>,
     events: DynamicSender<'_, Event>,
     conn_rx: &mut watch::DynReceiver<'_, Connection<'stack, P>>,
+    listener_config: Option<L2capListenerConfig>,
 ) -> ! {
     trace!("l2cap::run");
 
     let args_tx: Channel<NoopRawMutex, (ChannelOp<'stack, P>, u8), MAX_CHANNELS> = Channel::new();
     let notify_ch: NotifyChannel<'stack, P> = Channel::new();
-    let listener_signal: Signal<NoopRawMutex, ListenerArgs> = Signal::new();
 
     let command_loop = async {
         let mut slots: [ChannelSlot<'stack, P>; MAX_CHANNELS] = Default::default();
@@ -338,16 +326,12 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 Either::First(cmd) => {
                     info!("l2cap command: {:?}", *cmd);
                     match &*cmd {
-                        Command::Listen { psm, mtu, response } => {
-                            let mtu_opt = if *mtu > 0 { Some(*mtu) } else { None };
-                            listener_signal.signal(ListenerArgs {
-                                psm: *psm,
-                                mtu: mtu_opt,
-                                response: *response,
-                            });
-                            cmd.reply(Response::Listening).await;
-                        }
-                        Command::Connect { address, psm, mtu, num } => {
+                        Command::Connect {
+                            address,
+                            spsm,
+                            mtu,
+                            num,
+                        } => {
                             let conn = match stack.get_connection_by_peer_address(*address) {
                                 Some(conn) => conn,
                                 None => {
@@ -372,7 +356,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                                     .send((
                                         ChannelOp::Connect {
                                             conn: conn.clone(),
-                                            psm: *psm,
+                                            spsm: *spsm,
                                             mtu: mtu_opt,
                                         },
                                         free_idx as u8,
@@ -441,7 +425,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     ChannelNotification::Accepted {
                         writer,
                         reader,
-                        psm,
+                        spsm,
                         our_mtu,
                         our_mps,
                         peer_mtu,
@@ -461,7 +445,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                         events
                             .send(Event::L2capConnected {
                                 chan_id,
-                                psm,
+                                spsm,
                                 peer_mtu,
                                 peer_mps,
                                 our_mtu,
@@ -471,14 +455,14 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                             .await;
 
                         args_tx
-                            .send((ChannelOp::Accepted { reader, psm, address }, chan_id))
+                            .send((ChannelOp::Accepted { reader, spsm, address }, chan_id))
                             .await;
                     }
-                    ChannelNotification::Rejected { psm, address } => {
+                    ChannelNotification::Rejected { spsm, address } => {
                         events
                             .send(Event::L2capDisconnected {
                                 chan_id: 0,
-                                psm,
+                                spsm,
                                 address,
                             })
                             .await;
@@ -488,9 +472,17 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
         }
     };
 
+    let listener_future = async {
+        if let Some(config) = listener_config {
+            listener_task(stack, config, conn_rx, &notify_ch).await;
+        } else {
+            core::future::pending::<()>().await;
+        }
+    };
+
     join3(
         poll_channels(stack, &args_tx, &notify_ch, &events),
-        listener_task(stack, &listener_signal, conn_rx, &notify_ch),
+        listener_future,
         command_loop,
     )
     .await;

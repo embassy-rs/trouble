@@ -218,10 +218,18 @@ impl<T> From<Result<T, BtpStatus>> for HandlerResult<T> {
     }
 }
 
+/// L2CAP listener configuration captured during the pre-server phase.
+pub(crate) struct L2capListenerConfig {
+    pub spsm: u16,
+    pub mtu: Option<u16>,
+    pub response: LeCreditConnResultCode,
+}
+
 /// Result of the pre-server BTP phase.
 pub(crate) struct PreServerResult<'a, R, W> {
     pub transport: BtpTransport<R, W>,
     pub gap: GapState<'a, PreServerGap>,
+    pub l2cap_listener: Option<L2capListenerConfig>,
 }
 
 /// Run the pre-server BTP phase.
@@ -259,6 +267,8 @@ pub(crate) async fn run_pre_server<'a, R: Read, W: Write>(
         },
     };
 
+    let mut l2cap_listener: Option<L2capListenerConfig> = None;
+
     // Send IUT Ready event before entering the main loop
     info!("Sending IUT Ready event");
     BtpEvent::Core(CoreEvent::IutReady).write(&mut writer).await?;
@@ -295,6 +305,15 @@ pub(crate) async fn run_pre_server<'a, R: Read, W: Write>(
                 L2capCommand::ReadSupportedCommands => Ok(BtpResponse::L2cap(L2capResponse::SupportedCommands(
                     protocol::l2cap::SUPPORTED_COMMANDS,
                 ))),
+                L2capCommand::Listen(listen) => {
+                    let mtu = if listen.mtu > 0 { Some(listen.mtu) } else { None };
+                    l2cap_listener = Some(L2capListenerConfig {
+                        spsm: listen.psm,
+                        mtu,
+                        response: listen.response,
+                    });
+                    Ok(BtpResponse::L2cap(L2capResponse::Empty))
+                }
                 _ => Err(BtpStatus::NotReady),
             },
         };
@@ -311,6 +330,7 @@ pub(crate) async fn run_pre_server<'a, R: Read, W: Write>(
                 return Ok(Some(PreServerResult {
                     transport: BtpTransport { reader, writer },
                     gap,
+                    l2cap_listener,
                 }));
             }
             Err(status) => {
@@ -511,7 +531,6 @@ where
                         command_channel::Response::L2cap(response) => {
                             use l2cap::Response as LR;
                             match response {
-                                LR::Listening => Ok(BtpResponse::L2cap(L2capResponse::Empty)),
                                 LR::Connecting(rsp) => Ok(BtpResponse::L2cap(L2capResponse::Connecting(rsp))),
                                 LR::Disconnected => Ok(BtpResponse::L2cap(L2capResponse::Empty)),
                                 LR::DataSent => Ok(BtpResponse::L2cap(L2capResponse::Empty)),
@@ -697,7 +716,7 @@ fn convert_event<'a>(event: &'a Event, current_settings: &mut GapSettings) -> Bt
         }
         Event::L2capConnected {
             chan_id,
-            psm,
+            spsm,
             peer_mtu,
             peer_mps,
             our_mtu,
@@ -705,18 +724,18 @@ fn convert_event<'a>(event: &'a Event, current_settings: &mut GapSettings) -> Bt
             address,
         } => BtpEvent::L2cap(L2capEvent::Connected(protocol::l2cap::ConnectedEvent {
             chan_id: *chan_id,
-            psm: *psm,
+            psm: *spsm,
             peer_mtu: *peer_mtu,
             peer_mps: *peer_mps,
             our_mtu: *our_mtu,
             our_mps: *our_mps,
             address: *address,
         })),
-        Event::L2capDisconnected { chan_id, psm, address } => {
+        Event::L2capDisconnected { chan_id, spsm, address } => {
             BtpEvent::L2cap(L2capEvent::Disconnected(protocol::l2cap::DisconnectedEvent {
                 result: 0,
                 chan_id: *chan_id,
-                psm: *psm,
+                psm: *spsm,
                 address: *address,
             }))
         }
@@ -1322,23 +1341,16 @@ async fn handle_l2cap(cmd: L2capCommand<'_>, channels: &CommandChannels<'_>) -> 
         L2capCommand::ReadSupportedCommands => {
             HandlerResult::Ready(L2capResponse::SupportedCommands(SUPPORTED_COMMANDS))
         }
-        L2capCommand::Listen(listen) => {
-            channels
-                .l2cap
-                .send(l2cap::Command::Listen {
-                    psm: listen.psm,
-                    mtu: listen.mtu,
-                    response: listen.response,
-                })
-                .await;
-            HandlerResult::Forwarded
+        L2capCommand::Listen(_) => {
+            // Listen must be configured in the pre-server phase
+            HandlerResult::Error(BtpStatus::Fail)
         }
         L2capCommand::Connect(connect) => {
             channels
                 .l2cap
                 .send(l2cap::Command::Connect {
                     address: connect.address,
-                    psm: connect.psm,
+                    spsm: connect.psm,
                     mtu: connect.mtu,
                     num: connect.num,
                 })

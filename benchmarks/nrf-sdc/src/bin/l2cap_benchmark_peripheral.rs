@@ -77,6 +77,7 @@ async fn main(spawner: Spawner) {
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(sdc, &mut resources)
         .set_random_address(address)
+        .register_l2cap_spsm(0xF2)
         .build();
     let mut runner = stack.runner();
     let mut peripheral = stack.peripheral();
@@ -115,7 +116,7 @@ async fn main(spawner: Spawner) {
                 mtu: Some(PAYLOAD_LEN as u16),
                 mps: Some(L2CAP_MTU as u16 - 4),
             };
-            let mut ch1 = unwrap!(L2capChannel::accept(&stack, &conn, &[0xF2], &config).await);
+            let mut ch1 = unwrap!(L2capChannel::listen(&stack, &conn).accept(&config).await);
 
             let mut rx = [0; PAYLOAD_LEN];
             for i in 0..500 {

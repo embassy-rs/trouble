@@ -276,6 +276,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         self.connection_mut(index).att_mtu = mtu;
     }
 
+    pub(crate) fn set_l2cap_listening(&self, index: u8, listening: bool) {
+        self.connection_mut(index).l2cap_listening = listening;
+    }
+
     pub(crate) fn request_disconnect(&self, index: u8, reason: DisconnectReason) {
         let entry = &mut self.connection_mut(index);
         if entry.state == ConnectionState::Connected {
@@ -372,6 +376,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         self.with_connected_handle(h, |_storage| Ok(())).is_ok()
     }
 
+    pub(crate) fn is_l2cap_listening(&self, h: ConnHandle) -> bool {
+        self.with_connected_handle(h, |storage| Ok(storage.l2cap_listening))
+            .unwrap_or(false)
+    }
+
     pub(crate) fn reassembly<F: FnOnce(&mut PacketReassembly<P::Packet>) -> Result<R, Error>, R>(
         &self,
         h: ConnHandle,
@@ -403,6 +412,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 }
                 #[cfg(feature = "att-queued-writes")]
                 storage.prepare_write.clear();
+                storage.l2cap_listening = false;
                 return Ok(());
             }
         }
@@ -1068,6 +1078,7 @@ pub struct ConnectionStorage<P> {
     pub resolvable_addrs: ResolvablePrivateAddrs,
     #[cfg(feature = "legacy-pairing")]
     pub encryption_key_len: u8,
+    pub l2cap_listening: bool,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -1166,6 +1177,7 @@ impl<P> ConnectionStorage<P> {
             resolvable_addrs: ResolvablePrivateAddrs::none(),
             #[cfg(feature = "legacy-pairing")]
             encryption_key_len: 0,
+            l2cap_listening: false,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),

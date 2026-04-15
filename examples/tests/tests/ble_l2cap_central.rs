@@ -49,6 +49,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
         let mut resources: HostResources<_, DefaultPacketPool, 1, 1> = HostResources::new();
         let stack = trouble_host::new(controller_peripheral, &mut resources)
             .set_random_address(peripheral_address)
+            .register_l2cap_spsm(0x81)
             .build();
         let mut runner = stack.runner();
         let mut peripheral = stack.peripheral();
@@ -84,7 +85,7 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
                         mtu: Some(PAYLOAD_LEN as u16),
                         ..Default::default()
                     };
-                    let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x81], &config).await?;
+                    let mut ch1 = L2capChannel::listen(&stack, &conn).accept(&config).await?;
 
                     println!("[peripheral] channel created");
 

@@ -7,6 +7,7 @@ pub use crate::channel_manager::CreditFlowPolicy;
 pub use crate::channel_manager::Metrics as ChannelMetrics;
 use crate::channel_manager::{ChannelIndex, ChannelManager};
 use crate::connection::Connection;
+use crate::host::BleHost;
 use crate::pdu::Sdu;
 pub use crate::types::l2cap::LeCreditConnResultCode;
 use crate::{BleHostError, Error, PacketPool, Stack};
@@ -109,9 +110,9 @@ impl<'d, P: PacketPool> L2capPendingConnection<'d, P> {
         self.index.take().unwrap()
     }
 
-    /// Get the PSM of the incoming connection request.
-    pub fn psm(&self) -> u16 {
-        self.manager.psm(self.index.unwrap())
+    /// Get the SPSM of the incoming connection request.
+    pub fn spsm(&self) -> u16 {
+        self.manager.spsm(self.index.unwrap())
     }
 
     /// Get the peer's requested MTU.
@@ -172,9 +173,9 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         self.manager.disconnect(self.index);
     }
 
-    /// Get the PSM for this channel.
-    pub fn psm(&self) -> u16 {
-        self.manager.psm(self.index)
+    /// Get the SPSM for this channel.
+    pub fn spsm(&self) -> u16 {
+        self.manager.spsm(self.index)
     }
 
     /// Get the negotiated MTU for this channel.
@@ -261,44 +262,33 @@ impl<'d, P: PacketPool> L2capChannel<'d, P> {
         self.manager.metrics(self.index, f)
     }
 
-    /// Listen for an incoming connection request matching the list of PSM.
+    /// Start listening for incoming L2CAP connection requests on the given connection.
     ///
-    /// Returns a [`L2capPendingConnection`] that can be inspected, then accepted or rejected.
-    /// Returns `Err(Error::AlreadyInUse)` if any of the requested PSMs already have a listener.
-    pub async fn listen(
-        stack: &'d Stack<'_, impl Controller, P>,
-        connection: &Connection<'_, P>,
-        psm: &[u16],
-    ) -> Result<L2capPendingConnection<'d, P>, Error> {
-        stack
-            .host
-            .channels
-            .listen(connection.handle(), psm, &stack.host.connections)
-            .await
-    }
-
-    /// Await an incoming connection request matching the list of PSM and accept it.
-    pub async fn accept<T: Controller>(
+    /// SPSMs must be registered globally via [`StackBuilder::register_l2cap_spsm`].
+    ///
+    /// Returns `Err(Error::AlreadyInUse)` if this connection already has an active listener.
+    pub fn listen<T: Controller>(
         stack: &'d Stack<'_, T, P>,
-        connection: &Connection<'_, P>,
-        psm: &[u16],
-        config: &L2capChannelConfig,
-    ) -> Result<Self, BleHostError<T::Error>> {
-        let handle = connection.handle();
-        stack.host.channels.accept(handle, psm, config, stack.host).await
+        connection: &Connection<'d, P>,
+    ) -> L2capChannelListener<'d, T, P> {
+        connection.set_l2cap_listening(true);
+        L2capChannelListener {
+            conn: connection.clone(),
+            host: stack.host,
+        }
     }
 
-    /// Create a new connection request with the provided PSM.
+    /// Create a new connection request with the provided SPSM.
     pub async fn create<T: Controller>(
         stack: &'d Stack<'_, T, P>,
         connection: &Connection<'_, P>,
-        psm: u16,
+        spsm: u16,
         config: &L2capChannelConfig,
     ) -> Result<Self, BleHostError<T::Error>> {
         stack
             .host
             .channels
-            .create(connection.handle(), psm, config, stack.host)
+            .create(connection.handle(), spsm, config, stack.host)
             .await
     }
 
@@ -462,5 +452,51 @@ impl<'d, P: PacketPool> L2capChannelWriter<'d, P> {
             index: self.index,
             manager: self.manager,
         }
+    }
+}
+
+/// A listener for incoming L2CAP connection requests on a specific connection.
+///
+/// Created by [`L2capChannel::listen`]. When dropped, clears the listening flag
+/// on the connection and rejects any pending connection requests that have not
+/// yet been returned by [`next`](Self::next) or [`accept`](Self::accept).
+pub struct L2capChannelListener<'d, T: Controller, P: PacketPool> {
+    conn: Connection<'d, P>,
+    host: &'d BleHost<'d, T, P>,
+}
+
+impl<'d, T: Controller, P: PacketPool> L2capChannelListener<'d, T, P> {
+    /// Wait for the next incoming L2CAP connection request.
+    ///
+    /// Returns a [`L2capPendingConnection`] that can be inspected, then accepted or rejected.
+    pub async fn next(&self) -> Result<L2capPendingConnection<'d, P>, Error> {
+        self.host
+            .channels
+            .next_pending(self.conn.handle(), &self.host.connections)
+            .await
+    }
+
+    /// Wait for the next incoming L2CAP connection request and accept it.
+    ///
+    /// This is a convenience method equivalent to calling [`next`](Self::next) followed by
+    /// [`L2capPendingConnection::accept`].
+    pub async fn accept(&self, config: &L2capChannelConfig) -> Result<L2capChannel<'d, P>, BleHostError<T::Error>> {
+        let pending = self.next().await?;
+        let index = pending.into_index();
+        self.host.channels.accept_pending(index, config, self.host).await
+    }
+
+    /// Get a reference to the connection this listener is bound to.
+    pub fn connection(&self) -> &Connection<'d, P> {
+        &self.conn
+    }
+}
+
+impl<T: Controller, P: PacketPool> Drop for L2capChannelListener<'_, T, P> {
+    fn drop(&mut self) {
+        self.conn.set_l2cap_listening(false);
+        self.host
+            .channels
+            .reject_all_pending(self.conn.handle(), &self.host.connections);
     }
 }

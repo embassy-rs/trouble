@@ -205,7 +205,7 @@ pub(crate) enum Event {
     },
     L2capConnected {
         chan_id: u8,
-        psm: u16,
+        spsm: u16,
         peer_mtu: u16,
         peer_mps: u16,
         our_mtu: u16,
@@ -214,7 +214,7 @@ pub(crate) enum Event {
     },
     L2capDisconnected {
         chan_id: u8,
-        psm: u16,
+        spsm: u16,
         address: Address,
     },
     L2capDataReceived {
@@ -347,9 +347,14 @@ where
 
     // Build the stack, applying deferred GAP settings to the builder
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let builder = trouble_host::new(controller, &mut resources)
+    let mut builder = trouble_host::new(controller, &mut resources)
         .set_random_address(config.address)
         .set_random_generator_seed(&mut random_generator);
+
+    if let Some(ref listener_config) = pre.l2cap_listener {
+        builder = builder.register_l2cap_spsm(listener_config.spsm);
+    }
+
     let builder = pre.gap.apply_to_builder(builder);
     let stack = builder.build();
     let runner = stack.runner();
@@ -388,6 +393,7 @@ where
             CommandReceiver::new(l2cap_command.receiver(), response.sender()),
             events.dyn_sender(),
             &mut l2cap_rx,
+            pre.l2cap_listener,
         ),
         select5(
             ble_task(runner, events.dyn_sender(), &scan_mode),

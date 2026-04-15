@@ -71,7 +71,7 @@ The *Logical Link Control and Adaptation Protocol (L2CAP)* provides the data tra
 
 In addition to the fixed channels used by GATT and signaling, BLE supports *Connection-Oriented Channels (CoC)* for transferring arbitrary data with credit-based flow control. CoC channels are useful when GATT's attribute-based model is too restrictive, such as bulk data transfer or custom protocols.
 
-Each CoC is identified by a *PSM (Protocol/Service Multiplexer)* value, similar to a port number.
+Each CoC is identified by a *SPSM (Simplified Protocol/Service Multiplexer)* value, similar to a port number.
 
 == Security
 
