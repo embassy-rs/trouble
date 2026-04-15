@@ -31,5 +31,5 @@ echo "Build api doc"
 mv rust-toolchain-nightly.toml rust-toolchain.toml
 cargo install --git https://github.com/embassy-rs/docserver --locked --rev e16c30dcc60a41641fd73bd4ad1a8c4bd57d792d
 
-docserver-builder -i host -o crates/trouble-host/git.zup
+docserver build -i host -o crates/trouble-host/git.zup
 .ci/doc.sh
