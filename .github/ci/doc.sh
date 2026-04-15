@@ -12,9 +12,7 @@ export CARGO_TARGET_DIR=/ci/cache/target
 export PATH=$CARGO_HOME/bin:$PATH
 
 if ! command -v cargo-batch &> /dev/null; then
-    mkdir -p $CARGO_HOME/bin
-    curl -L https://github.com/embassy-rs/cargo-batch/releases/download/batch-0.6.0/cargo-batch > $CARGO_HOME/bin/cargo-batch
-    chmod +x $CARGO_HOME/bin/cargo-batch
+    cargo install --git https://github.com/embassy-rs/cargo-batch cargo --bin cargo-batch --locked
 fi
 
 # Read probe-rs token from bender's mounted secrets directory
