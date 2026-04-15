@@ -1801,7 +1801,7 @@ mod tests {
 
         const MAX_ATTRIBUTES: usize = 64;
         const CONNECTIONS_MAX: usize = 3;
-        const CCCD_MAX: usize = 64;
+        const CLIENT_ATT_BYTES: usize = 64;
         const NUM_CHARACTERISTICS: u8 = 9;
         const ATT_MTU: u16 = 185;
 
@@ -1828,7 +1828,8 @@ mod tests {
             }
         }
 
-        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CCCD_MAX, CONNECTIONS_MAX>::new(table);
+        let server =
+            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
 
         // Set up a connection with ATT MTU = 185 (typical iOS value)
         let mgr = setup();
@@ -1904,7 +1905,7 @@ mod tests {
 
         const MAX_ATTRIBUTES: usize = 16;
         const CONNECTIONS_MAX: usize = 3;
-        const CCCD_MAX: usize = 16;
+        const CLIENT_ATT_BYTES: usize = 16;
 
         let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
         let mut storage = [0u8; 1];
@@ -1914,12 +1915,13 @@ mod tests {
             })
             .add_characteristic(
                 Uuid::new_long([0x45; 16]),
-                &[CharacteristicProp::Read, CharacteristicProp::WriteWithoutResponse],
+                [CharacteristicProp::Read, CharacteristicProp::WriteWithoutResponse],
                 0u8,
                 &mut storage[..],
             )
             .build();
-        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CCCD_MAX, CONNECTIONS_MAX>::new(table);
+        let server =
+            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
 
         let mgr = setup();
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());

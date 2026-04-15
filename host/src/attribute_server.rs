@@ -23,115 +23,279 @@ impl Client {
     }
 }
 
-/// A table of CCCD values.
+/// A compact, fixed-size map of client-specific attribute values (e.g. CCCDs).
+///
+/// Entries are stored in a flat byte buffer with a sorted index for binary-search lookups.
+/// The `BYTES` const generic determines the total storage available for both the index and values.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug)]
-pub struct CccdTable<const ENTRIES: usize> {
-    inner: [(u16, CCCD); ENTRIES],
+pub struct ClientAttTable<const BYTES: usize> {
+    buf: [u8; BYTES],
 }
 
-impl<const ENTRIES: usize> Default for CccdTable<ENTRIES> {
-    fn default() -> Self {
-        Self {
-            inner: [(0, CCCD(0)); ENTRIES],
+impl<const BYTES: usize> ClientAttTable<BYTES> {
+    const HEADER_SIZE: usize = 2;
+    const ENTRY_SIZE: usize = 4;
+
+    /// Creates a new [`ClientAttTableBuilder`] for constructing a `ClientAttTable`.
+    pub const fn builder() -> ClientAttTableBuilder<BYTES> {
+        const { core::assert!(BYTES >= 2 && BYTES <= u16::MAX as usize) };
+
+        ClientAttTableBuilder {
+            buf: [0; BYTES],
+            values_len: 0,
         }
+    }
+
+    /// Returns the number of entries in the map.
+    pub const fn len(&self) -> usize {
+        u16::from_le_bytes([self.buf[0], self.buf[1]]) as usize
+    }
+
+    /// Returns `true` if the map contains no entries.
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    const fn values_base(&self) -> usize {
+        Self::HEADER_SIZE + self.len() * Self::ENTRY_SIZE
+    }
+
+    fn values_len(&self) -> usize {
+        if let Some(i) = self.find(u16::MAX) {
+            Self::entry_offset(&self.index()[i])
+        } else {
+            BYTES - self.values_base()
+        }
+    }
+
+    fn index(&self) -> &[[u8; 4]] {
+        self.buf[Self::HEADER_SIZE..self.values_base()].as_chunks::<4>().0
+    }
+
+    const fn entry_key(entry: &[u8; 4]) -> u16 {
+        u16::from_le_bytes([entry[0], entry[1]])
+    }
+
+    const fn entry_offset(entry: &[u8; 4]) -> usize {
+        u16::from_le_bytes([entry[2], entry[3]]) as usize
+    }
+
+    fn value_range(&self, i: usize) -> core::ops::Range<usize> {
+        let index = self.index();
+        let start = Self::entry_offset(&index[i]) + self.values_base();
+        let end = index
+            .get(i + 1)
+            .map(|entry| self.values_base() + Self::entry_offset(entry))
+            .unwrap_or(BYTES);
+        start..end
+    }
+
+    fn find(&self, key: u16) -> Option<usize> {
+        self.index().binary_search_by_key(&key, Self::entry_key).ok()
+    }
+
+    /// Returns a reference to the value associated with the given attribute handle, or `None` if not found.
+    pub fn get(&self, key: u16) -> Option<&[u8]> {
+        let range = self.value_range(self.find(key)?);
+        Some(&self.buf[range])
+    }
+
+    /// Returns a mutable reference to the value associated with the given attribute handle, or `None` if not found.
+    pub fn get_mut(&mut self, key: u16) -> Option<&mut [u8]> {
+        let range = self.value_range(self.find(key)?);
+        Some(&mut self.buf[range])
+    }
+
+    /// Returns the raw byte representation of the map, suitable for serialization or storage.
+    pub fn raw(&self) -> &[u8] {
+        let end = self.values_base() + self.values_len();
+        &self.buf[..end]
+    }
+
+    /// Constructs a `ClientAttTable` from a raw byte slice previously obtained via [`raw()`](Self::raw).
+    ///
+    /// Returns an error if the data is too large for the buffer, or if the index is malformed.
+    pub fn try_from_raw(data: &[u8]) -> Result<Self, Error> {
+        if data.len() > BYTES {
+            return Err(Error::InsufficientSpace);
+        } else if data.len() < 2 {
+            return Err(Error::InvalidValue);
+        }
+
+        let mut buf = [0; BYTES];
+        buf[..data.len()].copy_from_slice(data);
+        let map = Self { buf };
+
+        if map.values_base() > data.len() {
+            return Err(Error::InvalidValue);
+        }
+
+        let mut last_key = 0;
+        let mut last_offset = 0;
+        for e in map.index().iter() {
+            let key = Self::entry_key(e);
+            let offset = Self::entry_offset(e);
+            if key <= core::mem::replace(&mut last_key, key)
+                || offset < core::mem::replace(&mut last_offset, offset)
+                || map.values_base() + offset > data.len()
+            {
+                return Err(Error::InvalidValue);
+            }
+        }
+
+        Ok(map)
+    }
+
+    /// Copies values from `src` into this map for all matching keys.
+    ///
+    /// Keys present in this map but not in `src` are zeroed. If value sizes differ,
+    /// only the smaller length is copied and the remainder is zeroed.
+    pub fn set_values<const N: usize>(&mut self, src: &ClientAttTable<N>) {
+        for i in 0..self.len() {
+            let key = Self::entry_key(&self.index()[i]);
+            let range = self.value_range(i);
+            let dest = &mut self.buf[range];
+            match src.get(key) {
+                Some(src) => {
+                    let copy_len = dest.len().min(src.len());
+                    dest[..copy_len].copy_from_slice(&src[..copy_len]);
+                    dest[copy_len..].fill(0);
+                }
+                None => {
+                    dest.fill(0);
+                }
+            }
+        }
+    }
+
+    /// Zeros all values in the map, leaving the index structure intact.
+    pub fn clear(&mut self) {
+        let values_base = self.values_base();
+        let values_end = values_base + self.values_len();
+        self.buf[values_base..values_end].fill(0);
     }
 }
 
-impl<const ENTRIES: usize> CccdTable<ENTRIES> {
-    /// Create a new CCCD table from an array of (handle, cccd) pairs.
-    pub fn new(cccd_values: [(u16, CCCD); ENTRIES]) -> Self {
-        Self { inner: cccd_values }
-    }
+/// A builder for [`ClientAttTable`].
+///
+/// Entries must be pushed in ascending key order. Use [`build()`](Self::build) to finalize.
+#[derive(Debug, Clone)]
+pub struct ClientAttTableBuilder<const BYTES: usize> {
+    buf: [u8; BYTES],
+    values_len: u16,
+}
 
-    /// Get the inner array of (handle, cccd) pairs.
-    pub fn inner(&self) -> &[(u16, CCCD); ENTRIES] {
-        &self.inner
-    }
+impl<const BYTES: usize> ClientAttTableBuilder<BYTES> {
+    const HEADER_SIZE: usize = ClientAttTable::<BYTES>::HEADER_SIZE;
+    const ENTRY_SIZE: usize = ClientAttTable::<BYTES>::ENTRY_SIZE;
 
-    fn add_handle(&mut self, cccd_handle: u16) {
-        for (handle, _) in self.inner.iter_mut() {
-            if *handle == 0 {
-                *handle = cccd_handle;
-                break;
+    /// Adds an entry with the given attribute handle and value size.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not greater than the previously pushed key, or if there is insufficient space.
+    pub fn push(&mut self, key: u16, value_len: u16) {
+        let old_len = self.len();
+        self.set_len(old_len + 1);
+        let offset = self.values_len;
+        self.values_len = self
+            .values_len
+            .checked_add(value_len)
+            .expect("ClientAttTable buffer overflow");
+
+        // If we overflow, just keep tracking the total needed size so we can report it in build()
+        if self.end() <= BYTES {
+            let index = self.index_mut();
+            if old_len > 0 {
+                let last_key = ClientAttTable::<BYTES>::entry_key(&index[old_len - 1]);
+                assert!(key > last_key, "keys must be inserted in ascending order");
             }
+            Self::set_entry(&mut index[old_len], key, offset);
         }
     }
 
-    fn disable_all(&mut self) {
-        for (_, value) in self.inner.iter_mut() {
-            value.disable();
+    /// Consumes the builder and returns the completed [`ClientAttTable`].
+    pub fn build(mut self) -> ClientAttTable<BYTES> {
+        let end = self.end();
+        if end < BYTES {
+            let len = self.len();
+            if len > 0 {
+                let index = self.index_mut();
+                let last_key = ClientAttTable::<BYTES>::entry_key(&index[len - 1]);
+                assert!(last_key < u16::MAX);
+            }
+
+            // Add a dummy value to define the length of the last attribute value
+            self.push(u16::MAX, 0)
         }
+
+        if self.end() > BYTES {
+            panic!(
+                "ClientAttTable<{}> buffer overflow. Need {} bytes for exact size",
+                BYTES, end
+            );
+        } else if end < BYTES {
+            warn!(
+                "ClientAttTable<{}> buffer oversized. Only need {} bytes for exact size",
+                BYTES, end
+            );
+        }
+
+        ClientAttTable { buf: self.buf }
     }
 
-    fn get_raw(&self, cccd_handle: u16) -> Option<[u8; 2]> {
-        for (handle, value) in self.inner.iter() {
-            if *handle == cccd_handle {
-                return Some(value.raw().to_le_bytes());
-            }
-        }
-        None
+    const fn len(&self) -> usize {
+        u16::from_le_bytes([self.buf[0], self.buf[1]]) as usize
     }
 
-    fn set_notify(&mut self, cccd_handle: u16, is_enabled: bool) {
-        for (handle, value) in self.inner.iter_mut() {
-            if *handle == cccd_handle {
-                trace!("[cccd] set_notify({}) = {}", cccd_handle, is_enabled);
-                value.set_notify(is_enabled);
-                break;
-            }
-        }
+    fn set_len(&mut self, len: usize) {
+        assert!(len <= u16::MAX as usize);
+        let [b0, b1] = (len as u16).to_le_bytes();
+        self.buf[0] = b0;
+        self.buf[1] = b1;
     }
 
-    fn should_notify(&self, cccd_handle: u16) -> bool {
-        for (handle, value) in self.inner.iter() {
-            if *handle == cccd_handle {
-                return value.should_notify();
-            }
-        }
-        false
+    const fn index_mut(&mut self) -> &mut [[u8; 4]] {
+        let end = self.len() * Self::ENTRY_SIZE;
+        let (_, slice) = self.buf.split_at_mut(Self::HEADER_SIZE);
+        let (slice, _) = slice.split_at_mut(end);
+        slice.as_chunks_mut::<4>().0
     }
 
-    fn set_indicate(&mut self, cccd_handle: u16, is_enabled: bool) {
-        for (handle, value) in self.inner.iter_mut() {
-            if *handle == cccd_handle {
-                trace!("\n\n\n[cccd] set_indicate({}) = {}", cccd_handle, is_enabled);
-                value.set_indicate(is_enabled);
-                break;
-            }
-        }
+    const fn set_entry(entry: &mut [u8; 4], key: u16, offset: u16) {
+        let key = key.to_le_bytes();
+        let offset = offset.to_le_bytes();
+        *entry = [key[0], key[1], offset[0], offset[1]];
     }
-    fn should_indicate(&self, cccd_handle: u16) -> bool {
-        for (handle, value) in self.inner.iter() {
-            if *handle == cccd_handle {
-                return value.should_indicate();
-            }
-        }
-        false
+
+    const fn values_base(&self) -> usize {
+        Self::HEADER_SIZE + self.len() * Self::ENTRY_SIZE
+    }
+
+    const fn end(&self) -> usize {
+        self.values_base() + self.values_len as usize
     }
 }
 
 /// A table of CCCD values for each connected client.
-struct CccdTables<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> {
-    state: Mutex<M, RefCell<[(Client, CccdTable<CCCD_MAX>); CONN_MAX]>>,
+struct ClientAttTables<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> {
+    state: Mutex<M, RefCell<[(Client, ClientAttTable<BYTES>); CONN_MAX]>>,
 }
 
-impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CCCD_MAX, CONN_MAX> {
+impl<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> ClientAttTables<M, BYTES, CONN_MAX> {
     fn new<const ATT_MAX: usize>(att_table: &AttributeTable<'_, M, ATT_MAX>) -> Self {
-        let mut values: [(Client, CccdTable<CCCD_MAX>); CONN_MAX] =
-            core::array::from_fn(|_| (Client::default(), CccdTable::default()));
-        let mut base_cccd_table = CccdTable::default();
+        let mut builder = ClientAttTable::builder();
         att_table.iterate(|at| {
             for (handle, att) in at {
-                if matches!(att.data, AttributeData::ClientSpecific) {
-                    base_cccd_table.add_handle(handle);
+                if let AttributeData::ClientSpecific(len) = att.data {
+                    builder.push(handle, len);
                 }
             }
         });
-        // add the base CCCD table for each potential connected client
-        for (_, table) in values.iter_mut() {
-            *table = base_cccd_table.clone();
-        }
+        let base = builder.build();
+        let values: [(Client, ClientAttTable<BYTES>); CONN_MAX] =
+            core::array::from_fn(|_| (Client::default(), base.clone()));
         Self {
             state: Mutex::new(RefCell::new(values)),
         }
@@ -162,13 +326,13 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
                     client.is_connected = true;
                     client.set_identity(*peer_identity);
                     // erase the previous client's config
-                    table.disable_all();
+                    table.clear();
                     return Ok(());
                 }
             }
             // Should be unreachable if the max connections (CONN_MAX) matches that defined
             // in HostResources...
-            warn!("[server] unable to obtain CCCD slot");
+            warn!("[server] unable to obtain client attributes slot");
             Err(Error::ConnectionLimitReached)
         })
     }
@@ -180,7 +344,7 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
                 if client.identity.match_identity(peer_identity) {
                     if !bonded {
                         *client = Client::default();
-                        table.disable_all();
+                        table.clear();
                     } else {
                         client.is_connected = false;
                     }
@@ -190,67 +354,64 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn get_value(&self, peer_identity: &Identity, cccd_handle: u16) -> Option<[u8; 2]> {
+    fn with_value<R>(&self, peer_identity: &Identity, att_handle: u16, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
                 if client.identity.match_identity(peer_identity) {
-                    return table.get_raw(cccd_handle);
+                    return table.get(att_handle).map(f);
                 }
             }
             None
         })
     }
 
-    fn set_notify(&self, peer_identity: &Identity, cccd_handle: u16, is_enabled: bool) {
-        self.state.lock(|n| {
-            let mut n = n.borrow_mut();
-            for (client, table) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
-                    table.set_notify(cccd_handle, is_enabled);
-                    break;
-                }
-            }
-        })
-    }
-
-    fn should_notify(&self, peer_identity: &Identity, cccd_handle: u16) -> bool {
+    fn read(
+        &self,
+        peer_identity: &Identity,
+        att_handle: u16,
+        offset: usize,
+        data: &mut [u8],
+    ) -> Result<usize, AttErrorCode> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
                 if client.identity.match_identity(peer_identity) {
-                    return table.should_notify(cccd_handle);
+                    let value = table.get(att_handle).ok_or(AttErrorCode::ATTRIBUTE_NOT_FOUND)?;
+                    if offset > value.len() {
+                        return Err(AttErrorCode::INVALID_OFFSET);
+                    }
+                    let value = &value[offset..];
+                    let len = value.len().min(data.len());
+                    data[..len].copy_from_slice(value);
+                    return Ok(len);
                 }
             }
-            false
+            Err(AttErrorCode::ATTRIBUTE_NOT_FOUND)
         })
     }
 
-    fn set_indicate(&self, peer_identity: &Identity, cccd_handle: u16, is_enabled: bool) {
+    fn write(&self, peer_identity: &Identity, att_handle: u16, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, table) in n.iter_mut() {
                 if client.identity.match_identity(peer_identity) {
-                    table.set_indicate(cccd_handle, is_enabled);
-                    break;
+                    let value = table.get_mut(att_handle).ok_or(AttErrorCode::ATTRIBUTE_NOT_FOUND)?;
+                    if offset > value.len() {
+                        return Err(AttErrorCode::INVALID_OFFSET);
+                    } else if offset + data.len() > value.len() {
+                        return Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH);
+                    } else {
+                        value[offset..offset + data.len()].copy_from_slice(data);
+                        return Ok(());
+                    }
                 }
             }
+            Err(AttErrorCode::ATTRIBUTE_NOT_FOUND)
         })
     }
 
-    fn should_indicate(&self, peer_identity: &Identity, cccd_handle: u16) -> bool {
-        self.state.lock(|n| {
-            let n = n.borrow();
-            for (client, table) in n.iter() {
-                if client.identity.match_identity(peer_identity) {
-                    return table.should_indicate(cccd_handle);
-                }
-            }
-            false
-        })
-    }
-
-    fn get_cccd_table(&self, peer_identity: &Identity) -> Option<CccdTable<CCCD_MAX>> {
+    fn get_client_att_table(&self, peer_identity: &Identity) -> Option<ClientAttTable<BYTES>> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
@@ -262,13 +423,13 @@ impl<M: RawMutex, const CCCD_MAX: usize, const CONN_MAX: usize> CccdTables<M, CC
         })
     }
 
-    fn set_cccd_table(&self, peer_identity: &Identity, table: CccdTable<CCCD_MAX>) {
+    fn set_client_att_table(&self, peer_identity: &Identity, table: &ClientAttTable<BYTES>) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, t) in n.iter_mut() {
                 if client.identity.match_identity(peer_identity) {
-                    trace!("Setting cccd table {:?} for {:?}", table, peer_identity);
-                    *t = table;
+                    trace!("Setting client attribute table {:?} for {:?}", table, peer_identity);
+                    t.set_values(table);
                     break;
                 }
             }
@@ -295,11 +456,11 @@ pub struct AttributeServer<
     M: RawMutex,
     P: PacketPool,
     const ATT_MAX: usize,
-    const CCCD_MAX: usize,
+    const CLIENT_ATT_BYTES: usize,
     const CONN_MAX: usize,
 > {
     att_table: AttributeTable<'values, M, ATT_MAX>,
-    cccd_tables: CccdTables<M, CCCD_MAX, CONN_MAX>,
+    client_att_tables: ClientAttTables<M, CLIENT_ATT_BYTES, CONN_MAX>,
     _p: PhantomData<P>,
 }
 
@@ -328,12 +489,12 @@ pub(crate) mod sealed {
 /// Type erased attribute server
 pub trait DynamicAttributeServer<P: PacketPool>: sealed::DynamicAttributeServer<P> {}
 
-impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
-    DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: usize, const CONN_MAX: usize>
+    DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
 {
 }
-impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
-    sealed::DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: usize, const CONN_MAX: usize>
+    sealed::DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
 {
     fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
         AttributeServer::connect(self, connection)
@@ -345,7 +506,7 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
         #[cfg(not(feature = "security"))]
         let bonded = false;
 
-        self.cccd_tables.disconnect(&connection.peer_identity(), bonded);
+        self.client_att_tables.disconnect(&connection.peer_identity(), bonded);
     }
 
     fn process(
@@ -370,7 +531,7 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
     }
 
     fn update_identity(&self, identity: Identity) -> Result<(), Error> {
-        self.cccd_tables.update_identity(identity)
+        self.client_att_tables.update_identity(identity)
     }
 
     fn can_read(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode> {
@@ -386,17 +547,23 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, co
     }
 }
 
-impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: usize, const CONN_MAX: usize>
-    AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>
+impl<
+        'values,
+        M: RawMutex,
+        P: PacketPool,
+        const ATT_MAX: usize,
+        const CLIENT_ATT_BYTES: usize,
+        const CONN_MAX: usize,
+    > AttributeServer<'values, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
 {
     /// Create a new instance of the AttributeServer
     pub fn new(
         att_table: AttributeTable<'values, M, ATT_MAX>,
-    ) -> AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX> {
-        let cccd_tables = CccdTables::new(&att_table);
+    ) -> AttributeServer<'values, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX> {
+        let cccd_tables = ClientAttTables::new(&att_table);
         AttributeServer {
             att_table,
-            cccd_tables,
+            client_att_tables: cccd_tables,
             _p: PhantomData,
         }
     }
@@ -417,16 +584,31 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
     }
 
     pub(crate) fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
-        self.cccd_tables.connect(&connection.peer_identity())
+        self.client_att_tables.connect(&connection.peer_identity())
     }
 
     pub(crate) fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
-        self.cccd_tables.should_notify(&connection.peer_identity(), cccd_handle)
+        self.client_att_tables
+            .with_value(&connection.peer_identity(), cccd_handle, |value| {
+                if let Ok(value) = value.try_into() {
+                    CCCD(u16::from_le_bytes(value)).should_notify()
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) fn should_indicate(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
-        self.cccd_tables
-            .should_indicate(&connection.peer_identity(), cccd_handle)
+        self.client_att_tables
+            .with_value(&connection.peer_identity(), cccd_handle, |value| {
+                if let Ok(value) = value.try_into() {
+                    CCCD(u16::from_le_bytes(value)).should_indicate()
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
     }
 
     fn can_read(&self, connection: &Connection<'_, P>, att: &Attribute<'_>) -> Result<(), AttErrorCode> {
@@ -460,23 +642,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         data: &mut [u8],
     ) -> Result<usize, AttErrorCode> {
         self.can_read(connection, att)?;
-        if matches!(att.data, AttributeData::ClientSpecific) {
-            // CCCD values are per-connection; read directly from the CCCD table
-            let value = self
-                .cccd_tables
-                .get_value(&connection.peer_identity(), handle)
-                .unwrap_or_default();
-            let bytes = value.as_slice();
-            if offset >= bytes.len() {
-                return if offset == 0 {
-                    Ok(0)
-                } else {
-                    Err(AttErrorCode::INVALID_OFFSET)
-                };
-            }
-            let n = data.len().min(bytes.len() - offset);
-            data[..n].copy_from_slice(&bytes[offset..offset + n]);
-            return Ok(n);
+        if matches!(att.data, AttributeData::ClientSpecific(_)) {
+            return self
+                .client_att_tables
+                .read(&connection.peer_identity(), handle, offset, data);
         }
         att.read(offset, data)
     }
@@ -490,20 +659,10 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         data: &[u8],
     ) -> Result<(), AttErrorCode> {
         self.can_write(connection, att)?;
-        if matches!(att.data, AttributeData::ClientSpecific) {
-            if offset > 0 {
-                return Err(AttErrorCode::INVALID_OFFSET);
-            }
-            if data.is_empty() {
-                return Err(AttErrorCode::UNLIKELY_ERROR);
-            }
-            let notifications = data[0] & 0x01 != 0;
-            let indications = data[0] & 0x02 != 0;
-            self.cccd_tables
-                .set_notify(&connection.peer_identity(), handle, notifications);
-            self.cccd_tables
-                .set_indicate(&connection.peer_identity(), handle, indications);
-            return Ok(());
+        if matches!(att.data, AttributeData::ClientSpecific(_)) {
+            return self
+                .client_att_tables
+                .write(&connection.peer_identity(), handle, offset, data);
         }
         att.write(offset, data)
     }
@@ -1070,14 +1229,15 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CCCD_MAX: 
         Ok(())
     }
 
-    /// Get the CCCD table for a connection
-    pub fn get_cccd_table(&self, connection: &Connection<'_, P>) -> Option<CccdTable<CCCD_MAX>> {
-        self.cccd_tables.get_cccd_table(&connection.peer_identity())
+    /// Get the client-specific attribute table for a connection
+    pub fn get_client_att_table(&self, connection: &Connection<'_, P>) -> Option<ClientAttTable<CLIENT_ATT_BYTES>> {
+        self.client_att_tables.get_client_att_table(&connection.peer_identity())
     }
 
-    /// Set the CCCD table for a connection
-    pub fn set_cccd_table(&self, connection: &Connection<'_, P>, table: CccdTable<CCCD_MAX>) {
-        self.cccd_tables.set_cccd_table(&connection.peer_identity(), table);
+    /// Set the client-specific attribute table for a connection
+    pub fn set_client_att_table(&self, connection: &Connection<'_, P>, table: &ClientAttTable<CLIENT_ATT_BYTES>) {
+        self.client_att_tables
+            .set_client_att_table(&connection.peer_identity(), table);
     }
 }
 
@@ -1122,7 +1282,7 @@ mod tests {
         let _ = env_logger::try_init();
         const MAX_ATTRIBUTES: usize = 1024;
         const CONNECTIONS_MAX: usize = 3;
-        const CCCD_MAX: usize = 1024;
+        const CLIENT_ATT_BYTES: usize = 1024;
         const L2CAP_CHANNELS_MAX: usize = 5;
         type FacadeDummyType = [u8; 0];
 
@@ -1173,7 +1333,8 @@ mod tests {
             });
 
             // Create a server.
-            let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CCCD_MAX, CONNECTIONS_MAX>::new(table);
+            let server =
+                AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
 
             // Create the connection manager.
             let mgr = setup();

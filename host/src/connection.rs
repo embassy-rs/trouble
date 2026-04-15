@@ -910,11 +910,11 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         'server,
         M: RawMutex,
         const ATT_MAX: usize,
-        const CCCD_MAX: usize,
+        const CLIENT_ATT_BYTES: usize,
         const CONN_MAX: usize,
     >(
         self,
-        server: &'server AttributeServer<'values, M, P, ATT_MAX, CCCD_MAX, CONN_MAX>,
+        server: &'server AttributeServer<'values, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>,
     ) -> Result<GattConnection<'stack, 'server, P>, Error> {
         GattConnection::try_new(self, server)
     }

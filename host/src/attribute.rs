@@ -208,7 +208,7 @@ pub(crate) enum AttributeData<'d> {
         len: u8,
         value: [u8; MAX_SMALL_DATA_SIZE],
     },
-    ClientSpecific,
+    ClientSpecific(u16),
 }
 
 impl From<Uuid> for AttributeData<'_> {
@@ -282,7 +282,7 @@ impl AttributeData<'_> {
             AttributeData::ReadOnlyData { value } => Some(value),
             AttributeData::Data { len, value, .. } => Some(&value[..*len as usize]),
             AttributeData::SmallData { len, value, .. } => Some(&value[..*len as usize]),
-            AttributeData::ClientSpecific => None,
+            AttributeData::ClientSpecific(_) => None,
         }
     }
 
@@ -311,7 +311,7 @@ impl AttributeData<'_> {
                 let value = &value[..*len as usize];
                 append(value, &mut offset, &mut data)
             }
-            Self::ClientSpecific => return Err(AttErrorCode::UNLIKELY_ERROR),
+            Self::ClientSpecific(_) => return Err(AttErrorCode::UNLIKELY_ERROR),
         };
 
         if offset > 0 {
@@ -668,7 +668,7 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
                     if it.next().is_some() {
                         let end_handle = it.characteristic_group_end();
                         let cccd_handle = it.next().and_then(|(handle, att)| {
-                            matches!(att.data, AttributeData::ClientSpecific).then_some(handle)
+                            (att.uuid == CLIENT_CHARACTERISTIC_CONFIGURATION.into()).then_some(handle)
                         });
 
                         return Ok(Characteristic {
@@ -814,7 +814,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                         #[cfg(feature = "legacy-pairing")]
                         min_key_len: 0,
                     },
-                    AttributeData::ClientSpecific,
+                    AttributeData::ClientSpecific(2),
                 ));
 
                 Some(handle)
@@ -1703,7 +1703,7 @@ mod tests {
         table.push(Attribute::new(
             CLIENT_CHARACTERISTIC_CONFIGURATION,
             cccd_perms,
-            AttributeData::ClientSpecific,
+            AttributeData::ClientSpecific(2),
         ));
 
         // Client supported features characteristic
@@ -1770,7 +1770,7 @@ mod tests {
         table.push(Attribute::new(
             CLIENT_CHARACTERISTIC_CONFIGURATION,
             cccd_perms,
-            AttributeData::ClientSpecific,
+            AttributeData::ClientSpecific(2),
         ));
 
         table.push(Attribute::new(
