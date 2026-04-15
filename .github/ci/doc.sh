@@ -11,6 +11,12 @@ export CARGO_HOME=/ci/cache/cargo
 export CARGO_TARGET_DIR=/ci/cache/target
 export PATH=$CARGO_HOME/bin:$PATH
 
+if ! command -v cargo-batch &> /dev/null; then
+    mkdir -p $HOME/.cargo/bin
+    curl -L https://github.com/embassy-rs/cargo-batch/releases/download/batch-0.6.0/cargo-batch > $HOME/.cargo/bin/cargo-batch
+    chmod +x $HOME/.cargo/bin/cargo-batch
+fi
+
 # Read probe-rs token from bender's mounted secrets directory
 if [[ -f /ci/secrets/kubeconfig.yml ]]; then
     echo "Got kubeconfig token!"
