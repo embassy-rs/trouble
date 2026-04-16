@@ -11,9 +11,7 @@ export CARGO_HOME=/ci/cache/cargo
 export CARGO_TARGET_DIR=/ci/cache/target
 export PATH=$CARGO_HOME/bin:$PATH
 
-if ! command -v cargo-batch &> /dev/null; then
-    cargo install --git https://github.com/embassy-rs/cargo-batch cargo --bin cargo-batch --locked
-fi
+cargo install --git https://github.com/embassy-rs/cargo-batch cargo --bin cargo-batch --locked
 
 # Read probe-rs token from bender's mounted secrets directory
 if [[ -f /ci/secrets/kubeconfig.yml ]]; then
