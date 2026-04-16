@@ -3,9 +3,11 @@
 set -eo pipefail
 
 if ! command -v cargo-batch &> /dev/null; then
-    mkdir -p $HOME/.cargo/bin
-    curl -L https://github.com/embassy-rs/cargo-batch/releases/download/batch-0.6.0/cargo-batch > $HOME/.cargo/bin/cargo-batch
-    chmod +x $HOME/.cargo/bin/cargo-batch
+    echo "cargo-batch could not be found. Install it with the following command:"
+    echo ""
+    echo "    cargo install --git https://github.com/embassy-rs/cargo-batch cargo --bin cargo-batch --locked"
+    echo ""
+    exit 1
 fi
 
 export RUSTFLAGS=-Dwarnings

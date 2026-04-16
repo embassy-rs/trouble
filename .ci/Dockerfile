@@ -1,7 +1,16 @@
-FROM ubuntu:24.04
+FROM rust:1-slim-trixie AS builder
 
 RUN apt-get update && \
-    apt-get install -y git curl wget iproute2 iputils-ping jq strace build-essential python3 libusb-1.0-0 file aha asciidoctor && \
+    apt-get install -y git curl wget iproute2 iputils-ping jq strace build-essential python3 libusb-1.0-0 file aha asciidoctor pkg-config libssl-dev && \
+    apt-get clean
+
+RUN cargo install --git https://github.com/embassy-rs/cargo-batch cargo --bin cargo-batch --locked
+RUN cargo install probe-rs-tools --git https://github.com/probe-rs/probe-rs --locked --features remote
+
+FROM debian:trixie-slim
+
+RUN apt-get update && \
+    apt-get install -y git curl wget iproute2 iputils-ping jq strace build-essential python3 libusb-1.0-0 file aha asciidoctor pkg-config libssl-dev && \
     apt-get clean
 
 RUN \
@@ -31,10 +40,5 @@ RUN \
     cp gh_2.34.0_linux_amd64/bin/gh /usr/bin && \
     rm -rf gh_2.34.0_linux_amd64 gh.tar.gz
 
-#RUN \
-#    curl -L -o sccache.tar.gz https://github.com/mozilla/sccache/releases/download/v0.5.0/sccache-v0.5.0-x86_64-unknown-linux-musl.tar.gz && \
-#    tar xzvf sccache.tar.gz && \
-#    cp sccache-v0.5.0-x86_64-unknown-linux-musl/sccache /usr/bin && \
-#    rm -rf sccache-v0.5.0-x86_64-unknown-linux-musl sccache.tar.gz
 
-COPY bin/* /usr/bin/
+COPY --from=builder /usr/local/cargo/bin/* /usr/bin
