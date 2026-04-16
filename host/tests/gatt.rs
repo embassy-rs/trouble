@@ -102,7 +102,7 @@ async fn gatt_client_server() {
                                 assert_eq!(characteristic.handle, event.handle());
                                 event.accept().unwrap().send().await;
 
-                                let value: u8 = server.table().get(&characteristic).unwrap();
+                                let value: u8 = conn.get(&characteristic).unwrap();
                                 println!("[peripheral] write value: {}", value);
                                 assert_eq!(expected, value);
                                 expected = expected.wrapping_add(1);

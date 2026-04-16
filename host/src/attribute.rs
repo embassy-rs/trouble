@@ -289,7 +289,25 @@ impl AttributeData<'_> {
         }
     }
 
-    fn read(&self, mut offset: usize, mut data: &mut [u8]) -> Result<usize, AttErrorCode> {
+    pub(crate) fn is_variable_len(&self) -> bool {
+        match self {
+            AttributeData::Data { variable_len, .. }
+            | AttributeData::SmallData { variable_len, .. }
+            | AttributeData::ClientSpecific { variable_len, .. } => *variable_len,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn capacity(&self) -> usize {
+        match self {
+            AttributeData::ReadOnlyData { value, .. } => value.len(),
+            AttributeData::Data { value, .. } => value.len(),
+            AttributeData::SmallData { capacity, .. } => usize::from(*capacity),
+            AttributeData::ClientSpecific { capacity, .. } => usize::from(*capacity),
+        }
+    }
+
+    pub(crate) fn read(&self, mut offset: usize, mut data: &mut [u8]) -> Result<usize, AttErrorCode> {
         fn append(src: &[u8], offset: &mut usize, dest: &mut &mut [u8]) -> usize {
             if *offset >= src.len() {
                 *offset -= src.len();
@@ -324,7 +342,7 @@ impl AttributeData<'_> {
         }
     }
 
-    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
+    pub(crate) fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
         match self {
             Self::Data {
                 value,
@@ -559,55 +577,15 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     }
 
     pub(crate) fn set_raw(&self, attribute: u16, input: &[u8]) -> Result<(), Error> {
-        self.with_attribute_mut(attribute, |att| match &mut att.data {
-            AttributeData::Data {
-                value,
-                variable_len,
-                len,
-                ..
-            } => {
-                let expected_len = value.len();
-                let actual_len = input.len();
-
-                if *variable_len && actual_len <= expected_len {
-                    value[..input.len()].copy_from_slice(input);
-                    *len = input.len() as u16;
-                    Ok(())
-                } else if expected_len == actual_len {
-                    value.copy_from_slice(input);
-                    Ok(())
-                } else {
-                    Err(Error::UnexpectedDataLength {
-                        expected: expected_len,
-                        actual: actual_len,
-                    })
-                }
+        self.with_attribute_mut(attribute, |att| {
+            if !att.data.is_variable_len() && att.data.capacity() != input.len() {
+                Err(Error::UnexpectedDataLength {
+                    expected: att.data.capacity(),
+                    actual: input.len(),
+                })
+            } else {
+                att.write(0, input).map_err(Into::into)
             }
-            AttributeData::SmallData {
-                variable_len,
-                capacity,
-                len,
-                value,
-                ..
-            } => {
-                let expected_len = usize::from(*capacity);
-                let actual_len = input.len();
-
-                if *variable_len && actual_len <= expected_len {
-                    value[..input.len()].copy_from_slice(input);
-                    *len = input.len() as u8;
-                    Ok(())
-                } else if expected_len == actual_len {
-                    value[..expected_len].copy_from_slice(input);
-                    Ok(())
-                } else {
-                    Err(Error::UnexpectedDataLength {
-                        expected: expected_len,
-                        actual: actual_len,
-                    })
-                }
-            }
-            _ => Err(Error::NotSupported),
         })
         .unwrap_or(Err(Error::NotFound))
     }
@@ -749,13 +727,13 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
 /// A type which holds a handle to an attribute in the attribute table
 pub trait AttributeHandle {
     /// The data type which the attribute contains
-    type Value: AsGatt;
+    type Value: AsGatt + ?Sized;
 
     /// Returns the attribute's handle
     fn handle(&self) -> u16;
 }
 
-impl<T: AsGatt> AttributeHandle for Characteristic<T> {
+impl<T: AsGatt + ?Sized> AttributeHandle for Characteristic<T> {
     type Value = T;
 
     fn handle(&self) -> u16 {
@@ -990,9 +968,8 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If the characteristic does not support notifications, an error is returned.
     pub async fn notify<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>, value: &T) -> Result<(), Error> {
-        let value = value.as_gatt();
         let server = connection.server;
-        server.set(self.handle, value)?;
+        connection.set(self, value)?;
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
@@ -1005,7 +982,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let uns = AttUns::Notify {
             handle: self.handle,
-            data: value,
+            data: value.as_gatt(),
         };
         let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
         conn.send(pdu).await;
@@ -1025,9 +1002,8 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         connection: &GattConnection<'_, '_, P>,
         value: &T,
     ) -> Result<(), Error> {
-        let value = value.as_gatt();
         let server = connection.server;
-        server.set(self.handle, value)?;
+        connection.set(self, value)?;
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
@@ -1040,7 +1016,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let uns = AttUns::Indicate {
             handle: self.handle,
-            data: value,
+            data: value.as_gatt(),
         };
         let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
         conn.send(pdu).await;
@@ -1288,7 +1264,7 @@ pub struct Descriptor<T: AsGatt + ?Sized> {
     pub(crate) phantom: PhantomData<T>,
 }
 
-impl<T: AsGatt> AttributeHandle for Descriptor<T> {
+impl<T: AsGatt + ?Sized> AttributeHandle for Descriptor<T> {
     type Value = T;
 
     fn handle(&self) -> u16 {

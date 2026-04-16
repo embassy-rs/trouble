@@ -551,7 +551,8 @@ pub(crate) mod sealed {
         ) -> Result<Option<usize>, Error>;
         fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool;
         fn should_indicate(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool;
-        fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error>;
+        fn set(&self, connection: &Connection<'_, P>, att_handle: u16, input: &[u8]) -> Result<(), Error>;
+        fn get(&self, connection: &Connection<'_, P>, att_handle: u16, buf: &mut [u8]) -> Result<usize, Error>;
         fn update_identity(&self, identity: Identity) -> Result<(), Error>;
 
         fn can_read(&self, connection: &Connection<'_, P>, handle: u16) -> Result<(), AttErrorCode>;
@@ -599,8 +600,37 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: u
         AttributeServer::should_indicate(self, connection, cccd_handle)
     }
 
-    fn set(&self, characteristic: u16, input: &[u8]) -> Result<(), Error> {
-        self.att_table.set_raw(characteristic, input)
+    fn get(&self, connection: &Connection<'_, P>, att_handle: u16, buf: &mut [u8]) -> Result<usize, Error> {
+        self.att_table
+            .with_attribute(att_handle, |att| {
+                if matches!(att.data, AttributeData::ClientSpecific { .. }) {
+                    self.client_att_tables
+                        .read(&connection.peer_identity(), att_handle, 0, buf)
+                } else {
+                    att.read(0, buf)
+                }
+                .map_err(Into::into)
+            })
+            .unwrap_or(Err(Error::NotFound))
+    }
+
+    fn set(&self, connection: &Connection<'_, P>, att_handle: u16, input: &[u8]) -> Result<(), Error> {
+        self.att_table
+            .with_attribute_mut(att_handle, |att| {
+                if !att.data.is_variable_len() && att.data.capacity() != input.len() {
+                    Err(Error::UnexpectedDataLength {
+                        expected: att.data.capacity(),
+                        actual: input.len(),
+                    })
+                } else if matches!(att.data, AttributeData::ClientSpecific { .. }) {
+                    self.client_att_tables
+                        .write(&connection.peer_identity(), att_handle, 0, input)
+                        .map_err(Into::into)
+                } else {
+                    att.write(0, input).map_err(Into::into)
+                }
+            })
+            .unwrap_or(Err(Error::NotFound))
     }
 
     fn update_identity(&self, identity: Identity) -> Result<(), Error> {

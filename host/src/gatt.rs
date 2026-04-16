@@ -19,7 +19,7 @@ use crate::att::{
     self, Att, AttCfm, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_IND,
     ATT_HANDLE_VALUE_NTF,
 };
-use crate::attribute::{Characteristic, CharacteristicProps, Descriptor, Uuid};
+use crate::attribute::{AttributeHandle, Characteristic, CharacteristicProps, Descriptor, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 #[cfg(feature = "security")]
@@ -33,7 +33,7 @@ use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
 #[cfg(feature = "security")]
 use crate::BondInformation;
-use crate::{config, BleHostError, Error, PacketPool, Stack};
+use crate::{config, BleHostError, Error, PacketPool, Stack, MAX_INVALID_DATA_LEN};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
@@ -270,6 +270,29 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     /// Get a reference to the underlying BLE connection.
     pub fn raw(&self) -> &Connection<'stack, P> {
         &self.connection
+    }
+
+    /// Set the value of an attribute on the local GATT server for this connection.
+    pub fn set<T: AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
+        let gatt_value = input.as_gatt();
+        self.server.set(&self.connection, attribute_handle.handle(), gatt_value)
+    }
+
+    /// Get the value of an attribute from the local GATT server for this connection.
+    pub fn get<T: AttributeHandle>(&self, attribute_handle: &T) -> Result<T::Value, Error>
+    where
+        T::Value: FromGatt,
+    {
+        let mut buf = [0; 512];
+        let len = self.server.get(&self.connection, attribute_handle.handle(), &mut buf)?;
+        let value_slice = &buf[..len];
+        T::Value::from_gatt(value_slice).map_err(|_| {
+            let mut invalid_data = [0u8; MAX_INVALID_DATA_LEN];
+            let len_to_copy = value_slice.len().min(MAX_INVALID_DATA_LEN);
+            invalid_data[..len_to_copy].copy_from_slice(&value_slice[..len_to_copy]);
+
+            Error::CannotConstructGattValue(invalid_data)
+        })
     }
 }
 
