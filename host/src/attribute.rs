@@ -208,7 +208,10 @@ pub(crate) enum AttributeData<'d> {
         len: u8,
         value: [u8; MAX_SMALL_DATA_SIZE],
     },
-    ClientSpecific(u16),
+    ClientSpecific {
+        variable_len: bool,
+        capacity: u16,
+    },
 }
 
 impl From<Uuid> for AttributeData<'_> {
@@ -282,7 +285,7 @@ impl AttributeData<'_> {
             AttributeData::ReadOnlyData { value } => Some(value),
             AttributeData::Data { len, value, .. } => Some(&value[..*len as usize]),
             AttributeData::SmallData { len, value, .. } => Some(&value[..*len as usize]),
-            AttributeData::ClientSpecific(_) => None,
+            AttributeData::ClientSpecific { .. } => None,
         }
     }
 
@@ -311,7 +314,7 @@ impl AttributeData<'_> {
                 let value = &value[..*len as usize];
                 append(value, &mut offset, &mut data)
             }
-            Self::ClientSpecific(_) => return Err(AttErrorCode::UNLIKELY_ERROR),
+            Self::ClientSpecific { .. } => return Err(AttErrorCode::UNLIKELY_ERROR),
         };
 
         if offset > 0 {
@@ -814,7 +817,10 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                         #[cfg(feature = "legacy-pairing")]
                         min_key_len: 0,
                     },
-                    AttributeData::ClientSpecific(2),
+                    AttributeData::ClientSpecific {
+                        variable_len: false,
+                        capacity: 2,
+                    },
                 ));
 
                 Some(handle)
@@ -1703,7 +1709,10 @@ mod tests {
         table.push(Attribute::new(
             CLIENT_CHARACTERISTIC_CONFIGURATION,
             cccd_perms,
-            AttributeData::ClientSpecific(2),
+            AttributeData::ClientSpecific {
+                variable_len: false,
+                capacity: 2,
+            },
         ));
 
         // Client supported features characteristic
@@ -1770,7 +1779,10 @@ mod tests {
         table.push(Attribute::new(
             CLIENT_CHARACTERISTIC_CONFIGURATION,
             cccd_perms,
-            AttributeData::ClientSpecific(2),
+            AttributeData::ClientSpecific {
+                variable_len: false,
+                capacity: 2,
+            },
         ));
 
         table.push(Attribute::new(
