@@ -349,7 +349,7 @@ impl AttributeData<'_> {
                 variable_len,
                 len,
             } => {
-                if offset > value.len() {
+                if offset > usize::from(*len) {
                     Err(AttErrorCode::INVALID_OFFSET)
                 } else if offset + data.len() > value.len() {
                     Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
@@ -367,7 +367,7 @@ impl AttributeData<'_> {
                 len,
                 value,
             } => {
-                if offset > usize::from(*capacity) {
+                if offset > usize::from(*len) {
                     Err(AttErrorCode::INVALID_OFFSET)
                 } else if offset + data.len() > usize::from(*capacity) {
                     Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
@@ -896,6 +896,27 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         )
     }
 
+    /// Add a client-specific characteristic to this service.
+    pub fn add_characteristic_client<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
+        &mut self,
+        uuid: U,
+        props: P,
+    ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
+        assert!(T::MAX_SIZE <= 512);
+        let props: CharacteristicProps = props.into();
+        let permissions = props.default_permissions();
+        let variable_len = T::MAX_SIZE != T::MIN_SIZE;
+        self.add_characteristic_internal(
+            uuid.into(),
+            props,
+            permissions,
+            AttributeData::ClientSpecific {
+                variable_len,
+                capacity: T::MAX_SIZE as u16,
+            },
+        )
+    }
+
     /// Add an included service to this service
     pub fn add_included_service(&mut self, handle: u16) -> Result<u16, InvalidHandle> {
         self.table.with_inner_mut(|table| {
@@ -1203,6 +1224,24 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
             uuid.into(),
             permissions,
             AttributeData::ReadOnlyData { value: data.as_gatt() },
+        )
+    }
+
+    /// Add a client-specific descriptor to this service.
+    pub fn add_descriptor_client<DT: AsGatt, U: Into<Uuid>>(
+        &mut self,
+        uuid: U,
+        permissions: AttPermissions,
+    ) -> Descriptor<DT> {
+        assert!(DT::MAX_SIZE <= 512);
+        let variable_len = DT::MAX_SIZE != DT::MIN_SIZE;
+        self.add_descriptor_internal(
+            uuid.into(),
+            permissions,
+            AttributeData::ClientSpecific {
+                variable_len,
+                capacity: DT::MAX_SIZE as u16,
+            },
         )
     }
 
