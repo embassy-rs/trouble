@@ -471,6 +471,36 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
         process(&mut self.data, self.server, Ok(()))
     }
 
+    /// Accept the event without server processing.
+    pub fn accept_unprocessed<T: AsGatt + ?Sized>(mut self, data: &T) -> Result<Reply<'stack, P>, Error> {
+        let (rsp, offset) = match self.data.incoming() {
+            AttClient::Request(AttReq::Read { .. }) => (att::ATT_READ_RSP, 0),
+            AttClient::Request(AttReq::ReadBlob { offset, .. }) => (att::ATT_READ_BLOB_RSP, offset as usize),
+            _ => unreachable!(),
+        };
+        self.data.pdu = None;
+
+        let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
+        let mut w = WriteCursor::new(tx.as_mut());
+        let (mut header, mut payload) = w.split(4)?;
+        // Limit the buffer given to process() so that multi-entry ATT responses
+        // (ReadByType, ReadByGroupType, FindInformation) are bounded by the
+        // negotiated ATT MTU. Without this, entries are written into the full
+        // packet-pool buffer and then post-hoc truncated, which can split an
+        // entry in half and produce a malformed PDU.
+        let mtu = self.data.connection.get_att_mtu() as usize;
+        let len = payload.len().saturating_sub(offset).min(mtu - 1);
+
+        payload.write(rsp)?;
+        payload.append(&data.as_gatt()[offset..][..len])?;
+        header.write(payload.len() as u16)?;
+        header.write(4_u16)?;
+
+        let len = header.len() + payload.len();
+        let pdu = Pdu::new(tx, len);
+        Ok(Reply::new(self.data.connection.clone(), Some(pdu)))
+    }
+
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
     pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack, P>, Error> {
         process(&mut self.data, self.server, Err(err))
@@ -546,11 +576,53 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
         })
     }
 
+    /// Validate the offset and length of the write request against the attribute's `len` and `capacity`
+    pub fn validate(&self, len: usize, capacity: usize) -> Result<(), AttErrorCode> {
+        self.with_data(|offset, data| {
+            if offset > len {
+                Err(AttErrorCode::INVALID_OFFSET)
+            } else if offset + data.len() > capacity {
+                Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
+            } else {
+                Ok(())
+            }
+        })
+    }
+
     /// Accept the event, making it processed by the server.
     ///
     /// Automatically called if drop() is invoked.
     pub fn accept(mut self) -> Result<Reply<'stack, P>, Error> {
         process(&mut self.data, self.server, Ok(()))
+    }
+
+    /// Accept the event without server processing.
+    pub fn accept_unprocessed(mut self) -> Result<Reply<'stack, P>, Error> {
+        let rsp = match self.data.incoming() {
+            AttClient::Request(AttReq::Write { .. }) => Some(att::ATT_WRITE_RSP),
+            AttClient::Command(AttCmd::Write { .. }) => None,
+            #[cfg(feature = "att-queued-writes")]
+            AttClient::Request(AttReq::ExecuteWrite { .. }) => {
+                self.data.connection.clear_prepare_write();
+                Some(att::ATT_EXECUTE_WRITE_RSP)
+            }
+            _ => unreachable!(),
+        };
+
+        self.data.pdu = None;
+
+        if let Some(rsp) = rsp {
+            let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
+            let mut w = WriteCursor::new(tx.as_mut());
+            w.write(1_u16)?;
+            w.write(4_u16)?;
+            w.write(rsp)?;
+            let len = w.len();
+            let pdu = Pdu::new(tx, len);
+            Ok(Reply::new(self.data.connection.clone(), Some(pdu)))
+        } else {
+            Ok(Reply::new(self.data.connection.clone(), None))
+        }
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
