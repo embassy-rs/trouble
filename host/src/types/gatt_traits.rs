@@ -92,6 +92,29 @@ primitive!(
     BluetoothUuid16
 );
 
+impl FixedGattValue for () {
+    const SIZE: usize = 0;
+}
+
+impl FromGatt for () {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl AsGatt for () {
+    const MIN_SIZE: usize = Self::SIZE;
+    const MAX_SIZE: usize = Self::SIZE;
+
+    fn as_gatt(&self) -> &[u8] {
+        &[]
+    }
+}
+
 impl FixedGattValue for bool {
     const SIZE: usize = 1;
 }
