@@ -40,7 +40,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 } => {
                     info!("Gatt Write handle={}", w.handle());
                     let handle = w.handle();
-                    let data = Box::from(w.data());
+                    let data = w.with_data(|_, data| Box::from(data));
                     let reply = w.accept()?;
                     reply.send().await;
                     events.send(Event::AttrValueChanged { handle, data }).await;

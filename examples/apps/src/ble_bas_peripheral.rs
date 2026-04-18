@@ -117,7 +117,9 @@ async fn gatt_events_task<P: PacketPool>(server: &Server<'_>, conn: &GattConnect
                     }
                     GattEvent::Write(event) => {
                         if event.handle() == level.handle {
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                            event.with_data(|offset, data| {
+                                info!("[gatt] Write Event to Level Characteristic at {}: {:?}", offset, data)
+                            });
                         }
                     }
                     _ => {}

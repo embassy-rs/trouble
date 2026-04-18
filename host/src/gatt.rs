@@ -394,6 +394,12 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
             AttClient::Request(AttReq::Read { .. }) | AttClient::Request(AttReq::ReadBlob { .. }) => {
                 GattEvent::Read(ReadEvent { data, server })
             }
+            #[cfg(feature = "att-queued-writes")]
+            AttClient::Request(AttReq::ExecuteWrite { flags, .. })
+                if flags == 0x01 && data.connection.with_prepare_write(|pw| pw.handle != 0) =>
+            {
+                GattEvent::Write(WriteEvent { data, server })
+            }
             _ => GattEvent::Other(OtherEvent { data, server }),
         }
     }
@@ -504,20 +510,40 @@ pub struct WriteEvent<'stack, 'server, P: PacketPool> {
 impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     /// Characteristic handle that was written
     pub fn handle(&self) -> u16 {
-        // We know that the unwrap cannot fail, because `ReadEvent` wraps
-        // ATT payloads that always do have a handle
-        unwrap!(self.data.handle())
+        match self.data.incoming() {
+            AttClient::Request(AttReq::Write { handle, .. }) | AttClient::Command(AttCmd::Write { handle, .. }) => {
+                handle
+            }
+            #[cfg(feature = "att-queued-writes")]
+            AttClient::Request(AttReq::ExecuteWrite { .. }) => self.data.connection.with_prepare_write(|pw| pw.handle),
+            _ => unreachable!(),
+        }
     }
 
     /// Raw data to be written
-    pub fn data(&self) -> &[u8] {
-        // Note: write event data is always at offset 3, right?
-        &self.data.pdu.as_ref().unwrap().as_ref()[3..]
+    pub fn with_data<R>(&self, f: impl FnOnce(usize, &[u8]) -> R) -> R {
+        match self.data.incoming() {
+            AttClient::Request(AttReq::Write { data, .. }) | AttClient::Command(AttCmd::Write { data, .. }) => {
+                f(0, data)
+            }
+            #[cfg(feature = "att-queued-writes")]
+            AttClient::Request(AttReq::ExecuteWrite { .. }) => self.data.connection.with_prepare_write(|pw| {
+                let data = &pw.buf[..pw.len as usize];
+                f(usize::from(pw.offset), data)
+            }),
+            _ => unreachable!(),
+        }
     }
 
     /// Characteristic data to be written
     pub fn value<T: FromGatt>(&self, _c: &Characteristic<T>) -> Result<T, FromGattError> {
-        T::from_gatt(self.data())
+        self.with_data(|offset, data| {
+            if offset == 0 {
+                T::from_gatt(data)
+            } else {
+                Err(FromGattError::InvalidLength)
+            }
+        })
     }
 
     /// Accept the event, making it processed by the server.
@@ -1961,7 +1987,7 @@ mod tests {
         match event {
             GattEvent::Write(write) => {
                 assert_eq!(write.handle(), characteristic.handle);
-                assert_eq!(write.data(), &payload);
+                write.with_data(|_, data| assert_eq!(data, &payload));
                 let reply = write.accept().unwrap();
                 assert!(
                     reply.att_payload().is_none(),

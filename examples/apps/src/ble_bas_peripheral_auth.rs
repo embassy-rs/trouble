@@ -162,7 +162,7 @@ where
                     }
                     GattEvent::Write(event) => {
                         if event.handle() == level.handle {
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                            event.with_data(|offset, data| info!("[gatt] Write Event to Level Characteristic at {}: {:?}", offset, data));
                         }
                         #[cfg(feature = "security")]
                         if conn.raw().security_level()?.authenticated() {
