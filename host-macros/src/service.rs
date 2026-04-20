@@ -172,7 +172,7 @@ impl ServiceBuilder {
             #(#cfg_attr)*
             let (#char_name, #(#named_descriptors),*) = {
                 #[allow(clippy::absurd_extreme_comparisons)]
-                let mut builder = if <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE <= 20 {
+                let mut builder = if <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE <= trouble_host::attribute::MAX_SMALL_DATA_SIZE {
                     service.add_characteristic_small(#uuid, [#(#properties),*], #default_value)
                 } else {
                     static #name_screaming: static_cell::StaticCell<[u8; <#ty as trouble_host::types::gatt_traits::AsGatt>::MAX_SIZE]> = static_cell::StaticCell::new();
@@ -361,7 +361,7 @@ impl ServiceBuilder {
                             #identifier_assignment {
                                 const #capacity_screaming: usize = #capacity;
                                 #[allow(clippy::absurd_extreme_comparisons)]
-                                if #capacity_screaming <= 20 {
+                                if #capacity_screaming <= trouble_host::attribute::MAX_SMALL_DATA_SIZE {
                                     builder.add_descriptor_small(
                                         #uuid,
                                         #permissions,

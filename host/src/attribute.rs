@@ -17,6 +17,9 @@ use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
 use crate::{gatt, Error, PacketPool, MAX_INVALID_DATA_LEN};
 
+/// The maximum size in bytes of an attribute using inline small data storage.
+pub const MAX_SMALL_DATA_SIZE: usize = 20;
+
 /// Characteristic properties
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -203,7 +206,7 @@ pub(crate) enum AttributeData<'d> {
         variable_len: bool,
         capacity: u8,
         len: u8,
-        value: [u8; 20],
+        value: [u8; MAX_SMALL_DATA_SIZE],
     },
     ClientSpecific,
 }
@@ -212,7 +215,7 @@ impl From<Uuid> for AttributeData<'_> {
     fn from(uuid: Uuid) -> Self {
         let raw = uuid.as_raw();
         let len = raw.len() as u8;
-        let mut value = [0u8; 20];
+        let mut value = [0u8; MAX_SMALL_DATA_SIZE];
         value[..raw.len()].copy_from_slice(raw);
         AttributeData::SmallData {
             variable_len: false,
@@ -227,7 +230,7 @@ impl From<bt_hci::uuid::BluetoothUuid16> for AttributeData<'_> {
     fn from(uuid: bt_hci::uuid::BluetoothUuid16) -> Self {
         let raw = uuid.to_le_bytes();
         let len = raw.len() as u8;
-        let mut value = [0u8; 20];
+        let mut value = [0u8; MAX_SMALL_DATA_SIZE];
         value[..raw.len()].copy_from_slice(&raw);
         AttributeData::SmallData {
             variable_len: false,
@@ -242,7 +245,7 @@ impl From<bt_hci::uuid::BluetoothUuid128> for AttributeData<'_> {
     fn from(uuid: bt_hci::uuid::BluetoothUuid128) -> Self {
         let raw = uuid.to_le_bytes();
         let len = raw.len() as u8;
-        let mut value = [0u8; 20];
+        let mut value = [0u8; MAX_SMALL_DATA_SIZE];
         value[..raw.len()].copy_from_slice(&raw);
         AttributeData::SmallData {
             variable_len: false,
@@ -257,8 +260,8 @@ impl From<CharacteristicDeclaration> for AttributeData<'_> {
     fn from(decl: CharacteristicDeclaration) -> Self {
         let uuid_raw = decl.uuid.as_raw();
         let total_len = 1 + 2 + uuid_raw.len(); // props + handle + uuid
-        debug_assert!(total_len <= 20);
-        let mut value = [0u8; 20];
+        debug_assert!(total_len <= MAX_SMALL_DATA_SIZE);
+        let mut value = [0u8; MAX_SMALL_DATA_SIZE];
         value[0] = decl.props.0;
         value[1..3].copy_from_slice(&decl.value_handle.to_le_bytes());
         value[3..3 + uuid_raw.len()].copy_from_slice(uuid_raw);
@@ -862,23 +865,23 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
         )
     }
 
-    /// Add a characteristic to this service using inline storage. The characteristic value must be 20 bytes or less.
+    /// Add a characteristic to this service using inline storage. The characteristic value must be [`MAX_SMALL_DATA_SIZE`] bytes or less.
     pub fn add_characteristic_small<T: AsGatt, U: Into<Uuid>, P: Into<CharacteristicProps>>(
         &mut self,
         uuid: U,
         props: P,
         value: T,
     ) -> CharacteristicBuilder<'_, 'd, T, M, MAX> {
-        assert!(T::MIN_SIZE <= 20);
+        assert!(T::MIN_SIZE <= MAX_SMALL_DATA_SIZE);
 
         let props: CharacteristicProps = props.into();
         let permissions = props.default_permissions();
         let bytes = value.as_gatt();
-        assert!(bytes.len() <= 20);
-        let mut value = [0; 20];
+        assert!(bytes.len() <= MAX_SMALL_DATA_SIZE);
+        let mut value = [0; MAX_SMALL_DATA_SIZE];
         value[..bytes.len()].copy_from_slice(bytes);
         let variable_len = T::MAX_SIZE != T::MIN_SIZE;
-        let capacity = T::MAX_SIZE.min(20) as u8;
+        let capacity = T::MAX_SIZE.min(MAX_SMALL_DATA_SIZE) as u8;
         let len = bytes.len() as u8;
         self.add_characteristic_internal(
             uuid.into(),
@@ -923,7 +926,7 @@ impl<'d, M: RawMutex, const MAX: usize> ServiceBuilder<'_, 'd, M, MAX> {
                     let uuid = att.data.value().and_then(|val| (val.len() == 2).then_some(val));
 
                     // Encode: handle_LE(2) + last_handle_in_group_LE(2) + optional_uuid(0 or 2)
-                    let mut value = [0u8; 20];
+                    let mut value = [0u8; MAX_SMALL_DATA_SIZE];
                     let mut w = WriteCursor::new(&mut value);
                     w.write(handle).unwrap();
                     w.write(last_handle_in_group).unwrap();
@@ -1173,21 +1176,21 @@ impl<'r, 'd, T: AsGatt + ?Sized, M: RawMutex, const MAX: usize> CharacteristicBu
         )
     }
 
-    /// Add a characteristic to this service using inline storage. The descriptor value must be 20 bytes or less.
+    /// Add a characteristic to this service using inline storage. The descriptor value must be [`MAX_SMALL_DATA_SIZE`] bytes or less.
     pub fn add_descriptor_small<DT: AsGatt, U: Into<Uuid>>(
         &mut self,
         uuid: U,
         permissions: AttPermissions,
         value: DT,
     ) -> Descriptor<DT> {
-        assert!(DT::MIN_SIZE <= 20);
+        assert!(DT::MIN_SIZE <= MAX_SMALL_DATA_SIZE);
 
         let bytes = value.as_gatt();
-        assert!(bytes.len() <= 20);
-        let mut value = [0; 20];
+        assert!(bytes.len() <= MAX_SMALL_DATA_SIZE);
+        let mut value = [0; MAX_SMALL_DATA_SIZE];
         value[..bytes.len()].copy_from_slice(bytes);
         let variable_len = DT::MAX_SIZE != DT::MIN_SIZE;
-        let capacity = DT::MAX_SIZE.min(20) as u8;
+        let capacity = DT::MAX_SIZE.min(MAX_SMALL_DATA_SIZE) as u8;
         let len = bytes.len() as u8;
         self.add_descriptor_internal(
             uuid.into(),
