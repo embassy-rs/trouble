@@ -6,8 +6,10 @@ use self::client_att_table::ClientAttTables;
 pub use self::client_att_table::{ClientAttTable, ClientAttTableBuilder, ClientAttTableView};
 use crate::att::{self, AttClient, AttCmd, AttErrorCode, AttReq};
 use crate::attribute::{Attribute, AttributeData, AttributeTable, CCCD};
+use crate::connection::Connection;
 use crate::cursor::WriteCursor;
-use crate::prelude::Connection;
+#[cfg(feature = "gatt")]
+use crate::types::gatt_traits::AsGatt;
 use crate::types::uuid::Uuid;
 use crate::{codec, Error, Identity, PacketPool};
 
@@ -780,13 +782,13 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
     /// connection is checked for notification/indication subscriptions and
     /// sent the appropriate PDU.
     #[cfg(feature = "gatt")]
-    pub async fn write_and_notify<C: crate::Controller>(
+    pub async fn write_and_notify<C: crate::Controller, T: AsGatt + ?Sized>(
         &self,
         stack: &crate::Stack<'_, C, P>,
         value_handle: u16,
-        data: &[u8],
+        data: &T,
     ) -> Result<(), Error> {
-        self.att_table.write(value_handle, 0, data)?;
+        self.att_table.write(value_handle, 0, data.as_gatt())?;
 
         // Check if the next handle is a CCCD
         let cccd_handle = value_handle + 1;
@@ -796,18 +798,42 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
             return Ok(());
         }
 
+        self.notify(stack, value_handle, data).await
+    }
+
+    /// Send notifications/indications to all connected peers that have subscribed
+    /// via the CCCD without updating the value stored in the attribute table.
+    ///
+    /// If the attribute at `value_handle + 1` is not a CCCD (UUID 0x2902), an error
+    /// is returned. Each connection is checked for notification/indication
+    /// subscriptions and sent the appropriate PDU.
+    #[cfg(feature = "gatt")]
+    pub async fn notify<C: crate::Controller, T: AsGatt + ?Sized>(
+        &self,
+        stack: &crate::Stack<'_, C, P>,
+        value_handle: u16,
+        data: &T,
+    ) -> Result<(), Error> {
+        // Check if the next handle is a CCCD
+        let cccd_handle = value_handle + 1;
+        if self.att_table.uuid(cccd_handle)
+            != Some(bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION.into())
+        {
+            return Err(Error::InvalidValue);
+        }
+
+        let data = data.as_gatt();
         for conn in stack.connections() {
-            if self.should_notify(&conn, cccd_handle) {
-                let uns = att::AttUns::Notify {
+            if self.should_indicate(&conn, cccd_handle) {
+                let uns = att::AttUns::Indicate {
                     handle: value_handle,
                     data,
                 };
                 if let Ok(pdu) = crate::gatt::assemble(&conn, att::AttServer::Unsolicited(uns)) {
                     conn.send(pdu).await;
                 }
-            }
-            if self.should_indicate(&conn, cccd_handle) {
-                let uns = att::AttUns::Indicate {
+            } else if self.should_notify(&conn, cccd_handle) {
+                let uns = att::AttUns::Notify {
                     handle: value_handle,
                     data,
                 };

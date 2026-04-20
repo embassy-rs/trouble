@@ -162,7 +162,9 @@ where
                     }
                     GattEvent::Write(event) => {
                         if event.handle() == level.handle {
-                            event.with_data(|offset, data| info!("[gatt] Write Event to Level Characteristic at {}: {:?}", offset, data));
+                            event.with_data(|offset, data| {
+                                info!("[gatt] Write Event to Level Characteristic at {}: {:?}", offset, data)
+                            });
                         }
                         #[cfg(feature = "security")]
                         if conn.raw().security_level()?.authenticated() {
@@ -232,7 +234,7 @@ async fn custom_task<P: PacketPool>(server: &Server<'_>, conn: &GattConnection<'
     let level = server.battery_service.level;
     loop {
         tick = tick.wrapping_add(1);
-        if level.notify(conn, &tick).await.is_err() {
+        if level.notify(conn, &tick, true).await.is_err() {
             break;
         };
         Timer::after_secs(2).await;

@@ -983,14 +983,23 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
 }
 
 impl<T: AsGatt + ?Sized> Characteristic<T> {
-    /// Write a value to a characteristic, and notify a connection with the new value of the characteristic.
+    /// Send a notification to `connection` with a new `value` for the characteristic.
+    ///
+    /// If `store` is true, the new value will be written to the table before sending the notification.
     ///
     /// If the provided connection has not subscribed for this characteristic, it will not be notified.
     ///
     /// If the characteristic does not support notifications, an error is returned.
-    pub async fn notify<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>, value: &T) -> Result<(), Error> {
+    pub async fn notify<P: PacketPool>(
+        &self,
+        connection: &GattConnection<'_, '_, P>,
+        value: &T,
+        store: bool,
+    ) -> Result<(), Error> {
         let server = connection.server;
-        connection.set(self, value)?;
+        if store {
+            connection.set(self, value)?;
+        }
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
@@ -1010,7 +1019,9 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         Ok(())
     }
 
-    /// Write a value to a characteristic, and indicate a connection with the new value of the characteristic.
+    /// Send an indication to `connection` with a new `value` for the characteristic.
+    ///
+    /// If `store` is true, the new value will be written to the table before sending the indication.
     ///
     /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
     ///
@@ -1022,9 +1033,12 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         &self,
         connection: &GattConnection<'_, '_, P>,
         value: &T,
+        store: bool,
     ) -> Result<(), Error> {
         let server = connection.server;
-        connection.set(self, value)?;
+        if store {
+            connection.set(self, value)?;
+        }
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
