@@ -983,6 +983,14 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
 }
 
 impl<T: AsGatt + ?Sized> Characteristic<T> {
+    /// Check if notifications should be sent to `connection` for this characteristic.
+    pub fn should_notify<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>) -> bool {
+        let Some(cccd_handle) = self.cccd_handle else {
+            return false;
+        };
+        connection.server.should_notify(connection.raw(), cccd_handle)
+    }
+
     /// Send a notification to `connection` with a new `value` for the characteristic.
     ///
     /// If `store` is true, the new value will be written to the table before sending the notification.
@@ -1017,6 +1025,14 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
         conn.send(pdu).await;
         Ok(())
+    }
+
+    /// Check if indications should be sent to `connection` for this characteristic.
+    pub fn should_indicate<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>) -> bool {
+        let Some(cccd_handle) = self.cccd_handle else {
+            return false;
+        };
+        connection.server.should_notify(connection.raw(), cccd_handle)
     }
 
     /// Send an indication to `connection` with a new `value` for the characteristic.
