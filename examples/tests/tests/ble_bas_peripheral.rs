@@ -9,7 +9,7 @@ async fn ble_bas_peripheral_nrf52() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(run_bas_peripheral_test(
-            &[("target", "nrf52"), ("board", "microbit")],
+            &[("target", "nrf52")],
             firmware,
         ))
         .await;

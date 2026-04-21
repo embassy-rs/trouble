@@ -9,7 +9,7 @@ async fn ble_l2cap_peripheral_nrf52() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(run_l2cap_peripheral_test(
-            &[("target", "nrf52"), ("board", "microbit")],
+            &[("target", "nrf52")],
             firmware,
         ))
         .await;
