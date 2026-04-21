@@ -76,5 +76,4 @@ echo "Example tests"
 
 export PROBE_CONFIG=$(jq --arg token "$HIL_TOKEN" '.server.token = $token' .ci/config.json)
 
-echo "Example tests"
 cargo test --manifest-path examples/tests/Cargo.toml -- --nocapture
