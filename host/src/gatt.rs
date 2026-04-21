@@ -1935,8 +1935,7 @@ mod tests {
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
         unwrap!(mgr.connect(
             ConnHandle::new(0),
-            AddrKind::RANDOM,
-            BdAddr::new(ADDR_1),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
             LeConnRole::Peripheral,
             ConnParams::new(),
         ));

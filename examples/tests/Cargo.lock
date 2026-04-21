@@ -91,15 +91,16 @@ checksum = "34efbcccd345379ca2868b2b2c9d3782e9cc58ba87bc7d79d5b53d9c9ae6f25d"
 
 [[package]]
 name = "bt-hci"
-version = "0.8.0"
-source = "git+https://github.com/embassy-rs/bt-hci.git?rev=f6f359650e671d71c96b4354a6b5e26ea3918031#f6f359650e671d71c96b4354a6b5e26ea3918031"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "211713d2e9fb4793ce4360a712c0764264aff6be48932ccf02ca2a331c0436a9"
 dependencies = [
  "btuuid",
- "embassy-sync 0.7.2",
- "embedded-io 0.7.1",
- "embedded-io-async 0.7.0",
+ "embassy-sync",
+ "embedded-io",
+ "embedded-io-async",
  "futures-intrusive",
- "heapless 0.8.0",
+ "heapless 0.9.1",
 ]
 
 [[package]]
@@ -260,27 +261,13 @@ checksum = "dc2d050bdc5c21e0862a89256ed8029ae6c290a93aecefc73084b3002cdebb01"
 
 [[package]]
 name = "embassy-sync"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73974a3edbd0bd286759b3d483540f0ebef705919a5f56f4fc7709066f71689b"
-dependencies = [
- "cfg-if",
- "critical-section",
- "embedded-io-async 0.6.1",
- "futures-core",
- "futures-sink",
- "heapless 0.8.0",
-]
-
-[[package]]
-name = "embassy-sync"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bbd85cf5a5ae56bdf26f618364af642d1d0a4e245cdd75cd9aabda382f65a81"
 dependencies = [
  "cfg-if",
  "critical-section",
- "embedded-io-async 0.7.0",
+ "embedded-io-async",
  "futures-core",
  "futures-sink",
  "heapless 0.9.1",
@@ -349,12 +336,6 @@ dependencies = [
 
 [[package]]
 name = "embedded-io"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
-
-[[package]]
-name = "embedded-io"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
@@ -365,18 +346,9 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c900a1c087f1f7d17cdc84a1290df91521cd90933efa76d68e568385d889f2f4"
 dependencies = [
- "embedded-io 0.7.1",
- "embedded-io-async 0.7.0",
+ "embedded-io",
+ "embedded-io-async",
  "tokio",
-]
-
-[[package]]
-name = "embedded-io-async"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ff09972d4073aa8c299395be75161d582e7629cd663171d62af73c8d50dba3f"
-dependencies = [
- "embedded-io 0.6.1",
 ]
 
 [[package]]
@@ -385,7 +357,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2564b9f813c544241430e147d8bc454815ef9ac998878d30cc3055449f7fd4c0"
 dependencies = [
- "embedded-io 0.7.1",
+ "embedded-io",
 ]
 
 [[package]]
@@ -1916,11 +1888,11 @@ dependencies = [
  "anyhow",
  "bt-hci",
  "critical-section",
- "embassy-sync 0.7.2",
+ "embassy-sync",
  "embassy-time",
- "embedded-io 0.7.1",
+ "embedded-io",
  "embedded-io-adapters",
- "embedded-io-async 0.7.0",
+ "embedded-io-async",
  "futures",
  "heapless 0.9.1",
  "hilbench-agent",
@@ -1943,9 +1915,9 @@ version = "0.6.0"
 dependencies = [
  "bt-hci",
  "embassy-futures",
- "embassy-sync 0.8.0",
+ "embassy-sync",
  "embassy-time",
- "embedded-io 0.7.1",
+ "embedded-io",
  "futures",
  "heapless 0.9.1",
  "log",

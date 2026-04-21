@@ -107,12 +107,13 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.8.0"
-source = "git+https://github.com/embassy-rs/bt-hci.git?rev=f6f359650e671d71c96b4354a6b5e26ea3918031#f6f359650e671d71c96b4354a6b5e26ea3918031"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "211713d2e9fb4793ce4360a712c0764264aff6be48932ccf02ca2a331c0436a9"
 dependencies = [
  "btuuid",
  "defmt 1.0.1",
- "embassy-sync 0.7.2",
+ "embassy-sync",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
@@ -483,7 +484,7 @@ dependencies = [
  "defmt 1.0.1",
  "embassy-futures",
  "embassy-hal-internal 0.4.0",
- "embassy-sync 0.8.0",
+ "embassy-sync",
  "embassy-time",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
@@ -569,7 +570,7 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-futures",
  "embassy-hal-internal 0.5.0",
- "embassy-sync 0.8.0",
+ "embassy-sync",
  "embassy-time-driver",
  "embassy-time-queue-utils",
  "embassy-usb-driver",
@@ -584,20 +585,6 @@ dependencies = [
  "nrf-pac",
  "rand_core 0.6.4",
  "rand_core 0.9.5",
-]
-
-[[package]]
-name = "embassy-sync"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73974a3edbd0bd286759b3d483540f0ebef705919a5f56f4fc7709066f71689b"
-dependencies = [
- "cfg-if",
- "critical-section",
- "embedded-io-async 0.6.1",
- "futures-core",
- "futures-sink",
- "heapless 0.8.0",
 ]
 
 [[package]]
@@ -1121,7 +1108,7 @@ dependencies = [
  "critical-section",
  "defmt 1.0.1",
  "embassy-nrf",
- "embassy-sync 0.8.0",
+ "embassy-sync",
  "embedded-io 0.7.1",
  "embedded-storage",
  "embedded-storage-async",
@@ -1157,7 +1144,7 @@ dependencies = [
  "defmt 1.0.1",
  "embassy-hal-internal 0.5.0",
  "embassy-nrf",
- "embassy-sync 0.8.0",
+ "embassy-sync",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "nrf-mpsl",
@@ -1701,7 +1688,7 @@ dependencies = [
  "bt-hci",
  "defmt 1.0.1",
  "embassy-futures",
- "embassy-sync 0.8.0",
+ "embassy-sync",
  "embassy-time",
  "embedded-hal-async",
  "embedded-storage-async",
@@ -1722,7 +1709,7 @@ dependencies = [
  "cmac",
  "defmt 1.0.1",
  "embassy-futures",
- "embassy-sync 0.8.0",
+ "embassy-sync",
  "embassy-time",
  "embedded-io 0.7.1",
  "futures",
@@ -1761,7 +1748,7 @@ dependencies = [
  "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
- "embassy-sync 0.8.0",
+ "embassy-sync",
  "embassy-time",
  "futures",
  "nrf-mpsl",
