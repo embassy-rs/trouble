@@ -115,4 +115,6 @@ async fn run_l2cap_central_test(labels: &[(&str, &str)], firmware: &str) {
     });
 
     await_test(dut, peripheral, token2).await;
+    // DUT task is awaited inside `await_test`, so the probe has been dropped here.
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 }
