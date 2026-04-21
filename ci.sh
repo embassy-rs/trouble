@@ -72,9 +72,9 @@ export RUST_TEST_THREADS=1
 echo "Integration tests"
 cargo test --manifest-path host/Cargo.toml --features log --test '*' -- --nocapture
 
-# echo "Example tests"
-# 
-# export PROBE_CONFIG=$(jq --arg token "$HIL_TOKEN" '.server.token = $token' .ci/config.json)
-# 
-# echo "Example tests"
-# cargo test --manifest-path examples/tests/Cargo.toml -- --nocapture
+echo "Example tests"
+
+export PROBE_CONFIG=$(jq --arg token "$HIL_TOKEN" '.server.token = $token' .ci/config.json)
+
+echo "Example tests"
+cargo test --manifest-path examples/tests/Cargo.toml -- --nocapture
