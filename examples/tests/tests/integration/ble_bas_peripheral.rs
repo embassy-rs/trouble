@@ -9,7 +9,7 @@ async fn ble_bas_peripheral_nrf52() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(run_bas_peripheral_test(
-            &[("target", "nrf52"), ("board", "microbit")],
+            &[("target", "nrf52")],
             firmware,
         ))
         .await;
@@ -97,4 +97,6 @@ async fn run_bas_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     });
 
     await_test(dut, central, token2).await;
+    // DUT task is awaited inside `await_test`, so the probe has been dropped here.
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 }

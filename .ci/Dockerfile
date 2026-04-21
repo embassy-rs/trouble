@@ -10,7 +10,7 @@ RUN cargo install probe-rs-tools --git https://github.com/probe-rs/probe-rs --lo
 FROM debian:trixie-slim
 
 RUN apt-get update && \
-    apt-get install -y git curl wget iproute2 iputils-ping jq strace build-essential python3 libusb-1.0-0 file aha asciidoctor pkg-config libssl-dev && \
+    apt-get install -y git curl wget iproute2 iputils-ping jq strace build-essential python3 libusb-1.0-0 file aha asciidoctor pkg-config libssl-dev libclang-dev && \
     apt-get clean
 
 RUN \

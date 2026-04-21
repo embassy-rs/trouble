@@ -52,7 +52,6 @@ embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev="
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev="82e83a4bdd269ffb643a200da46f1f415e6548db" }
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "69744a721ec59e985b2c557937eae01593c1997b"}
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "69744a721ec59e985b2c557937eae01593c1997b"}
-bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "f6f359650e671d71c96b4354a6b5e26ea3918031" }
 #nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 #nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
 

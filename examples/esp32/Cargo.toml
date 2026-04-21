@@ -70,4 +70,3 @@ esp-println =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba
 esp-radio =             { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
 esp-rtos =              { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
 esp-storage =           { git = "https://github.com/lulf/esp-hal.git", rev="49ba429e34266bcac867b968e0a55b433d5a7c37" }
-bt-hci =                { git = "https://github.com/embassy-rs/bt-hci.git", rev = "f6f359650e671d71c96b4354a6b5e26ea3918031" }

@@ -57,4 +57,3 @@ debug = 2
 # cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
 # embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
 # embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "ed8d4277cd8165c8b280ccbb1501534056691b6a" }
-bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "f6f359650e671d71c96b4354a6b5e26ea3918031" }

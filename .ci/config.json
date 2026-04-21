@@ -5,11 +5,11 @@
   },
   "targets": [
     {
-      "chip": "nRF52833_xxAA",
-      "probe": "0d28:0204:9904360258994e450055901000000046000000009796990b",
+      "chip": "nRF52832_xxAA",
+      "probe": "1366:1015:000682808385", 
       "labels": {
         "target": "nrf52",
-        "board": "microbit"
+        "board": "nrf52dk"
       }
     }
   ]
