@@ -85,7 +85,10 @@ where
 
 impl Transport {
     pub async fn new(dev: Device) -> Result<Self, nusb::Error> {
-        dev.set_configuration(1).await?;
+        // Ignore errors because this method fails on windows where the WinUSB driver does not
+        // have permission to set the configuration for the device.
+        // Setting the configuration appears to be required on MacOS though, so we still attempt it.
+        let _ = dev.set_configuration(1).await;
         let interface = dev.detach_and_claim_interface(0).await?;
         let event_in = interface.endpoint(ENDPOINT_EVENT_IN)?;
         let acl_in = interface.endpoint(ENDPOINT_ACL_IN)?;
