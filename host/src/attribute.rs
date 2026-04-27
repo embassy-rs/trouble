@@ -1004,9 +1004,25 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         value: &T,
         store: bool,
     ) -> Result<(), Error> {
+        self.notify_raw(connection, value.as_gatt(), store).await
+    }
+
+    /// Send a notification to `connection` with a new `value` for the characteristic.
+    ///
+    /// If `store` is true, the new value will be written to the table before sending the notification.
+    ///
+    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
+    ///
+    /// If the characteristic does not support notifications, an error is returned.
+    pub async fn notify_raw<P: PacketPool>(
+        &self,
+        connection: &GattConnection<'_, '_, P>,
+        value: &[u8],
+        store: bool,
+    ) -> Result<(), Error> {
         let server = connection.server;
         if store {
-            connection.set(self, value)?;
+            server.set(connection.raw(), self.handle, value)?;
         }
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
@@ -1020,7 +1036,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let uns = AttUns::Notify {
             handle: self.handle,
-            data: value.as_gatt(),
+            data: value,
         };
         let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
         conn.send(pdu).await;
@@ -1051,9 +1067,28 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         value: &T,
         store: bool,
     ) -> Result<(), Error> {
+        self.indicate_raw(connection, value.as_gatt(), store).await
+    }
+
+    /// Send an indication to `connection` with a new `value` for the characteristic.
+    ///
+    /// If `store` is true, the new value will be written to the table before sending the indication.
+    ///
+    /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
+    ///
+    /// If the characteristic does not support indications, an error is returned.
+    ///
+    /// This function does not block for the confirmation to the indication message, if the client sends a confirmation
+    /// this will be seen on the [GattConnection] as a [crate::att::AttClient::Confirmation] event.
+    pub async fn indicate_raw<P: PacketPool>(
+        &self,
+        connection: &GattConnection<'_, '_, P>,
+        value: &[u8],
+        store: bool,
+    ) -> Result<(), Error> {
         let server = connection.server;
         if store {
-            connection.set(self, value)?;
+            server.set(connection.raw(), self.handle, value)?;
         }
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
@@ -1067,7 +1102,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let uns = AttUns::Indicate {
             handle: self.handle,
-            data: value.as_gatt(),
+            data: value,
         };
         let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
         conn.send(pdu).await;
@@ -1108,6 +1143,18 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         T: FromGatt,
     {
         server.table().get(self)
+    }
+
+    /// Access the raw byte value of the characteristic.
+    pub fn with_raw_value<M: RawMutex, P: PacketPool, R, const AT: usize, const CN: usize>(
+        &self,
+        server: &AttributeServer<'_, M, P, AT, CN>,
+        f: impl FnOnce(&[u8]) -> R,
+    ) -> Option<R> {
+        server
+            .table()
+            .with_attribute(self.handle, |att| att.data.value().map(f))
+            .flatten()
     }
 
     /// Returns the attribute handle for the characteristic's client characteristic configuration descriptor (if available)
