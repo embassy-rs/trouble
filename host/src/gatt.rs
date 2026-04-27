@@ -937,7 +937,7 @@ const MAX_NOTIF: usize = config::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
 const NOTIF_QSIZE: usize = config::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
 
 /// BT Core Spec Vol 3, Part F, Section 3.3.3: ATT transaction timeout.
-const ATT_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const ATT_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A GATT client capable of using the GATT protocol.
 pub struct GattClient<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> {

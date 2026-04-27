@@ -754,6 +754,9 @@ where
                 } else {
                     #[cfg(feature = "gatt")]
                     match a {
+                        Ok(att::Att::Client(AttClient::Confirmation(_))) => {
+                            self.connections.signal_indication_confirmation(acl.handle());
+                        }
                         Ok(att::Att::Client(_)) => {
                             self.connections.post_gatt(acl.handle(), pdu)?;
                         }

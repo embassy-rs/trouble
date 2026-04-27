@@ -7,11 +7,13 @@ use bt_hci::uuid::declarations::{CHARACTERISTIC, INCLUDE, PRIMARY_SERVICE, SECON
 use bt_hci::uuid::descriptors::CLIENT_CHARACTERISTIC_CONFIGURATION;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_time::with_timeout;
 use heapless::Vec;
 
 use crate::att::{AttErrorCode, AttUns};
 use crate::attribute_server::AttributeServer;
 use crate::cursor::{ReadCursor, WriteCursor};
+use crate::gatt::ATT_TRANSACTION_TIMEOUT;
 use crate::prelude::{AsGatt, FixedGattValue, FromGatt, GattConnection, SecurityLevel};
 use crate::types::gatt_traits::FromGattError;
 pub use crate::types::uuid::Uuid;
@@ -1059,8 +1061,11 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If the characteristic does not support indications, an error is returned.
     ///
-    /// This function does not block for the confirmation to the indication message, if the client sends a confirmation
-    /// this will be seen on the [GattConnection] as a [crate::att::AttClient::Confirmation] event.
+    /// Blocks until the peer's `HandleValueConfirmation` is received, for up to 30 seconds
+    /// (BT Core Spec Vol 3, Part F, Section 3.3.3 ATT transaction timeout). On timeout the
+    /// connection is closed and `Error::Timeout` is returned. Concurrent calls on the same
+    /// connection are serialized; callers do not need to coordinate. Returns
+    /// `Error::Disconnected` if the connection is dropped while waiting.
     pub async fn indicate<P: PacketPool>(
         &self,
         connection: &GattConnection<'_, '_, P>,
@@ -1078,8 +1083,11 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If the characteristic does not support indications, an error is returned.
     ///
-    /// This function does not block for the confirmation to the indication message, if the client sends a confirmation
-    /// this will be seen on the [GattConnection] as a [crate::att::AttClient::Confirmation] event.
+    /// Blocks until the peer's `HandleValueConfirmation` is received, for up to 30 seconds
+    /// (BT Core Spec Vol 3, Part F, Section 3.3.3 ATT transaction timeout). On timeout the
+    /// connection is closed and `Error::Timeout` is returned. Concurrent calls on the same
+    /// connection are serialized; callers do not need to coordinate. Returns
+    /// `Error::Disconnected` if the connection is dropped while waiting.
     pub async fn indicate_raw<P: PacketPool>(
         &self,
         connection: &GattConnection<'_, '_, P>,
@@ -1100,13 +1108,25 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         self.authorize_unsolicited(connection, cccd_handle).await?;
 
+        conn.acquire_indication_slot().await?;
+        let _drop = crate::host::OnDrop::new(|| conn.release_indication_slot());
+
         let uns = AttUns::Indicate {
             handle: self.handle,
             data: value,
         };
         let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
         conn.send(pdu).await;
-        Ok(())
+
+        match with_timeout(ATT_TRANSACTION_TIMEOUT, conn.wait_indication_confirmation()).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                warn!("[gatt] ATT transaction timeout (30s) waiting for indication confirmation, disconnecting");
+                conn.disconnect();
+                Err(Error::Timeout)
+            }
+        }
     }
 
     /// Set the value of the characteristic in the provided attribute server.
