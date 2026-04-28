@@ -17,6 +17,19 @@ impl<P> Pdu<P> {
     }
 }
 
+impl<P: Packet> core::fmt::Debug for Pdu<P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("Pdu").field(&&self.packet.as_ref()[..self.len]).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P: Packet> defmt::Format for Pdu<P> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "Pdu({=[u8]:02x})", &self.packet.as_ref()[..self.len])
+    }
+}
+
 impl<P: Packet> AsRef<[u8]> for Pdu<P> {
     fn as_ref(&self) -> &[u8] {
         &self.packet.as_ref()[..self.len]

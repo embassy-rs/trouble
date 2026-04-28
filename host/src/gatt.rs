@@ -36,6 +36,8 @@ use crate::BondInformation;
 use crate::{config, BleHostError, Error, PacketPool, Stack, MAX_INVALID_DATA_LEN};
 
 /// A GATT connection event.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     /// Connection disconnected.
     Disconnected {
@@ -311,6 +313,19 @@ pub struct GattData<'stack, P: PacketPool> {
     connection: Connection<'stack, P>,
 }
 
+impl<P: PacketPool> core::fmt::Debug for GattData<'_, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("GattData").field(&self.pdu).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P: PacketPool> defmt::Format for GattData<'_, P> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "GattData({})", &self.pdu)
+    }
+}
+
 impl<'stack, P: PacketPool> GattData<'stack, P> {
     pub(crate) const fn new(pdu: Pdu<P::Packet>, connection: Connection<'stack, P>) -> Self {
         Self {
@@ -361,6 +376,8 @@ impl<'stack, P: PacketPool> GattData<'stack, P> {
 }
 
 /// An event returned while processing GATT requests.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GattEvent<'stack, 'server, P: PacketPool> {
     /// A characteristic was read.
     Read(ReadEvent<'stack, 'server, P>),
@@ -465,6 +482,19 @@ pub struct ReadEvent<'stack, 'server, P: PacketPool> {
     server: &'server dyn DynamicAttributeServer<P>,
 }
 
+impl<P: PacketPool> core::fmt::Debug for ReadEvent<'_, '_, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("ReadEvent").field(&self.data).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P: PacketPool> defmt::Format for ReadEvent<'_, '_, P> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ReadEvent({})", &self.data)
+    }
+}
+
 impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
     /// Characteristic handle that was read
     pub fn handle(&self) -> u16 {
@@ -544,6 +574,19 @@ impl<P: PacketPool> Drop for ReadEvent<'_, '_, P> {
 pub struct WriteEvent<'stack, 'server, P: PacketPool> {
     data: GattData<'stack, P>,
     server: &'server dyn DynamicAttributeServer<P>,
+}
+
+impl<P: PacketPool> core::fmt::Debug for WriteEvent<'_, '_, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("WriteEvent").field(&self.data).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P: PacketPool> defmt::Format for WriteEvent<'_, '_, P> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "WriteEvent({})", &self.data)
+    }
 }
 
 impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
@@ -670,6 +713,19 @@ pub struct OtherEvent<'stack, 'server, P: PacketPool> {
     server: &'server dyn DynamicAttributeServer<P>,
 }
 
+impl<P: PacketPool> core::fmt::Debug for OtherEvent<'_, '_, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("OtherEvent").field(&self.data).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P: PacketPool> defmt::Format for OtherEvent<'_, '_, P> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "OtherEvent({})", &self.data)
+    }
+}
+
 impl<'stack, P: PacketPool> OtherEvent<'stack, '_, P> {
     /// Accept the event, making it processed by the server.
     ///
@@ -713,6 +769,19 @@ pub struct NotAllowedEvent<'stack, 'server, P: PacketPool> {
     data: GattData<'stack, P>,
     err: AttErrorCode,
     server: &'server dyn DynamicAttributeServer<P>,
+}
+
+impl<P: PacketPool> core::fmt::Debug for NotAllowedEvent<'_, '_, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("NotAllowedEvent").field(&self.data).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P: PacketPool> defmt::Format for NotAllowedEvent<'_, '_, P> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "NotAllowedEvent({})", &self.data)
+    }
 }
 
 impl<'stack, P: PacketPool> NotAllowedEvent<'stack, '_, P> {
