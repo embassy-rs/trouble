@@ -4,7 +4,6 @@ use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::Timer;
 use embedded_storage_async::nor_flash::NorFlash;
-use rand_core::{CryptoRng, RngCore};
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::{MapConfig, MapStorage, PostcardValue};
 use serde::{Deserialize, Serialize};
@@ -65,10 +64,9 @@ struct StoredBondInformation(BondInformation);
 impl<'a> PostcardValue<'a> for StoredBondInformation {}
 
 /// Run the BLE stack.
-pub async fn run<C, RNG, S>(controller: C, random_generator: &mut RNG, storage: &mut S, storage_range: Range<u32>)
+pub async fn run<C, S>(controller: C, storage: &mut S, storage_range: Range<u32>)
 where
     C: Controller,
-    RNG: RngCore + CryptoRng,
     S: NorFlash,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
@@ -79,7 +77,6 @@ where
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(random_generator)
         .build();
 
     let mut map_storage = MapStorage::<(), _, _>::new(storage, MapConfig::new(storage_range), NoCache::new());

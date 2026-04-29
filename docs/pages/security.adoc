@@ -10,7 +10,6 @@ Security requires a cryptographically secure random seed:
 ----
 let stack = trouble_host::new(controller, &mut resources)
     .set_random_address(address)
-    .set_random_generator_seed(&mut rng)  // Must implement RngCore + CryptoRng
     .build();
 ----
 

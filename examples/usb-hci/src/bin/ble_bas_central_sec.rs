@@ -1,6 +1,5 @@
 use bt_hci::controller::ExternalController;
 use bt_hci_usb::Transport;
-use rand::rngs::OsRng;
 use trouble_example_apps::ble_bas_central_sec;
 
 #[tokio::main(flavor = "current_thread")]
@@ -13,5 +12,5 @@ async fn main() {
     let transport = Transport::new(device).await.unwrap();
     let controller = ExternalController::<_, 8>::new(transport);
 
-    ble_bas_central_sec::run(controller, &mut OsRng).await;
+    ble_bas_central_sec::run(controller).await;
 }

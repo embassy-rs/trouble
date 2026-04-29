@@ -30,17 +30,16 @@
 //!
 //! ```no_run
 //! use embedded_io_async::{Read, Write};
-//! use rand_core::{CryptoRng, RngCore};
+//! use trouble_host::prelude::IdentityResolvingKey;
 //! use trouble_tester_app::{run, BtpConfig, Controller};
 //!
-//! async fn run_btp<C, R, W, RNG>(controller: C, reader: R, writer: W, rng: RNG)
+//! async fn run_btp<C, R, W>(controller: C, reader: R, writer: W, irk: IdentityResolvingKey)
 //! where
 //!     C: Controller,
 //!     R: Read,
 //!     W: Write,
-//!     RNG: RngCore + CryptoRng,
 //! {
-//!     let _ = run(controller, reader, writer, BtpConfig::default(), rng).await;
+//!     let _ = run(controller, reader, writer, BtpConfig::default(), irk).await;
 //! }
 //! ```
 
@@ -64,7 +63,6 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, DynamicSender};
 use embassy_sync::watch::Watch;
 use embedded_io_async::{Read, Write};
-use rand_core::{CryptoRng, RngCore};
 use static_cell::StaticCell;
 use trouble_host::OobData;
 use trouble_host::prelude::*;
@@ -298,18 +296,17 @@ impl Default for BtpConfig<'_> {
 /// * `C` - Controller type
 /// * `R` - Reader type
 /// * `W` - Writer type
-pub async fn run<C, R, W, RNG>(
+pub async fn run<C, R, W>(
     controller: C,
     reader: R,
     writer: W,
     config: BtpConfig<'_>,
-    mut random_generator: RNG,
+    irk: IdentityResolvingKey,
 ) -> Result<(), Error<C::Error>>
 where
     C: Controller,
     R: Read,
     W: Write,
-    RNG: RngCore + CryptoRng,
 {
     use core::sync::atomic::{AtomicBool, Ordering};
     static CALLED: AtomicBool = AtomicBool::new(false);
@@ -321,11 +318,6 @@ where
 
     let scan_mode = Cell::new(ScanMode::default());
     let oob = OobState::new();
-
-    // Generate an IRK for privacy support (used when SET_PRIVACY is received)
-    let mut irk_bytes = [0u8; 16];
-    random_generator.fill_bytes(&mut irk_bytes);
-    let irk = trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk_bytes).unwrap();
 
     let mut table = AttributeTable::<NoopRawMutex, ATTRIBUTE_TABLE_SIZE>::new();
     init_table(&mut table, &config);
@@ -344,9 +336,7 @@ where
 
     // Build the stack, applying deferred GAP settings to the builder
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let mut builder = trouble_host::new(controller, &mut resources)
-        .set_random_address(config.address)
-        .set_random_generator_seed(&mut random_generator);
+    let mut builder = trouble_host::new(controller, &mut resources).set_random_address(config.address);
 
     if let Some(ref listener_config) = pre.l2cap_listener {
         builder = builder.register_l2cap_spsm(listener_config.spsm);

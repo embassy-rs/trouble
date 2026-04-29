@@ -3,7 +3,6 @@
 
 use embassy_executor::Spawner;
 use esp_hal::clock::CpuClock;
-use esp_hal::rng::{Trng, TrngSource};
 use esp_hal::timer::timg::TimerGroup;
 use esp_radio::ble::controller::BleConnector;
 use esp_storage::FlashStorage;
@@ -28,9 +27,6 @@ async fn main(_s: Spawner) {
         software_interrupt.software_interrupt0,
     );
 
-    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
-    let mut trng = Trng::try_new().unwrap();
-
     let bluetooth = peripherals.BT;
     let connector = BleConnector::new(bluetooth, Default::default()).unwrap();
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
@@ -42,5 +38,5 @@ async fn main(_s: Spawner) {
     let storage_range = (capacity - erase_size * 2)..capacity;
     let mut flash = embassy_embedded_hal::adapter::BlockingAsync::new(flash_storage);
 
-    ble_bas_peripheral_bonding::run(controller, &mut trng, &mut flash, storage_range).await;
+    ble_bas_peripheral_bonding::run(controller, &mut flash, storage_range).await;
 }

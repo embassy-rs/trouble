@@ -2326,7 +2326,6 @@ dependencies = [
  "fixed",
  "heapless 0.9.3",
  "log",
- "rand_core 0.6.4",
  "sequential-storage",
  "serde",
  "static_cell",
