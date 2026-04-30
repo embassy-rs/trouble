@@ -9,20 +9,29 @@
 
 set -euo pipefail
 
+export RUSTUP_HOME=/ci/cache/rustup
+export CARGO_HOME=/ci/cache/cargo
 export CARGO_TARGET_DIR=/ci/cache/target
-export CARGO_NET_GIT_FETCH_WITH_CLI=true
+export PATH=$CARGO_HOME/bin:$PATH
 
 # Read probe-rs token from bender's mounted secrets directory
 if [[ -f /ci/secrets/probe-rs-token ]]; then
-    echo "Got HIL token!"
+    echo Got HIL token!
     export HIL_TOKEN=$(cat /ci/secrets/probe-rs-token)
 fi
+
+# needed for "dumb HTTP" transport support
+# used when pointing stm32-metapac to a CI-built one.
+export CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # Restore lockfiles
 if [ -f /ci/cache/lockfiles.tar ]; then
     echo Restoring lockfiles...
     tar xf /ci/cache/lockfiles.tar
 fi
+
+# hashtime restore /ci/cache/filetime.json || true
+# hashtime save /ci/cache/filetime.json
 
 # Run the shared build/lint/test script
 ./ci.sh
