@@ -30,8 +30,10 @@ if [ -f /ci/cache/lockfiles.tar ]; then
     tar xf /ci/cache/lockfiles.tar
 fi
 
-# hashtime restore /ci/cache/filetime.json || true
-# hashtime save /ci/cache/filetime.json
+cargo install --git https://github.com/embassy-rs/hashtime --locked --rev cfb0a6d8b69adb704ceb58ff81577718913a42a1
+
+hashtime restore /ci/cache/filetime.json || true
+hashtime save /ci/cache/filetime.json
 
 # Run the shared build/lint/test script
 ./ci.sh
