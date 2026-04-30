@@ -35,6 +35,15 @@ impl LongTermKey {
     pub const fn to_le_bytes(self) -> [u8; 16] {
         self.0.to_le_bytes()
     }
+
+    /// Derives a Long Term Key from a 128-bit Encryption Root (ER) and 16-bit
+    /// Diversifier (DIV) ([Vol 3] Part H, Section B.2.2).
+    ///
+    ///   LTK = d1(ER, DIV, 0)
+    #[inline]
+    pub fn from_encryption_root(er: u128, div: u16) -> Self {
+        Self(d1(er, div, 0))
+    }
 }
 
 impl From<&LongTermKey> for u128 {
@@ -78,6 +87,15 @@ impl IdentityResolvingKey {
     #[inline(always)]
     pub const fn from_le_bytes(k: [u8; 16]) -> Option<Self> {
         Self::new(u128::from_le_bytes(k))
+    }
+
+    /// Derives an Identity Resolving Key from a 128-bit Identity Root (IR)
+    /// ([Vol 3] Part H, Section B.2.3).
+    ///
+    ///   IRK = d1(IR, 1, 0)
+    #[inline]
+    pub fn from_identity_root(ir: u128) -> Option<Self> {
+        Self::new(d1(ir, 1, 0))
     }
 
     /// Returns the Identity Resolving Key as `[u8; 16]` value in little endian.
@@ -623,6 +641,22 @@ pub(super) fn s1(k: u128, r1: u128, r2: u128) -> u128 {
     u128::from_be_bytes(r_prime)
 }
 
+/// Diversifying function `d1` ([Vol 3] Part H, Section B.2.1).
+///
+///   d1(k, d, r) = e(k, d')
+/// where d' = padding(96) || r || d, with the least significant octet of `d`
+/// becoming the least significant octet of `d'`.
+pub(super) fn d1(k: u128, d: u16, r: u16) -> u128 {
+    let mut d_prime = [0u8; 16];
+    d_prime[12..14].copy_from_slice(&r.to_be_bytes());
+    d_prime[14..16].copy_from_slice(&d.to_be_bytes());
+
+    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
+    cipher.encrypt_block((&mut d_prime).into());
+
+    u128::from_be_bytes(d_prime)
+}
+
 /// Combines `hi` and `lo` values into a big-endian byte array.
 #[allow(clippy::redundant_pub_crate)]
 #[cfg(test)]
@@ -964,5 +998,16 @@ mod tests {
 
         let result = s1(k, r1, r2);
         assert_eq!(result, 0x9a1fe1f0e8b0f49b5b4216ae796da062);
+    }
+
+    /// Diversifying function d1 ([Vol 3] Part H, Section B.2.1).
+    /// Spec example: d=0x1234, r=0xABCD => d' = 0x000000000000000000000000ABCD1234.
+    #[allow(clippy::unreadable_literal)]
+    #[test]
+    fn diversify_d1() {
+        let k: u128 = 0x000102030405060708090a0b0c0d0e0f;
+        let d: u16 = 0x1234;
+        let r: u16 = 0xABCD;
+        assert_eq!(d1(k, d, r), 0xb66854fa3dd35aadf83a6c59e22b52fd);
     }
 }
