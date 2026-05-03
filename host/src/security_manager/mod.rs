@@ -261,6 +261,23 @@ impl Inner {
             handle,
             peer_identity,
         } = *cmd;
+        // Once the pairing FSM has finished (Success or Error), ignore any
+        // SMP frame that isn't a fresh PairingRequest. `is_idle()` returns
+        // true post-completion, so without this guard the block below
+        // would overwrite the completed `pairing_sm` with a brand-new one
+        // whenever the central followed up with key-distribution PDUs
+        // (IdentityInformation, IdentityAddressInformation, …) — entirely
+        // normal in LESC. The fresh SM then rejected the PDU with
+        // InvalidState and the error path fired PairingFailed at the
+        // central, corrupting its bond.
+        if self
+            .pairing_sm
+            .as_ref()
+            .is_some_and(|sm| sm.result().is_some())
+            && command != Command::PairingRequest
+        {
+            return Ok(());
+        }
         if self.is_idle() {
             let local_address = self.connection_local_address(storage)?;
             let peer_address = Self::connection_peer_address(peer_address, storage);
