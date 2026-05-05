@@ -1049,7 +1049,17 @@ impl<P> DisconnectRequest<'_, P> {
     }
 
     pub fn confirm(self) {
-        self.connections.borrow_mut()[self.index].state = ConnectionState::Disconnecting(self.reason);
+        let mut connections = self.connections.borrow_mut();
+        let storage = &mut connections[self.index];
+        // Only transition if still in DisconnectRequest. The HCI
+        // disconnect_complete handler (`disconnected()`) may race ahead and
+        // set state = Disconnected; in that case we must NOT overwrite it
+        // back to Disconnecting, or the slot becomes unreusable
+        // (`state == Disconnected && refcount == 0` is the reuse check).
+        if !matches!(storage.state, ConnectionState::DisconnectRequest(_)) {
+            return;
+        }
+        storage.state = ConnectionState::Disconnecting(self.reason);
     }
 }
 pub struct ConnectionStorage<P> {
