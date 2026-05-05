@@ -894,7 +894,7 @@ where
         w.write_hci(&header)?;
         w.write_hci(signal)?;
 
-        let mut sender = self.l2cap(conn, w.len() as u16, 1).await?;
+        let mut sender = self.l2cap(conn, (w.len() - 4) as u16, 1).await?;
         sender.send(w.finish()).await?;
 
         Ok(())
@@ -1685,7 +1685,7 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;
-            match host.l2cap(conn, pdu.len() as u16, 1).await {
+            match host.l2cap(conn, (pdu.len() - 4) as u16, 1).await {
                 Ok(mut sender) => {
                     if let Err(e) = sender.send(pdu.as_ref()).await {
                         warn!("[host] error sending outbound pdu");
