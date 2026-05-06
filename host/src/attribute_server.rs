@@ -6,6 +6,7 @@ use embassy_sync::blocking_mutex::Mutex;
 
 use crate::att::{self, AttClient, AttCmd, AttErrorCode, AttReq};
 use crate::attribute::{Attribute, AttributeData, AttributeTable, CCCD};
+use crate::config::CLIENT_ATT_TABLE_SIZE;
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
@@ -26,24 +27,29 @@ impl Client {
 /// A compact, fixed-size map of client-specific attribute values (e.g. CCCDs).
 ///
 /// Entries are stored in a flat byte buffer with a sorted index for binary-search lookups.
-/// The `BYTES` const generic determines the total storage available for both the index and values.
+/// [`CLIENT_ATT_TABLE_SIZE`] determines the total storage available for both the index and values.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug)]
-pub struct ClientAttTable<const BYTES: usize> {
-    buf: [u8; BYTES],
+#[repr(align(2))]
+pub struct ClientAttTable {
+    buf: [u8; CLIENT_ATT_TABLE_SIZE],
 }
 
-impl<const BYTES: usize> ClientAttTable<BYTES> {
+impl ClientAttTable {
     const HEADER_SIZE: usize = 2;
     const ENTRY_SIZE: usize = 4;
     const END_OF_VALUES: u16 = 0x8000;
 
     /// Creates a new [`ClientAttTableBuilder`] for constructing a `ClientAttTable`.
-    pub const fn builder() -> ClientAttTableBuilder<BYTES> {
-        const { core::assert!(BYTES >= Self::HEADER_SIZE && BYTES <= u16::MAX as usize) };
+    pub const fn builder() -> ClientAttTableBuilder {
+        const {
+            core::assert!(
+                CLIENT_ATT_TABLE_SIZE >= ClientAttTable::HEADER_SIZE && CLIENT_ATT_TABLE_SIZE <= u16::MAX as usize
+            )
+        };
 
         ClientAttTableBuilder {
-            buf: [0; BYTES],
+            buf: [0; CLIENT_ATT_TABLE_SIZE],
             values_len: 0,
         }
     }
@@ -63,7 +69,7 @@ impl<const BYTES: usize> ClientAttTable<BYTES> {
             }
         }
 
-        BYTES - self.values_base()
+        CLIENT_ATT_TABLE_SIZE - self.values_base()
     }
 
     fn index(&self) -> &[[u8; 4]] {
@@ -180,13 +186,13 @@ impl<const BYTES: usize> ClientAttTable<BYTES> {
     ///
     /// Returns an error if the data is too large for the buffer, or if the index is malformed.
     pub fn try_from_raw(data: &[u8]) -> Result<Self, Error> {
-        if data.len() > BYTES {
+        if data.len() > CLIENT_ATT_TABLE_SIZE {
             return Err(Error::InsufficientSpace);
         } else if data.len() < 2 {
             return Err(Error::InvalidValue);
         }
 
-        let mut buf = [0; BYTES];
+        let mut buf = [0; CLIENT_ATT_TABLE_SIZE];
         buf[..data.len()].copy_from_slice(data);
         let map = Self { buf };
 
@@ -222,7 +228,7 @@ impl<const BYTES: usize> ClientAttTable<BYTES> {
     ///
     /// Keys present in this map but not in `src` are zeroed. If value sizes differ,
     /// only the smaller length is copied and the remainder is zeroed.
-    pub fn set_values<const N: usize>(&mut self, src: &ClientAttTable<N>) {
+    pub fn set_values(&mut self, src: &ClientAttTable) {
         for i in 0..self.att_count() {
             let entry = self.index()[i];
             let key = Self::entry_key(&entry);
@@ -259,14 +265,14 @@ impl<const BYTES: usize> ClientAttTable<BYTES> {
 ///
 /// Entries must be pushed in ascending key order. Use [`build()`](Self::build) to finalize.
 #[derive(Debug, Clone)]
-pub struct ClientAttTableBuilder<const BYTES: usize> {
-    buf: [u8; BYTES],
+pub struct ClientAttTableBuilder {
+    buf: [u8; CLIENT_ATT_TABLE_SIZE],
     values_len: u16,
 }
 
-impl<const BYTES: usize> ClientAttTableBuilder<BYTES> {
-    const HEADER_SIZE: usize = ClientAttTable::<BYTES>::HEADER_SIZE;
-    const ENTRY_SIZE: usize = ClientAttTable::<BYTES>::ENTRY_SIZE;
+impl ClientAttTableBuilder {
+    const HEADER_SIZE: usize = ClientAttTable::HEADER_SIZE;
+    const ENTRY_SIZE: usize = ClientAttTable::ENTRY_SIZE;
 
     /// Adds an entry with the given attribute handle and value size.
     ///
@@ -295,10 +301,10 @@ impl<const BYTES: usize> ClientAttTableBuilder<BYTES> {
             .expect("ClientAttTable buffer overflow");
 
         // If we overflow, just keep tracking the total needed size so we can report it in build()
-        if self.end() <= BYTES {
+        if self.end() <= CLIENT_ATT_TABLE_SIZE {
             let index = self.index_mut();
             if old_att_count > 0 {
-                let last_key = ClientAttTable::<BYTES>::entry_key(&index[old_att_count - 1]);
+                let last_key = ClientAttTable::entry_key(&index[old_att_count - 1]);
                 assert!(key > last_key, "keys must be inserted in ascending order");
             }
             Self::set_entry(&mut index[old_att_count], key, offset, variable_len);
@@ -306,22 +312,22 @@ impl<const BYTES: usize> ClientAttTableBuilder<BYTES> {
     }
 
     /// Consumes the builder and returns the completed [`ClientAttTable`].
-    pub fn build(mut self) -> ClientAttTable<BYTES> {
+    pub fn build(mut self) -> ClientAttTable {
         let end = self.end();
-        if end < BYTES {
+        if end < CLIENT_ATT_TABLE_SIZE {
             // Add a dummy value to define the length of the last attribute value
-            self.push_inner(ClientAttTable::<BYTES>::END_OF_VALUES, 0, false)
+            self.push_inner(ClientAttTable::END_OF_VALUES, 0, false)
         }
 
-        if self.end() > BYTES {
+        if self.end() > CLIENT_ATT_TABLE_SIZE {
             panic!(
-                "ClientAttTable<{}> buffer overflow. Need {} bytes for exact size",
-                BYTES, end
+                "ClientAttTable buffer ({} bytes) overflow. Need {} bytes for exact size",
+                CLIENT_ATT_TABLE_SIZE, end
             );
-        } else if end < BYTES {
+        } else if end < CLIENT_ATT_TABLE_SIZE {
             warn!(
-                "ClientAttTable<{}> buffer oversized. Only need {} bytes for exact size",
-                BYTES, end
+                "ClientAttTable buffer ({} bytes) oversized. Only need {} bytes for exact size",
+                CLIENT_ATT_TABLE_SIZE, end
             );
         }
 
@@ -360,11 +366,11 @@ impl<const BYTES: usize> ClientAttTableBuilder<BYTES> {
 }
 
 /// A table of CCCD values for each connected client.
-struct ClientAttTables<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> {
-    state: Mutex<M, RefCell<[(Client, ClientAttTable<BYTES>); CONN_MAX]>>,
+struct ClientAttTables<M: RawMutex, const CONN_MAX: usize> {
+    state: Mutex<M, RefCell<[(Client, ClientAttTable); CONN_MAX]>>,
 }
 
-impl<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> ClientAttTables<M, BYTES, CONN_MAX> {
+impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
     fn new<const ATT_MAX: usize>(att_table: &AttributeTable<'_, M, ATT_MAX>) -> Self {
         let mut builder = ClientAttTable::builder();
         att_table.iterate(|at| {
@@ -375,8 +381,7 @@ impl<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> ClientAttTables<M, 
             }
         });
         let base = builder.build();
-        let values: [(Client, ClientAttTable<BYTES>); CONN_MAX] =
-            core::array::from_fn(|_| (Client::default(), base.clone()));
+        let values: [(Client, ClientAttTable); CONN_MAX] = core::array::from_fn(|_| (Client::default(), base.clone()));
         Self {
             state: Mutex::new(RefCell::new(values)),
         }
@@ -484,7 +489,7 @@ impl<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> ClientAttTables<M, 
         })
     }
 
-    fn get_client_att_table(&self, peer_identity: &Identity) -> Option<ClientAttTable<BYTES>> {
+    fn get_client_att_table(&self, peer_identity: &Identity) -> Option<ClientAttTable> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
@@ -496,7 +501,7 @@ impl<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> ClientAttTables<M, 
         })
     }
 
-    fn set_client_att_table(&self, peer_identity: &Identity, table: &ClientAttTable<BYTES>) {
+    fn set_client_att_table(&self, peer_identity: &Identity, table: &ClientAttTable) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, t) in n.iter_mut() {
@@ -524,16 +529,9 @@ impl<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> ClientAttTables<M, 
 }
 
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct AttributeServer<
-    'values,
-    M: RawMutex,
-    P: PacketPool,
-    const ATT_MAX: usize,
-    const CLIENT_ATT_BYTES: usize,
-    const CONN_MAX: usize,
-> {
+pub struct AttributeServer<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> {
     att_table: AttributeTable<'values, M, ATT_MAX>,
-    client_att_tables: ClientAttTables<M, CLIENT_ATT_BYTES, CONN_MAX>,
+    client_att_tables: ClientAttTables<M, CONN_MAX>,
     _p: PhantomData<P>,
 }
 
@@ -563,12 +561,12 @@ pub(crate) mod sealed {
 /// Type erased attribute server
 pub trait DynamicAttributeServer<P: PacketPool>: sealed::DynamicAttributeServer<P> {}
 
-impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: usize, const CONN_MAX: usize>
-    DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> DynamicAttributeServer<P>
+    for AttributeServer<'_, M, P, ATT_MAX, CONN_MAX>
 {
 }
-impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: usize, const CONN_MAX: usize>
-    sealed::DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> sealed::DynamicAttributeServer<P>
+    for AttributeServer<'_, M, P, ATT_MAX, CONN_MAX>
 {
     fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
         AttributeServer::connect(self, connection)
@@ -650,19 +648,11 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: u
     }
 }
 
-impl<
-        'values,
-        M: RawMutex,
-        P: PacketPool,
-        const ATT_MAX: usize,
-        const CLIENT_ATT_BYTES: usize,
-        const CONN_MAX: usize,
-    > AttributeServer<'values, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
+impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize>
+    AttributeServer<'values, M, P, ATT_MAX, CONN_MAX>
 {
     /// Create a new instance of the AttributeServer
-    pub fn new(
-        att_table: AttributeTable<'values, M, ATT_MAX>,
-    ) -> AttributeServer<'values, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX> {
+    pub fn new(att_table: AttributeTable<'values, M, ATT_MAX>) -> AttributeServer<'values, M, P, ATT_MAX, CONN_MAX> {
         let cccd_tables = ClientAttTables::new(&att_table);
         AttributeServer {
             att_table,
@@ -1333,12 +1323,12 @@ impl<
     }
 
     /// Get the client-specific attribute table for a connection
-    pub fn get_client_att_table(&self, connection: &Connection<'_, P>) -> Option<ClientAttTable<CLIENT_ATT_BYTES>> {
+    pub fn get_client_att_table(&self, connection: &Connection<'_, P>) -> Option<ClientAttTable> {
         self.client_att_tables.get_client_att_table(&connection.peer_identity())
     }
 
     /// Set the client-specific attribute table for a connection
-    pub fn set_client_att_table(&self, connection: &Connection<'_, P>, table: &ClientAttTable<CLIENT_ATT_BYTES>) {
+    pub fn set_client_att_table(&self, connection: &Connection<'_, P>, table: &ClientAttTable) {
         self.client_att_tables
             .set_client_att_table(&connection.peer_identity(), table);
     }
@@ -1385,7 +1375,6 @@ mod tests {
         let _ = env_logger::try_init();
         const MAX_ATTRIBUTES: usize = 1024;
         const CONNECTIONS_MAX: usize = 3;
-        const CLIENT_ATT_BYTES: usize = 1024;
         const L2CAP_CHANNELS_MAX: usize = 5;
         type FacadeDummyType = [u8; 0];
 
@@ -1436,8 +1425,7 @@ mod tests {
             });
 
             // Create a server.
-            let server =
-                AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
+            let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
 
             // Create the connection manager.
             let mgr = setup();

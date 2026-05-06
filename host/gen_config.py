@@ -59,6 +59,9 @@ feature("gatt_client_notification_max_subscribers",
 feature("gatt_client_notification_queue_size",
         "When using the GATT client, this controls how many notifications can be queued for each subscriber.",
         default=1, min=1, max=512, pow2=True)
+feature("client_att_table_size",
+        "Maximum buffer size per connection for client-specific attribute values, such as CCCDs.",
+        default=64, vals=[2, 8, 16, 32, 64, 128, 256, 512, 1024])
 feature("prepare_write_buffer_size",
         "Maximum buffer size per connection for ATT queued writes.",
         default=512, vals=[64, 128, 256, 512, 1024])
