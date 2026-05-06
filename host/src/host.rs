@@ -23,7 +23,7 @@ use bt_hci::cmd::le::{
     LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr, LeSetScanEnable,
 };
 use bt_hci::cmd::link_control::Disconnect;
-use bt_hci::cmd::{AsyncCmd, SyncCmd};
+use bt_hci::cmd::{self, AsyncCmd, SyncCmd};
 use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 #[cfg(feature = "scan")]
@@ -1476,9 +1476,15 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         .exec(&host.controller)
         .await?;
 
-        SetEventMaskPage2::new(EventMaskPage2::new().enable_encryption_change_v2(true))
+        if let Err(e) = SetEventMaskPage2::new(EventMaskPage2::new().enable_encryption_change_v2(true))
             .exec(&host.controller)
-            .await?;
+            .await
+        {
+            match e {
+                cmd::Error::Hci(bt_hci::param::Error::UNKNOWN_CMD) => debug!("set event mask page 2 is not supported"),
+                e => Err(e)?,
+            }
+        }
 
         let mask = LeEventMask::new()
             .enable_le_conn_complete(true)
