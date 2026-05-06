@@ -446,6 +446,7 @@ impl Inner {
         connections: &ConnectionManager<'_, P>,
         storage: &mut ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
+        let mut bond = None;
         let res: Result<(), Error> = if let Some(sm) = self.pairing_sm.as_mut() {
             let mut ops = PairingOpsImpl {
                 bonds,
@@ -478,13 +479,14 @@ impl Inner {
                 .find(|bond| bond.identity.match_identity(identity))
                 .cloned()
             {
-                Some(bond) if encrypted => {
-                    info!("[smp] Encrypted using bond {:?}", bond.identity);
-                    storage.security_level = bond.security_level;
+                Some(b) if encrypted => {
+                    info!("[smp] Encrypted using bond {:?}", b.identity);
+                    storage.security_level = b.security_level;
                     #[cfg(feature = "legacy-pairing")]
                     {
-                        storage.encryption_key_len = bond.encryption_key_len;
+                        storage.encryption_key_len = b.encryption_key_len;
                     }
+                    bond = Some(b);
                 }
                 _ => {
                     warn!(
@@ -503,6 +505,7 @@ impl Inner {
         if encrypted && storage.security_level != SecurityLevel::NoEncryption {
             let _ = storage.events.try_send(ConnectionEvent::Encrypted {
                 security_level: storage.security_level,
+                bond,
             });
         }
 
