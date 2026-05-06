@@ -141,6 +141,7 @@ pub(crate) struct BleHost<'d, T, P: PacketPool> {
 #[derive(Clone, Copy)]
 pub(crate) struct InitialState {
     acl_max: usize,
+    acl_total: usize,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -894,28 +895,37 @@ where
         w.write_hci(&header)?;
         w.write_hci(signal)?;
 
-        let mut sender = self.l2cap(conn, (w.len() - 4) as u16, 1).await?;
+        let mut sender = self.l2cap_pdu(conn, w.len() as u16).await?;
         sender.send(w.finish()).await?;
 
         Ok(())
     }
 
-    // Request to an L2CAP payload of len to the HCI controller for a connection.
+    // Request to send a single L2CAP PDU of pdu_len to the HCI controller for a connection.
     //
     // This function will request the appropriate number of ACL packets to be sent and
-    // the returned sender will handle fragmentation.
-    pub(crate) async fn l2cap(
+    // the returned sender will handle ACL fragmentation.
+    //
+    // This function cannot be used to send an SDU split among multiple k-frames.
+    pub(crate) async fn l2cap_pdu(
         &self,
         handle: ConnHandle,
-        len: u16,
-        n_packets: u16,
+        pdu_len: u16,
     ) -> Result<L2capSender<'_, T, P::Packet>, BleHostError<T::Error>> {
         // Take into account l2cap header.
-        let acl_max = self.initialized.get().await.acl_max as u16;
-        let len = len + (4 * n_packets);
-        let n_acl = len.div_ceil(acl_max);
-        let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n_acl as usize, Some(cx))).await?;
-        trace!("[host] granted send packets = {}, len = {}", n_packets, len);
+        let initial_state = self.initialized.get().await;
+        let acl_max = initial_state.acl_max as u16;
+        if acl_max == 0 {
+            return Err(Error::NoPermits.into());
+        }
+
+        let n_acl = usize::from(pdu_len.div_ceil(acl_max));
+        if n_acl > initial_state.acl_total {
+            return Err(Error::NoPermits.into());
+        }
+
+        let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n_acl, Some(cx))).await?;
+        trace!("[host] granted send packets = {}, len = {}", n_acl, pdu_len);
         Ok(L2capSender {
             controller: &self.controller,
             handle,
@@ -924,20 +934,41 @@ where
         })
     }
 
-    // Request to an L2CAP payload of len to the HCI controller for a connection.
+    // Request to send an L2CAP SDU of sdu_len to the HCI controller for a connection.
     //
     // This function will request the appropriate number of ACL packets to be sent and
-    // the returned sender will handle fragmentation.
-    pub(crate) fn try_l2cap(
+    // the returned sender will handle ACL fragmentation.
+    pub(crate) fn try_l2cap_sdu(
         &self,
         handle: ConnHandle,
-        len: u16,
-        n_packets: u16,
+        sdu_len: u16,
+        mps: u16,
     ) -> Result<L2capSender<'_, T, P::Packet>, BleHostError<T::Error>> {
-        let acl_max = self.initialized.try_get().map(|i| i.acl_max).unwrap_or(27) as u16;
-        let len = len + (4 * n_packets);
-        let n_acl = len.div_ceil(acl_max);
-        let grant = match self.connections.poll_request_to_send(handle, n_acl as usize, None) {
+        let initial_state = self.initialized.try_get().ok_or(Error::NoPermits)?;
+        let acl_max = initial_state.acl_max;
+        if acl_max == 0 {
+            return Err(Error::NoPermits.into());
+        }
+
+        const L2CAP_BASIC_HEADER_SIZE: usize = 4; // L2CAP Basic Header added to each k-frame
+        const L2CAP_SDU_LEN_SIZE: usize = 2; // L2CAP SDU Length field added to first k-frame
+
+        let mps = usize::from(mps);
+        let len = usize::from(sdu_len) + L2CAP_SDU_LEN_SIZE;
+        let full_k_frame_len = mps + L2CAP_BASIC_HEADER_SIZE;
+        let full_k_frames = len / mps;
+        let last_k_frame_len = if len.is_multiple_of(mps) {
+            0
+        } else {
+            len % mps + L2CAP_BASIC_HEADER_SIZE
+        };
+
+        let n_acl = full_k_frames * full_k_frame_len.div_ceil(acl_max) + last_k_frame_len.div_ceil(acl_max);
+        if n_acl > initial_state.acl_total {
+            return Err(Error::NoPermits.into());
+        }
+
+        let grant = match self.connections.poll_request_to_send(handle, n_acl, None) {
             Poll::Ready(res) => res?,
             Poll::Pending => {
                 return Err(Error::Busy.into());
@@ -947,7 +978,7 @@ where
             controller: &self.controller,
             handle,
             grant,
-            fragment_size: acl_max,
+            fragment_size: acl_max as u16,
         })
     }
 
@@ -1557,6 +1588,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
 
         let _ = host.initialized.init(InitialState {
             acl_max: ret.le_acl_data_packet_length as usize,
+            acl_total: ret.total_num_le_acl_data_packets as usize,
         });
         info!("[host] initialized");
 
@@ -1685,7 +1717,7 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;
-            match host.l2cap(conn, (pdu.len() - 4) as u16, 1).await {
+            match host.l2cap_pdu(conn, pdu.len() as u16).await {
                 Ok(mut sender) => {
                     if let Err(e) = sender.send(pdu.as_ref()).await {
                         warn!("[host] error sending outbound pdu");

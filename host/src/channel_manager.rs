@@ -985,14 +985,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        ble.l2cap(conn, (len - 4) as u16, 1).await?.send(&p_buf[..len]).await?;
+        ble.l2cap_pdu(conn, len as u16).await?.send(&p_buf[..len]).await?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
 
         for chunk in chunks {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            ble.l2cap(conn, (len - 4) as u16, 1).await?.send(&p_buf[..len]).await?;
+            ble.l2cap_pdu(conn, len as u16).await?.send(&p_buf[..len]).await?;
             grant.confirm(1);
         }
         Ok(())
@@ -1016,7 +1016,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
 
         // The number of packets we'll need to send for this payload
-        let len = (buf.len() as u16).saturating_add(2);
+        let sdu_len = buf.len() as u16;
+        let len = sdu_len.saturating_add(2);
         let n_packets = len.div_ceil(mps);
 
         let mut grant = match self.poll_request_to_send(index, n_packets, None) {
@@ -1027,7 +1028,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         };
 
         // Pre-request
-        let mut sender = ble.try_l2cap(conn, len, n_packets)?;
+        let mut sender = ble.try_l2cap_sdu(conn, sdu_len, mps)?;
 
         // Segment using mps
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
