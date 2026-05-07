@@ -1481,7 +1481,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             .await
         {
             match e {
-                cmd::Error::Hci(bt_hci::param::Error::UNKNOWN_CMD) => debug!("set event mask page 2 is not supported"),
+                cmd::Error::Hci(bt_hci::param::Error::UNKNOWN_CMD) => warn!("set event mask page 2 is not supported"),
                 e => Err(e)?,
             }
         }
