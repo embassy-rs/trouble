@@ -1,6 +1,6 @@
 [package]
 edition = "2024"
-name = "trouble-stm32wb-examples"
+name = "trouble-stm32wba-examples"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 publish = false
