@@ -22,5 +22,6 @@
         // "examples/serial-hci/Cargo.toml",
         // "examples/apache-nimble/Cargo.toml",
         // "examples/stm32wb/Cargo.toml",
+        // "examples/stm32wba6/Cargo.toml",
     ]
 }

@@ -33,6 +33,7 @@ cargo batch \
     --- build --release --manifest-path bt-hci-linux/Cargo.toml \
     --- build --release --manifest-path bt-hci-usb/Cargo.toml \
     --- build --release --manifest-path examples/stm32wb/Cargo.toml --target thumbv7em-none-eabihf --features stm32wb55rg \
+    --- build --release --manifest-path examples/stm32wba6/Cargo.toml --target thumbv7em-none-eabihf --features stm32wba65ri \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840,security \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52833 \
