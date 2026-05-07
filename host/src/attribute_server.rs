@@ -54,104 +54,23 @@ impl ClientAttTable {
         }
     }
 
-    const fn att_count(&self) -> usize {
-        u16::from_le_bytes([self.buf[0], self.buf[1]]) as usize
-    }
-
-    const fn values_base(&self) -> usize {
-        Self::HEADER_SIZE + self.att_count() * Self::ENTRY_SIZE
-    }
-
-    fn values_len(&self) -> usize {
-        if let Some(entry) = self.index().last() {
-            if Self::entry_key(entry) == Self::END_OF_VALUES {
-                return Self::entry_offset(entry);
-            }
-        }
-
-        CLIENT_ATT_TABLE_SIZE - self.values_base()
-    }
-
-    fn index(&self) -> &[[u8; 4]] {
-        self.buf[Self::HEADER_SIZE..self.values_base()].as_chunks::<4>().0
-    }
-
-    const fn entry_key(entry: &[u8; 4]) -> u16 {
-        let key = u16::from_le_bytes([entry[0], entry[1]]);
-        if key == Self::END_OF_VALUES {
-            key
-        } else {
-            key & 0x7fff
-        }
-    }
-
-    const fn entry_offset(entry: &[u8; 4]) -> usize {
-        u16::from_le_bytes([entry[2], entry[3]]) as usize
-    }
-
-    const fn is_variable_len(entry: &[u8; 4]) -> bool {
-        let key = u16::from_le_bytes([entry[0], entry[1]]);
-        key != Self::END_OF_VALUES && (key & 0x8000) != 0
-    }
-
-    fn raw_value_start(&self, i: usize) -> usize {
-        let entry = self.index()[i];
-        Self::entry_offset(&entry) + self.values_base()
-    }
-
-    fn value_start(&self, i: usize) -> usize {
-        let entry = self.index()[i];
-        let start = Self::entry_offset(&entry) + self.values_base();
-        if Self::is_variable_len(&entry) {
-            start + 2
-        } else {
-            start
-        }
-    }
-
-    fn value_end(&self, i: usize) -> usize {
-        self.index()
-            .get(i + 1)
-            .map(Self::entry_offset)
-            .unwrap_or(self.values_len())
-            + self.values_base()
-    }
-
-    fn value_capacity(&self, i: usize) -> usize {
-        self.value_end(i).saturating_sub(self.value_start(i))
-    }
-
-    fn value_len(&self, i: usize) -> usize {
-        let index = self.index();
-        if Self::is_variable_len(&index[i]) {
-            let start = self.raw_value_start(i);
-            u16::from_le_bytes([self.buf[start], self.buf[start + 1]]) as usize
-        } else {
-            self.value_capacity(i)
-        }
+    /// Get a read-only view of the table
+    pub fn view(&self) -> ClientAttTableView<'_> {
+        ClientAttTableView { buf: &self.buf }
     }
 
     // If `i` is a variable length attribute, set its length to `len`. For fixed length attributes, do nothing.
     fn set_variable_len(&mut self, i: usize, len: u16) {
-        assert!(len as usize <= self.value_capacity(i));
-        if Self::is_variable_len(&self.index()[i]) {
-            let start = self.raw_value_start(i);
+        assert!(len as usize <= self.view().value_capacity(i));
+        if self.view().index()[i].is_variable_len() {
+            let start = self.view().raw_value_start(i);
             self.buf[start..][..2].copy_from_slice(&len.to_le_bytes());
         }
     }
 
-    fn find(&self, key: u16) -> Option<usize> {
-        self.index().binary_search_by_key(&key, Self::entry_key).ok()
-    }
-
     /// Returns a reference to the value associated with the given attribute handle, or `None` if not found.
     pub fn get(&self, key: u16) -> Option<&[u8]> {
-        if key >= Self::END_OF_VALUES {
-            None
-        } else {
-            let i = self.find(key)?;
-            Some(&self.buf[self.value_start(i)..][..self.value_len(i)])
-        }
+        self.view().get(key)
     }
 
     /// Writes `data` to `key` starting at `offset`.
@@ -160,13 +79,13 @@ impl ClientAttTable {
             return Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
         }
 
-        let i = self.find(key).ok_or(AttErrorCode::ATTRIBUTE_NOT_FOUND)?;
-        if offset > self.value_len(i) {
+        let i = self.view().find(key).ok_or(AttErrorCode::ATTRIBUTE_NOT_FOUND)?;
+        if offset > self.view().value_len(i) {
             Err(AttErrorCode::INVALID_OFFSET)
-        } else if offset + data.len() > self.value_capacity(i) {
+        } else if offset + data.len() > self.view().value_capacity(i) {
             Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
         } else {
-            let start = self.value_start(i) + offset;
+            let start = self.view().value_start(i) + offset;
             let end = start + data.len();
             self.buf[start..end].copy_from_slice(data);
 
@@ -176,25 +95,100 @@ impl ClientAttTable {
         }
     }
 
-    /// Returns the raw byte representation of the map, suitable for serialization or storage.
-    pub fn raw(&self) -> &[u8] {
-        let end = self.values_base() + self.values_len();
-        &self.buf[..end]
+    /// Copies values from `src` into this map for all matching keys.
+    ///
+    /// Keys present in this map but not in `src` are zeroed. If value sizes differ,
+    /// only the smaller length is copied and the remainder is zeroed.
+    pub fn set_values(&mut self, src: &ClientAttTableView<'_>) {
+        for i in 0..self.view().att_count() {
+            let view = self.view();
+            let key = view.index()[i].key();
+            match src.get(key) {
+                Some(src) => {
+                    let start = view.value_start(i);
+                    let capacity = view.value_capacity(i);
+                    let dest = &mut self.buf[start..][..capacity];
+
+                    let copy_len = dest.len().min(src.len());
+                    dest[..copy_len].copy_from_slice(&src[..copy_len]);
+                    dest[copy_len..].fill(0);
+
+                    self.set_variable_len(i, copy_len as u16);
+                }
+                None => {
+                    let start = view.raw_value_start(i);
+                    let end = view.value_end(i);
+                    self.buf[start..end].fill(0);
+                }
+            }
+        }
     }
 
-    /// Constructs a `ClientAttTable` from a raw byte slice previously obtained via [`raw()`](Self::raw).
+    /// Zeros all values in the map, leaving the index structure intact.
+    pub fn clear(&mut self) {
+        let values_base = self.view().values_base();
+        let values_end = values_base + self.view().values_len();
+        self.buf[values_base..values_end].fill(0);
+    }
+
+    /// Returns the raw byte representation of the map, suitable for serialization or storage.
+    pub fn raw(&self) -> &[u8] {
+        self.view().raw()
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct ClientAttTableEntry([u8; 4]);
+
+impl ClientAttTableEntry {
+    const fn key(&self) -> u16 {
+        let key = u16::from_le_bytes([self.0[0], self.0[1]]);
+        if key == ClientAttTable::END_OF_VALUES {
+            key
+        } else {
+            key & 0x7fff
+        }
+    }
+
+    const fn offset(&self) -> usize {
+        u16::from_le_bytes([self.0[2], self.0[3]]) as usize
+    }
+
+    const fn is_variable_len(&self) -> bool {
+        let key = u16::from_le_bytes([self.0[0], self.0[1]]);
+        key != ClientAttTable::END_OF_VALUES && (key & 0x8000) != 0
+    }
+
+    const fn set(&mut self, key: u16, offset: u16, variable_len: bool) {
+        let flag = if variable_len { 0x8000 } else { 0 };
+        let key = (key | flag).to_le_bytes();
+        let offset = offset.to_le_bytes();
+        self.0 = [key[0], key[1], offset[0], offset[1]];
+    }
+}
+
+/// A compact, fixed-size map of client-specific attribute values (e.g. CCCDs).
+///
+/// Entries are stored in a flat byte buffer with a sorted index for binary-search lookups.
+/// [`CLIENT_ATT_TABLE_SIZE`] determines the total storage available for both the index and values.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ClientAttTableView<'a> {
+    buf: &'a [u8],
+}
+
+impl<'a> ClientAttTableView<'a> {
+    /// Constructs a `ClientAttTableView` from a raw byte slice previously obtained via [`raw()`](Self::raw).
     ///
     /// Returns an error if the data is too large for the buffer, or if the index is malformed.
-    pub fn try_from_raw(data: &[u8]) -> Result<Self, Error> {
-        if data.len() > CLIENT_ATT_TABLE_SIZE {
-            return Err(Error::InsufficientSpace);
-        } else if data.len() < 2 {
+    pub fn try_from_raw(data: &'a [u8]) -> Result<Self, Error> {
+        if data.len() < ClientAttTable::HEADER_SIZE {
             return Err(Error::InvalidValue);
         }
 
-        let mut buf = [0; CLIENT_ATT_TABLE_SIZE];
-        buf[..data.len()].copy_from_slice(data);
-        let map = Self { buf };
+        let map = Self { buf: data };
 
         if map.values_base() > data.len() {
             return Err(Error::InvalidValue);
@@ -204,8 +198,8 @@ impl ClientAttTable {
         let mut last_key = 0;
         let mut last_offset = 0;
         for e in map.index().iter() {
-            let key = Self::entry_key(e);
-            let offset = Self::entry_offset(e);
+            let key = e.key();
+            let offset = e.offset();
             if key <= core::mem::replace(&mut last_key, key)
                 || offset < core::mem::replace(&mut last_offset, offset)
                 || map.values_base() + offset > data.len()
@@ -224,40 +218,86 @@ impl ClientAttTable {
         Ok(map)
     }
 
-    /// Copies values from `src` into this map for all matching keys.
-    ///
-    /// Keys present in this map but not in `src` are zeroed. If value sizes differ,
-    /// only the smaller length is copied and the remainder is zeroed.
-    pub fn set_values(&mut self, src: &ClientAttTable) {
-        for i in 0..self.att_count() {
-            let entry = self.index()[i];
-            let key = Self::entry_key(&entry);
-            match src.get(key) {
-                Some(src) => {
-                    let start = self.value_start(i);
-                    let capacity = self.value_capacity(i);
-                    let dest = &mut self.buf[start..][..capacity];
+    const fn att_count(&self) -> usize {
+        u16::from_le_bytes([self.buf[0], self.buf[1]]) as usize
+    }
 
-                    let copy_len = dest.len().min(src.len());
-                    dest[..copy_len].copy_from_slice(&src[..copy_len]);
-                    dest[copy_len..].fill(0);
+    const fn values_base(&self) -> usize {
+        ClientAttTable::HEADER_SIZE + self.att_count() * ClientAttTable::ENTRY_SIZE
+    }
 
-                    self.set_variable_len(i, copy_len as u16);
-                }
-                None => {
-                    let start = self.raw_value_start(i);
-                    let end = self.value_end(i);
-                    self.buf[start..end].fill(0);
-                }
+    fn values_len(&self) -> usize {
+        if let Some(entry) = self.index().last() {
+            if entry.key() == ClientAttTable::END_OF_VALUES {
+                return entry.offset();
             }
+        }
+
+        self.buf.len() - self.values_base()
+    }
+
+    fn index(&self) -> &[ClientAttTableEntry] {
+        let chunks = self.buf[ClientAttTable::HEADER_SIZE..self.values_base()]
+            .as_chunks::<4>()
+            .0;
+        unsafe { core::slice::from_raw_parts(chunks.as_ptr().cast::<ClientAttTableEntry>(), chunks.len()) }
+    }
+
+    fn raw_value_start(&self, i: usize) -> usize {
+        let entry = self.index()[i];
+        entry.offset() + self.values_base()
+    }
+
+    fn value_start(&self, i: usize) -> usize {
+        let entry = self.index()[i];
+        let start = entry.offset() + self.values_base();
+        if entry.is_variable_len() {
+            start + 2
+        } else {
+            start
         }
     }
 
-    /// Zeros all values in the map, leaving the index structure intact.
-    pub fn clear(&mut self) {
-        let values_base = self.values_base();
-        let values_end = values_base + self.values_len();
-        self.buf[values_base..values_end].fill(0);
+    fn value_end(&self, i: usize) -> usize {
+        self.index()
+            .get(i + 1)
+            .map(ClientAttTableEntry::offset)
+            .unwrap_or(self.values_len())
+            + self.values_base()
+    }
+
+    fn value_capacity(&self, i: usize) -> usize {
+        self.value_end(i).saturating_sub(self.value_start(i))
+    }
+
+    fn value_len(&self, i: usize) -> usize {
+        let index = self.index();
+        if index[i].is_variable_len() {
+            let start = self.raw_value_start(i);
+            u16::from_le_bytes([self.buf[start], self.buf[start + 1]]) as usize
+        } else {
+            self.value_capacity(i)
+        }
+    }
+
+    fn find(&self, key: u16) -> Option<usize> {
+        self.index().binary_search_by_key(&key, ClientAttTableEntry::key).ok()
+    }
+
+    /// Returns a reference to the value associated with the given attribute handle, or `None` if not found.
+    pub fn get(&self, key: u16) -> Option<&'a [u8]> {
+        if key >= ClientAttTable::END_OF_VALUES {
+            None
+        } else {
+            let i = self.find(key)?;
+            Some(&self.buf[self.value_start(i)..][..self.value_len(i)])
+        }
+    }
+
+    /// Returns the raw byte representation of the map, suitable for serialization or storage.
+    pub fn raw(&self) -> &'a [u8] {
+        let end = self.values_base() + self.values_len();
+        &self.buf[..end]
     }
 }
 
@@ -304,10 +344,10 @@ impl ClientAttTableBuilder {
         if self.end() <= CLIENT_ATT_TABLE_SIZE {
             let index = self.index_mut();
             if old_att_count > 0 {
-                let last_key = ClientAttTable::entry_key(&index[old_att_count - 1]);
+                let last_key = index[old_att_count - 1].key();
                 assert!(key > last_key, "keys must be inserted in ascending order");
             }
-            Self::set_entry(&mut index[old_att_count], key, offset, variable_len);
+            index[old_att_count].set(key, offset, variable_len);
         }
     }
 
@@ -342,18 +382,12 @@ impl ClientAttTableBuilder {
         self.buf[..2].copy_from_slice(&(len as u16).to_le_bytes())
     }
 
-    const fn index_mut(&mut self) -> &mut [[u8; 4]] {
+    const fn index_mut(&mut self) -> &mut [ClientAttTableEntry] {
         let end = self.att_count() * Self::ENTRY_SIZE;
         let (_, slice) = self.buf.split_at_mut(Self::HEADER_SIZE);
         let (slice, _) = slice.split_at_mut(end);
-        slice.as_chunks_mut::<4>().0
-    }
-
-    const fn set_entry(entry: &mut [u8; 4], key: u16, offset: u16, variable_len: bool) {
-        let flag = if variable_len { 0x8000 } else { 0 };
-        let key = (key | flag).to_le_bytes();
-        let offset = offset.to_le_bytes();
-        *entry = [key[0], key[1], offset[0], offset[1]];
+        let chunks = slice.as_chunks_mut::<4>().0;
+        unsafe { core::slice::from_raw_parts_mut(chunks.as_mut_ptr() as *mut _, chunks.len()) }
     }
 
     const fn values_base(&self) -> usize {
@@ -501,7 +535,7 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
         })
     }
 
-    fn set_client_att_table(&self, peer_identity: &Identity, table: &ClientAttTable) {
+    fn set_client_att_table(&self, peer_identity: &Identity, table: &ClientAttTableView<'_>) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, t) in n.iter_mut() {
@@ -1328,7 +1362,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
     }
 
     /// Set the client-specific attribute table for a connection
-    pub fn set_client_att_table(&self, connection: &Connection<'_, P>, table: &ClientAttTable) {
+    pub fn set_client_att_table(&self, connection: &Connection<'_, P>, table: &ClientAttTableView<'_>) {
         self.client_att_tables
             .set_client_att_table(&connection.peer_identity(), table);
     }

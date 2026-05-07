@@ -218,7 +218,7 @@ impl ServerBuilder {
                     self.server.get_client_att_table(connection)
                 }
 
-                #visibility fn set_client_att_table(&self, connection: &trouble_host::connection::Connection<'_, #packet_type>, table: &trouble_host::prelude::ClientAttTable) {
+                #visibility fn set_client_att_table(&self, connection: &trouble_host::connection::Connection<'_, #packet_type>, table: &trouble_host::prelude::ClientAttTableView<'_>) {
                     self.server.set_client_att_table(connection, table);
                 }
             }
