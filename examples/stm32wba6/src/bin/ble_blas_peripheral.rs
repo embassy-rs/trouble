@@ -32,6 +32,11 @@ bind_interrupts!(struct Irqs {
     HASH => LowInterruptHandler;
 });
 
+#[unsafe(no_mangle)]
+pub extern "C" fn BLEPLATCB_TimerExpiry(_id: u16) {
+    // Nothing
+}
+
 /// BLE runner task - drives the BLE stack sequencer
 #[embassy_executor::task]
 async fn ble_runner_task() {
