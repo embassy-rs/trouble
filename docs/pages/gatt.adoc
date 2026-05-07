@@ -94,7 +94,7 @@ loop {
             match &event {
                 GattEvent::Read(event) => {
                     if event.handle() == level.handle {
-                        let value = server.get(&level);
+                        let value = conn.get(&level);
                         info!("Read battery level: {:?}", value);
                     }
                 }

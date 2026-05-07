@@ -229,8 +229,8 @@ const CONNECTIONS_MAX: usize = 3;
 const L2CAP_CHANNELS_MAX: usize = 14;
 /// Maximum number of attributes in the GATT attribute table.
 const ATTRIBUTE_TABLE_SIZE: usize = 64;
-/// Maximum number of CCCD (Client Characteristic Configuration Descriptor) entries.
-const CCCD_TABLE_SIZE: usize = 10;
+/// Maximum total size of the client-specific attributes (e.g. CCCDs) tables.
+const CLIENT_ATT_BYTES: usize = 64;
 /// Number of attributes used by the GAP service (service + device name + appearance + central address resolution).
 const GAP_ATTRIBUTE_COUNT: usize = 7;
 /// Number of attributes used by the GATT service (service + service_changed + client_supported_features + database_hash).
@@ -238,7 +238,7 @@ const GATT_ATTRIBUTE_COUNT: usize = 8;
 
 /// Type alias for the GATT attribute server used throughout this crate.
 pub(crate) type Server<'a, P> =
-    AttributeServer<'a, NoopRawMutex, P, ATTRIBUTE_TABLE_SIZE, CCCD_TABLE_SIZE, CONNECTIONS_MAX>;
+    AttributeServer<'a, NoopRawMutex, P, ATTRIBUTE_TABLE_SIZE, CLIENT_ATT_BYTES, CONNECTIONS_MAX>;
 
 /// Errors from the BTP runner.
 #[derive(Debug)]

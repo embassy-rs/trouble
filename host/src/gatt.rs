@@ -19,21 +19,21 @@ use crate::att::{
     self, Att, AttCfm, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_IND,
     ATT_HANDLE_VALUE_NTF,
 };
-use crate::attribute::{AttributeData, Characteristic, CharacteristicProps, Descriptor, Uuid};
+use crate::attribute::{AttributeHandle, Characteristic, CharacteristicProps, Descriptor, Uuid};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
 use crate::connection::Connection;
 #[cfg(feature = "security")]
 use crate::connection::SecurityLevel;
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
-use crate::prelude::{ConnectionEvent, ConnectionParamsRequest};
+use crate::prelude::{CharacteristicDeclaration, ConnectionEvent, ConnectionParamsRequest};
 #[cfg(feature = "security")]
 use crate::security_manager::PassKey;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
 #[cfg(feature = "security")]
 use crate::BondInformation;
-use crate::{config, BleHostError, Error, PacketPool, Stack};
+use crate::{config, BleHostError, Error, PacketPool, Stack, MAX_INVALID_DATA_LEN};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
@@ -270,6 +270,29 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     /// Get a reference to the underlying BLE connection.
     pub fn raw(&self) -> &Connection<'stack, P> {
         &self.connection
+    }
+
+    /// Set the value of an attribute on the local GATT server for this connection.
+    pub fn set<T: AttributeHandle>(&self, attribute_handle: &T, input: &T::Value) -> Result<(), Error> {
+        let gatt_value = input.as_gatt();
+        self.server.set(&self.connection, attribute_handle.handle(), gatt_value)
+    }
+
+    /// Get the value of an attribute from the local GATT server for this connection.
+    pub fn get<T: AttributeHandle>(&self, attribute_handle: &T) -> Result<T::Value, Error>
+    where
+        T::Value: FromGatt,
+    {
+        let mut buf = [0; 512];
+        let len = self.server.get(&self.connection, attribute_handle.handle(), &mut buf)?;
+        let value_slice = &buf[..len];
+        T::Value::from_gatt(value_slice).map_err(|_| {
+            let mut invalid_data = [0u8; MAX_INVALID_DATA_LEN];
+            let len_to_copy = value_slice.len().min(MAX_INVALID_DATA_LEN);
+            invalid_data[..len_to_copy].copy_from_slice(&value_slice[..len_to_copy]);
+
+            Error::CannotConstructGattValue(invalid_data)
+        })
     }
 }
 
@@ -1147,19 +1170,15 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     return ControlFlow::Break(());
                 }
 
-                match AttributeData::decode_declaration(item) {
-                    Ok(AttributeData::Declaration {
-                        props,
-                        handle,
-                        uuid: decl_uuid,
-                    }) => {
+                match CharacteristicDeclaration::try_from(item) {
+                    Ok(decl) => {
                         if characteristics
                             .push(Characteristic {
-                                handle,
+                                handle: decl.value_handle,
                                 end_handle: 0,
-                                props,
+                                props: decl.props,
                                 cccd_handle: None,
-                                uuid: decl_uuid,
+                                uuid: decl.uuid,
                                 phantom: PhantomData,
                             })
                             .is_err()
@@ -1169,7 +1188,6 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         }
                         ControlFlow::Continue(())
                     }
-                    Ok(_) => unreachable!(),
                     Err(e) => {
                         err = Some(e.into());
                         ControlFlow::Break(())
@@ -1233,29 +1251,24 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         }));
                     }
 
-                    match AttributeData::decode_declaration(item) {
-                        Ok(AttributeData::Declaration {
-                            props,
-                            handle: value_handle,
-                            uuid: decl_uuid,
-                        }) => {
+                    match CharacteristicDeclaration::try_from(item) {
+                        Ok(decl) => {
                             if found.is_some() {
                                 // We already found our match; this is the next declaration,
                                 // so we can determine end_handle.
                                 return ControlFlow::Break(Ok(declaration_handle));
                             }
 
-                            if *uuid == decl_uuid {
-                                found = Some((value_handle, props));
+                            if *uuid == decl.uuid {
+                                found = Some((decl.value_handle, decl.props));
                             }
 
-                            if value_handle == 0xFFFF && found.is_some() {
+                            if decl.value_handle == 0xFFFF && found.is_some() {
                                 return ControlFlow::Break(Ok(declaration_handle));
                             }
 
                             ControlFlow::Continue(())
                         }
-                        Ok(_) => ControlFlow::Break(Err(Error::InvalidCharacteristicDeclarationData)),
                         Err(e) => ControlFlow::Break(Err(e)),
                     }
                 },
@@ -1811,7 +1824,7 @@ mod tests {
 
         const MAX_ATTRIBUTES: usize = 64;
         const CONNECTIONS_MAX: usize = 3;
-        const CCCD_MAX: usize = 64;
+        const CLIENT_ATT_BYTES: usize = 64;
         const NUM_CHARACTERISTICS: u8 = 9;
         const ATT_MTU: u16 = 185;
 
@@ -1838,7 +1851,8 @@ mod tests {
             }
         }
 
-        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CCCD_MAX, CONNECTIONS_MAX>::new(table);
+        let server =
+            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
 
         // Set up a connection with ATT MTU = 185 (typical iOS value)
         let mgr = setup();
@@ -1914,7 +1928,7 @@ mod tests {
 
         const MAX_ATTRIBUTES: usize = 16;
         const CONNECTIONS_MAX: usize = 3;
-        const CCCD_MAX: usize = 16;
+        const CLIENT_ATT_BYTES: usize = 16;
 
         let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
         let mut storage = [0u8; 1];
@@ -1924,12 +1938,13 @@ mod tests {
             })
             .add_characteristic(
                 Uuid::new_long([0x45; 16]),
-                &[CharacteristicProp::Read, CharacteristicProp::WriteWithoutResponse],
+                [CharacteristicProp::Read, CharacteristicProp::WriteWithoutResponse],
                 0u8,
                 &mut storage[..],
             )
             .build();
-        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CCCD_MAX, CONNECTIONS_MAX>::new(table);
+        let server =
+            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
 
         let mgr = setup();
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());

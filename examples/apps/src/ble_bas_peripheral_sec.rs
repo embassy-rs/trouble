@@ -128,7 +128,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                 match &event {
                     GattEvent::Read(event) => {
                         if event.handle() == level.handle {
-                            let value = server.get(&level);
+                            let value = conn.get(&level);
                             info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                         }
                     }

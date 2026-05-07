@@ -133,7 +133,7 @@ async fn gatt_client_server() {
                                     writes += 1;
                                 } else {
                                     let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
-                                    let value: u8 = server.table().get(&characteristic).unwrap();
+                                    let value: u8 = conn.get(&characteristic).unwrap();
                                     assert_eq!(expected, value);
                                     expected = expected.wrapping_add(2);
                                     writes += 1;
