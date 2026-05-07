@@ -8,7 +8,7 @@ use embassy_stm32::ipcc::{Config, ReceiveInterruptHandler, TransmitInterruptHand
 use embassy_stm32::rcc::WPAN_DEFAULT;
 use embassy_stm32_wpan::TlMbox;
 
-use embassy_stm32_wpan::sub::ble::AtomicController;
+use embassy_stm32_wpan::sub::ble::ControllerAdapter;
 use embassy_stm32_wpan::sub::mm;
 use trouble_example_apps::ble_bas_central;
 use {defmt_rtt as _, panic_probe as _};
@@ -67,7 +67,7 @@ async fn main(spawner: Spawner) {
 
     info!("create controller");
 
-    let controller = AtomicController::new(ble);
+    let controller = ControllerAdapter::new(ble);
 
     ble_bas_central::run(controller).await;
 }
