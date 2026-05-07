@@ -141,10 +141,10 @@ impl ServerBuilder {
                 size
             };
             const _: () = const {
-                let exact = 2 + 6 * (0 #code_cccd_summation);
+                let exact = 4 + 6 * (0 #code_cccd_summation);
                 let configured = trouble_host::config::CLIENT_ATT_TABLE_SIZE;
                 core::assert!(
-                    configured == exact || configured >= exact + 4,
+                    configured >= exact,
                     "Configured client ATT table size is insufficient for this server's CCCD attributes. Please increase the client-att-table-size-* feature."
                 );
             };
