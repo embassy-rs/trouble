@@ -1045,9 +1045,9 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     }
 
     /// Set the value of the characteristic in the provided attribute server.
-    pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, P, AT, CT, CN>,
+        server: &AttributeServer<'_, M, P, AT, CN>,
         value: &T,
     ) -> Result<(), Error> {
         let value = value.as_gatt();
@@ -1056,9 +1056,9 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     }
 
     /// Set the value of the characteristic in the provided attribute server.
-    pub fn set_ro<'a, M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn set_ro<'a, M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'a, M, P, AT, CT, CN>,
+        server: &AttributeServer<'a, M, P, AT, CN>,
         value: &'a T,
     ) -> Result<(), Error> {
         let value = value.as_gatt();
@@ -1070,9 +1070,9 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If the characteristic for the handle cannot be found, an error is returned.
     ///
-    pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, P, AT, CT, CN>,
+        server: &AttributeServer<'_, M, P, AT, CN>,
     ) -> Result<T, Error>
     where
         T: FromGatt,
@@ -1323,9 +1323,9 @@ impl<T: AsGatt + ?Sized> Descriptor<T> {
     }
 
     /// Set the value of the descriptor in the provided attribute server.
-    pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn set<M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, P, AT, CT, CN>,
+        server: &AttributeServer<'_, M, P, AT, CN>,
         value: &T,
     ) -> Result<(), Error> {
         let value = value.as_gatt();
@@ -1337,9 +1337,9 @@ impl<T: AsGatt + ?Sized> Descriptor<T> {
     ///
     /// If the descriptor for the handle cannot be found, an error is returned.
     ///
-    pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CT: usize, const CN: usize>(
+    pub fn get<M: RawMutex, P: PacketPool, const AT: usize, const CN: usize>(
         &self,
-        server: &AttributeServer<'_, M, P, AT, CT, CN>,
+        server: &AttributeServer<'_, M, P, AT, CN>,
     ) -> Result<T, Error>
     where
         T: FromGatt,

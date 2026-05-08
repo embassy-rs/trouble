@@ -148,9 +148,9 @@ impl<P: PacketPool> Drop for GattConnection<'_, '_, P> {
 impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     /// Creates a GATT connection from the given BLE connection and `AttributeServer`:
     /// this will register the client within the server's CCCD table.
-    pub(crate) fn try_new<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+    pub(crate) fn try_new<'values, M: RawMutex, const AT: usize, const CN: usize>(
         connection: Connection<'stack, P>,
-        server: &'server AttributeServer<'values, M, P, AT, CT, CN>,
+        server: &'server AttributeServer<'values, M, P, AT, CN>,
     ) -> Result<Self, Error> {
         trace!("[gatt {}] connecting to server", connection.handle().raw());
         server.connect(&connection)?;
@@ -1824,7 +1824,6 @@ mod tests {
 
         const MAX_ATTRIBUTES: usize = 64;
         const CONNECTIONS_MAX: usize = 3;
-        const CLIENT_ATT_BYTES: usize = 64;
         const NUM_CHARACTERISTICS: u8 = 9;
         const ATT_MTU: u16 = 185;
 
@@ -1851,8 +1850,7 @@ mod tests {
             }
         }
 
-        let server =
-            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
 
         // Set up a connection with ATT MTU = 185 (typical iOS value)
         let mgr = setup();
@@ -1928,8 +1926,6 @@ mod tests {
 
         const MAX_ATTRIBUTES: usize = 16;
         const CONNECTIONS_MAX: usize = 3;
-        const CLIENT_ATT_BYTES: usize = 16;
-
         let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
         let mut storage = [0u8; 1];
         let characteristic: Characteristic<u8> = table
@@ -1943,8 +1939,7 @@ mod tests {
                 &mut storage[..],
             )
             .build();
-        let server =
-            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
 
         let mgr = setup();
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());

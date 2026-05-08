@@ -72,6 +72,11 @@ pub const GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS: usize = raw::GATT_CLIENT_NOT
 /// Default: 1.
 pub const GATT_CLIENT_NOTIFICATION_QUEUE_SIZE: usize = raw::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
 
+/// Maximum buffer size per connection for client-specific attribute values, such as CCCDs.
+///
+/// Default: 64.
+pub const CLIENT_ATT_TABLE_SIZE: usize = raw::CLIENT_ATT_TABLE_SIZE;
+
 /// Maximum buffer size per connection for ATT Prepare Write queuing.
 ///
 /// Default: 512.

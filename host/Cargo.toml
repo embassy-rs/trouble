@@ -179,6 +179,17 @@ gatt-client-notification-queue-size-128 = []
 gatt-client-notification-queue-size-256 = []
 gatt-client-notification-queue-size-512 = []
 
+# Maximum buffer size per connection for client-specific attribute values, such as CCCDs.
+client-att-table-size-2 = []
+client-att-table-size-8 = []
+client-att-table-size-16 = []
+client-att-table-size-32 = []
+client-att-table-size-64 = [] # Default
+client-att-table-size-128 = []
+client-att-table-size-256 = []
+client-att-table-size-512 = []
+client-att-table-size-1024 = []
+
 # Maximum buffer size per connection for ATT queued writes.
 prepare-write-buffer-size-64 = []
 prepare-write-buffer-size-128 = []

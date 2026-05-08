@@ -7,7 +7,7 @@ os.chdir(dname)
 features = []
 
 
-def feature(name, description, default, min=None, max=None, pow2=None, vals=None, factors=[]):
+def feature(name, description, default, min=None, max=None, pow2=None, vals=None, enable=None, factors=[]):
     if vals is None:
         assert min is not None
         assert max is not None
@@ -32,6 +32,7 @@ def feature(name, description, default, min=None, max=None, pow2=None, vals=None
             "default": default,
             "vals": vals,
             "description": description,
+            "enable": enable,
         }
     )
 
@@ -48,16 +49,19 @@ feature("l2cap_tx_queue_size",
         default=8, min=1, max=64, pow2=True)
 feature("default_packet_pool_size",
         "Controls the pool size of the default packet pool, if enabled.",
-        default=16, min=1, max=128, pow2=True)
+        enable="default-packet-pool", default=16, min=1, max=128, pow2=True)
 feature("default_packet_pool_mtu",
         "Controls the packet MTU of the default packet pool, if enabled.",
-        default=251, vals = [27, 48, 64, 128, 251, 255, 512, 1024])
+        enable="default-packet-pool", default=251, vals = [27, 48, 64, 128, 251, 255, 512, 1024])
 feature("gatt_client_notification_max_subscribers",
         "When using the GATT client, this controls how many subscribers can be created.",
         default=1, min=1, max=512, pow2=True)
 feature("gatt_client_notification_queue_size",
         "When using the GATT client, this controls how many notifications can be queued for each subscriber.",
         default=1, min=1, max=512, pow2=True)
+feature("client_att_table_size",
+        "Maximum buffer size per connection for client-specific attribute values, such as CCCDs.",
+        default=64, vals=[2, 8, 16, 32, 64, 128, 256, 512, 1024])
 feature("prepare_write_buffer_size",
         "Maximum buffer size per connection for ATT queued writes.",
         default=512, vals=[64, 128, 256, 512, 1024])
@@ -68,9 +72,17 @@ things = ""
 for f in features:
     name = f["name"].replace("_", "-")
     desc = f["description"]
+
+    enable = f["enable"]
+    if not enable:
+        enable = ""
+    else:
+        enable = enable if isinstance(enable, list) else [enable]
+        enable = ", ".join(f'"{x}"' for x in enable)
+
     things += f"# {desc}\n"
     for val in f["vals"]:
-        things += f"{name}-{val} = []"
+        things += f"{name}-{val} = [{enable}]"
         if val == f["default"]:
             things += " # Default"
         things += "\n"

@@ -1,15 +1,17 @@
-use core::cell::RefCell;
 use core::marker::PhantomData;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::blocking_mutex::Mutex;
 
+use self::client_att_table::ClientAttTables;
+pub use self::client_att_table::{ClientAttTable, ClientAttTableBuilder, ClientAttTableView};
 use crate::att::{self, AttClient, AttCmd, AttErrorCode, AttReq};
 use crate::attribute::{Attribute, AttributeData, AttributeTable, CCCD};
 use crate::cursor::WriteCursor;
 use crate::prelude::Connection;
 use crate::types::uuid::Uuid;
 use crate::{codec, Error, Identity, PacketPool};
+
+mod client_att_table;
 
 #[derive(Default)]
 struct Client {
@@ -23,517 +25,10 @@ impl Client {
     }
 }
 
-/// A compact, fixed-size map of client-specific attribute values (e.g. CCCDs).
-///
-/// Entries are stored in a flat byte buffer with a sorted index for binary-search lookups.
-/// The `BYTES` const generic determines the total storage available for both the index and values.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Debug)]
-pub struct ClientAttTable<const BYTES: usize> {
-    buf: [u8; BYTES],
-}
-
-impl<const BYTES: usize> ClientAttTable<BYTES> {
-    const HEADER_SIZE: usize = 2;
-    const ENTRY_SIZE: usize = 4;
-    const END_OF_VALUES: u16 = 0x8000;
-
-    /// Creates a new [`ClientAttTableBuilder`] for constructing a `ClientAttTable`.
-    pub const fn builder() -> ClientAttTableBuilder<BYTES> {
-        const { core::assert!(BYTES >= Self::HEADER_SIZE && BYTES <= u16::MAX as usize) };
-
-        ClientAttTableBuilder {
-            buf: [0; BYTES],
-            values_len: 0,
-        }
-    }
-
-    const fn att_count(&self) -> usize {
-        u16::from_le_bytes([self.buf[0], self.buf[1]]) as usize
-    }
-
-    const fn values_base(&self) -> usize {
-        Self::HEADER_SIZE + self.att_count() * Self::ENTRY_SIZE
-    }
-
-    fn values_len(&self) -> usize {
-        if let Some(entry) = self.index().last() {
-            if Self::entry_key(entry) == Self::END_OF_VALUES {
-                return Self::entry_offset(entry);
-            }
-        }
-
-        BYTES - self.values_base()
-    }
-
-    fn index(&self) -> &[[u8; 4]] {
-        self.buf[Self::HEADER_SIZE..self.values_base()].as_chunks::<4>().0
-    }
-
-    const fn entry_key(entry: &[u8; 4]) -> u16 {
-        let key = u16::from_le_bytes([entry[0], entry[1]]);
-        if key == Self::END_OF_VALUES {
-            key
-        } else {
-            key & 0x7fff
-        }
-    }
-
-    const fn entry_offset(entry: &[u8; 4]) -> usize {
-        u16::from_le_bytes([entry[2], entry[3]]) as usize
-    }
-
-    const fn is_variable_len(entry: &[u8; 4]) -> bool {
-        let key = u16::from_le_bytes([entry[0], entry[1]]);
-        key != Self::END_OF_VALUES && (key & 0x8000) != 0
-    }
-
-    fn raw_value_start(&self, i: usize) -> usize {
-        let entry = self.index()[i];
-        Self::entry_offset(&entry) + self.values_base()
-    }
-
-    fn value_start(&self, i: usize) -> usize {
-        let entry = self.index()[i];
-        let start = Self::entry_offset(&entry) + self.values_base();
-        if Self::is_variable_len(&entry) {
-            start + 2
-        } else {
-            start
-        }
-    }
-
-    fn value_end(&self, i: usize) -> usize {
-        self.index()
-            .get(i + 1)
-            .map(Self::entry_offset)
-            .unwrap_or(self.values_len())
-            + self.values_base()
-    }
-
-    fn value_capacity(&self, i: usize) -> usize {
-        self.value_end(i).saturating_sub(self.value_start(i))
-    }
-
-    fn value_len(&self, i: usize) -> usize {
-        let index = self.index();
-        if Self::is_variable_len(&index[i]) {
-            let start = self.raw_value_start(i);
-            u16::from_le_bytes([self.buf[start], self.buf[start + 1]]) as usize
-        } else {
-            self.value_capacity(i)
-        }
-    }
-
-    // If `i` is a variable length attribute, set its length to `len`. For fixed length attributes, do nothing.
-    fn set_variable_len(&mut self, i: usize, len: u16) {
-        assert!(len as usize <= self.value_capacity(i));
-        if Self::is_variable_len(&self.index()[i]) {
-            let start = self.raw_value_start(i);
-            self.buf[start..][..2].copy_from_slice(&len.to_le_bytes());
-        }
-    }
-
-    fn find(&self, key: u16) -> Option<usize> {
-        self.index().binary_search_by_key(&key, Self::entry_key).ok()
-    }
-
-    /// Returns a reference to the value associated with the given attribute handle, or `None` if not found.
-    pub fn get(&self, key: u16) -> Option<&[u8]> {
-        if key >= Self::END_OF_VALUES {
-            None
-        } else {
-            let i = self.find(key)?;
-            Some(&self.buf[self.value_start(i)..][..self.value_len(i)])
-        }
-    }
-
-    /// Writes `data` to `key` starting at `offset`.
-    pub fn write(&mut self, key: u16, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        if key >= Self::END_OF_VALUES {
-            return Err(AttErrorCode::ATTRIBUTE_NOT_FOUND);
-        }
-
-        let i = self.find(key).ok_or(AttErrorCode::ATTRIBUTE_NOT_FOUND)?;
-        if offset > self.value_len(i) {
-            Err(AttErrorCode::INVALID_OFFSET)
-        } else if offset + data.len() > self.value_capacity(i) {
-            Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
-        } else {
-            let start = self.value_start(i) + offset;
-            let end = start + data.len();
-            self.buf[start..end].copy_from_slice(data);
-
-            self.set_variable_len(i, (offset + data.len()) as u16);
-
-            Ok(())
-        }
-    }
-
-    /// Returns the raw byte representation of the map, suitable for serialization or storage.
-    pub fn raw(&self) -> &[u8] {
-        let end = self.values_base() + self.values_len();
-        &self.buf[..end]
-    }
-
-    /// Constructs a `ClientAttTable` from a raw byte slice previously obtained via [`raw()`](Self::raw).
-    ///
-    /// Returns an error if the data is too large for the buffer, or if the index is malformed.
-    pub fn try_from_raw(data: &[u8]) -> Result<Self, Error> {
-        if data.len() > BYTES {
-            return Err(Error::InsufficientSpace);
-        } else if data.len() < 2 {
-            return Err(Error::InvalidValue);
-        }
-
-        let mut buf = [0; BYTES];
-        buf[..data.len()].copy_from_slice(data);
-        let map = Self { buf };
-
-        if map.values_base() > data.len() {
-            return Err(Error::InvalidValue);
-        }
-
-        // Validate the index
-        let mut last_key = 0;
-        let mut last_offset = 0;
-        for e in map.index().iter() {
-            let key = Self::entry_key(e);
-            let offset = Self::entry_offset(e);
-            if key <= core::mem::replace(&mut last_key, key)
-                || offset < core::mem::replace(&mut last_offset, offset)
-                || map.values_base() + offset > data.len()
-            {
-                return Err(Error::InvalidValue);
-            }
-        }
-
-        // Validate variable length attributes
-        for i in 0..map.att_count() {
-            if map.value_end(i) < map.value_start(i) || map.value_len(i) > map.value_capacity(i) {
-                return Err(Error::InvalidValue);
-            }
-        }
-
-        Ok(map)
-    }
-
-    /// Copies values from `src` into this map for all matching keys.
-    ///
-    /// Keys present in this map but not in `src` are zeroed. If value sizes differ,
-    /// only the smaller length is copied and the remainder is zeroed.
-    pub fn set_values<const N: usize>(&mut self, src: &ClientAttTable<N>) {
-        for i in 0..self.att_count() {
-            let entry = self.index()[i];
-            let key = Self::entry_key(&entry);
-            match src.get(key) {
-                Some(src) => {
-                    let start = self.value_start(i);
-                    let capacity = self.value_capacity(i);
-                    let dest = &mut self.buf[start..][..capacity];
-
-                    let copy_len = dest.len().min(src.len());
-                    dest[..copy_len].copy_from_slice(&src[..copy_len]);
-                    dest[copy_len..].fill(0);
-
-                    self.set_variable_len(i, copy_len as u16);
-                }
-                None => {
-                    let start = self.raw_value_start(i);
-                    let end = self.value_end(i);
-                    self.buf[start..end].fill(0);
-                }
-            }
-        }
-    }
-
-    /// Zeros all values in the map, leaving the index structure intact.
-    pub fn clear(&mut self) {
-        let values_base = self.values_base();
-        let values_end = values_base + self.values_len();
-        self.buf[values_base..values_end].fill(0);
-    }
-}
-
-/// A builder for [`ClientAttTable`].
-///
-/// Entries must be pushed in ascending key order. Use [`build()`](Self::build) to finalize.
-#[derive(Debug, Clone)]
-pub struct ClientAttTableBuilder<const BYTES: usize> {
-    buf: [u8; BYTES],
-    values_len: u16,
-}
-
-impl<const BYTES: usize> ClientAttTableBuilder<BYTES> {
-    const HEADER_SIZE: usize = ClientAttTable::<BYTES>::HEADER_SIZE;
-    const ENTRY_SIZE: usize = ClientAttTable::<BYTES>::ENTRY_SIZE;
-
-    /// Adds an entry with the given attribute handle and value size.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not greater than the previously pushed keys.
-    pub fn push(&mut self, key: u16, value_len: u16, variable_len: bool) {
-        assert!(value_len <= 512, "Bluetooth attributes must be at most 512 bytes");
-        assert!(key > 0, "Bluetooth handles must be greater than 0");
-        assert!(key <= 0x7fff, "Handle values above 0x7fff are reserved");
-        self.push_inner(key, value_len, variable_len);
-    }
-
-    fn push_inner(&mut self, key: u16, mut value_len: u16, variable_len: bool) {
-        let old_att_count = self.att_count();
-        self.set_att_count(old_att_count + 1);
-        let offset = self.values_len;
-
-        if variable_len {
-            value_len += 2;
-        }
-
-        self.values_len = self
-            .values_len
-            .checked_add(value_len)
-            .expect("ClientAttTable buffer overflow");
-
-        // If we overflow, just keep tracking the total needed size so we can report it in build()
-        if self.end() <= BYTES {
-            let index = self.index_mut();
-            if old_att_count > 0 {
-                let last_key = ClientAttTable::<BYTES>::entry_key(&index[old_att_count - 1]);
-                assert!(key > last_key, "keys must be inserted in ascending order");
-            }
-            Self::set_entry(&mut index[old_att_count], key, offset, variable_len);
-        }
-    }
-
-    /// Consumes the builder and returns the completed [`ClientAttTable`].
-    pub fn build(mut self) -> ClientAttTable<BYTES> {
-        let end = self.end();
-        if end < BYTES {
-            // Add a dummy value to define the length of the last attribute value
-            self.push_inner(ClientAttTable::<BYTES>::END_OF_VALUES, 0, false)
-        }
-
-        if self.end() > BYTES {
-            panic!(
-                "ClientAttTable<{}> buffer overflow. Need {} bytes for exact size",
-                BYTES, end
-            );
-        } else if end < BYTES {
-            warn!(
-                "ClientAttTable<{}> buffer oversized. Only need {} bytes for exact size",
-                BYTES, end
-            );
-        }
-
-        ClientAttTable { buf: self.buf }
-    }
-
-    const fn att_count(&self) -> usize {
-        u16::from_le_bytes([self.buf[0], self.buf[1]]) as usize
-    }
-
-    fn set_att_count(&mut self, len: usize) {
-        self.buf[..2].copy_from_slice(&(len as u16).to_le_bytes())
-    }
-
-    const fn index_mut(&mut self) -> &mut [[u8; 4]] {
-        let end = self.att_count() * Self::ENTRY_SIZE;
-        let (_, slice) = self.buf.split_at_mut(Self::HEADER_SIZE);
-        let (slice, _) = slice.split_at_mut(end);
-        slice.as_chunks_mut::<4>().0
-    }
-
-    const fn set_entry(entry: &mut [u8; 4], key: u16, offset: u16, variable_len: bool) {
-        let flag = if variable_len { 0x8000 } else { 0 };
-        let key = (key | flag).to_le_bytes();
-        let offset = offset.to_le_bytes();
-        *entry = [key[0], key[1], offset[0], offset[1]];
-    }
-
-    const fn values_base(&self) -> usize {
-        Self::HEADER_SIZE + self.att_count() * Self::ENTRY_SIZE
-    }
-
-    const fn end(&self) -> usize {
-        self.values_base() + self.values_len as usize
-    }
-}
-
-/// A table of CCCD values for each connected client.
-struct ClientAttTables<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> {
-    state: Mutex<M, RefCell<[(Client, ClientAttTable<BYTES>); CONN_MAX]>>,
-}
-
-impl<M: RawMutex, const BYTES: usize, const CONN_MAX: usize> ClientAttTables<M, BYTES, CONN_MAX> {
-    fn new<const ATT_MAX: usize>(att_table: &AttributeTable<'_, M, ATT_MAX>) -> Self {
-        let mut builder = ClientAttTable::builder();
-        att_table.iterate(|at| {
-            for (handle, att) in at {
-                if let AttributeData::ClientSpecific { variable_len, capacity } = att.data {
-                    builder.push(handle, capacity, variable_len);
-                }
-            }
-        });
-        let base = builder.build();
-        let values: [(Client, ClientAttTable<BYTES>); CONN_MAX] =
-            core::array::from_fn(|_| (Client::default(), base.clone()));
-        Self {
-            state: Mutex::new(RefCell::new(values)),
-        }
-    }
-
-    fn connect(&self, peer_identity: &Identity) -> Result<(), Error> {
-        self.state.lock(|n| {
-            trace!("[server] searching for peer {:?}", peer_identity);
-            let mut n = n.borrow_mut();
-            let empty_slot = Identity::default();
-            for (client, table) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
-                    // trace!("[server] found! table = {:?}", *table);
-                    client.is_connected = true;
-                    return Ok(());
-                } else if client.identity == empty_slot {
-                    //  trace!("[server] empty slot: connecting");
-                    client.is_connected = true;
-                    client.set_identity(*peer_identity);
-                    return Ok(());
-                }
-            }
-            trace!("[server] all slots full...");
-            // if we got here all slots are full; replace the first disconnected client
-            for (client, table) in n.iter_mut() {
-                if !client.is_connected {
-                    trace!("[server] booting disconnected peer {:?}", client.identity);
-                    client.is_connected = true;
-                    client.set_identity(*peer_identity);
-                    // erase the previous client's config
-                    table.clear();
-                    return Ok(());
-                }
-            }
-            // Should be unreachable if the max connections (CONN_MAX) matches that defined
-            // in HostResources...
-            warn!("[server] unable to obtain client attributes slot");
-            Err(Error::ConnectionLimitReached)
-        })
-    }
-
-    fn disconnect(&self, peer_identity: &Identity, bonded: bool) {
-        self.state.lock(|n| {
-            let mut n = n.borrow_mut();
-            for (client, table) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
-                    if !bonded {
-                        *client = Client::default();
-                        table.clear();
-                    } else {
-                        client.is_connected = false;
-                    }
-                    break;
-                }
-            }
-        })
-    }
-
-    fn with_value<R>(&self, peer_identity: &Identity, att_handle: u16, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
-        self.state.lock(|n| {
-            let n = n.borrow();
-            for (client, table) in n.iter() {
-                if client.identity.match_identity(peer_identity) {
-                    return table.get(att_handle).map(f);
-                }
-            }
-            None
-        })
-    }
-
-    fn read(
-        &self,
-        peer_identity: &Identity,
-        att_handle: u16,
-        offset: usize,
-        data: &mut [u8],
-    ) -> Result<usize, AttErrorCode> {
-        self.state.lock(|n| {
-            let n = n.borrow();
-            for (client, table) in n.iter() {
-                if client.identity.match_identity(peer_identity) {
-                    let value = table.get(att_handle).ok_or(AttErrorCode::ATTRIBUTE_NOT_FOUND)?;
-                    if offset > value.len() {
-                        return Err(AttErrorCode::INVALID_OFFSET);
-                    }
-                    let value = &value[offset..];
-                    let len = value.len().min(data.len());
-                    data[..len].copy_from_slice(value);
-                    return Ok(len);
-                }
-            }
-            Err(AttErrorCode::ATTRIBUTE_NOT_FOUND)
-        })
-    }
-
-    fn write(&self, peer_identity: &Identity, att_handle: u16, offset: usize, data: &[u8]) -> Result<(), AttErrorCode> {
-        self.state.lock(|n| {
-            let mut n = n.borrow_mut();
-            for (client, table) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
-                    return table.write(att_handle, offset, data);
-                }
-            }
-            Err(AttErrorCode::ATTRIBUTE_NOT_FOUND)
-        })
-    }
-
-    fn get_client_att_table(&self, peer_identity: &Identity) -> Option<ClientAttTable<BYTES>> {
-        self.state.lock(|n| {
-            let n = n.borrow();
-            for (client, table) in n.iter() {
-                if client.identity.match_identity(peer_identity) {
-                    return Some(table.clone());
-                }
-            }
-            None
-        })
-    }
-
-    fn set_client_att_table(&self, peer_identity: &Identity, table: &ClientAttTable<BYTES>) {
-        self.state.lock(|n| {
-            let mut n = n.borrow_mut();
-            for (client, t) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
-                    trace!("Setting client attribute table {:?} for {:?}", table, peer_identity);
-                    t.set_values(table);
-                    break;
-                }
-            }
-        })
-    }
-
-    fn update_identity(&self, identity: Identity) -> Result<(), Error> {
-        self.state.lock(|n| {
-            let mut n = n.borrow_mut();
-            for (client, _) in n.iter_mut() {
-                if identity.match_identity(&client.identity) {
-                    client.set_identity(identity);
-                    return Ok(());
-                }
-            }
-            Err(Error::NotFound)
-        })
-    }
-}
-
 /// A GATT server capable of processing the GATT protocol using the provided table of attributes.
-pub struct AttributeServer<
-    'values,
-    M: RawMutex,
-    P: PacketPool,
-    const ATT_MAX: usize,
-    const CLIENT_ATT_BYTES: usize,
-    const CONN_MAX: usize,
-> {
+pub struct AttributeServer<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> {
     att_table: AttributeTable<'values, M, ATT_MAX>,
-    client_att_tables: ClientAttTables<M, CLIENT_ATT_BYTES, CONN_MAX>,
+    client_att_tables: ClientAttTables<M, CONN_MAX>,
     _p: PhantomData<P>,
 }
 
@@ -563,12 +58,12 @@ pub(crate) mod sealed {
 /// Type erased attribute server
 pub trait DynamicAttributeServer<P: PacketPool>: sealed::DynamicAttributeServer<P> {}
 
-impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: usize, const CONN_MAX: usize>
-    DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> DynamicAttributeServer<P>
+    for AttributeServer<'_, M, P, ATT_MAX, CONN_MAX>
 {
 }
-impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: usize, const CONN_MAX: usize>
-    sealed::DynamicAttributeServer<P> for AttributeServer<'_, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
+impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> sealed::DynamicAttributeServer<P>
+    for AttributeServer<'_, M, P, ATT_MAX, CONN_MAX>
 {
     fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
         AttributeServer::connect(self, connection)
@@ -650,19 +145,11 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CLIENT_ATT_BYTES: u
     }
 }
 
-impl<
-        'values,
-        M: RawMutex,
-        P: PacketPool,
-        const ATT_MAX: usize,
-        const CLIENT_ATT_BYTES: usize,
-        const CONN_MAX: usize,
-    > AttributeServer<'values, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>
+impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize>
+    AttributeServer<'values, M, P, ATT_MAX, CONN_MAX>
 {
     /// Create a new instance of the AttributeServer
-    pub fn new(
-        att_table: AttributeTable<'values, M, ATT_MAX>,
-    ) -> AttributeServer<'values, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX> {
+    pub fn new(att_table: AttributeTable<'values, M, ATT_MAX>) -> AttributeServer<'values, M, P, ATT_MAX, CONN_MAX> {
         let cccd_tables = ClientAttTables::new(&att_table);
         AttributeServer {
             att_table,
@@ -1333,12 +820,12 @@ impl<
     }
 
     /// Get the client-specific attribute table for a connection
-    pub fn get_client_att_table(&self, connection: &Connection<'_, P>) -> Option<ClientAttTable<CLIENT_ATT_BYTES>> {
+    pub fn get_client_att_table(&self, connection: &Connection<'_, P>) -> Option<ClientAttTable> {
         self.client_att_tables.get_client_att_table(&connection.peer_identity())
     }
 
     /// Set the client-specific attribute table for a connection
-    pub fn set_client_att_table(&self, connection: &Connection<'_, P>, table: &ClientAttTable<CLIENT_ATT_BYTES>) {
+    pub fn set_client_att_table(&self, connection: &Connection<'_, P>, table: &ClientAttTableView<'_>) {
         self.client_att_tables
             .set_client_att_table(&connection.peer_identity(), table);
     }
@@ -1385,7 +872,6 @@ mod tests {
         let _ = env_logger::try_init();
         const MAX_ATTRIBUTES: usize = 1024;
         const CONNECTIONS_MAX: usize = 3;
-        const CLIENT_ATT_BYTES: usize = 1024;
         const L2CAP_CHANNELS_MAX: usize = 5;
         type FacadeDummyType = [u8; 0];
 
@@ -1436,8 +922,7 @@ mod tests {
             });
 
             // Create a server.
-            let server =
-                AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
+            let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
 
             // Create the connection manager.
             let mgr = setup();

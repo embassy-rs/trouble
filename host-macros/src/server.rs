@@ -15,7 +15,6 @@ pub(crate) struct ServerArgs {
     mutex_type: Option<syn::Type>,
     packet_type: Option<syn::Type>,
     attribute_table_size: Option<Expr>,
-    client_att_table_size: Option<Expr>,
     connections_max: Option<Expr>,
 }
 
@@ -53,12 +52,6 @@ impl ServerArgs {
                 })?;
                 self.attribute_table_size = Some(buffer.parse()?);
             }
-            "client_att_table_size" => {
-                let buffer = meta.value().map_err(|_| {
-                    Error::custom("client_att_table_size must be followed by `= [size]`. e.g. client_att_table_size = 4".to_string())
-                })?;
-                self.client_att_table_size = Some(buffer.parse()?);
-            }
             "connections_max" => {
                 let buffer = meta.value().map_err(|_| {
                     Error::custom("connections_max must be followed by `= [size]`. e.g. connections_max = 1".to_string())
@@ -66,7 +59,7 @@ impl ServerArgs {
                 self.connections_max = Some(buffer.parse()?);
             }
             other => return Err(meta.error(format!(
-                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, packet_type, attribute_table_size, client_att_table_size, connections_max"
+                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, packet_type, attribute_table_size, connections_max"
             ))),
         }
         Ok(())
@@ -135,12 +128,6 @@ impl ServerBuilder {
             parse_quote!(trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation)
         };
 
-        let client_att_table_size = if let Some(value) = self.arguments.client_att_table_size {
-            value
-        } else {
-            parse_quote!(2 + 6 * (0 #code_cccd_summation))
-        };
-
         let connections_max = if let Some(value) = self.arguments.connections_max {
             value
         } else {
@@ -148,17 +135,24 @@ impl ServerBuilder {
         };
 
         quote! {
-            const _ATTRIBUTE_TABLE_SIZE: usize = #attribute_table_size;
-            // This pattern causes the assertion to happen at compile time
-            const _: () = {
-                core::assert!(_ATTRIBUTE_TABLE_SIZE >= trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation, "Specified attribute table size is insufficient. Please increase attribute_table_size or remove the argument entirely to allow automatic sizing of the attribute table.");
+            const _ATTRIBUTE_TABLE_SIZE: usize = const {
+                let size = #attribute_table_size;
+                core::assert!(size >= trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation, "Specified attribute table size is insufficient. Please increase attribute_table_size or remove the argument entirely to allow automatic sizing of the attribute table.");
+                size
             };
-            const _CLIENT_ATT_TABLE_SIZE: usize = #client_att_table_size;
+            const _: () = const {
+                let exact = 4 + 6 * (0 #code_cccd_summation);
+                let configured = trouble_host::config::CLIENT_ATT_TABLE_SIZE;
+                core::assert!(
+                    configured >= exact,
+                    "Configured client ATT table size is insufficient for this server's CCCD attributes. Please increase the client-att-table-size-* feature."
+                );
+            };
             const _CONNECTIONS_MAX: usize = #connections_max;
 
             #visibility struct #name<'values>
             {
-                pub server: trouble_host::prelude::AttributeServer<'values, #mutex_type, #packet_type, _ATTRIBUTE_TABLE_SIZE, _CLIENT_ATT_TABLE_SIZE, _CONNECTIONS_MAX>,
+                pub server: trouble_host::prelude::AttributeServer<'values, #mutex_type, #packet_type, _ATTRIBUTE_TABLE_SIZE, _CONNECTIONS_MAX>,
                 #code_service_definition
             }
 
@@ -220,18 +214,18 @@ impl ServerBuilder {
                     self.server.table().set(attribute_handle, input)
                 }
 
-                #visibility fn get_client_att_table(&self, connection: &trouble_host::connection::Connection<'_, #packet_type>) -> Option<trouble_host::prelude::ClientAttTable<_CLIENT_ATT_TABLE_SIZE>> {
+                #visibility fn get_client_att_table(&self, connection: &trouble_host::connection::Connection<'_, #packet_type>) -> Option<trouble_host::prelude::ClientAttTable> {
                     self.server.get_client_att_table(connection)
                 }
 
-                #visibility fn set_client_att_table(&self, connection: &trouble_host::connection::Connection<'_, #packet_type>, table: &trouble_host::prelude::ClientAttTable<_CLIENT_ATT_TABLE_SIZE>) {
+                #visibility fn set_client_att_table(&self, connection: &trouble_host::connection::Connection<'_, #packet_type>, table: &trouble_host::prelude::ClientAttTableView<'_>) {
                     self.server.set_client_att_table(connection, table);
                 }
             }
 
             impl<'values> core::ops::Deref for #name<'values>
             {
-                type Target = trouble_host::prelude::AttributeServer<'values, #mutex_type, #packet_type, _ATTRIBUTE_TABLE_SIZE, _CLIENT_ATT_TABLE_SIZE, _CONNECTIONS_MAX>;
+                type Target = trouble_host::prelude::AttributeServer<'values, #mutex_type, #packet_type, _ATTRIBUTE_TABLE_SIZE, _CONNECTIONS_MAX>;
 
                 fn deref(&self) -> &Self::Target {
                     &self.server
