@@ -55,7 +55,7 @@ use crate::command::CommandState;
 use crate::connection::{ConnParams, ConnectionEvent};
 #[cfg(feature = "security")]
 use crate::connection_manager::ResolvablePrivateAddrs;
-use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGrant};
+use crate::connection_manager::{AclSendLock, ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
 use crate::prelude::{ConnectionParamsRequest, RequestedConnParams};
@@ -895,7 +895,7 @@ where
         w.write_hci(&header)?;
         w.write_hci(signal)?;
 
-        let mut sender = self.l2cap_pdu(conn, w.len() as u16).await?;
+        let mut sender = self.l2cap_pdu(conn).await?;
         sender.send(w.finish()).await?;
 
         Ok(())
@@ -903,15 +903,10 @@ where
 
     // Request to send a single L2CAP PDU of pdu_len to the HCI controller for a connection.
     //
-    // This function will request the appropriate number of ACL packets to be sent and
-    // the returned sender will handle ACL fragmentation.
+    // This function will acquire the connection ACL send lock and the returned sender will handle ACL fragmentation.
     //
     // This function cannot be used to send an SDU split among multiple k-frames.
-    pub(crate) async fn l2cap_pdu(
-        &self,
-        handle: ConnHandle,
-        pdu_len: u16,
-    ) -> Result<L2capSender<'_, T, P::Packet>, BleHostError<T::Error>> {
+    pub(crate) async fn l2cap_pdu(&self, handle: ConnHandle) -> Result<L2capSender<'_, T, P>, BleHostError<T::Error>> {
         // Take into account l2cap header.
         let initial_state = self.initialized.get().await;
         let acl_max = initial_state.acl_max as u16;
@@ -919,36 +914,37 @@ where
             return Err(Error::NoPermits.into());
         }
 
-        let n_acl = usize::from(pdu_len.div_ceil(acl_max));
-        if n_acl > initial_state.acl_total {
-            return Err(Error::NoPermits.into());
-        }
-
-        let grant = poll_fn(|cx| self.connections.poll_request_to_send(handle, n_acl, Some(cx))).await?;
-        trace!("[host] granted send packets = {}, len = {}", n_acl, pdu_len);
+        let acl_send_lock = poll_fn(|cx| self.connections.poll_acquire_acl_send_lock(handle, Some(cx))).await?;
         Ok(L2capSender {
             controller: &self.controller,
             handle,
-            grant,
+            acl_send_lock,
             fragment_size: acl_max,
+            max_fragments: initial_state.acl_total,
         })
     }
 
     // Request to send an L2CAP SDU of sdu_len to the HCI controller for a connection.
     //
-    // This function will request the appropriate number of ACL packets to be sent and
-    // the returned sender will handle ACL fragmentation.
+    // This function will acquire the connection ACL send lock and the returned sender will handle ACL fragmentation.
     pub(crate) fn try_l2cap_sdu(
         &self,
         handle: ConnHandle,
         sdu_len: u16,
         mps: u16,
-    ) -> Result<L2capSender<'_, T, P::Packet>, BleHostError<T::Error>> {
+    ) -> Result<L2capSender<'_, T, P>, BleHostError<T::Error>> {
         let initial_state = self.initialized.try_get().ok_or(Error::NoPermits)?;
         let acl_max = initial_state.acl_max;
         if acl_max == 0 {
             return Err(Error::NoPermits.into());
         }
+
+        let acl_send_lock = match self.connections.poll_acquire_acl_send_lock(handle, None) {
+            Poll::Ready(res) => res?,
+            Poll::Pending => {
+                return Err(Error::Busy.into());
+            }
+        };
 
         const L2CAP_BASIC_HEADER_SIZE: usize = 4; // L2CAP Basic Header added to each k-frame
         const L2CAP_SDU_LEN_SIZE: usize = 2; // L2CAP SDU Length field added to first k-frame
@@ -966,19 +962,16 @@ where
         let n_acl = full_k_frames * full_k_frame_len.div_ceil(acl_max) + last_k_frame_len.div_ceil(acl_max);
         if n_acl > initial_state.acl_total {
             return Err(Error::NoPermits.into());
+        } else if !acl_send_lock.has_link_credits(n_acl) {
+            return Err(Error::Busy.into());
         }
 
-        let grant = match self.connections.poll_request_to_send(handle, n_acl, None) {
-            Poll::Ready(res) => res?,
-            Poll::Pending => {
-                return Err(Error::Busy.into());
-            }
-        };
         Ok(L2capSender {
             controller: &self.controller,
             handle,
-            grant,
+            acl_send_lock,
             fragment_size: acl_max as u16,
+            max_fragments: initial_state.acl_total,
         })
     }
 
@@ -1717,7 +1710,7 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
         let params = host.initialized.get().await;
         loop {
             let (conn, pdu) = host.connections.outbound().await;
-            match host.l2cap_pdu(conn, pdu.len() as u16).await {
+            match host.l2cap_pdu(conn).await {
                 Ok(mut sender) => {
                     if let Err(e) = sender.send(pdu.as_ref()).await {
                         warn!("[host] error sending outbound pdu");
@@ -1739,18 +1732,28 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     }
 }
 
-pub struct L2capSender<'a, T: Controller, P> {
+pub struct L2capSender<'a, T: Controller, P: PacketPool> {
     pub(crate) controller: &'a T,
     pub(crate) handle: ConnHandle,
-    pub(crate) grant: PacketGrant<'a, P>,
+    pub(crate) acl_send_lock: AclSendLock<'a, P>,
     pub(crate) fragment_size: u16,
+    pub(crate) max_fragments: usize,
 }
 
-impl<'a, T: Controller, P> L2capSender<'a, T, P> {
+impl<'a, T: Controller, P: PacketPool> L2capSender<'a, T, P> {
     pub(crate) fn try_send(&mut self, pdu: &[u8]) -> Result<(), BleHostError<T::Error>>
     where
         T: blocking::Controller,
     {
+        let n_acl = pdu.chunks(self.fragment_size as usize).len();
+        if n_acl > self.max_fragments {
+            return Err(Error::NoPermits.into());
+        }
+
+        let mut grant = match self.acl_send_lock.poll_request_to_send(n_acl, None) {
+            Poll::Ready(res) => res?,
+            Poll::Pending => return Err(Error::Busy.into()),
+        };
         let mut pbf = AclPacketBoundary::FirstNonFlushable;
         //info!(
         //    "[host] fragmenting PDU of size {} into {} sized fragments",
@@ -1760,8 +1763,8 @@ impl<'a, T: Controller, P> L2capSender<'a, T, P> {
         for chunk in pdu.chunks(self.fragment_size as usize) {
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
             match self.controller.try_write_acl_data(&acl) {
-                Ok(result) => {
-                    self.grant.confirm(1);
+                Ok(_result) => {
+                    grant.confirm(1);
                     trace!("[host] sent acl packet len = {}", chunk.len());
                 }
                 Err(blocking::TryError::Busy) => {
@@ -1783,12 +1786,13 @@ impl<'a, T: Controller, P> L2capSender<'a, T, P> {
         //);
         let mut pbf = AclPacketBoundary::FirstNonFlushable;
         for chunk in pdu.chunks(self.fragment_size as usize) {
+            let mut grant = poll_fn(|cx| self.acl_send_lock.poll_request_to_send(1, Some(cx))).await?;
             let acl = AclPacket::new(self.handle, pbf, AclBroadcastFlag::PointToPoint, chunk);
             self.controller
                 .write_acl_data(&acl)
                 .await
                 .map_err(BleHostError::Controller)?;
-            self.grant.confirm(1);
+            grant.confirm(1);
             pbf = AclPacketBoundary::Continuing;
             trace!("[host] sent acl packet len = {}", chunk.len());
         }

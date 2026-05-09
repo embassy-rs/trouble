@@ -132,11 +132,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         }
     }
 
-    fn connection(&self, index: u8) -> Ref<'_, ConnectionStorage<P::Packet>> {
+    pub(crate) fn connection(&self, index: u8) -> Ref<'_, ConnectionStorage<P::Packet>> {
         Ref::map(self.connections.borrow(), |x| &x[index as usize])
     }
 
-    fn connection_mut(&self, index: u8) -> RefMut<'_, ConnectionStorage<P::Packet>> {
+    pub(crate) fn connection_mut(&self, index: u8) -> RefMut<'_, ConnectionStorage<P::Packet>> {
         RefMut::map(self.connections.borrow_mut(), |x| &mut x[index as usize])
     }
 
@@ -178,6 +178,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn handle(&self, index: u8) -> ConnHandle {
         self.connection(index).handle.unwrap()
+    }
+
+    pub(crate) fn state(&self, index: u8) -> ConnectionState {
+        self.connection(index).state
     }
 
     pub(crate) fn is_connected(&self, index: u8) -> bool {
@@ -452,6 +456,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
                 storage.reassembly.clear();
+                storage.acl_send_locked = false;
+                storage.link_credit_waker.wake();
+                storage.acl_send_lock_waker.wake();
                 let _ = storage.events.try_send(ConnectionEvent::Disconnected { reason });
                 #[cfg(feature = "gatt")]
                 {
@@ -516,6 +523,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.reassembly.clear();
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
+                storage.acl_send_locked = false;
                 // Default ATT MTU is 23
                 storage.att_mtu = 23;
                 storage.handle.replace(handle);
@@ -652,33 +660,34 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         Err(Error::NotFound)
     }
 
-    pub(crate) fn poll_request_to_send(
+    pub(crate) fn poll_acquire_acl_send_lock(
         &self,
         handle: ConnHandle,
-        packets: usize,
         cx: Option<&mut Context<'_>>,
-    ) -> Poll<Result<PacketGrant<'_, P::Packet>, Error>> {
-        for storage in self.connections.borrow_mut().iter_mut() {
-            match storage.state {
-                ConnectionState::Connecting | ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                    if packets <= storage.link_credits {
-                        storage.link_credits -= packets;
+    ) -> Poll<Result<AclSendLock<'_, P>, Error>> {
+        for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
+            if storage.handle != Some(handle) {
+                continue;
+            }
 
-                        return Poll::Ready(Ok(PacketGrant::new(self.connections, handle, packets)));
-                    } else {
-                        if let Some(cx) = cx {
-                            storage.link_credit_waker.register(cx.waker());
-                        }
-                        #[cfg(feature = "connection-metrics")]
-                        storage.metrics.blocked_send();
+            if !matches!(storage.state, ConnectionState::Connecting | ConnectionState::Connected) {
+                return Poll::Ready(Err(Error::Disconnected));
+            }
 
-                        return Poll::Pending;
-                    }
+            if !storage.acl_send_locked {
+                storage.acl_send_locked = true;
+                return Poll::Ready(Ok(AclSendLock::new(handle, self)));
+            } else {
+                if let Some(cx) = cx {
+                    storage.acl_send_lock_waker.register(cx.waker());
                 }
-                _ => {}
+                #[cfg(feature = "connection-metrics")]
+                storage.metrics.blocked_send();
+
+                return Poll::Pending;
             }
         }
-        warn!("[link][pool_request_to_send] connection {:?} not found", handle);
+        warn!("[link][poll_acquire_acl_send_lock] connection {:?} not found", handle);
         Poll::Ready(Err(Error::NotFound))
     }
 
@@ -1075,6 +1084,27 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn clear_prepare_write(&self, index: u8) {
         self.connection_mut(index).prepare_write.clear();
     }
+
+    pub(crate) fn has_link_credits(&self, handle: ConnHandle, n: usize) -> bool {
+        self.connection_by_handle(handle)
+            .map(|conn| conn.link_credits >= n)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn unlock_acl_send(&self, handle: ConnHandle) {
+        if let Some(mut storage) = self.connection_by_handle_mut(handle) {
+            if core::mem::replace(&mut storage.acl_send_locked, false) {
+                storage.acl_send_lock_waker.wake();
+            }
+        }
+    }
+
+    pub(crate) fn return_link_credits(&self, handle: ConnHandle, packets: usize) {
+        if let Some(mut storage) = self.connection_by_handle_mut(handle) {
+            storage.link_credits += packets;
+            storage.link_credit_waker.wake();
+        }
+    }
 }
 
 /// Iterator over currently connected connections.
@@ -1139,6 +1169,8 @@ pub struct ConnectionStorage<P> {
     pub att_mtu: u16,
     pub link_credits: usize,
     pub link_credit_waker: WakerRegistration,
+    pub acl_send_locked: bool,
+    pub acl_send_lock_waker: WakerRegistration,
     pub refcount: u8,
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
@@ -1250,6 +1282,8 @@ impl<P> ConnectionStorage<P> {
             att_mtu: 23,
             link_credits: 0,
             link_credit_waker: WakerRegistration::new(),
+            acl_send_locked: false,
+            acl_send_lock_waker: WakerRegistration::new(),
             refcount: 0,
             #[cfg(feature = "connection-metrics")]
             metrics: Metrics::new(),
@@ -1306,6 +1340,15 @@ impl<P> ConnectionStorage<P> {
             waker.wake();
         }
     }
+
+    fn take_link_credits(&mut self, n: usize) -> bool {
+        if let Some(credits) = self.link_credits.checked_sub(n) {
+            self.link_credits = credits;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl<P> core::fmt::Debug for ConnectionStorage<P> {
@@ -1348,7 +1391,7 @@ impl<P> defmt::Format for ConnectionStorage<P> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConnectionState {
     DisconnectRequest(DisconnectReason),
@@ -1358,17 +1401,63 @@ pub enum ConnectionState {
     Connected,
 }
 
-pub struct PacketGrant<'a, P> {
-    connections: &'a RefCell<[ConnectionStorage<P>]>,
+pub struct AclSendLock<'a, P: PacketPool> {
     handle: ConnHandle,
+    manager: &'a ConnectionManager<'a, P>,
+}
+
+impl<'a, P: PacketPool> AclSendLock<'a, P> {
+    fn new(handle: ConnHandle, manager: &'a ConnectionManager<'a, P>) -> Self {
+        Self { handle, manager }
+    }
+
+    pub(crate) fn has_link_credits(&self, n_acl: usize) -> bool {
+        self.manager.has_link_credits(self.handle, n_acl)
+    }
+
+    pub(crate) fn poll_request_to_send(
+        &self,
+        packets: usize,
+        cx: Option<&mut Context<'_>>,
+    ) -> Poll<Result<PacketGrant<'a, P>, Error>> {
+        let Some(mut storage) = self.manager.connection_by_handle_mut(self.handle) else {
+            return Poll::Ready(Err(Error::Disconnected));
+        };
+
+        if !matches!(storage.state, ConnectionState::Connecting | ConnectionState::Connected) {
+            Poll::Ready(Err(Error::Disconnected))
+        } else if storage.take_link_credits(packets) {
+            Poll::Ready(Ok(PacketGrant::new(self.handle, self.manager, packets)))
+        } else {
+            #[cfg(feature = "connection-metrics")]
+            storage.metrics.blocked_send();
+
+            if let Some(cx) = cx {
+                storage.link_credit_waker.register(cx.waker());
+            }
+
+            Poll::Pending
+        }
+    }
+}
+
+impl<P: PacketPool> Drop for AclSendLock<'_, P> {
+    fn drop(&mut self) {
+        self.manager.unlock_acl_send(self.handle);
+    }
+}
+
+pub struct PacketGrant<'a, P: PacketPool> {
+    handle: ConnHandle,
+    manager: &'a ConnectionManager<'a, P>,
     packets: usize,
 }
 
-impl<'a, P> PacketGrant<'a, P> {
-    fn new(connections: &'a RefCell<[ConnectionStorage<P>]>, handle: ConnHandle, packets: usize) -> Self {
+impl<'a, P: PacketPool> PacketGrant<'a, P> {
+    fn new(handle: ConnHandle, manager: &'a ConnectionManager<'a, P>, packets: usize) -> Self {
         Self {
-            connections,
             handle,
+            manager,
             packets,
         }
     }
@@ -1377,34 +1466,17 @@ impl<'a, P> PacketGrant<'a, P> {
         self.packets = self.packets.saturating_sub(sent);
         #[cfg(feature = "connection-metrics")]
         {
-            for storage in self.connections.borrow_mut().iter_mut() {
-                match storage.state {
-                    ConnectionState::Connected if self.handle == storage.handle.unwrap() => {
-                        storage.metrics.sent(sent);
-                        break;
-                    }
-                    _ => {}
-                }
+            if let Some(mut storage) = self.manager.connection_by_handle_mut(self.handle) {
+                storage.metrics.sent(sent);
             }
         }
     }
 }
 
-impl<P> Drop for PacketGrant<'_, P> {
+impl<P: PacketPool> Drop for PacketGrant<'_, P> {
     fn drop(&mut self) {
         if self.packets > 0 {
-            for storage in self.connections.borrow_mut().iter_mut() {
-                match storage.state {
-                    ConnectionState::Connected if self.handle == storage.handle.unwrap() => {
-                        storage.link_credits += self.packets;
-                        storage.link_credit_waker.wake();
-                        return;
-                    }
-                    _ => {}
-                }
-            }
-            // make it an assert?
-            warn!("[link] connection {:?} not found", self.handle);
+            self.manager.return_link_credits(self.handle, self.packets);
         }
     }
 }

@@ -19,9 +19,9 @@ use bt_hci::{
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
-use crate::connection_manager::ConnectionManager;
 #[cfg(feature = "connection-metrics")]
 pub use crate::connection_manager::Metrics as ConnectionMetrics;
+use crate::connection_manager::{ConnectionManager, ConnectionState};
 use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
@@ -509,6 +509,14 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         Self { index, manager }
     }
 
+    pub(crate) fn manager(&self) -> &ConnectionManager<'stack, P> {
+        self.manager
+    }
+
+    pub(crate) fn index(&self) -> u8 {
+        self.index
+    }
+
     pub(crate) fn set_att_mtu(&self, mtu: u16) {
         self.manager.set_att_mtu(self.index, mtu);
     }
@@ -561,6 +569,10 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     #[cfg(feature = "gatt")]
     pub(crate) async fn wait_indication_confirmation(&self) -> Result<(), Error> {
         self.manager.wait_indication_confirmation(self.index).await
+    }
+
+    pub(crate) fn state(&self) -> ConnectionState {
+        self.manager.state(self.index)
     }
 
     /// Check if still connected

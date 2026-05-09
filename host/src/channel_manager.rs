@@ -985,14 +985,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let (first, remaining) = buf.split_at(buf.len().min(mps as usize - 2));
 
         let len = encode(first, &mut p_buf[..], peer_cid, Some(buf.len() as u16))?;
-        ble.l2cap_pdu(conn, len as u16).await?.send(&p_buf[..len]).await?;
+        ble.l2cap_pdu(conn).await?.send(&p_buf[..len]).await?;
         grant.confirm(1);
 
         let chunks = remaining.chunks(mps as usize);
 
         for chunk in chunks {
             let len = encode(chunk, &mut p_buf[..], peer_cid, None)?;
-            ble.l2cap_pdu(conn, len as u16).await?.send(&p_buf[..len]).await?;
+            ble.l2cap_pdu(conn).await?.send(&p_buf[..len]).await?;
             grant.confirm(1);
         }
         Ok(())
