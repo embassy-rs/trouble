@@ -128,6 +128,12 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     /// The peer has lost its bond.
     BondLost,
     #[cfg(feature = "security")]
+    /// The link is now encrypted.
+    Encrypted {
+        /// Security level achieved by the encryption.
+        security_level: SecurityLevel,
+    },
+    #[cfg(feature = "security")]
     /// OOB data is requested during pairing. Respond with [`GattConnection::provide_oob_data()`].
     OobRequest,
 }
@@ -257,6 +263,9 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::BondLost => GattConnectionEvent::BondLost,
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::Encrypted { security_level } => GattConnectionEvent::Encrypted { security_level },
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::OobRequest => GattConnectionEvent::OobRequest,

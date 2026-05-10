@@ -274,6 +274,14 @@ pub enum ConnectionEvent {
     /// The peer has lost its bond (received pairing request for a bonded peer).
     BondLost,
     #[cfg(feature = "security")]
+    /// The link is now encrypted. Fires once per encryption-enable transition,
+    /// for both fresh pairings and resumed bonded sessions. For pairings, this
+    /// fires alongside `PairingComplete`.
+    Encrypted {
+        /// Security level achieved by the encryption.
+        security_level: SecurityLevel,
+    },
+    #[cfg(feature = "security")]
     /// OOB data is requested during pairing. Respond with [`Connection::provide_oob_data()`].
     OobRequest,
 }

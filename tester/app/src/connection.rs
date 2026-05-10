@@ -92,12 +92,6 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     bond: _,
                 } => {
                     info!("PairingComplete addr={:?} level={:?}", address, security_level);
-                    events
-                        .send(Event::SecLevelChanged {
-                            address,
-                            level: security_level,
-                        })
-                        .await;
                 }
                 GattConnectionEvent::PairingFailed(error) => {
                     info!("PairingFailed addr={:?}", address);
@@ -106,6 +100,15 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                 GattConnectionEvent::BondLost => {
                     info!("BondLost addr={:?}", address);
                     events.send(Event::BondLost { address }).await;
+                }
+                GattConnectionEvent::Encrypted { security_level } => {
+                    info!("Encrypted addr={:?} level={:?}", address, security_level);
+                    events
+                        .send(Event::SecLevelChanged {
+                            address,
+                            level: security_level,
+                        })
+                        .await;
                 }
                 GattConnectionEvent::OobRequest => {
                     let (local_oob, peer_oob) = if let Some(sc_local) = oob.sc_local.get() {
