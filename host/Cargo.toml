@@ -14,7 +14,7 @@ repository = "https://github.com/embassy-rs/trouble"
 [package.metadata.embassy_docs]
 src_base = "https://github.com/embassy-rs/trouble-host/blob/v$VERSION/src/"
 src_base_git = "https://github.com/embassy-rs/trouble-host/blob/$COMMIT/src/"
-features = ["defmt", "peripheral", "central", "gatt", "scan", "derive"]
+features = ["defmt", "peripheral", "central", "gatt", "scan", "derive", "security"]
 target = "thumbv7em-none-eabi"
 
 [dependencies]
