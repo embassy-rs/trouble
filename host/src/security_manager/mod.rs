@@ -48,7 +48,7 @@ pub(crate) enum SecurityEventData {
     /// Pairing timer changed
     TimerChange,
     /// A new bond was stored during pairing
-    BondAdded(crate::Identity),
+    BondAdded(ConnHandle, crate::Identity),
 }
 
 /// Bond Information
@@ -1171,7 +1171,9 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
     fn try_update_bond_information(&mut self, bond: &BondInformation) -> Result<(), Error> {
         add_bond(self.bonds, bond.clone())?;
         if bond.identity.irk.is_some() {
-            let _ = self.events.try_send(SecurityEventData::BondAdded(bond.identity));
+            let _ = self
+                .events
+                .try_send(SecurityEventData::BondAdded(self.conn_handle, bond.identity));
         }
         Ok(())
     }
