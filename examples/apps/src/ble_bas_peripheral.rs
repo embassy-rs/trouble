@@ -24,7 +24,7 @@ struct BatteryService {
     #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
     level: u8,
     #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", write, read, notify)]
-    status: bool,
+    status: (),
 }
 
 /// Run the BLE stack.
@@ -104,27 +104,53 @@ async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
 /// This is how we interact with read and write requests.
 async fn gatt_events_task<P: PacketPool>(server: &Server<'_>, conn: &GattConnection<'_, '_, P>) -> Result<(), Error> {
     let level = server.battery_service.level;
+    let status_handle = server.battery_service.status.handle;
+    let mut status = false;
     let reason = loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
             GattConnectionEvent::Gatt { event } => {
-                match &event {
+                let reply = match event {
                     GattEvent::Read(event) => {
                         if event.handle() == level.handle {
                             let value = conn.get(&level);
                             info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                            event.accept()
+                        } else if event.handle() == status_handle {
+                            event.accept_unprocessed(&status)
+                        } else {
+                            event.accept()
                         }
                     }
                     GattEvent::Write(event) => {
                         if event.handle() == level.handle {
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                            event.with_data(|offset, data| {
+                                info!("[gatt] Write Event to Level Characteristic at {}: {:?}", offset, data)
+                            });
+                            event.accept()
+                        } else if event.handle() == status_handle {
+                            match event.validate(1, 1) {
+                                Ok(()) => {
+                                    event.with_data(|offset, data| {
+                                        if data.len() == 1 {
+                                            // If data.len() is 1, offset must be 0 or else validate would have errored
+                                            assert!(offset == 0);
+                                            status = data[0] != 0;
+                                        }
+                                    });
+                                    event.accept_unprocessed()
+                                }
+                                Err(err) => event.reject(err),
+                            }
+                        } else {
+                            event.accept()
                         }
                     }
-                    _ => {}
+                    _ => event.accept(),
                 };
                 // This step is also performed at drop(), but writing it explicitly is necessary
                 // in order to ensure reply is sent.
-                match event.accept() {
+                match reply {
                     Ok(reply) => reply.send().await,
                     Err(e) => warn!("[gatt] error sending response: {:?}", e),
                 };
@@ -180,7 +206,7 @@ async fn custom_task<C: Controller, P: PacketPool>(
     loop {
         tick = tick.wrapping_add(1);
         info!("[custom_task] notifying connection of tick {}", tick);
-        if level.notify(conn, &tick).await.is_err() {
+        if level.notify(conn, &tick, true).await.is_err() {
             info!("[custom_task] error notifying connection");
             break;
         };

@@ -137,10 +137,10 @@ Send updates to connected clients that have subscribed:
 let level = server.battery_service.level;
 
 // Notification (no confirmation from client)
-level.notify(&conn, &new_value).await?;
+level.notify(&conn, &new_value, true).await?;
 
 // Indication (waits for client confirmation)
-level.indicate(&conn, &new_value).await?;
+level.indicate(&conn, &new_value, true).await?;
 ----
 
 NOTE: Notifications/indications will only be delivered if the client has enabled them by writing to the characteristic's CCCD (Client Characteristic Configuration Descriptor). The `notify` and `indicate` calls return an error if the client hasn't subscribed.
@@ -291,7 +291,7 @@ pub async fn run<C: Controller>(controller: C) {
                         let mut tick: u8 = 0;
                         loop {
                             tick = tick.wrapping_add(1);
-                            let _ = level.notify(&conn, &tick).await;
+                            let _ = level.notify(&conn, &tick, true).await;
                             Timer::after_secs(2).await;
                         }
                     },
