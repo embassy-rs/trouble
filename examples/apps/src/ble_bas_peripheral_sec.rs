@@ -134,7 +134,9 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                     }
                     GattEvent::Write(event) => {
                         if event.handle() == level.handle {
-                            info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
+                            event.with_data(|offset, data| {
+                                info!("[gatt] Write Event to Level Characteristic at {}: {:?}", offset, data)
+                            });
                         }
                     }
                     GattEvent::NotAllowed(event) => {
@@ -199,7 +201,7 @@ async fn custom_task<C: Controller, P: PacketPool>(
     loop {
         tick = tick.wrapping_add(1);
         info!("[custom_task] notifying connection of tick {}", tick);
-        if level.notify(conn, &tick).await.is_err() {
+        if level.notify(conn, &tick, true).await.is_err() {
             info!("[custom_task] error notifying connection");
             break;
         };

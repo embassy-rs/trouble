@@ -892,11 +892,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     ) -> Result<(), crate::BleHostError<C::Error>>
     where
         C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
-            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>
-            + crate::ControllerCmdSync<bt_hci::cmd::link_control::Disconnect>,
+            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
     {
         use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
-        use bt_hci::cmd::link_control::Disconnect;
 
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
@@ -922,9 +920,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     } else {
                         warn!("[host] Long term key request reply failed, no long term key");
                         // Send disconnect event to the controller
-                        host.command(Disconnect::new(handle, DisconnectReason::AuthenticationFailure))
-                            .await?;
-                        unwrap!(self.disconnected(handle, Status::AUTHENTICATION_FAILURE));
+                        self.request_handle_disconnect(handle, DisconnectReason::AuthenticationFailure);
                     }
                 } else {
                     warn!("[host] Long term key request reply failed, unknown peer")

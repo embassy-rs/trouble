@@ -427,9 +427,12 @@ fn set_properties(args: &PropertiesArgs) -> Vec<TokenStream2> {
 fn set_permissions(args: &PermissionArgs) -> TokenStream2 {
     let read = args.read;
     let write = args.write;
-    quote! {trouble_host::attribute::AttPermissions {
-        read: #read,
-        write: #write,
-        ..Default::default()
-    }}
+    quote! {
+        #[allow(clippy::needless_update)]
+        trouble_host::attribute::AttPermissions {
+            read: #read,
+            write: #write,
+            ..Default::default()
+        }
+    }
 }
