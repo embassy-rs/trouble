@@ -659,9 +659,13 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         debug!("exchange_att_mtu: {}, current default: {}", mtu, state.default_att_mtu);
         let default_att_mtu = state.default_att_mtu;
         core::mem::drop(state);
+        // Both states are live link-layer connections; the transition
+        // to `Connected` is just the application polling `accept()` and
+        // is unrelated to ATT activity. `handle_acl` already accepts
+        // both via `connection_by_handle_mut`.
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
-                ConnectionState::Connected if storage.handle.unwrap() == conn => {
+                ConnectionState::Connecting | ConnectionState::Connected if storage.handle.unwrap() == conn => {
                     storage.att_mtu = default_att_mtu.min(mtu);
                     return storage.att_mtu;
                 }
