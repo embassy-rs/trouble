@@ -196,6 +196,13 @@ impl Pairing {
                 current @ (Self::WaitingPairingRequest | Self::WaitingLinkEncrypted),
                 Input::Event(Event::LinkEncryptedResult(res)),
             ) => Self::handle_link_encrypted(current, res, pairing_data, ops),
+            // Bonded reconnect: the per-stack pairing_sm persists in
+            // `Success` after the previous session, so when a bonded peer
+            // reconnects and the controller emits Encryption Complete
+            // (LTK reuse, no fresh pairing) the FSM receives this event
+            // while sitting in Success. Treat as a no-op — the SM has
+            // nothing left to do.
+            (current @ Self::Success, Input::Event(Event::LinkEncryptedResult(_))) => Ok(current),
             (
                 Self::WaitingNumericComparisonResult {
                     phase_data,
