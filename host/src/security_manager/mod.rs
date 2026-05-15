@@ -449,7 +449,7 @@ impl Inner {
         connections: &ConnectionManager<'_, P>,
         storage: &mut ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
-        if let Some(sm) = self.pairing_sm.as_mut() {
+        let res: Result<(), Error> = if let Some(sm) = self.pairing_sm.as_mut() {
             let mut ops = PairingOpsImpl {
                 bonds,
                 events,
@@ -474,7 +474,7 @@ impl Inner {
                 self.finished_waker.wake();
                 let _ = events.try_send(SecurityEventData::TimerChange);
             }
-            return res;
+            res
         } else if let Some(identity) = storage.peer_identity.as_ref() {
             match bonds
                 .iter()
@@ -497,8 +497,19 @@ impl Inner {
                     storage.security_level = SecurityLevel::NoEncryption;
                 }
             }
+            Ok(())
+        } else {
+            Ok(())
+        };
+
+        // Emit an Encrypted event for both new-pairing and resumed-bond paths.
+        if encrypted && storage.security_level != SecurityLevel::NoEncryption {
+            let _ = storage.events.try_send(ConnectionEvent::Encrypted {
+                security_level: storage.security_level,
+            });
         }
-        Ok(())
+
+        res
     }
 
     fn handle_encryption_failure<P: PacketPool>(
