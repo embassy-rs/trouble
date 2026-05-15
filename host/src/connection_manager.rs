@@ -963,10 +963,16 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             }
             crate::security_manager::SecurityEventData::TimerChange => (),
             #[cfg(feature = "security")]
-            crate::security_manager::SecurityEventData::BondAdded(identity) => {
+            crate::security_manager::SecurityEventData::BondAdded(handle, identity) => {
                 host.resolving_list_state
                     .borrow_mut()
                     .push(crate::host::ResolvingListUpdate::Add(identity));
+                // Update the connection's stored peer identity to reflect the identity
+                // address distributed during key exchange, which may differ from the
+                // address seen at connection time (e.g. a temporary RPA).
+                if let Some(mut connection) = self.connection_by_handle_mut(handle) {
+                    connection.peer_identity = Some(identity);
+                }
             }
         }
         Ok(())
