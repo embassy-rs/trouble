@@ -17,6 +17,10 @@ src_base_git = "https://github.com/embassy-rs/trouble-host/blob/$COMMIT/src/"
 features = ["defmt", "peripheral", "central", "gatt", "scan", "derive", "security"]
 target = "thumbv7em-none-eabi"
 
+[package.metadata.docs.rs]
+features = ["defmt", "peripheral", "central", "gatt", "scan", "derive", "security"]
+targets = ["thumbv7em-none-eabi"]
+
 [dependencies]
 aes = { version = "0.8.2", optional = true }
 bt-hci = { version = "0.8", features = ["uuid"] }
