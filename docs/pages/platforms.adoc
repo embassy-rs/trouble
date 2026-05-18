@@ -178,6 +178,57 @@ async fn main(spawner: Spawner) {
 
 See the link:https://github.com/embassy-rs/trouble/tree/main/examples/rp-pico-w[rp-pico-w examples] for complete configurations.
 
+== STM32WB
+
+Uses the BLE coprocessor on the STM32WB series via the `embassy-stm32-wpan` crate, which exposes a `bt-hci` controller adapter over the IPCC mailbox. Requires flashing ST's wireless firmware (FUS + BLE HCI stack) onto the device before running the example.
+
+[source,rust]
+----
+#![no_std]
+#![no_main]
+
+use embassy_executor::Spawner;
+use embassy_stm32::bind_interrupts;
+use embassy_stm32::ipcc::{Config, ReceiveInterruptHandler, TransmitInterruptHandler};
+use embassy_stm32::rcc;
+use embassy_stm32_wpan::TlMbox;
+use embassy_stm32_wpan::sub::{ble::ControllerAdapter, mm};
+
+bind_interrupts!(struct Irqs {
+    IPCC_C1_RX => ReceiveInterruptHandler;
+    IPCC_C1_TX => TransmitInterruptHandler;
+});
+
+#[embassy_executor::task]
+async fn run_mm_queue(mut memory_manager: mm::MemoryManager<'static>) {
+    memory_manager.run_queue().await;
+}
+
+#[embassy_executor::main(executor = "embassy_stm32::executor::Executor", entry = "cortex_m_rt::entry")]
+async fn main(spawner: Spawner) {
+    let mut config = embassy_stm32::Config::default();
+    config.rcc = rcc::Config::new_wpan();
+    let p = embassy_stm32::init(config);
+
+    // 1. Bring up the IPCC mailbox to talk to the wireless coprocessor.
+    let (ble, mm) = TlMbox::wait_ready(p.IPCC, Irqs, Config::default())
+        .await
+        .unwrap()
+        .init_ble(Default::default())
+        .await
+        .unwrap();
+    spawner.spawn(run_mm_queue(mm).unwrap());
+
+    // 2. The ControllerAdapter implements the bt-hci Controller trait.
+    let controller = ControllerAdapter::new(ble);
+
+    // 3. Run application
+    my_app::run(controller).await;
+}
+----
+
+See the link:https://github.com/embassy-rs/trouble/tree/main/examples/stm32wb[stm32wb examples] for complete configurations, including the steps to flash the FUS and BLE HCI firmware onto the coprocessor with STM32CubeProgrammer.
+
 == Serial HCI (UART)
 
 For any Bluetooth controller connected over a UART (e.g., HCI dongles). Works on desktop with `tokio`.
