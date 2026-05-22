@@ -38,7 +38,12 @@ impl DeviceUnderTest {
                     if attempt == MAX_FLASH_ATTEMPTS || self.token.is_cancelled() {
                         return Err(e);
                     }
-                    log::warn!("Flash attempt {}/{} failed: {}, retrying...", attempt, MAX_FLASH_ATTEMPTS, e);
+                    log::warn!(
+                        "Flash attempt {}/{} failed: {}, retrying...",
+                        attempt,
+                        MAX_FLASH_ATTEMPTS,
+                        e
+                    );
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 }
             }

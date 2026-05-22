@@ -1,8 +1,4 @@
 {
-  "server": {
-    "url": "ws://192.168.10.54:3000",
-    "token": ""
-  },
   "targets": [
     {
       "chip": "nRF52832_xxAA",
