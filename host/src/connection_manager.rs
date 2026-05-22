@@ -224,7 +224,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "gatt")]
     pub(crate) fn post_gatt(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         for entry in self.connections.borrow().iter() {
-            if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+            if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected)
+                && Some(handle) == entry.handle
+            {
                 entry.gatt.try_send(pdu).map_err(|_| Error::OutOfMemory)?;
                 return Ok(());
             }
@@ -235,7 +237,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "gatt")]
     pub(crate) fn post_gatt_client(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         for entry in self.connections.borrow().iter() {
-            if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+            if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected)
+                && Some(handle) == entry.handle
+            {
                 entry.gatt_client.try_send(pdu).map_err(|_| Error::OutOfMemory)?;
                 return Ok(());
             }
@@ -579,7 +583,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn confirm_sent(&self, handle: ConnHandle, packets: usize) -> Result<(), Error> {
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
-                ConnectionState::Connected if handle == storage.handle.unwrap() => {
+                ConnectionState::Connecting | ConnectionState::Connected if handle == storage.handle.unwrap() => {
                     storage.link_credits += packets;
                     storage.link_credit_waker.wake();
                     return Ok(());
@@ -598,7 +602,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     ) -> Poll<Result<PacketGrant<'_, P::Packet>, Error>> {
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
-                ConnectionState::Connected if storage.handle.unwrap() == handle => {
+                ConnectionState::Connecting | ConnectionState::Connected if storage.handle.unwrap() == handle => {
                     if packets <= storage.link_credits {
                         storage.link_credits -= packets;
 
