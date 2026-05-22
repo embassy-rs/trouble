@@ -5,7 +5,6 @@
 ## dedup kill
 ## device /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_265650C6A0739A40-if00 /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_265650C6A0739A40-if00 
 ## device /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_CBBC59EDA8BA738E-if00 /dev/serial/by-id/usb-ZEPHYR_Zephyr_HCI_UART_sample_CBBC59EDA8BA738E-if00
-## device /dev/serial/by-id/usb-SEGGER_J-Link_000682808385-if00 /dev/serial/by-id/usb-SEGGER_J-Link_000682808385-if00
 ## cooldown 30s
 
 set -euo pipefail
