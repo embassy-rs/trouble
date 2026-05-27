@@ -33,9 +33,9 @@ stm32wba65ri = [ "embassy-stm32-wpan/stm32wba65ri", "embassy-stm32-wpan/ble-stac
 name = "ble_bas_peripheral"
 
 [patch.crates-io]
-embassy-stm32 = { version = "0.6.0", git = "https://github.com/embassy-rs/embassy.git", rev = "d1c7b8f"}
-embassy-stm32-wpan = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "d1c7b8f"}
-embassy-sync = { version = "0.8.0", git = "https://github.com/embassy-rs/embassy.git", rev = "d1c7b8f"}
-embassy-executor = { version = "0.10.0", git = "https://github.com/embassy-rs/embassy.git", rev = "d1c7b8f"}
-embassy-time = { version = "0.5.1", git = "https://github.com/embassy-rs/embassy.git", rev = "d1c7b8f"}
-embassy-net = { version = "0.9.1", git = "https://github.com/embassy-rs/embassy.git", rev = "d1c7b8f"}
+embassy-stm32 = { version = "0.6.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
+embassy-stm32-wpan = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
+embassy-sync = { version = "0.8.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
+embassy-executor = { version = "0.10.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
+embassy-time = { version = "0.5.1", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
+embassy-net = { version = "0.9.1", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}

@@ -1488,7 +1488,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
 
         let mask = LeEventMask::new()
             .enable_le_conn_complete(true)
-            .enable_le_enhanced_conn_complete(true)
+            .enable_le_enhanced_conn_complete_v1(true)
             .enable_le_conn_update_complete(true)
             .enable_le_adv_set_terminated(true)
             .enable_le_adv_report(true)
