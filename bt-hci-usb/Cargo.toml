@@ -8,7 +8,7 @@ keywords = ["no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [dependencies]
-bt-hci = "0.8"
+bt-hci = "0.9"
 embedded-io = { version = "0.7.1", features = ["std"] }
 futures = { version = "0.3.32", default-features = false }
 nusb = { version = "0.2.3", features = ["tokio"] }

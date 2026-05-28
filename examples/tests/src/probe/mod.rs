@@ -30,7 +30,7 @@ impl DeviceUnderTest {
     }
 
     pub async fn run(self, firmware: String) -> Result<FirmwareLogs, anyhow::Error> {
-        const MAX_FLASH_ATTEMPTS: usize = 3;
+        const MAX_FLASH_ATTEMPTS: usize = 5;
         for attempt in 1..=MAX_FLASH_ATTEMPTS {
             match self.try_run(&firmware).await {
                 Ok(logs) => return Ok(logs),
@@ -38,7 +38,12 @@ impl DeviceUnderTest {
                     if attempt == MAX_FLASH_ATTEMPTS || self.token.is_cancelled() {
                         return Err(e);
                     }
-                    log::warn!("Flash attempt {}/{} failed: {}, retrying...", attempt, MAX_FLASH_ATTEMPTS, e);
+                    log::warn!(
+                        "Flash attempt {}/{} failed: {}, retrying...",
+                        attempt,
+                        MAX_FLASH_ATTEMPTS,
+                        e
+                    );
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 }
             }

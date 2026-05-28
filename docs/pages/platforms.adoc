@@ -29,7 +29,7 @@ Dependencies:
 [source,toml]
 ----
 [dependencies]
-bt-hci = "0.8"
+bt-hci = "0.9"
 bt-hci-linux = { path = "../../bt-hci-linux" }
 tokio = { version = "1", features = ["macros", "rt"] }
 trouble-host = { version = "0.6", features = ["log"] }

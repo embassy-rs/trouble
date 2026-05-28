@@ -9,4 +9,4 @@ runner = "probe-rs run --chip STM32WB55RG"
 target = "thumbv7em-none-eabihf"
 
 [env]
-DEFMT_LOG = "trace"
+DEFMT_LOG = "debug"

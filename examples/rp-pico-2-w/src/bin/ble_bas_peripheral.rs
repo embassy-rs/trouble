@@ -1,15 +1,16 @@
 #![no_std]
 #![no_main]
 
-use cyw43_pio::{PioSpi, RM2_CLOCK_DIVIDER};
 #[cfg(not(feature = "skip-cyw43-firmware"))]
 use cyw43::aligned_bytes;
+use cyw43::Cyw43439;
+use cyw43_pio::{PioSpi, RM2_CLOCK_DIVIDER};
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_rp::{bind_interrupts, dma};
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, PIO0};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
+use embassy_rp::{bind_interrupts, dma};
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_peripheral;
 use trouble_host::prelude::ExternalController;
@@ -17,11 +18,13 @@ use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
-    DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>;
+    DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>, dma::InterruptHandler<DMA_CH1>;
 });
 
 #[embassy_executor::task]
-async fn cyw43_task(runner: cyw43::Runner<'static, cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>>) -> ! {
+async fn cyw43_task(
+    runner: cyw43::Runner<'static, cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>, Cyw43439>,
+) -> ! {
     runner.run().await
 }
 
@@ -62,11 +65,13 @@ async fn main(spawner: Spawner) {
         p.PIN_24,
         p.PIN_29,
         dma::Channel::new(p.DMA_CH0, Irqs),
+        dma::Channel::new(p.DMA_CH1, Irqs),
     );
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
-    let (_net_device, bt_device, mut control, runner) = cyw43::new_with_bluetooth(state, pwr, spi, fw, btfw, nvram).await;
+    let (_net_device, bt_device, mut control, runner) =
+        cyw43::new_with_bluetooth(state, pwr, spi, fw, btfw, nvram).await;
     spawner.spawn(unwrap!(cyw43_task(runner)));
     control.init(clm).await;
 
