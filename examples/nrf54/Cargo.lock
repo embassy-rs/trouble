@@ -720,9 +720,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fixed"
-version = "1.31.0"
+version = "1.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9af2cbf772fa6d1c11358f92ef554cb6b386201210bcf0e91fb7fba8a907fb40"
+checksum = "c566da967934c6c7ee0458a9773de9b2a685bd2ce26a3b28ddfc740e640182f5"
 dependencies = [
  "az",
  "bytemuck",
@@ -1676,6 +1676,7 @@ dependencies = [
  "embassy-time",
  "embedded-hal-async",
  "embedded-storage-async",
+ "fixed",
  "heapless 0.9.3",
  "rand_core 0.6.4",
  "sequential-storage",
