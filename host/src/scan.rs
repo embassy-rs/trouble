@@ -69,7 +69,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
 
         host.command(LeSetExtScanEnable::new(
             true,
-            FilterDuplicates::Disabled,
+            config.filter_duplicates,
             bt_hci_duration(config.timeout),
             bt_hci::param::Duration::from_secs(0),
         ))
@@ -121,7 +121,8 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         );
         host.command(params).await?;
 
-        host.command(LeSetScanEnable::new(true, true)).await?;
+        let filter_duplicates = !matches!(config.filter_duplicates, FilterDuplicates::Disabled);
+        host.command(LeSetScanEnable::new(true, filter_duplicates)).await?;
         drop.defuse();
         Ok(ScanSession {
             command_state: &self.central.host.scan_command_state,

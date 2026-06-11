@@ -7,8 +7,8 @@ use bt_hci::cmd::le::{
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
-    AllPhys, ConnHandle, DisconnectReason, FrameSpaceInitiator, LeConnRole, PhyKind, PhyMask, PhyOptions, SpacingTypes,
-    Status,
+    AllPhys, ConnHandle, DisconnectReason, FilterDuplicates, FrameSpaceInitiator, LeConnRole, PhyKind, PhyMask,
+    PhyOptions, SpacingTypes, Status,
 };
 #[cfg(feature = "connection-params-update")]
 use bt_hci::{
@@ -80,6 +80,8 @@ pub struct ScanConfig<'d> {
     pub window: Duration,
     /// Scan timeout.
     pub timeout: Duration,
+    /// Duplicate advertising filtering.
+    pub filter_duplicates: FilterDuplicates,
 }
 
 impl Default for ScanConfig<'_> {
@@ -91,6 +93,7 @@ impl Default for ScanConfig<'_> {
             interval: Duration::from_secs(1),
             window: Duration::from_secs(1),
             timeout: Duration::from_secs(0),
+            filter_duplicates: FilterDuplicates::Disabled,
         }
     }
 }
