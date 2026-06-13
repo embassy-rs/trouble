@@ -18,7 +18,7 @@ where
     let address: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<_, DefaultPacketPool, 0, 0, 2> = HostResources::new();
+    let mut resources: HostResources<_, DefaultPacketPool, 1, 0, 3> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
         .build();
@@ -28,8 +28,8 @@ where
     let mut adv_data = [0; 31];
     let len = AdStructure::encode_slice(
         &[
-            AdStructure::CompleteLocalName(b"Trouble Multiadv"),
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+            AdStructure::CompleteLocalName(b"Trouble Multiadv"),
         ],
         &mut adv_data[..],
     )
@@ -61,16 +61,32 @@ where
             },
             address: None,
         },
+        AdvertisementSet {
+            params: params_1m,
+            data: Advertisement::ExtConnectableNonscannableUndirected {
+                adv_data: &adv_data[..len],
+            },
+            address: None,
+        },
     ];
     let mut handles = AdvertisementSet::handles(&sets);
 
     info!("Starting advertising");
     let _ = join(runner.run(), async {
         loop {
-            let _advertiser = peripheral.advertise_ext(&sets, &mut handles).await.unwrap();
+            let mut advertiser = peripheral.advertise_ext(&sets, &mut handles).await.unwrap();
             loop {
-                info!("Still running");
-                Timer::after(Duration::from_secs(60)).await;
+                match advertiser.accept_connectable().await {
+                    Ok(conn) => {
+                        info!("Connection established on adv set {:?}", conn.adv_handle());
+                        Timer::after(Duration::from_secs(10)).await;
+                        info!("Dropping connection, beacon sets keep advertising");
+                    }
+                    Err(e) => {
+                        warn!("Advertiser stopped: {:?}", e);
+                        break;
+                    }
+                }
             }
         }
     })

@@ -9,11 +9,14 @@ use bt_hci::cmd::le::{
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, LeConnRole, Operation};
 use embassy_futures::select::{select, Either};
+use embassy_time::{with_timeout, Duration};
 
 use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
 use crate::connection::Connection;
 use crate::host::BleHost;
 use crate::{bt_hci_duration, bt_hci_ext_duration, Address, BleHostError, Error, PacketPool};
+
+const REARM_TERMINATE_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Type which implements the BLE peripheral role.
 pub struct Peripheral<'d, C, P: PacketPool> {
@@ -127,6 +130,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             host: self.host,
             extended: false,
             done: false,
+            connectable: None,
         })
     }
 
@@ -214,6 +218,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         // Clear current advertising terminations
         host.advertise_state.reset();
 
+        let mut connectable: Option<AdvSet> = None;
         for (i, set) in sets.iter().enumerate() {
             let handle = AdvHandle::new(i as u8);
             let data: RawAdvertisement<'k> = set.data.into();
@@ -271,6 +276,9 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             handles[i].adv_handle = handle;
             handles[i].duration = bt_hci_duration(set.params.timeout.unwrap_or(embassy_time::Duration::from_micros(0)));
             handles[i].max_ext_adv_events = set.params.max_events.unwrap_or(0);
+            if connectable.is_none() && data.props.connectable_adv() {
+                connectable = Some(handles[i]);
+            }
         }
 
         trace!("[host] enabling extended advertising");
@@ -281,6 +289,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             host: self.host,
             extended: true,
             done: false,
+            connectable,
         })
     }
 
@@ -345,14 +354,12 @@ pub struct Advertiser<'d, C, P: PacketPool> {
     host: &'d BleHost<'d, C, P>,
     extended: bool,
     done: bool,
+    connectable: Option<AdvSet>,
 }
 
 impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
-    /// Accept the next peripheral connection for this advertiser.
-    ///
-    /// Returns Error::Timeout if advertiser stopped.
-    pub async fn accept(mut self) -> Result<Connection<'d, P>, Error> {
-        let result = match select(
+    async fn accept_one(&self) -> Result<Connection<'d, P>, Error> {
+        match select(
             self.host.connections.accept(LeConnRole::Peripheral, &[]),
             self.host.advertise_state.wait(),
         )
@@ -360,9 +367,48 @@ impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
         {
             Either::First(conn) => Ok(conn),
             Either::Second(_) => Err(Error::Timeout),
-        };
+        }
+    }
+
+    /// Accept the next peripheral connection for this advertiser.
+    ///
+    /// Returns Error::Timeout if advertiser stopped.
+    pub async fn accept(mut self) -> Result<Connection<'d, P>, Error> {
+        let result = self.accept_one().await;
         self.done = true;
         result
+    }
+
+    /// Accept the next connection, then re-enable the connectable set so the other sets keep
+    /// advertising and connections can be accepted in a loop:
+    ///
+    /// ```ignore
+    /// let mut advertiser = peripheral.advertise_ext(&sets, &mut handles).await?;
+    /// loop {
+    ///     let conn = advertiser.accept_connectable().await?;
+    /// }
+    /// ```
+    ///
+    /// Returns Error::Timeout if all sets stopped advertising, or Error::NotFound if none of the
+    /// sets is connectable.
+    pub async fn accept_connectable(&mut self) -> Result<Connection<'d, P>, BleHostError<C::Error>>
+    where
+        C: for<'t> ControllerCmdSync<LeSetExtAdvEnable<'t>>,
+    {
+        // Not setting `done`; Drop cancels advertising once the caller stops looping.
+        let set = self.connectable.ok_or(Error::NotFound)?;
+        let conn = self.accept_one().await?;
+        // Per BT Core Spec Vol 4, Part E, Section 7.8.56 the connectable set terminates right after
+        // the connection. Wait for it so the connection's adv handle is correlated and our state
+        // stays coherent before re-enabling. Bounded in case the controller never sends it.
+        let _ = with_timeout(
+            REARM_TERMINATE_TIMEOUT,
+            self.host.advertise_state.wait_terminated(set.adv_handle),
+        )
+        .await;
+        self.host.advertise_state.rearm(set.adv_handle);
+        self.host.command(LeSetExtAdvEnable::new(true, &[set])).await?;
+        Ok(conn)
     }
 }
 

@@ -184,6 +184,19 @@ impl<'d> AdvState<'d> {
         self.waker.borrow_mut().wake();
     }
 
+    // Rearm a terminated handle
+    pub(crate) fn rearm(&self, handle: AdvHandle) {
+        for entry in self.handles.borrow_mut().iter_mut() {
+            match entry {
+                AdvHandleState::Terminated(h) if *h == handle => {
+                    *entry = AdvHandleState::Advertising(handle);
+                }
+                _ => {}
+            }
+        }
+        self.waker.borrow_mut().wake();
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.handles.as_ptr().len()
     }
@@ -221,6 +234,21 @@ impl<'d> AdvState<'d> {
             } else {
                 Poll::Pending
             }
+        })
+        .await;
+    }
+
+    pub async fn wait_terminated(&self, handle: AdvHandle) {
+        poll_fn(|cx| {
+            self.waker.borrow_mut().register(cx.waker());
+            for entry in self.handles.borrow().iter() {
+                if let AdvHandleState::Advertising(h) = entry {
+                    if *h == handle {
+                        return Poll::Pending;
+                    }
+                }
+            }
+            Poll::Ready(())
         })
         .await;
     }
@@ -1232,6 +1260,9 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 LeEventKind::LeAdvertisingSetTerminated => {
                                     let set = unwrap!(LeAdvertisingSetTerminated::from_hci_bytes_complete(event.data));
                                     host.advertise_state.terminate(set.adv_handle);
+                                    if set.status.to_result().is_ok() {
+                                        host.connections.associate_adv_handle(set.handle, set.adv_handle);
+                                    }
                                 }
                                 LeEventKind::LeExtendedAdvertisingReport => {
                                     #[cfg(feature = "scan")]

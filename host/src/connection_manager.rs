@@ -6,7 +6,7 @@ use core::task::{Context, Poll};
 
 #[cfg(feature = "security")]
 use bt_hci::param::BdAddr;
-use bt_hci::param::{ConnHandle, DisconnectReason, LeConnRole, Status};
+use bt_hci::param::{AdvHandle, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
@@ -174,6 +174,16 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn role_by_handle(&self, handle: ConnHandle) -> Option<LeConnRole> {
         self.connection_by_handle(handle).and_then(|connection| connection.role)
+    }
+
+    pub(crate) fn adv_handle(&self, index: u8) -> Option<AdvHandle> {
+        self.connection(index).adv_handle
+    }
+
+    pub(crate) fn associate_adv_handle(&self, conn: ConnHandle, adv: AdvHandle) {
+        if let Some(mut storage) = self.connection_by_handle_mut(conn) {
+            storage.adv_handle = Some(adv);
+        }
     }
 
     pub(crate) fn handle(&self, index: u8) -> ConnHandle {
@@ -1077,6 +1087,7 @@ pub struct ConnectionStorage<P> {
     pub handle: Option<ConnHandle>,
     pub role: Option<LeConnRole>,
     pub peer_identity: Option<Identity>,
+    pub adv_handle: Option<AdvHandle>,
     pub params: ConnParams,
     pub att_mtu: u16,
     pub link_credits: usize,
@@ -1180,6 +1191,7 @@ impl<P> ConnectionStorage<P> {
             handle: None,
             role: None,
             peer_identity: None,
+            adv_handle: None,
             params: ConnParams::new(),
             att_mtu: 23,
             link_credits: 0,
