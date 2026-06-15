@@ -143,7 +143,7 @@ level.notify(&conn, &new_value, true).await?;
 level.indicate(&conn, &new_value, true).await?;
 ----
 
-NOTE: Notifications/indications will only be delivered if the client has enabled them by writing to the characteristic's CCCD (Client Characteristic Configuration Descriptor). The `notify` and `indicate` calls return an error if the client hasn't subscribed.
+NOTE: Notifications/indications will only be delivered if the client has enabled them by writing to the characteristic's CCCD (Client Characteristic Configuration Descriptor).
 
 == The GATT Client
 

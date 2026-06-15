@@ -264,6 +264,60 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         .await
     }
 
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn acquire_indication_slot(&self, index: u8) -> Result<(), Error> {
+        poll_fn(|cx| {
+            let mut connections = self.connections.borrow_mut();
+            let storage = &mut connections[index as usize];
+            if storage.state == ConnectionState::Disconnected {
+                return Poll::Ready(Err(Error::Disconnected));
+            }
+            if !storage.indication_in_flight {
+                storage.indication_in_flight = true;
+                storage.indication_cfm_received = false;
+                return Poll::Ready(Ok(()));
+            }
+            storage.indication_slot_waker.register(cx.waker());
+            Poll::Pending
+        })
+        .await
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn release_indication_slot(&self, index: u8) {
+        let mut connections = self.connections.borrow_mut();
+        let storage = &mut connections[index as usize];
+        storage.indication_in_flight = false;
+        storage.indication_cfm_received = false;
+        storage.indication_slot_waker.wake();
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn wait_indication_confirmation(&self, index: u8) -> Result<(), Error> {
+        poll_fn(|cx| {
+            let mut connections = self.connections.borrow_mut();
+            let storage = &mut connections[index as usize];
+            if storage.indication_cfm_received {
+                storage.indication_cfm_received = false;
+                return Poll::Ready(Ok(()));
+            }
+            if storage.state == ConnectionState::Disconnected {
+                return Poll::Ready(Err(Error::Disconnected));
+            }
+            storage.indication_cfm_waker.register(cx.waker());
+            Poll::Pending
+        })
+        .await
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn signal_indication_confirmation(&self, h: ConnHandle) {
+        if let Some(mut entry) = self.connection_by_handle_mut(h) {
+            entry.indication_cfm_received = true;
+            entry.indication_cfm_waker.wake();
+        }
+    }
+
     pub(crate) fn peer_address(&self, index: u8) -> Address {
         self.connection(index).peer_identity.map(|i| i.addr).unwrap_or_default()
     }
@@ -403,6 +457,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 {
                     storage.gatt.clear();
                     storage.gatt_client_waker.wake();
+                    storage.indication_in_flight = false;
+                    storage.indication_cfm_received = false;
+                    storage.indication_slot_waker.wake();
+                    storage.indication_cfm_waker.wake();
                 }
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
@@ -1107,6 +1165,14 @@ pub struct ConnectionStorage<P> {
     pub(crate) gatt_client: GattChannel<P>,
     #[cfg(feature = "gatt")]
     pub(crate) gatt_client_waker: WakerRegistration,
+    #[cfg(feature = "gatt")]
+    pub(crate) indication_in_flight: bool,
+    #[cfg(feature = "gatt")]
+    pub(crate) indication_slot_waker: WakerRegistration,
+    #[cfg(feature = "gatt")]
+    pub(crate) indication_cfm_received: bool,
+    #[cfg(feature = "gatt")]
+    pub(crate) indication_cfm_waker: WakerRegistration,
     #[cfg(feature = "att-queued-writes")]
     pub(crate) prepare_write: PrepareWriteState,
 }
@@ -1205,6 +1271,14 @@ impl<P> ConnectionStorage<P> {
             gatt_client: GattChannel::new(),
             #[cfg(feature = "gatt")]
             gatt_client_waker: WakerRegistration::new(),
+            #[cfg(feature = "gatt")]
+            indication_in_flight: false,
+            #[cfg(feature = "gatt")]
+            indication_slot_waker: WakerRegistration::new(),
+            #[cfg(feature = "gatt")]
+            indication_cfm_received: false,
+            #[cfg(feature = "gatt")]
+            indication_cfm_waker: WakerRegistration::new(),
             reassembly: PacketReassembly::new(),
             #[cfg(feature = "security")]
             bondable: false,

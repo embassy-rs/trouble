@@ -546,6 +546,21 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.next_gatt_client(self.index).await
     }
 
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn acquire_indication_slot(&self) -> Result<(), Error> {
+        self.manager.acquire_indication_slot(self.index).await
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn release_indication_slot(&self) {
+        self.manager.release_indication_slot(self.index)
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn wait_indication_confirmation(&self) -> Result<(), Error> {
+        self.manager.wait_indication_confirmation(self.index).await
+    }
+
     /// Check if still connected
     pub fn is_connected(&self) -> bool {
         self.manager.is_connected(self.index)
