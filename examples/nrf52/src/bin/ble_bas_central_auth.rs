@@ -9,8 +9,6 @@ use embassy_nrf::{bind_interrupts, rng};
 use embassy_nrf::gpio::{Input, Pull};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_central_auth;
 use {defmt_rtt as _, panic_probe as _};
@@ -73,7 +71,6 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
-    let mut rng_2 = ChaCha12Rng::from_rng(&mut rng).unwrap();
 
     let mut sdc_mem = sdc::Mem::<6544>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
@@ -81,5 +78,5 @@ async fn main(spawner: Spawner) {
     let yes = Input::new(p.P0_11, Pull::Up);
     let no = Input::new(p.P0_12, Pull::Up);
 
-    ble_bas_central_auth::run(sdc, &mut rng_2, yes, no).await;
+    ble_bas_central_auth::run(sdc, yes, no).await;
 }

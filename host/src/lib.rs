@@ -17,8 +17,6 @@ use bt_hci::FromHciBytesError;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::{Vec, VecView};
-#[cfg(feature = "security")]
-use rand_core::{CryptoRng, RngCore};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
@@ -477,6 +475,7 @@ pub trait SecurityCmds:
     + ControllerCmdSync<LeSetAddrResolutionEnable>
     + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
     + ControllerCmdSync<LeSetPrivacyMode>
+    + ControllerCmdSync<LeRand>
 {
 }
 
@@ -490,7 +489,8 @@ impl<
             + ControllerCmdSync<LeClearResolvingList>
             + ControllerCmdSync<LeSetAddrResolutionEnable>
             + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
-            + ControllerCmdSync<LeSetPrivacyMode>,
+            + ControllerCmdSync<LeSetPrivacyMode>
+            + ControllerCmdSync<LeRand>,
     > SecurityCmds for C
 {
 }
@@ -791,20 +791,6 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
         self
     }
 
-    /// Set the random generator seed for random generator used by security manager.
-    #[cfg(feature = "security")]
-    pub fn set_random_generator_seed<RNG: RngCore + CryptoRng>(mut self, _random_generator: &mut RNG) -> Self {
-        {
-            let mut random_seed = [0u8; 32];
-            _random_generator.fill_bytes(&mut random_seed);
-            self.host()
-                .connections
-                .security_manager
-                .set_random_generator_seed(random_seed);
-        }
-        self
-    }
-
     /// Set the IO capabilities used by the security manager.
     ///
     /// Only relevant if the feature `security` is enabled.
@@ -839,13 +825,6 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
     /// [`Peripheral`](peripheral::Peripheral) handles via [`Stack::central()`] and
     /// [`Stack::peripheral()`].
     pub fn build(mut self) -> Stack<'stack, C, P> {
-        #[cfg(all(feature = "security", not(feature = "dev-disable-csprng-seed-requirement")))]
-        if !self.host().connections.security_manager.get_random_generator_seeded() {
-            panic!(
-                "The security manager random number generator has not been seeded from a cryptographically secure random number generator"
-            )
-        }
-
         Stack {
             host: self.host.take().unwrap(),
             runner_taken: Cell::new(false),

@@ -15,8 +15,8 @@ use bt_hci::cmd::controller_baseband::{
 use bt_hci::cmd::info::ReadBdAddr;
 #[cfg(feature = "security")]
 use bt_hci::cmd::le::{
-    LeAddDeviceToResolvingList, LeClearResolvingList, LeRemoveDeviceFromResolvingList, LeSetAddrResolutionEnable,
-    LeSetPrivacyMode, LeSetResolvablePrivateAddrTimeout,
+    LeAddDeviceToResolvingList, LeClearResolvingList, LeRand, LeRemoveDeviceFromResolvingList,
+    LeSetAddrResolutionEnable, LeSetPrivacyMode, LeSetResolvablePrivateAddrTimeout,
 };
 use bt_hci::cmd::le::{
     LeConnUpdate, LeCreateConnCancel, LeReadBufferSize, LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask,
@@ -1461,6 +1461,16 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
     {
         let host = &self.host;
         Reset::new().exec(&host.controller).await?;
+
+        #[cfg(feature = "security")]
+        {
+            let mut seed = [0u8; 32];
+            for chunk in seed.chunks_mut(8) {
+                let bytes: [u8; 8] = LeRand::new().exec(&host.controller).await?;
+                chunk.copy_from_slice(&bytes);
+            }
+            host.connections.security_manager.set_random_generator_seed(seed);
+        }
 
         if let Some(addr) = host.address {
             LeSetRandomAddr::new(addr.addr).exec(&host.controller).await?;

@@ -109,8 +109,6 @@ impl defmt::Format for BondInformation {
 struct SecurityManagerData {
     /// Local device address
     local_address: Option<Address>,
-    /// Random generator seeded
-    random_generator_seeded: bool,
     /// Local Identity Resolving Key (set when privacy is enabled)
     local_irk: Option<IdentityResolvingKey>,
 }
@@ -120,7 +118,6 @@ impl SecurityManagerData {
     fn new() -> Self {
         Self {
             local_address: None,
-            random_generator_seeded: false,
             local_irk: None,
         }
     }
@@ -449,6 +446,7 @@ impl Inner {
         connections: &ConnectionManager<'_, P>,
         storage: &mut ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
+        let mut bond = None;
         let res: Result<(), Error> = if let Some(sm) = self.pairing_sm.as_mut() {
             let mut ops = PairingOpsImpl {
                 bonds,
@@ -481,13 +479,14 @@ impl Inner {
                 .find(|bond| bond.identity.match_identity(identity))
                 .cloned()
             {
-                Some(bond) if encrypted => {
-                    info!("[smp] Encrypted using bond {:?}", bond.identity);
-                    storage.security_level = bond.security_level;
+                Some(b) if encrypted => {
+                    info!("[smp] Encrypted using bond {:?}", b.identity);
+                    storage.security_level = b.security_level;
                     #[cfg(feature = "legacy-pairing")]
                     {
-                        storage.encryption_key_len = bond.encryption_key_len;
+                        storage.encryption_key_len = b.encryption_key_len;
                     }
+                    bond = Some(b);
                 }
                 _ => {
                     warn!(
@@ -506,6 +505,7 @@ impl Inner {
         if encrypted && storage.security_level != SecurityLevel::NoEncryption {
             let _ = storage.events.try_send(ConnectionEvent::Encrypted {
                 security_level: storage.security_level,
+                bond,
             });
         }
 
@@ -657,13 +657,12 @@ impl<'d> SecurityManager<'d> {
         self.inner.borrow_mut().secure_connections_only = enabled;
     }
 
-    /// Set the current local address
+    /// Seed the security manager's CSPRNG and regenerate the persistent LESC keypair.
     pub(crate) fn set_random_generator_seed(&self, random_seed: [u8; 32]) {
         let mut inner = self.inner.borrow_mut();
         inner.rng = ChaCha12Rng::from_seed(random_seed);
         inner.secret_key = crypto::SecretKey::new(&mut inner.rng);
         inner.public_key = inner.secret_key.public_key();
-        inner.state.random_generator_seeded = true;
     }
 
     /// Set the current local address
@@ -722,11 +721,6 @@ impl<'d> SecurityManager<'d> {
                 None
             }
         })
-    }
-
-    /// Has the random generator been seeded?
-    pub(crate) fn get_random_generator_seeded(&self) -> bool {
-        self.inner.borrow().state.random_generator_seeded
     }
 
     /// Generate local OOB data for LESC pairing.

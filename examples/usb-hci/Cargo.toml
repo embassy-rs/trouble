@@ -13,7 +13,6 @@ embedded-io = { version = "0.7", features = ["std"] }
 env_logger = "0.11"
 log = "0.4"
 nusb = { version = "0.2.3", features = ["tokio"] }
-rand = { version = "0.8.5", features = ["getrandom"] }
 tokio = { version = "1", features = ["io-util", "net", "rt", "macros", "signal", "sync"] }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "std"] }
 trouble-host = { path = "../../host", features = ["scan"] }

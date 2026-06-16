@@ -283,6 +283,8 @@ pub enum ConnectionEvent {
     Encrypted {
         /// Security level achieved by the encryption.
         security_level: SecurityLevel,
+        /// Bond information if encryption was achieved using a stored bond.
+        bond: Option<BondInformation>,
     },
     #[cfg(feature = "security")]
     /// OOB data is requested during pairing. Respond with [`Connection::provide_oob_data()`].

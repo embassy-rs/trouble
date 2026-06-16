@@ -973,7 +973,6 @@ dependencies = [
  "futures-executor",
  "heapless",
  "log",
- "rand_core",
  "static_cell",
  "tokio",
  "trouble-host",
