@@ -61,6 +61,10 @@ jobs:
       with:
         toolchain: stable
 
+    - name: Install deps
+      run: |
+        cargo install --git https://github.com/embassy-rs/cargo-batch cargo --bin cargo-batch --locked
+
     - name: Build project
       run: |
         cd host
