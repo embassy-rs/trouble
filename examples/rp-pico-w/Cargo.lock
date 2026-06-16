@@ -2599,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bt-hci",
  "defmt 1.0.1",
@@ -2616,7 +2616,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "convert_case",
  "darling",
