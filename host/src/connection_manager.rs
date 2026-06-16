@@ -2,6 +2,7 @@ use core::cell::{Ref, RefCell, RefMut};
 use core::future::poll_fn;
 #[cfg(feature = "security")]
 use core::future::Future;
+use core::num::NonZeroU16;
 use core::task::{Context, Poll};
 
 #[cfg(feature = "security")]
@@ -335,7 +336,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     pub(crate) fn set_att_mtu(&self, index: u8, mtu: u16) {
-        self.connection_mut(index).att_mtu = mtu;
+        self.connection_mut(index).att_mtu = NonZeroU16::new(mtu);
     }
 
     pub(crate) fn set_l2cap_listening(&self, index: u8, listening: bool) {
@@ -524,8 +525,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.state = ConnectionState::Connecting;
                 storage.link_credits = default_credits;
                 storage.acl_send_locked = false;
-                // Default ATT MTU is 23
-                storage.att_mtu = 23;
+                storage.att_mtu = None;
                 storage.handle.replace(handle);
                 #[cfg(feature = "security")]
                 let identity = self
@@ -692,7 +692,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     pub(crate) fn get_att_mtu(&self, index: u8) -> u16 {
-        self.connection(index).att_mtu
+        self.connection(index).att_mtu()
+    }
+
+    pub(crate) fn is_att_mtu_exchanged(&self, index: u8) -> bool {
+        self.connection(index).att_mtu.is_some()
     }
 
     pub(crate) async fn send(&self, index: u8, pdu: Pdu<P::Packet>) {
@@ -717,7 +721,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
                 ConnectionState::Connected if storage.handle.unwrap() == conn => {
-                    return storage.att_mtu;
+                    return storage.att_mtu();
                 }
                 _ => {}
             }
@@ -737,8 +741,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
                 ConnectionState::Connecting | ConnectionState::Connected if storage.handle.unwrap() == conn => {
-                    storage.att_mtu = default_att_mtu.min(mtu);
-                    return storage.att_mtu;
+                    storage.att_mtu = NonZeroU16::new(default_att_mtu.min(mtu));
+                    return storage.att_mtu();
                 }
                 _ => {}
             }
@@ -1166,7 +1170,7 @@ pub struct ConnectionStorage<P> {
     pub role: Option<LeConnRole>,
     pub peer_identity: Option<Identity>,
     pub params: ConnParams,
-    pub att_mtu: u16,
+    pub att_mtu: Option<NonZeroU16>,
     pub link_credits: usize,
     pub link_credit_waker: WakerRegistration,
     pub acl_send_locked: bool,
@@ -1279,7 +1283,7 @@ impl<P> ConnectionStorage<P> {
             role: None,
             peer_identity: None,
             params: ConnParams::new(),
-            att_mtu: 23,
+            att_mtu: None,
             link_credits: 0,
             link_credit_waker: WakerRegistration::new(),
             acl_send_locked: false,
@@ -1348,6 +1352,11 @@ impl<P> ConnectionStorage<P> {
         } else {
             false
         }
+    }
+
+    fn att_mtu(&self) -> u16 {
+        // Default ATT MTU is 23
+        self.att_mtu.map_or(23, |mtu| mtu.get())
     }
 }
 
