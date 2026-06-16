@@ -315,8 +315,18 @@ impl Inner {
         }
         let address = self.pairing_sm.as_ref().unwrap().peer_address();
 
-        if address != peer_address {
-            // TODO Is this correct?
+        // The state machine stores the connection-level peer address: the RPA,
+        // when the controller resolved one (see `connection_peer_address`, and
+        // the SMP confirm-value calculations that require the on-air address).
+        // The incoming command carries the *resolved identity* address, so the
+        // command address must be normalized the same way before comparing.
+        // Comparing them directly rejected every pairing attempt from a peer
+        // whose RPA was resolved against a stored bond -- i.e. a bonded peer
+        // that lost its keys could never re-pair until the local bond (and so
+        // the resolving-list entry) was deleted.
+        if address != Self::connection_peer_address(peer_address, storage) {
+            // A pairing is already in progress with a *different* peer address;
+            // reject and reset rather than mixing two exchanges.
             self.pairing_sm = None;
             return Err(Error::InvalidValue);
         }
@@ -385,8 +395,13 @@ impl Inner {
         }
         let address = self.pairing_sm.as_ref().unwrap().peer_address();
 
-        if address != peer_address {
-            // TODO Is this correct?
+        // See the matching check in `handle_peripheral`: the state machine
+        // stores the connection-level peer address (the RPA when one was
+        // resolved), while the command carries the resolved identity, so the
+        // command address must be normalized before comparing.
+        if address != Self::connection_peer_address(peer_address, storage) {
+            // A pairing is already in progress with a *different* peer address;
+            // reject and reset rather than mixing two exchanges.
             self.pairing_sm = None;
             return Err(Error::InvalidValue);
         }
