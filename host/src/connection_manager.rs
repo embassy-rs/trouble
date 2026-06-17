@@ -98,7 +98,6 @@ struct State {
     peripheral_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
     default_link_credits: usize,
-    default_att_mtu: u16,
 }
 
 type EventChannel = Channel<NoopRawMutex, ConnectionEvent, { config::CONNECTION_EVENT_QUEUE_SIZE }>;
@@ -115,7 +114,6 @@ pub(crate) struct ConnectionManager<'d, P: PacketPool> {
 impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn new(
         connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
-        default_att_mtu: u16,
         #[cfg(feature = "security")] bond_storage: &'d RefCell<heapless::VecView<crate::BondInformation>>,
     ) -> Self {
         Self {
@@ -124,7 +122,6 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 peripheral_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
                 default_link_credits: 0,
-                default_att_mtu,
             }),
             connections,
             outbound: Channel::new(),
@@ -517,7 +514,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     ) -> Result<(), Error> {
         let mut state = self.state.borrow_mut();
         let default_credits = state.default_link_credits;
-        let default_att_mtu = state.default_att_mtu;
+        let default_att_mtu = self.default_att_mtu();
         for (idx, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 {
                 storage.events.clear();
@@ -641,9 +638,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         }
     }
 
-    pub(crate) fn set_default_att_mtu(&self, att_mtu: u16) {
-        let mut state = self.state.borrow_mut();
-        state.default_att_mtu = att_mtu;
+    pub(crate) const fn default_att_mtu(&self) -> u16 {
+        (P::MTU - 4) as u16
     }
 
     pub(crate) fn confirm_sent(&self, handle: ConnHandle, packets: usize) -> Result<(), Error> {
@@ -726,14 +722,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 _ => {}
             }
         }
-        self.state.borrow().default_att_mtu
+        self.default_att_mtu()
     }
 
     pub(crate) fn exchange_att_mtu(&self, conn: ConnHandle, mtu: u16) -> u16 {
-        let state = self.state.borrow();
-        debug!("exchange_att_mtu: {}, current default: {}", mtu, state.default_att_mtu);
-        let default_att_mtu = state.default_att_mtu;
-        core::mem::drop(state);
+        debug!("exchange_att_mtu: {}, current default: {}", mtu, self.default_att_mtu());
+        let default_att_mtu = self.default_att_mtu();
         // Both states are live link-layer connections; the transition
         // to `Connected` is just the application polling `accept()` and
         // is unrelated to ATT activity. `handle_acl` already accepts
@@ -1514,7 +1508,6 @@ pub(crate) mod tests {
         >::new())));
         let mgr = ConnectionManager::new(
             storage,
-            23,
             #[cfg(feature = "security")]
             bond_storage,
         );

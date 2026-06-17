@@ -262,7 +262,6 @@ where
             controller,
             connections: ConnectionManager::new(
                 connections,
-                P::MTU as u16 - 4,
                 #[cfg(feature = "security")]
                 bond_storage,
             ),
