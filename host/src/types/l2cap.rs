@@ -1,4 +1,4 @@
-use bt_hci::{FixedSizeValue, WriteHci};
+use bt_hci::{FixedSizeValue, WriteHci, fixed_size_from_hci_bytes, fixed_size_write_hci};
 
 pub(crate) const L2CAP_CID_ATT: u16 = 0x0004;
 pub(crate) const L2CAP_CID_LE_U_SIGNAL: u16 = 0x0005;
@@ -19,6 +19,9 @@ unsafe impl FixedSizeValue for L2capHeader {
     }
 }
 
+fixed_size_write_hci!(L2capHeader);
+fixed_size_from_hci_bytes!(L2capHeader);
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -33,6 +36,9 @@ unsafe impl FixedSizeValue for L2capSignalHeader {
         true
     }
 }
+
+fixed_size_write_hci!(L2capSignalHeader);
+fixed_size_from_hci_bytes!(L2capSignalHeader);
 
 #[cfg(not(feature = "defmt"))]
 pub trait L2capSignal: WriteHci + FixedSizeValue + core::fmt::Debug {
@@ -59,6 +65,9 @@ unsafe impl FixedSizeValue for L2capSignalCode {
         true
     }
 }
+
+fixed_size_write_hci!(L2capSignalCode);
+fixed_size_from_hci_bytes!(L2capSignalCode);
 
 impl core::fmt::Debug for L2capSignalCode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -164,6 +173,9 @@ unsafe impl FixedSizeValue for LeCreditConnReq {
     }
 }
 
+fixed_size_write_hci!(LeCreditConnReq);
+fixed_size_from_hci_bytes!(LeCreditConnReq);
+
 impl L2capSignal for LeCreditConnReq {
     fn code() -> L2capSignalCode {
         L2capSignalCode::LE_CREDIT_CONN_REQ
@@ -176,25 +188,25 @@ impl L2capSignal for LeCreditConnReq {
 /// Result code for an LE Credit Based Connection Response.
 pub enum LeCreditConnResultCode {
     /// Connection successful.
-    Success = 0x0000,
+    Success                    = 0x0000,
     /// Connection refused — LE_PSM not supported.
-    SpsmNotSupported = 0x0002,
+    SpsmNotSupported           = 0x0002,
     /// Connection refused — no resources available.
-    NoResources = 0x0004,
+    NoResources                = 0x0004,
     /// Connection refused — insufficient authentication.
     InsufficientAuthentication = 0x0005,
     /// Connection refused — insufficient authorization.
-    InsufficientAuthorization = 0x0006,
+    InsufficientAuthorization  = 0x0006,
     /// Connection refused — encryption key size too short.
-    EncryptionKeyTooShort = 0x0007,
+    EncryptionKeyTooShort      = 0x0007,
     /// Connection refused — insufficient encryption.
-    InsufficientEncryption = 0x0008,
+    InsufficientEncryption     = 0x0008,
     /// Connection refused — invalid Source CID.
-    InvalidSourceId = 0x0009,
+    InvalidSourceId            = 0x0009,
     /// Connection refused — Source CID already allocated.
-    ScidAlreadyAllocated = 0x000A,
+    ScidAlreadyAllocated       = 0x000A,
     /// Connection refused — unacceptable parameters.
-    UnacceptableParameters = 0x000B,
+    UnacceptableParameters     = 0x000B,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -232,6 +244,9 @@ unsafe impl FixedSizeValue for LeCreditConnRes {
     }
 }
 
+fixed_size_write_hci!(LeCreditConnRes);
+fixed_size_from_hci_bytes!(LeCreditConnRes);
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -245,6 +260,9 @@ unsafe impl FixedSizeValue for LeCreditFlowInd {
         true
     }
 }
+
+fixed_size_write_hci!(LeCreditFlowInd);
+fixed_size_from_hci_bytes!(LeCreditFlowInd);
 
 impl L2capSignal for LeCreditFlowInd {
     fn code() -> L2capSignalCode {
@@ -266,6 +284,9 @@ unsafe impl FixedSizeValue for CommandRejectRes {
     }
 }
 
+fixed_size_write_hci!(CommandRejectRes);
+fixed_size_from_hci_bytes!(CommandRejectRes);
+
 impl L2capSignal for CommandRejectRes {
     fn code() -> L2capSignalCode {
         L2capSignalCode::COMMAND_REJECT_RES
@@ -286,6 +307,9 @@ unsafe impl FixedSizeValue for DisconnectionReq {
     }
 }
 
+fixed_size_write_hci!(DisconnectionReq);
+fixed_size_from_hci_bytes!(DisconnectionReq);
+
 impl L2capSignal for DisconnectionReq {
     fn code() -> L2capSignalCode {
         L2capSignalCode::DISCONNECTION_REQ
@@ -305,6 +329,9 @@ unsafe impl FixedSizeValue for DisconnectionRes {
         true
     }
 }
+
+fixed_size_write_hci!(DisconnectionRes);
+fixed_size_from_hci_bytes!(DisconnectionRes);
 
 impl L2capSignal for DisconnectionRes {
     fn code() -> L2capSignalCode {
@@ -327,6 +354,8 @@ unsafe impl FixedSizeValue for ConnParamUpdateReq {
         true
     }
 }
+fixed_size_write_hci!(ConnParamUpdateReq);
+fixed_size_from_hci_bytes!(ConnParamUpdateReq);
 
 impl L2capSignal for ConnParamUpdateReq {
     fn code() -> L2capSignalCode {
@@ -346,6 +375,9 @@ unsafe impl FixedSizeValue for ConnParamUpdateRes {
         true
     }
 }
+
+fixed_size_write_hci!(ConnParamUpdateRes);
+fixed_size_from_hci_bytes!(ConnParamUpdateRes);
 
 impl L2capSignal for ConnParamUpdateRes {
     fn code() -> L2capSignalCode {
