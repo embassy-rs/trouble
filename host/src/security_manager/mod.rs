@@ -437,8 +437,8 @@ impl Inner {
                 events,
                 secret_key: &self.secret_key,
                 public_key: &self.public_key,
-                peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
-                conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                peer_identity: storage.peer_identity,
+                conn_handle: storage.handle,
                 connections,
                 storage,
                 state: &self.state,
@@ -468,10 +468,10 @@ impl Inner {
                 events,
                 secret_key: &self.secret_key,
                 public_key: &self.public_key,
-                peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                peer_identity: storage.peer_identity,
                 connections,
                 storage,
-                conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                conn_handle: storage.handle,
                 state: &self.state,
             };
             let res = sm.handle_event(pairing::Event::LinkEncryptedResult(encrypted), &mut ops, &mut self.rng);
@@ -488,10 +488,10 @@ impl Inner {
                 let _ = events.try_send(SecurityEventData::TimerChange);
             }
             res
-        } else if let Some(identity) = storage.peer_identity.as_ref() {
+        } else {
             match bonds
                 .iter()
-                .find(|bond| bond.identity.match_identity(identity))
+                .find(|bond| bond.identity.match_identity(&storage.peer_identity))
                 .cloned()
             {
                 Some(b) if encrypted => {
@@ -506,13 +506,11 @@ impl Inner {
                 _ => {
                     warn!(
                         "[smp] Either encryption failed to enable or bond not found for {:?}",
-                        identity
+                        storage.peer_identity
                     );
                     storage.security_level = SecurityLevel::NoEncryption;
                 }
             }
-            Ok(())
-        } else {
             Ok(())
         };
 
@@ -548,10 +546,10 @@ impl Inner {
                     events,
                     secret_key: &self.secret_key,
                     public_key: &self.public_key,
-                    peer_identity: storage.peer_identity.unwrap_or_default(),
+                    peer_identity: storage.peer_identity,
                     connections,
                     storage,
-                    conn_handle: storage.handle.unwrap_or(ConnHandle::new(0)),
+                    conn_handle: storage.handle,
                     state: &self.state,
                 },
                 &mut self.rng,
@@ -574,11 +572,11 @@ impl Inner {
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
         user_initiated: bool,
     ) -> Result<(), Error> {
-        let role = storage.role.ok_or(Error::InvalidValue)?;
+        let role = storage.role;
 
         if !self.is_idle() {
             // If pairing is already in progress for this peer, consider the request fulfilled.
-            let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+            let peer_identity = storage.peer_identity;
             let peer_address = peer_identity.addr;
             if self
                 .pairing_sm
@@ -590,8 +588,8 @@ impl Inner {
             return Err(Error::InvalidState);
         }
 
-        let handle = storage.handle.ok_or(Error::InvalidValue)?;
-        let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+        let handle = storage.handle;
+        let peer_identity = storage.peer_identity;
         let local_address = self.connection_local_address(storage)?;
         let peer_address = Self::connection_peer_address(peer_identity.addr, storage);
         let local_io = self.io_capabilities;
@@ -843,9 +841,9 @@ impl<'d> SecurityManager<'d> {
         let cmd = SmpCommand {
             command,
             payload: &buffer[1..size],
-            peer_address: storage.peer_identity.ok_or(Error::InvalidValue)?.addr,
-            handle: storage.handle.ok_or(Error::InvalidValue)?,
-            peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+            peer_address: storage.peer_identity.addr,
+            handle: storage.handle,
+            peer_identity: storage.peer_identity,
         };
         self.inner.borrow_mut().handle_peripheral(
             &mut self.bonds.borrow_mut(),
@@ -866,9 +864,9 @@ impl<'d> SecurityManager<'d> {
         let cmd = SmpCommand {
             command,
             payload: &buffer[1..size],
-            peer_address: storage.peer_identity.ok_or(Error::InvalidValue)?.addr,
-            handle: storage.handle.ok_or(Error::InvalidValue)?,
-            peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+            peer_address: storage.peer_identity.addr,
+            handle: storage.handle,
+            peer_identity: storage.peer_identity,
         };
         self.inner
             .borrow_mut()
@@ -882,7 +880,7 @@ impl<'d> SecurityManager<'d> {
         connections: &ConnectionManager<P>,
         storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
-        let role = storage.role.ok_or(Error::InvalidValue)?;
+        let role = storage.role;
 
         let result = if role == LeConnRole::Peripheral {
             self.handle_peripheral(pdu, connections, storage)
@@ -928,7 +926,7 @@ impl<'d> SecurityManager<'d> {
 
             // Cease sending security manager messages on timeout
             if *error != Error::Timeout {
-                let handle = storage.handle.ok_or(Error::InvalidValue)?;
+                let handle = storage.handle;
                 let mut packet = self.prepare_packet(Command::PairingFailed, connections)?;
                 let payload = packet.payload_mut();
                 payload[0] = u8::from(reason);
