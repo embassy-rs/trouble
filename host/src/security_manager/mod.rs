@@ -1276,3 +1276,130 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         self.state.local_address.ok_or(Error::InvalidValue)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use core::cell::RefCell;
+    use std::boxed::Box;
+
+    use bt_hci::param::{ConnHandle, LeConnRole};
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use rand_chacha::ChaCha12Rng;
+    use rand_core::SeedableRng;
+
+    use super::*;
+    use crate::connection::ConnParams;
+    use crate::connection_manager::{ConnectionManager, ConnectionStorage};
+    use crate::prelude::DefaultPacketPool;
+    use crate::IoCapabilities;
+
+    fn setup_manager() -> &'static ConnectionManager<'static, DefaultPacketPool> {
+        let storage: &RefCell<[_]> = Box::leak(Box::new(RefCell::new([const { ConnectionStorage::new() }; 2])));
+        let bond_storage: &RefCell<heapless::VecView<_>> =
+            Box::leak(Box::new(RefCell::new(heapless::Vec::<BondInformation, 4>::new())));
+        Box::leak(Box::new(ConnectionManager::new(storage, bond_storage)))
+    }
+
+    fn test_inner(peer_address: Address) -> Inner {
+        let mut rng = ChaCha12Rng::from_seed([7; 32]);
+        let secret_key = crypto::SecretKey::new(&mut rng);
+        let public_key = secret_key.public_key();
+        Inner {
+            rng,
+            secret_key,
+            public_key,
+            state: SecurityManagerData {
+                local_address: Some(Address::random([1, 2, 3, 4, 5, 6])),
+                local_irk: None,
+            },
+            pairing_sm: Some(Pairing::new_peripheral(
+                Address::random([1, 2, 3, 4, 5, 6]),
+                peer_address,
+                IoCapabilities::NoInputNoOutput,
+            )),
+            finished_waker: WakerRegistration::new(),
+            io_capabilities: IoCapabilities::NoInputNoOutput,
+            #[cfg(feature = "legacy-pairing")]
+            secure_connections_only: false,
+        }
+    }
+
+    #[test]
+    fn encryption_success_uses_bond_when_pairing_sm_is_for_other_peer() {
+        let mgr = setup_manager();
+        let handle = ConnHandle::new(2);
+        let current = Identity::from(Address::random([0x10, 2, 3, 4, 5, 6]));
+        let other = Address::random([0x40, 2, 3, 4, 5, 6]);
+        unwrap!(mgr.connect(handle, current.addr, LeConnRole::Peripheral, ConnParams::new()));
+
+        let mut inner = test_inner(other);
+        let mut bonds: heapless::Vec<BondInformation, 4> = heapless::Vec::new();
+        unwrap!(bonds.push(BondInformation::new(
+            current,
+            LongTermKey::new(1),
+            SecurityLevel::EncryptedAuthenticated,
+            true,
+        )));
+        let events = Channel::<NoopRawMutex, SecurityEventData, 3>::new();
+
+        unwrap!(mgr.with_connected_handle(handle, |storage| {
+            unwrap!(inner.handle_encryption_success(&mut bonds, &events, true, mgr, storage));
+            assert_eq!(storage.security_level, SecurityLevel::EncryptedAuthenticated);
+            assert!(inner.pairing_sm.is_some());
+            assert_eq!(inner.pairing_sm.as_ref().unwrap().peer_address(), other);
+            Ok(())
+        }));
+    }
+
+    #[test]
+    fn encryption_failure_rejects_current_bond_without_touching_other_peer_sm() {
+        let mgr = setup_manager();
+        let handle = ConnHandle::new(3);
+        let current = Identity::from(Address::random([0x11, 2, 3, 4, 5, 6]));
+        let other = Address::random([0x41, 2, 3, 4, 5, 6]);
+        unwrap!(mgr.connect(handle, current.addr, LeConnRole::Peripheral, ConnParams::new()));
+
+        let mut inner = test_inner(other);
+        let mut bonds: heapless::Vec<BondInformation, 4> = heapless::Vec::new();
+        unwrap!(bonds.push(BondInformation::new(
+            current,
+            LongTermKey::new(2),
+            SecurityLevel::Encrypted,
+            true,
+        )));
+        let events = Channel::<NoopRawMutex, SecurityEventData, 3>::new();
+
+        unwrap!(mgr.with_connected_handle(handle, |storage| {
+            inner.handle_encryption_failure(&mut bonds, &events, mgr, storage);
+            assert!(storage.bond_rejected);
+            assert!(inner.pairing_sm.is_some());
+            assert_eq!(inner.pairing_sm.as_ref().unwrap().peer_address(), other);
+            Ok(())
+        }));
+    }
+
+    #[test]
+    fn pairing_event_for_other_peer_fails_without_advancing_sm() {
+        let mgr = setup_manager();
+        let handle = ConnHandle::new(4);
+        let current = Identity::from(Address::random([0x12, 2, 3, 4, 5, 6]));
+        let other = Address::random([0x42, 2, 3, 4, 5, 6]);
+        unwrap!(mgr.connect(handle, current.addr, LeConnRole::Peripheral, ConnParams::new()));
+
+        let mut inner = test_inner(other);
+        let mut bonds: heapless::Vec<BondInformation, 4> = heapless::Vec::new();
+        let events = Channel::<NoopRawMutex, SecurityEventData, 3>::new();
+
+        unwrap!(mgr.with_connected_handle(handle, |storage| {
+            assert_eq!(
+                inner.handle_pairing_event(&mut bonds, &events, pairing::Event::PassKeyConfirm, mgr, storage),
+                Err(Error::InvalidState)
+            );
+            assert!(inner.pairing_sm.is_some());
+            assert_eq!(inner.pairing_sm.as_ref().unwrap().peer_address(), other);
+            Ok(())
+        }));
+    }
+}
