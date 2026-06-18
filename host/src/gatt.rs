@@ -1140,35 +1140,37 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         _stack: &Stack<'_, C, P>,
         connection: &Connection<'reference, P>,
     ) -> Result<GattClient<'reference, C, P, MAX_SERVICES>, BleHostError<C::Error>> {
-        let l2cap = L2capHeader { channel: 4, length: 3 };
-        let mut buf = P::allocate().ok_or(Error::OutOfMemory)?;
-        let mut w = WriteCursor::new(buf.as_mut());
-        w.write_hci(&l2cap)?;
-        w.write(att::Att::Client(att::AttClient::Request(att::AttReq::ExchangeMtu {
-            mtu: P::MTU as u16 - 4,
-        })))?;
+        if !connection.is_att_mtu_exchanged() {
+            let l2cap = L2capHeader { channel: 4, length: 3 };
+            let mut buf = P::allocate().ok_or(Error::OutOfMemory)?;
+            let mut w = WriteCursor::new(buf.as_mut());
+            w.write_hci(&l2cap)?;
+            w.write(att::Att::Client(att::AttClient::Request(att::AttReq::ExchangeMtu {
+                mtu: P::MTU as u16 - 4,
+            })))?;
 
-        let len = w.len();
-        connection.send(Pdu::new(buf, len)).await;
+            let len = w.len();
+            connection.send(Pdu::new(buf, len)).await;
 
-        // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
-        with_timeout(ATT_TRANSACTION_TIMEOUT, async {
-            loop {
-                let pdu = connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
-                match pdu.as_ref()[0] {
-                    att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => break Ok::<_, BleHostError<C::Error>>(()),
-                    _ => {
-                        warn!("[gatt] unexpected PDU during MTU exchange, discarding");
+            // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
+            with_timeout(ATT_TRANSACTION_TIMEOUT, async {
+                loop {
+                    let pdu = connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
+                    match pdu.as_ref()[0] {
+                        att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => break Ok::<_, BleHostError<C::Error>>(()),
+                        _ => {
+                            warn!("[gatt] unexpected PDU during MTU exchange, discarding");
+                        }
                     }
                 }
-            }
-        })
-        .await
-        .map_err(|_| {
-            warn!("[gatt] MTU exchange timeout (30s), disconnecting");
-            connection.disconnect();
-            BleHostError::BleHost(Error::Timeout)
-        })??;
+            })
+            .await
+            .map_err(|_| {
+                warn!("[gatt] MTU exchange timeout (30s), disconnecting");
+                connection.disconnect();
+                BleHostError::BleHost(Error::Timeout)
+            })??;
+        }
 
         // Enable encryption with bonded peers before starting GATT operations
         // (BT Core Spec Vol 3, Part C, Section 10.3.2: client "should" enable encryption on reconnection)
