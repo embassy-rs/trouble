@@ -959,21 +959,20 @@ impl<'d> SecurityManager<'d> {
     }
 
     /// Channel disconnected
-    pub(crate) fn disconnect(&self, identity: &Identity) {
+    pub(crate) fn disconnect<P>(&self, storage: &ConnectionStorage<P>) {
         {
             let mut inner = self.inner.borrow_mut();
             if inner
                 .pairing_sm
-                .as_ref()
-                .is_some_and(|sm| sm.peer_address() == identity.addr)
+                .take_if(|p| p.peer_address() == Inner::connection_peer_address(storage))
+                .is_some()
             {
-                inner.pairing_sm = None;
                 inner.finished_waker.wake();
             }
         }
         self.bonds
             .borrow_mut()
-            .retain(|x| x.is_bonded || x.identity != *identity);
+            .retain(|x| x.is_bonded || x.identity != storage.peer_identity);
     }
 
     /// Handle recevied events from HCI

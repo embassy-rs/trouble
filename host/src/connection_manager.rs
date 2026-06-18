@@ -462,7 +462,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 {
                     storage.security_level = SecurityLevel::NoEncryption;
                     storage.bondable = false;
-                    self.security_manager.disconnect(&storage.peer_identity);
+                    self.security_manager.disconnect(storage);
                 }
                 #[cfg(feature = "att-queued-writes")]
                 storage.prepare_write.clear();
@@ -791,7 +791,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             } else if storage.security_level != SecurityLevel::NoEncryption {
                 return Ok(());
             }
-            storage.peer_identity.addr
+            storage
+                .resolvable_addrs
+                .peer
+                .map(|a| Address::new(AddrKind::RANDOM, a))
+                .unwrap_or(storage.peer_identity.addr)
         };
 
         if !self.security_manager.is_pairing_in_progress(address) {
