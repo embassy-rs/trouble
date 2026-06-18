@@ -233,14 +233,20 @@ impl Inner {
     /// Get the peer address to use for pairing calculations.
     /// When privacy is enabled and a peer RPA was used for this connection, use it;
     /// otherwise fall back to the identity address.
-    fn connection_peer_address<P>(identity_addr: Address, storage: &ConnectionStorage<P>) -> Address {
+    fn connection_peer_address<P>(storage: &ConnectionStorage<P>) -> Address {
         if let Some(rpa) = storage.resolvable_addrs.peer {
-            return Address {
+            Address {
                 kind: bt_hci::param::AddrKind::RANDOM,
                 addr: rpa,
-            };
+            }
+        } else {
+            storage.peer_identity.addr
         }
-        identity_addr
+    }
+
+    fn pairing_sm_for<'a, P>(sm: Option<&'a mut Pairing>, storage: &ConnectionStorage<P>) -> Option<&'a mut Pairing> {
+        let expected = Self::connection_peer_address(storage);
+        sm.filter(|sm| sm.peer_address() == expected)
     }
 
     fn handle_peripheral<P: PacketPool>(
@@ -258,9 +264,9 @@ impl Inner {
             handle,
             peer_identity,
         } = *cmd;
-        if self.is_idle() {
+        if self.is_idle() && command == Command::PairingRequest {
             let local_address = self.connection_local_address(storage)?;
-            let peer_address = Self::connection_peer_address(peer_address, storage);
+            let peer_address = Self::connection_peer_address(storage);
             let local_io = self.io_capabilities;
 
             #[cfg(feature = "legacy-pairing")]
@@ -298,7 +304,9 @@ impl Inner {
             && payload.len() >= 4
             && (!AuthReq::from(payload[2]).secure_connection()
                 || payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS)
-            && self.pairing_sm.as_ref().is_some_and(|p| p.is_lesc_peripheral())
+            && self.pairing_sm.as_ref().is_some_and(|sm| {
+                sm.peer_address() == Self::connection_peer_address(storage) && sm.is_lesc_peripheral()
+            })
         {
             if self.secure_connections_only {
                 if payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS {
@@ -306,29 +314,17 @@ impl Inner {
                 }
                 return Err(Error::Security(Reason::AuthenticationRequirements));
             }
-            let old = self.pairing_sm.take().unwrap();
-            self.pairing_sm = Some(old.switch_to_legacy_peripheral()?);
+            if let Some(old) = self.pairing_sm.take() {
+                self.pairing_sm = Some(old.switch_to_legacy_peripheral()?);
+            }
         }
 
-        if self.pairing_sm.as_ref().unwrap().is_central() {
+        let Some(pairing_sm) = Self::pairing_sm_for(self.pairing_sm.as_mut(), storage) else {
             return Err(Error::InvalidState);
-        }
-        let address = self.pairing_sm.as_ref().unwrap().peer_address();
+        };
 
-        // The state machine stores the connection-level peer address: the RPA,
-        // when the controller resolved one (see `connection_peer_address`, and
-        // the SMP confirm-value calculations that require the on-air address).
-        // The incoming command carries the *resolved identity* address, so the
-        // command address must be normalized the same way before comparing.
-        // Comparing them directly rejected every pairing attempt from a peer
-        // whose RPA was resolved against a stored bond -- i.e. a bonded peer
-        // that lost its keys could never re-pair until the local bond (and so
-        // the resolving-list entry) was deleted.
-        if address != Self::connection_peer_address(peer_address, storage) {
-            // A pairing is already in progress with a *different* peer address;
-            // reject and reset rather than mixing two exchanges.
-            self.pairing_sm = None;
-            return Err(Error::InvalidValue);
+        if pairing_sm.is_central() {
+            return Err(Error::InvalidState);
         }
 
         let mut ops = PairingOpsImpl {
@@ -342,10 +338,7 @@ impl Inner {
             peer_identity,
             state: &self.state,
         };
-        self.pairing_sm
-            .as_mut()
-            .unwrap()
-            .handle_l2cap_command(command, payload, &mut ops, &mut self.rng)
+        pairing_sm.handle_l2cap_command(command, payload, &mut ops, &mut self.rng)
     }
 
     fn handle_central<P: PacketPool>(
@@ -363,10 +356,10 @@ impl Inner {
             handle,
             peer_identity,
         } = *cmd;
-        if self.is_idle() {
+        if self.is_idle() && command == Command::SecurityRequest {
             self.pairing_sm = Some(Pairing::new_central(
                 self.connection_local_address(storage)?,
-                Self::connection_peer_address(peer_address, storage),
+                Self::connection_peer_address(storage),
                 self.io_capabilities,
             ));
         }
@@ -378,7 +371,10 @@ impl Inner {
             && payload.len() >= 4
             && (!AuthReq::from(payload[2]).secure_connection()
                 || payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS)
-            && self.pairing_sm.as_ref().is_some_and(|p| p.is_lesc_central())
+            && self
+                .pairing_sm
+                .as_ref()
+                .is_some_and(|sm| sm.peer_address() == Self::connection_peer_address(storage) && sm.is_lesc_central())
         {
             if self.secure_connections_only {
                 if payload[3] < crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS {
@@ -386,24 +382,17 @@ impl Inner {
                 }
                 return Err(Error::Security(Reason::AuthenticationRequirements));
             }
-            let old = self.pairing_sm.take().unwrap();
-            self.pairing_sm = Some(old.switch_to_legacy_central()?);
+            if let Some(old) = self.pairing_sm.take() {
+                self.pairing_sm = Some(old.switch_to_legacy_central()?);
+            }
         }
 
-        if !self.pairing_sm.as_ref().unwrap().is_central() {
+        let Some(pairing_sm) = Self::pairing_sm_for(self.pairing_sm.as_mut(), storage) else {
             return Err(Error::InvalidState);
-        }
-        let address = self.pairing_sm.as_ref().unwrap().peer_address();
+        };
 
-        // See the matching check in `handle_peripheral`: the state machine
-        // stores the connection-level peer address (the RPA when one was
-        // resolved), while the command carries the resolved identity, so the
-        // command address must be normalized before comparing.
-        if address != Self::connection_peer_address(peer_address, storage) {
-            // A pairing is already in progress with a *different* peer address;
-            // reject and reset rather than mixing two exchanges.
-            self.pairing_sm = None;
-            return Err(Error::InvalidValue);
+        if !pairing_sm.is_central() {
+            return Err(Error::InvalidState);
         }
 
         let mut ops = PairingOpsImpl {
@@ -417,10 +406,7 @@ impl Inner {
             peer_identity,
             state: &self.state,
         };
-        self.pairing_sm
-            .as_mut()
-            .unwrap()
-            .handle_l2cap_command(command, payload, &mut ops, &mut self.rng)
+        pairing_sm.handle_l2cap_command(command, payload, &mut ops, &mut self.rng)
     }
 
     fn handle_pairing_event<P: PacketPool>(
@@ -431,7 +417,7 @@ impl Inner {
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
-        if let Some(sm) = self.pairing_sm.as_mut() {
+        if let Some(sm) = Self::pairing_sm_for(self.pairing_sm.as_mut(), storage) {
             let mut ops = PairingOpsImpl {
                 bonds,
                 events,
@@ -448,9 +434,10 @@ impl Inner {
                 sm.reset_timeout();
                 let _ = events.try_send(SecurityEventData::TimerChange);
             }
-            return res;
+            res
+        } else {
+            Err(Error::InvalidState)
         }
-        Ok(())
     }
 
     fn handle_encryption_success<P: PacketPool>(
@@ -462,7 +449,7 @@ impl Inner {
         storage: &mut ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
         let mut bond = None;
-        let res: Result<(), Error> = if let Some(sm) = self.pairing_sm.as_mut() {
+        let res: Result<(), Error> = if let Some(sm) = Self::pairing_sm_for(self.pairing_sm.as_mut(), storage) {
             let mut ops = PairingOpsImpl {
                 bonds,
                 events,
@@ -532,7 +519,11 @@ impl Inner {
         connections: &ConnectionManager<'_, P>,
         storage: &mut ConnectionStorage<P::Packet>,
     ) {
-        if let Some(sm) = self.pairing_sm.as_mut() {
+        let has_bond = bonds.iter().any(|b| b.identity.match_identity(&storage.peer_identity));
+        if has_bond {
+            storage.bond_rejected = true;
+        }
+        if let Some(sm) = Self::pairing_sm_for(self.pairing_sm.as_mut(), storage) {
             // If we were waiting for bonded encryption, mark the bond as
             // rejected on this connection so the next pairing attempt will
             // skip bonded encryption and initiate fresh pairing instead.
@@ -576,22 +567,17 @@ impl Inner {
 
         if !self.is_idle() {
             // If pairing is already in progress for this peer, consider the request fulfilled.
-            let peer_identity = storage.peer_identity;
-            let peer_address = peer_identity.addr;
-            if self
-                .pairing_sm
-                .as_ref()
-                .is_some_and(|sm| sm.peer_address() == peer_address && sm.result().is_none())
-            {
+            if Self::pairing_sm_for(self.pairing_sm.as_mut(), storage).is_some() {
                 return Ok(());
+            } else {
+                return Err(Error::InvalidState);
             }
-            return Err(Error::InvalidState);
         }
 
         let handle = storage.handle;
         let peer_identity = storage.peer_identity;
         let local_address = self.connection_local_address(storage)?;
-        let peer_address = Self::connection_peer_address(peer_identity.addr, storage);
+        let peer_address = Self::connection_peer_address(storage);
         let local_io = self.io_capabilities;
         let mut ops = PairingOpsImpl {
             bonds,
