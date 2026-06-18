@@ -207,7 +207,6 @@ struct Inner {
 struct SmpCommand<'a> {
     command: Command,
     payload: &'a [u8],
-    peer_address: Address,
     handle: ConnHandle,
     peer_identity: Identity,
 }
@@ -260,7 +259,6 @@ impl Inner {
         let SmpCommand {
             command,
             payload,
-            peer_address,
             handle,
             peer_identity,
         } = *cmd;
@@ -352,7 +350,6 @@ impl Inner {
         let SmpCommand {
             command,
             payload,
-            peer_address,
             handle,
             peer_identity,
         } = *cmd;
@@ -827,7 +824,6 @@ impl<'d> SecurityManager<'d> {
         let cmd = SmpCommand {
             command,
             payload: &buffer[1..size],
-            peer_address: storage.peer_identity.addr,
             handle: storage.handle,
             peer_identity: storage.peer_identity,
         };
@@ -850,7 +846,6 @@ impl<'d> SecurityManager<'d> {
         let cmd = SmpCommand {
             command,
             payload: &buffer[1..size],
-            peer_address: storage.peer_identity.addr,
             handle: storage.handle,
             peer_identity: storage.peer_identity,
         };
