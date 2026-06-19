@@ -1,0 +1,6 @@
+[wokwi]
+version = 1
+elf = "target/riscv32imc-unknown-none-elf/release/ble_bas_peripheral_hci"
+firmware = "target/riscv32imc-unknown-none-elf/release/ble_bas_peripheral_hci"
+gdbServerPort = 3333
+rfc2217ServerPort = 4000

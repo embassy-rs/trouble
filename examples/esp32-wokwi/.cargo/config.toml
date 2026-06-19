@@ -1,0 +1,19 @@
+[alias]
+wokwi = "build --release --target=riscv32imc-unknown-none-elf --bin ble_bas_peripheral_hci"
+flash = "run --release --target=riscv32imc-unknown-none-elf --bin ble_bas_peripheral_hci"
+
+[target.'cfg(all(target_arch = "riscv32", target_os = "none"))']
+runner = "espflash flash --monitor"
+
+[build]
+rustflags = [
+  "-C", "force-frame-pointers",
+]
+
+target = "riscv32imc-unknown-none-elf"
+
+[env]
+ESP_LOG = "info"
+
+[unstable]
+build-std = ["alloc", "core"]
