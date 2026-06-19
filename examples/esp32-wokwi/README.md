@@ -60,7 +60,8 @@ scan on
 # Look for "TrouBLE" or the BAS peripheral
 connect <MAC>
 info <MAC>
-# ServicesResolved: yes  →  GATT discovery succeeded
+menu-gatt
+list-attributes
 ```
 
 For low-level debugging:
