@@ -127,3 +127,27 @@ impl<'a> CentralConfig<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    use super::*;
+
+    // Building the GAP config twice must not panic. With the one-shot StaticCell
+    // the second build panicked ("StaticCell already full").
+    #[test]
+    fn gap_config_can_be_built_twice() {
+        for _ in 0..2 {
+            let mut table: AttributeTable<'_, NoopRawMutex, 16> = AttributeTable::new();
+            GapConfig::Peripheral(PeripheralConfig {
+                name: "trouble",
+                appearance: &appearance::UNKNOWN,
+            })
+            .build(&mut table)
+            .unwrap();
+        }
+    }
+}
