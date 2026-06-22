@@ -5,9 +5,7 @@ use core::future::Future;
 use core::num::NonZeroU16;
 use core::task::{Context, Poll};
 
-#[cfg(feature = "security")]
-use bt_hci::param::BdAddr;
-use bt_hci::param::{ConnHandle, DisconnectReason, LeConnRole, Status};
+use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
@@ -141,7 +139,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     fn connection_by_handle(&self, handle: ConnHandle) -> Option<Ref<'_, ConnectionStorage<P::Packet>>> {
         Ref::filter_map(self.connections.borrow(), |connections| {
             for storage in connections.iter() {
-                if storage.handle == Some(handle)
+                if storage.handle == handle
                     && matches!(storage.state, ConnectionState::Connected | ConnectionState::Connecting)
                 {
                     return Some(storage);
@@ -155,7 +153,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     fn connection_by_handle_mut(&self, handle: ConnHandle) -> Option<RefMut<'_, ConnectionStorage<P::Packet>>> {
         RefMut::filter_map(self.connections.borrow_mut(), |connections| {
             for storage in connections.iter_mut() {
-                if storage.handle == Some(handle)
+                if storage.handle == handle
                     && matches!(storage.state, ConnectionState::Connected | ConnectionState::Connecting)
                 {
                     return Some(storage);
@@ -167,15 +165,15 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     pub(crate) fn role(&self, index: u8) -> LeConnRole {
-        self.connection(index).role.unwrap()
+        self.connection(index).role
     }
 
     pub(crate) fn role_by_handle(&self, handle: ConnHandle) -> Option<LeConnRole> {
-        self.connection_by_handle(handle).and_then(|connection| connection.role)
+        self.connection_by_handle(handle).map(|connection| connection.role)
     }
 
     pub(crate) fn handle(&self, index: u8) -> ConnHandle {
-        self.connection(index).handle.unwrap()
+        self.connection(index).handle
     }
 
     pub(crate) fn state(&self, index: u8) -> ConnectionState {
@@ -202,7 +200,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEvent) -> Result<(), Error> {
         for entry in self.connections.borrow_mut().iter_mut() {
-            if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+            if entry.state == ConnectionState::Connected && handle == entry.handle {
                 if let ConnectionEvent::ConnectionParamsUpdated {
                     conn_interval,
                     peripheral_latency,
@@ -226,8 +224,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "gatt")]
     pub(crate) fn post_gatt(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         for entry in self.connections.borrow().iter() {
-            if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected)
-                && Some(handle) == entry.handle
+            if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected) && handle == entry.handle
             {
                 entry.gatt.try_send(pdu).map_err(|_| Error::OutOfMemory)?;
                 return Ok(());
@@ -239,8 +236,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "gatt")]
     pub(crate) fn post_gatt_client(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         for entry in self.connections.borrow().iter() {
-            if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected)
-                && Some(handle) == entry.handle
+            if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected) && handle == entry.handle
             {
                 entry.gatt_client.try_send(pdu).map_err(|_| Error::OutOfMemory)?;
                 return Ok(());
@@ -321,11 +317,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     pub(crate) fn peer_address(&self, index: u8) -> Address {
-        self.connection(index).peer_identity.map(|i| i.addr).unwrap_or_default()
+        self.connection(index).peer_identity.addr
     }
 
     pub(crate) fn peer_identity(&self, index: u8) -> Identity {
-        self.connection(index).peer_identity.unwrap()
+        self.connection(index).peer_identity
     }
 
     pub(crate) fn params(&self, index: u8) -> ConnParams {
@@ -350,7 +346,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn request_handle_disconnect(&self, handle: ConnHandle, reason: DisconnectReason) {
         if let Some(mut entry) = self.connection_by_handle_mut(handle) {
-            if entry.state == ConnectionState::Connected && Some(handle) == entry.handle {
+            if entry.state == ConnectionState::Connected && handle == entry.handle {
                 entry.state = ConnectionState::DisconnectRequest(reason);
                 self.state.borrow_mut().disconnect_waker.wake();
             }
@@ -370,7 +366,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             if let ConnectionState::DisconnectRequest(reason) = storage.state {
                 return Poll::Ready(DisconnectRequest {
                     index: idx,
-                    handle: storage.handle.unwrap(),
+                    handle: storage.handle,
                     reason,
                     connections: self.connections,
                 });
@@ -381,12 +377,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn get_connected_handle(&'d self, h: ConnHandle) -> Option<Connection<'d, P>> {
         for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-            match (storage.handle, &storage.state) {
-                (Some(handle), ConnectionState::Connected) if handle == h => {
-                    storage.inc_ref();
-                    return Some(Connection::new(index as u8, self));
-                }
-                _ => {}
+            if storage.handle == h && storage.state == ConnectionState::Connected {
+                storage.inc_ref();
+                return Some(Connection::new(index as u8, self));
             }
         }
         None
@@ -402,13 +395,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn get_connection_by_peer_address(&'d self, peer_address: Address) -> Option<Connection<'d, P>> {
         for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-            if storage.state == ConnectionState::Connected {
-                if let Some(peer) = &storage.peer_identity {
-                    if peer.match_address(&peer_address) {
-                        storage.inc_ref();
-                        return Some(Connection::new(index as u8, self));
-                    }
-                }
+            if storage.state == ConnectionState::Connected && storage.peer_identity.match_address(&peer_address) {
+                storage.inc_ref();
+                return Some(Connection::new(index as u8, self));
             }
         }
         None
@@ -451,7 +440,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn disconnected(&self, h: ConnHandle, reason: Status) -> Result<(), Error> {
         for (idx, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-            if Some(h) == storage.handle && storage.state != ConnectionState::Disconnected {
+            if h == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
                 storage.reassembly.clear();
                 storage.acl_send_locked = false;
@@ -473,9 +462,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 {
                     storage.security_level = SecurityLevel::NoEncryption;
                     storage.bondable = false;
-                    if let Some(identity) = storage.peer_identity.as_ref() {
-                        self.security_manager.disconnect(identity);
-                    }
+                    self.security_manager.disconnect(storage);
                 }
                 #[cfg(feature = "att-queued-writes")]
                 storage.prepare_write.clear();
@@ -523,7 +510,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.link_credits = default_credits;
                 storage.acl_send_locked = false;
                 storage.att_mtu = None;
-                storage.handle.replace(handle);
+                storage.handle = handle;
                 #[cfg(feature = "security")]
                 let identity = self
                     .security_manager
@@ -532,8 +519,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     .unwrap_or(peer_addr.into());
                 #[cfg(not(feature = "security"))]
                 let identity = Identity::from(peer_addr);
-                storage.peer_identity.replace(identity);
-                storage.role.replace(role);
+                storage.peer_identity = identity;
+                storage.role = role;
                 storage.params = params;
                 #[cfg(feature = "security")]
                 {
@@ -580,12 +567,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         core::mem::drop(state);
         for (idx, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
             if let ConnectionState::Connecting = storage.state {
-                let handle = storage.handle.unwrap();
-                let r = storage.role.unwrap();
+                let handle = storage.handle;
+                let r = storage.role;
                 if r == role {
                     if !peers.is_empty() {
                         for peer in peers.iter() {
-                            if storage.peer_identity.unwrap().match_address(peer) {
+                            if storage.peer_identity.match_address(peer) {
                                 storage.state = ConnectionState::Connected;
                                 debug!("[link][poll_accept] connection accepted: state: {:?}", storage);
                                 assert_eq!(storage.refcount, 0);
@@ -645,7 +632,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn confirm_sent(&self, handle: ConnHandle, packets: usize) -> Result<(), Error> {
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
-                ConnectionState::Connecting | ConnectionState::Connected if handle == storage.handle.unwrap() => {
+                ConnectionState::Connecting | ConnectionState::Connected if handle == storage.handle => {
                     storage.link_credits += packets;
                     storage.link_credit_waker.wake();
                     return Ok(());
@@ -662,7 +649,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         cx: Option<&mut Context<'_>>,
     ) -> Poll<Result<AclSendLock<'_, P>, Error>> {
         for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-            if storage.handle != Some(handle) {
+            if storage.handle != handle {
                 continue;
             }
 
@@ -696,12 +683,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     pub(crate) async fn send(&self, index: u8, pdu: Pdu<P::Packet>) {
-        let handle = self.connection(index).handle.unwrap();
+        let handle = self.connection(index).handle;
         self.outbound.send((handle, pdu)).await
     }
 
     pub(crate) fn try_send(&self, index: u8, pdu: Pdu<P::Packet>) -> Result<(), Error> {
-        let handle = self.connection(index).handle.unwrap();
+        let handle = self.connection(index).handle;
         self.outbound.try_send((handle, pdu)).map_err(|_| Error::OutOfMemory)
     }
 
@@ -716,7 +703,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn get_att_mtu_handle(&self, conn: ConnHandle) -> u16 {
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
-                ConnectionState::Connected if storage.handle.unwrap() == conn => {
+                ConnectionState::Connected if storage.handle == conn => {
                     return storage.att_mtu();
                 }
                 _ => {}
@@ -734,7 +721,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         // both via `connection_by_handle_mut`.
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
-                ConnectionState::Connecting | ConnectionState::Connected if storage.handle.unwrap() == conn => {
+                ConnectionState::Connecting | ConnectionState::Connected if storage.handle == conn => {
                     storage.att_mtu = NonZeroU16::new(default_att_mtu.min(mtu));
                     return storage.att_mtu();
                 }
@@ -790,13 +777,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     #[cfg(feature = "security")]
     pub(crate) fn is_bonded_peer(&self, index: u8) -> bool {
         let storage = self.connection(index);
-        if let Some(identity) = storage.peer_identity.as_ref() {
-            self.security_manager
-                .get_peer_bond_information(identity)
-                .is_some_and(|b| b.is_bonded)
-        } else {
-            false
-        }
+        self.security_manager
+            .get_peer_bond_information(&storage.peer_identity)
+            .is_some_and(|b| b.is_bonded)
     }
 
     #[cfg(feature = "security")]
@@ -808,10 +791,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             } else if storage.security_level != SecurityLevel::NoEncryption {
                 return Ok(());
             }
-            match storage.peer_identity.as_ref() {
-                Some(identity) => identity.addr,
-                _ => return Err(Error::InvalidValue),
-            }
+            storage
+                .resolvable_addrs
+                .peer
+                .map(|a| Address::new(AddrKind::RANDOM, a))
+                .unwrap_or(storage.peer_identity.addr)
         };
 
         if !self.security_manager.is_pairing_in_progress(address) {
@@ -924,7 +908,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         {
             for storage in self.connections.borrow().iter() {
                 match storage.state {
-                    ConnectionState::Connected if storage.handle.unwrap() == handle => {
+                    ConnectionState::Connected if storage.handle == handle => {
                         if storage.smp_timeout {
                             warn!("Ignoring security channel packet after SMP timeout");
                             return Ok(());
@@ -971,7 +955,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
-                let identity = self.connection_by_handle(handle).and_then(|x| x.peer_identity);
+                let identity = self.connection_by_handle(handle).map(|x| x.peer_identity);
                 if let Some(identity) = identity {
                     // Match EDIV/Rand against stored bonds to find the correct LTK.
                     // During active legacy pairing (STK phase), the STK is stored with EDIV=0, Rand=0.
@@ -1000,7 +984,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 }
             }
             crate::security_manager::SecurityEventData::EnableEncryption(handle, bond_info) => {
-                let role = self.connection_by_handle(handle).and_then(|x| x.role);
+                let role = self.connection_by_handle(handle).map(|x| x.role);
                 if let Some(role) = role {
                     if LeConnRole::Central == role {
                         #[cfg(feature = "legacy-pairing")]
@@ -1018,13 +1002,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 warn!("[host] Pairing timeout");
                 if let Some(peer_address) = self.security_manager.peer_address() {
                     for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-                        if storage.state == ConnectionState::Connected {
-                            if let Some(peer) = &storage.peer_identity {
-                                if peer.match_address(&peer_address) {
-                                    storage.smp_timeout = true;
-                                    break;
-                                }
-                            }
+                        if storage.state == ConnectionState::Connected
+                            && storage.peer_identity.match_address(&peer_address)
+                        {
+                            storage.smp_timeout = true;
+                            break;
                         }
                     }
                 }
@@ -1040,7 +1022,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 // address distributed during key exchange, which may differ from the
                 // address seen at connection time (e.g. a temporary RPA).
                 if let Some(mut connection) = self.connection_by_handle_mut(handle) {
-                    connection.peer_identity = Some(identity);
+                    connection.peer_identity = identity;
                 }
             }
         }
@@ -1160,9 +1142,9 @@ impl<P> DisconnectRequest<'_, P> {
 }
 pub struct ConnectionStorage<P> {
     pub state: ConnectionState,
-    pub handle: Option<ConnHandle>,
-    pub role: Option<LeConnRole>,
-    pub peer_identity: Option<Identity>,
+    pub handle: ConnHandle,
+    pub role: LeConnRole,
+    pub peer_identity: Identity,
     pub params: ConnParams,
     pub att_mtu: Option<NonZeroU16>,
     pub link_credits: usize,
@@ -1273,9 +1255,16 @@ impl<P> ConnectionStorage<P> {
     pub(crate) const fn new() -> ConnectionStorage<P> {
         ConnectionStorage {
             state: ConnectionState::Disconnected,
-            handle: None,
-            role: None,
-            peer_identity: None,
+            handle: ConnHandle(0),
+            role: LeConnRole::Central,
+            peer_identity: Identity {
+                addr: Address {
+                    kind: AddrKind::PUBLIC,
+                    addr: BdAddr([0; 6]),
+                },
+                #[cfg(feature = "security")]
+                irk: None,
+            },
             params: ConnParams::new(),
             att_mtu: None,
             link_credits: 0,
@@ -1397,9 +1386,9 @@ impl<P> defmt::Format for ConnectionStorage<P> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConnectionState {
+    Disconnected,
     DisconnectRequest(DisconnectReason),
     Disconnecting(DisconnectReason),
-    Disconnected,
     Connecting,
     Connected,
 }
