@@ -1633,6 +1633,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     match host.command(Disconnect::new(request.handle(), request.reason())).await {
                         Ok(_) => {}
                         Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
+                        Err(BleHostError::BleHost(Error::NotFound)) => {}
+                        Err(BleHostError::BleHost(Error::Disconnected)) => {}
                         Err(e) => {
                             return Err(e);
                         }
@@ -1645,6 +1647,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                         Ok(_) => {}
                         Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
                         Err(BleHostError::BleHost(Error::NotFound)) => {}
+                        Err(BleHostError::BleHost(Error::Disconnected)) => {}
                         Err(e) => {
                             return Err(e);
                         }
