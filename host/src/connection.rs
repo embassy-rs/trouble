@@ -491,6 +491,27 @@ pub struct Connection<'stack, P: PacketPool> {
     manager: &'stack ConnectionManager<'stack, P>,
 }
 
+impl<P: PacketPool> core::fmt::Debug for Connection<'_, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("Connection").field(&self.index).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P: PacketPool> defmt::Format for Connection<'_, P> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "Connection({})", self.index)
+    }
+}
+
+impl<P: PacketPool> PartialEq for Connection<'_, P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index && core::ptr::eq(self.manager, other.manager)
+    }
+}
+
+impl<P: PacketPool> Eq for Connection<'_, P> {}
+
 impl<P: PacketPool> Clone for Connection<'_, P> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
