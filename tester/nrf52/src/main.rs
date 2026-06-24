@@ -122,8 +122,8 @@ async fn main(spawner: Spawner) -> ! {
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     let mut uart_config = embassy_nrf::uarte::Config::default();
-    uart_config.baudrate = buffered_uarte::Baudrate::BAUD115200;
-    uart_config.parity = buffered_uarte::Parity::EXCLUDED;
+    uart_config.baudrate = buffered_uarte::Baudrate::Baud115200;
+    uart_config.parity = buffered_uarte::Parity::Excluded;
     static RX_BUF: StaticCell<[u8; 512]> = StaticCell::new();
     static TX_BUF: StaticCell<[u8; 512]> = StaticCell::new();
     let rx_buf = RX_BUF.init([0u8; 512]);

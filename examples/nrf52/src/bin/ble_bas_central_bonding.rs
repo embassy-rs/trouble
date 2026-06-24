@@ -78,9 +78,9 @@ async fn main(spawner: Spawner) {
 
     // Config for the MX25R64 present in the nRF52840 DK
     let mut config = qspi::Config::default();
-    config.read_opcode = qspi::ReadOpcode::READ4IO;
-    config.write_opcode = qspi::WriteOpcode::PP4IO;
-    config.write_page_size = qspi::WritePageSize::_256BYTES;
+    config.read_opcode = qspi::ReadOpcode::Read4io;
+    config.write_opcode = qspi::WriteOpcode::Pp4io;
+    config.write_page_size = qspi::WritePageSize::_256bytes;
     config.frequency = qspi::Frequency::M32;
     config.capacity = 8*1024*1024;
 
