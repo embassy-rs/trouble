@@ -1,0 +1,33 @@
+[package]
+name = "trouble-esp32-wokwi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+bt-hci = { version = "0.9", features = ["uuid"] }
+embassy-executor = "0.10.0"
+embassy-sync-08 = { package = "embassy-sync", version = "0.8" }
+embedded-io = "0.7"
+embedded-io-async = "0.7"
+esp-alloc = { version = "0.10.0" }
+esp-backtrace = { version = "0.19.0", features = ["panic-handler", "println", "esp32c3"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32c3"] }
+esp-hal = { version = "1.1.0", features = ["unstable", "esp32c3", "log-04"] }
+esp-println = { version = "0.17.0", default-features = false, features = ["log-04", "no-op", "esp32c3"] }
+esp-rtos = { version = "0.3.0", features = ["embassy", "esp-alloc", "log-04", "esp32c3"] }
+log = "0.4"
+trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
+trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "thin"
+opt-level = "s"
+overflow-checks = false
