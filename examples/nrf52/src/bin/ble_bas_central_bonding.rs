@@ -73,7 +73,7 @@ async fn main(spawner: Spawner) {
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
 
-    let mut sdc_mem = sdc::Mem::<6544>::new();
+    let mut sdc_mem = sdc::Mem::<7056>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     // Config for the MX25R64 present in the nRF52840 DK
