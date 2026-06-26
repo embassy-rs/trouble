@@ -74,7 +74,7 @@ async fn main(spawner: Spawner) {
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
 
-    let mut sdc_mem = sdc::Mem::<4864>::new();
+    let mut sdc_mem = sdc::Mem::<5376>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     ble_bas_central::run(sdc).await;

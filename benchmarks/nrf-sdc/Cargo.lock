@@ -82,7 +82,7 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.9.2",
+ "heapless",
 ]
 
 [[package]]
@@ -388,9 +388,9 @@ dependencies = [
 
 [[package]]
 name = "embassy-nrf"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b715380574504335c40ec3016bc44598fac3c385f82959b26c41b25c30b7648d"
+checksum = "82051f67e8a06a8faebd183f62cfade184c96be68126c5f064abb8223a591ff1"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if",
@@ -406,6 +406,7 @@ dependencies = [
  "embassy-time-driver",
  "embassy-time-queue-utils",
  "embassy-usb-driver",
+ "embassy-usb-synopsys-otg",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -415,6 +416,7 @@ dependencies = [
  "embedded-storage-async",
  "fixed",
  "nrf-pac",
+ "rand_core 0.10.1",
  "rand_core 0.6.4",
  "rand_core 0.9.3",
 ]
@@ -431,7 +433,7 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "futures-core",
  "futures-sink",
- "heapless 0.9.2",
+ "heapless",
 ]
 
 [[package]]
@@ -462,22 +464,37 @@ dependencies = [
 
 [[package]]
 name = "embassy-time-queue-utils"
-version = "0.3.0"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80e2ee86063bd028a420a5fb5898c18c87a8898026da1d4c852af2c443d0a454"
+checksum = "168297bf80aaf114b3c9ad589bf38b01b3009b9af7f97cd18086c5bbf96f5693"
 dependencies = [
  "embassy-executor-timer-queue",
- "heapless 0.8.0",
+ "heapless",
 ]
 
 [[package]]
 name = "embassy-usb-driver"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17119855ccc2d1f7470a39756b12068454ae27a3eabb037d940b5c03d9c77b7a"
+checksum = "fa675c5f4349b6aa0fcffc4bf9b241f18cd11b97c1f8323273fb9a5449937fbd"
 dependencies = [
  "defmt 1.0.1",
  "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
+]
+
+[[package]]
+name = "embassy-usb-synopsys-otg"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6efd0c0e0b21bcf91b475b8fa47347c1df32c9a99728ae1e1b0e6625862dfd1a"
+dependencies = [
+ "critical-section",
+ "defmt 1.0.1",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb-driver",
+ "portable-atomic",
 ]
 
 [[package]]
@@ -704,16 +721,6 @@ dependencies = [
 
 [[package]]
 name = "heapless"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
-dependencies = [
- "hash32",
- "stable_deref_trait",
-]
-
-[[package]]
-name = "heapless"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af2455f757db2b292a9b1768c4b70186d443bcb3b316252d6b540aec1cd89ed"
@@ -842,7 +849,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=8062911a0e1e8f06f74ded93b2fb483050a84887#8062911a0e1e8f06f74ded93b2fb483050a84887"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=abe49d22ebfc85fae134eb082fbfddf752016a55#abe49d22ebfc85fae134eb082fbfddf752016a55"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -859,7 +866,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=8062911a0e1e8f06f74ded93b2fb483050a84887#8062911a0e1e8f06f74ded93b2fb483050a84887"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=abe49d22ebfc85fae134eb082fbfddf752016a55#abe49d22ebfc85fae134eb082fbfddf752016a55"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -867,9 +874,9 @@ dependencies = [
 
 [[package]]
 name = "nrf-pac"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bddd547fab92b0553ff37032034fd04ce8b8b60d3f9a83f89ea815dfd0400336"
+checksum = "83531b9f1e19f493018da9b8b20359e4cedd6d1357553b1ac50f3fa27a0104fa"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -878,7 +885,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=8062911a0e1e8f06f74ded93b2fb483050a84887#8062911a0e1e8f06f74ded93b2fb483050a84887"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=abe49d22ebfc85fae134eb082fbfddf752016a55#abe49d22ebfc85fae134eb082fbfddf752016a55"
 dependencies = [
  "bt-hci",
  "critical-section",
@@ -895,7 +902,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=8062911a0e1e8f06f74ded93b2fb483050a84887#8062911a0e1e8f06f74ded93b2fb483050a84887"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=abe49d22ebfc85fae134eb082fbfddf752016a55#abe49d22ebfc85fae134eb082fbfddf752016a55"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1067,6 +1074,12 @@ name = "rand_core"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
+
+[[package]]
+name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "regex"
@@ -1305,7 +1318,7 @@ dependencies = [
  "embassy-time",
  "embedded-io 0.7.1",
  "futures",
- "heapless 0.9.2",
+ "heapless",
  "static_cell",
  "zerocopy",
 ]

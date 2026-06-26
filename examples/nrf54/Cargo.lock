@@ -114,8 +114,8 @@ dependencies = [
  "btuuid",
  "defmt 1.0.1",
  "embassy-sync",
- "embedded-io",
- "embedded-io-async",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
  "futures-intrusive",
  "heapless 0.9.2",
  "serde",
@@ -478,7 +478,7 @@ dependencies = [
 [[package]]
 name = "embassy-embedded-hal"
 version = "0.6.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "defmt 1.0.1",
  "embassy-futures",
@@ -496,7 +496,7 @@ dependencies = [
 [[package]]
 name = "embassy-executor"
 version = "0.10.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "cordyceps",
  "cortex-m",
@@ -510,7 +510,7 @@ dependencies = [
 [[package]]
 name = "embassy-executor-macros"
 version = "0.8.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -521,17 +521,17 @@ dependencies = [
 [[package]]
 name = "embassy-executor-timer-queue"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 
 [[package]]
 name = "embassy-futures"
 version = "0.1.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 
 [[package]]
 name = "embassy-hal-internal"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -541,8 +541,8 @@ dependencies = [
 
 [[package]]
 name = "embassy-nrf"
-version = "0.10.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+version = "0.11.0"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "bitflags 2.11.0",
  "cfg-if",
@@ -562,8 +562,8 @@ dependencies = [
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
- "embedded-io",
- "embedded-io-async",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
  "embedded-storage",
  "embedded-storage-async",
  "fixed",
@@ -576,12 +576,12 @@ dependencies = [
 [[package]]
 name = "embassy-sync"
 version = "0.8.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "cfg-if",
  "critical-section",
  "defmt 1.0.1",
- "embedded-io-async",
+ "embedded-io-async 0.7.0",
  "futures-core",
  "futures-sink",
  "heapless 0.9.2",
@@ -590,7 +590,7 @@ dependencies = [
 [[package]]
 name = "embassy-time"
 version = "0.5.1"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -606,15 +606,15 @@ dependencies = [
 [[package]]
 name = "embassy-time-driver"
 version = "0.2.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "document-features",
 ]
 
 [[package]]
 name = "embassy-time-queue-utils"
-version = "0.3.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+version = "0.3.2"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "embassy-executor-timer-queue",
  "heapless 0.9.2",
@@ -622,18 +622,18 @@ dependencies = [
 
 [[package]]
 name = "embassy-usb-driver"
-version = "0.2.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+version = "0.2.2"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
- "bitflags 2.11.0",
  "defmt 1.0.1",
- "embedded-io-async",
+ "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
 ]
 
 [[package]]
 name = "embassy-usb-synopsys-otg"
-version = "0.3.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=82e83a4bdd269ffb643a200da46f1f415e6548db#82e83a4bdd269ffb643a200da46f1f415e6548db"
+version = "0.4.0"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=7a0b1cf453a496240d04545c19aa86009f0fe058#7a0b1cf453a496240d04545c19aa86009f0fe058"
 dependencies = [
  "critical-section",
  "defmt 1.0.1",
@@ -670,6 +670,12 @@ dependencies = [
 
 [[package]]
 name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
+name = "embedded-io"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
@@ -679,12 +685,21 @@ dependencies = [
 
 [[package]]
 name = "embedded-io-async"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ff09972d4073aa8c299395be75161d582e7629cd663171d62af73c8d50dba3f"
+dependencies = [
+ "embedded-io 0.6.1",
+]
+
+[[package]]
+name = "embedded-io-async"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2564b9f813c544241430e147d8bc454815ef9ac998878d30cc3055449f7fd4c0"
 dependencies = [
  "defmt 1.0.1",
- "embedded-io",
+ "embedded-io 0.7.1",
 ]
 
 [[package]]
@@ -1071,7 +1086,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e1fbb89a173dfc053ec4877d366f51804eac498d#e1fbb89a173dfc053ec4877d366f51804eac498d"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=abe49d22ebfc85fae134eb082fbfddf752016a55#abe49d22ebfc85fae134eb082fbfddf752016a55"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -1079,7 +1094,7 @@ dependencies = [
  "defmt 1.0.1",
  "embassy-nrf",
  "embassy-sync",
- "embedded-io",
+ "embedded-io 0.7.1",
  "embedded-storage",
  "embedded-storage-async",
  "nrf-mpsl-sys",
@@ -1088,7 +1103,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e1fbb89a173dfc053ec4877d366f51804eac498d#e1fbb89a173dfc053ec4877d366f51804eac498d"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=abe49d22ebfc85fae134eb082fbfddf752016a55#abe49d22ebfc85fae134eb082fbfddf752016a55"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1096,9 +1111,9 @@ dependencies = [
 
 [[package]]
 name = "nrf-pac"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bddd547fab92b0553ff37032034fd04ce8b8b60d3f9a83f89ea815dfd0400336"
+checksum = "83531b9f1e19f493018da9b8b20359e4cedd6d1357553b1ac50f3fa27a0104fa"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -1107,15 +1122,15 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e1fbb89a173dfc053ec4877d366f51804eac498d#e1fbb89a173dfc053ec4877d366f51804eac498d"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=abe49d22ebfc85fae134eb082fbfddf752016a55#abe49d22ebfc85fae134eb082fbfddf752016a55"
 dependencies = [
  "bt-hci",
  "critical-section",
  "defmt 1.0.1",
  "embassy-nrf",
  "embassy-sync",
- "embedded-io",
- "embedded-io-async",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
  "nrf-mpsl",
  "nrf-sdc-sys",
  "rand_core 0.9.5",
@@ -1124,7 +1139,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e1fbb89a173dfc053ec4877d366f51804eac498d#e1fbb89a173dfc053ec4877d366f51804eac498d"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=abe49d22ebfc85fae134eb082fbfddf752016a55#abe49d22ebfc85fae134eb082fbfddf752016a55"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1686,7 +1701,7 @@ dependencies = [
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
- "embedded-io",
+ "embedded-io 0.7.1",
  "futures",
  "heapless 0.9.2",
  "p256",
