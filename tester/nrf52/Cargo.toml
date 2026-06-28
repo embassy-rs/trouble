@@ -17,7 +17,8 @@ embassy-sync = { version = "0.8", features = ["defmt"] }
 futures = { version = "0.3.31", default-features = false, features = ["async-await"] }
 nrf-sdc = { version = "0.4.0", default-features = false, features = ["central", "peripheral", "defmt"] }
 nrf-mpsl = { version = "0.3.0", default-features = false, features = ["defmt", "critical-section-impl"] }
-bt-hci = { version = "0.9", default-features = false, features = ["defmt", "embassy-time"] }
+# bt-hci = { version = "0.9", default-features = false, features = ["defmt", "embassy-time"] }
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci", default-features = false, features = ["defmt", "embassy-time"] }
 trouble-host = { path = "../../host", features = ["derive", "scan", "gatt"] }
 trouble-tester-app = { path = "../app", features = ["defmt"] }
 
