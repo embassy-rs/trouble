@@ -76,7 +76,7 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     window: Duration::from_millis(50),
                     ..Default::default()
                 };
-                let mut scanner = Scanner::new(central);
+                let mut scanner = Scanner::new(&mut central);
                 match scanner.scan_ext(&config).await {
                     Ok(session) => {
                         info!("Scan started");
@@ -105,7 +105,6 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                         cmd.reply(Response::Fail).await;
                     }
                 }
-                central = scanner.into_inner();
             }
             Command::StopDiscovery => {
                 // Not currently scanning, treat as idempotent success

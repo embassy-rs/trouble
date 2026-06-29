@@ -21,25 +21,23 @@ use crate::{bt_hci_duration, BleHostError, Central, PacketPool};
 ///
 /// The buffer size can be tuned if in a noisy environment that
 /// returns a lot of results.
-pub struct Scanner<'d, C: Controller, P: PacketPool> {
-    central: Central<'d, C, P>,
+pub struct Scanner<'d, 'stack, C: Controller, P: PacketPool> {
+    central: &'d mut Central<'stack, C, P>,
 }
 
-impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
+impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
     /// Create a new scanner with the provided central.
-    pub fn new(central: Central<'d, C, P>) -> Self {
+    pub fn new(central: &'d mut Central<'stack, C, P>) -> Self {
         Self { central }
-    }
-
-    /// Retrieve the underlying central
-    pub fn into_inner(self) -> Central<'d, C, P> {
-        self.central
     }
 
     /// Performs an extended BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan_ext(&mut self, config: &ScanConfig<'_>) -> Result<ScanSession<'_, true>, BleHostError<C::Error>>
+    pub async fn scan_ext(
+        &mut self,
+        config: &ScanConfig<'_>,
+    ) -> Result<ScanSession<'stack, true>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeSetExtScanParams>
@@ -95,7 +93,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
     /// Performs a BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan(&mut self, config: &ScanConfig<'_>) -> Result<ScanSession<'_, false>, BleHostError<C::Error>>
+    pub async fn scan(&mut self, config: &ScanConfig<'_>) -> Result<ScanSession<'stack, false>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeSetScanParams>
             + ControllerCmdSync<LeSetScanEnable>
