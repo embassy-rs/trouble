@@ -44,7 +44,11 @@ use bt_hci::param::{
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select4, Either3, Either4};
+#[cfg(feature = "scan")]
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::once_lock::OnceLock;
+#[cfg(feature = "scan")]
+use embassy_sync::signal::Signal;
 use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::Duration;
 use futures::pin_mut;
@@ -136,6 +140,8 @@ pub(crate) struct BleHost<'d, T, P: PacketPool> {
     pub(crate) rpa_timeout: Cell<embassy_time::Duration>,
     #[cfg(feature = "security")]
     pub(crate) resolving_list_state: RefCell<ResolvingListSignal>,
+    #[cfg(feature = "scan")]
+    pub(crate) scan_timeout: Signal<NoopRawMutex, ()>,
 }
 
 #[derive(Clone, Copy)]
@@ -274,6 +280,8 @@ where
             rpa_timeout: Cell::new(embassy_time::Duration::from_secs(900)),
             #[cfg(feature = "security")]
             resolving_list_state: RefCell::new(ResolvingListSignal::new()),
+            #[cfg(feature = "scan")]
+            scan_timeout: Signal::new(),
         }
     }
 
@@ -1254,7 +1262,10 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         host.connect_command_state.canceled();
                                     }
                                 }
-                                LeEventKind::LeScanTimeout => {}
+                                LeEventKind::LeScanTimeout => {
+                                    #[cfg(feature = "scan")]
+                                    host.scan_timeout.signal(());
+                                }
                                 LeEventKind::LeAdvertisingSetTerminated => {
                                     let set = unwrap!(LeAdvertisingSetTerminated::from_hci_bytes_complete(event.data));
                                     host.advertise_state.terminate(set.adv_handle);

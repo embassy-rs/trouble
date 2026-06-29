@@ -1,4 +1,6 @@
 //! Scan config.
+use core::future::Future;
+
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable,
     LeSetScanParams,
@@ -6,6 +8,8 @@ use bt_hci::cmd::le::{
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{FilterDuplicates, ScanningPhy};
 pub use bt_hci::param::{LeAdvReportsIter, LeExtAdvReportsIter};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::Instant;
 
 use crate::command::CommandState;
@@ -67,6 +71,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         ))
         .await?;
 
+        host.scan_timeout.reset();
         host.command(LeSetExtScanEnable::new(
             true,
             config.filter_duplicates,
@@ -82,6 +87,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             } else {
                 Some(Instant::now() + config.timeout)
             },
+            timeout: &host.scan_timeout,
             done: false,
         })
     }
@@ -131,6 +137,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             } else {
                 Some(Instant::now() + config.timeout)
             },
+            timeout: &host.scan_timeout,
             done: false,
         })
     }
@@ -140,11 +147,21 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
 pub struct ScanSession<'d, const EXTENDED: bool> {
     command_state: &'d CommandState<bool>,
     deadline: Option<Instant>,
+    timeout: &'d Signal<NoopRawMutex, ()>,
     done: bool,
 }
 
 impl<const EXTENDED: bool> Drop for ScanSession<'_, EXTENDED> {
     fn drop(&mut self) {
         self.command_state.cancel(EXTENDED);
+    }
+}
+
+impl<'d> Future for ScanSession<'d, true> {
+    type Output = ();
+
+    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        core::pin::pin!(this.timeout.wait()).poll(cx)
     }
 }
