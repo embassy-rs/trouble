@@ -4,14 +4,15 @@ compile_error!("Only Linux is supported");
 use core::future::Future;
 use core::mem;
 use core::pin::Pin;
-use core::task::{Context, Poll, ready};
+use core::task::{ready, Context, Poll};
+use std::convert::Infallible;
 use std::io;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 
-use bt_hci::transport::{self, WithIndicator};
-use bt_hci::{ControllerToHostPacket, FromHciBytes as _, HostToControllerPacket, WriteHci as _};
+use bt_hci_driver::{self, PacketKind, PacketToController, PacketToHost, ReadHciError};
+use embedded_io::ReadExactError;
 use tokio::io::unix::AsyncFd;
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf, ReadHalf, WriteHalf, split};
+use tokio::io::{split, AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf};
 use tokio::sync::Mutex;
 
 const BTPROTO_HCI: libc::c_int = 1;
@@ -27,7 +28,7 @@ struct sockaddr_hci {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum Error {
-    FromHciBytesError(bt_hci::FromHciBytesError),
+    FromHciBytesError(ReadHciError<Infallible>),
     Io(io::Error),
 }
 
@@ -45,9 +46,22 @@ impl embedded_io::Error for Error {
     }
 }
 
-impl From<bt_hci::FromHciBytesError> for Error {
-    fn from(e: bt_hci::FromHciBytesError) -> Self {
-        Self::FromHciBytesError(e)
+impl From<ReadHciError<io::Error>> for Error {
+    fn from(e: ReadHciError<io::Error>) -> Self {
+        match e {
+            ReadHciError::BufferTooSmall => Error::FromHciBytesError(ReadHciError::BufferTooSmall),
+            ReadHciError::InvalidValue => Error::FromHciBytesError(ReadHciError::InvalidValue),
+            ReadHciError::Read(ReadExactError::UnexpectedEof) => {
+                Error::FromHciBytesError(ReadHciError::Read(ReadExactError::UnexpectedEof))
+            }
+            ReadHciError::Read(ReadExactError::Other(io)) => Error::Io(io),
+        }
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(io: io::Error) -> Self {
+        Error::Io(io)
     }
 }
 
@@ -139,6 +153,37 @@ impl AsyncWrite for Socket {
     }
 }
 
+struct TokioReader<'a> {
+    reader: &'a mut ReadHalf<Socket>,
+}
+impl embedded_io::ErrorType for TokioReader<'_> {
+    type Error = io::Error;
+}
+
+impl embedded_io_async::Read for TokioReader<'_> {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        tokio::io::AsyncReadExt::read(&mut self.reader, buf).await
+    }
+}
+
+struct TokioWriter<'a> {
+    writer: &'a mut WriteHalf<Socket>,
+}
+
+impl embedded_io::ErrorType for TokioWriter<'_> {
+    type Error = io::Error;
+}
+
+impl embedded_io_async::Write for TokioWriter<'_> {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        tokio::io::AsyncWriteExt::write(&mut self.writer, buf).await
+    }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        tokio::io::AsyncWriteExt::flush(&mut self.writer).await
+    }
+}
+
 pub struct Transport {
     rx: Mutex<ReadHalf<Socket>>,
     tx: Mutex<WriteHalf<Socket>>,
@@ -154,26 +199,20 @@ impl Transport {
     }
 }
 
-impl transport::Transport for Transport {
-    async fn read<'a>(&self, rx: &'a mut [u8]) -> Result<ControllerToHostPacket<'a>, Self::Error> {
-        let read = self.rx.lock().await.read(rx).await.map_err(Error::Io)?;
-        let packet = ControllerToHostPacket::from_hci_bytes_complete(
-            rx.get(..read)
-                .expect("More bytes were read than their buffer. This probably shouldn't happen."),
-        )
-        .map_err(Error::FromHciBytesError)?;
+impl bt_hci_driver::Transport for Transport {
+    async fn read<'a, P: PacketToHost<'a>>(&self, rx: &'a mut [u8]) -> Result<P, Self::Error> {
+        let mut r = self.rx.lock().await;
+        let mut reader = TokioReader { reader: &mut *r };
+        let kind = PacketKind::read_async(&mut reader).await?;
+        let packet = P::read_hci_async(kind, &mut reader, rx).await?;
         Ok(packet)
     }
 
-    fn write<T: HostToControllerPacket>(&self, val: &T) -> impl Future<Output = Result<(), Self::Error>> {
-        let mut buf = Vec::<u8>::new();
-        WithIndicator::new(val).write_hci(&mut buf).unwrap();
+    fn write<P: PacketToController>(&self, val: &P) -> impl Future<Output = Result<(), Self::Error>> {
         async move {
-            let written = self.tx.lock().await.write(&buf).await.map_err(Error::Io)?;
-            assert!(
-                written == buf.len(),
-                "Fewer bytes were written than the whole `HostToControllerPacket`. This probably shouldn't happen."
-            );
+            let mut writer = self.tx.lock().await;
+            let writer = TokioWriter { writer: &mut *writer };
+            val.write_hci_async(writer).await?;
             Ok(())
         }
     }
