@@ -1668,8 +1668,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 Either4::Third(action) => match action {
                     CancelledCommandState::Connect(_) => {
                         trace!("[host] cancel connection create");
-                        if host.command(LeCreateConnCancel::new()).await.is_err() {
-                            warn!("[host] error cancelling connection");
+                        if let Err(err) = host.command(LeCreateConnCancel::new()).await {
+                            warn!("[host] error cancelling connection: {:?}", err);
                         }
                         // Signal to ensure no one is stuck
                         host.connect_command_state.canceled();

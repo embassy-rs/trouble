@@ -149,9 +149,20 @@ pub struct ScanSession<'d, const EXTENDED: bool> {
     done: bool,
 }
 
+impl<const EXTENDED: bool> ScanSession<'_, EXTENDED> {
+    /// Stop scanning and wait until the controller has disabled scanning.
+    pub async fn stop(mut self) {
+        self.command_state.cancel(EXTENDED);
+        self.command_state.wait_idle().await;
+        self.done = true;
+    }
+}
+
 impl<const EXTENDED: bool> Drop for ScanSession<'_, EXTENDED> {
     fn drop(&mut self) {
-        self.command_state.cancel(EXTENDED);
+        if !self.done {
+            self.command_state.cancel(EXTENDED);
+        }
     }
 }
 
