@@ -106,7 +106,9 @@ impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
         });
         host.scan_command_state.request().await;
 
-        self.central.set_accept_filter(config.filter_accept_list).await?;
+        if !config.filter_accept_list.is_empty() {
+            self.central.set_accept_filter(config.filter_accept_list).await?;
+        }
 
         let params = LeSetScanParams::new(
             if config.active {
