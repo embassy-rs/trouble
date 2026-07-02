@@ -345,7 +345,7 @@ where
                     let peer_addr_kind = identity.addr.kind;
                     let peer_irk_bytes = peer_irk.to_le_bytes();
 
-                    info!("[host] incremental resolving list add");
+                    debug!("[host] incremental resolving list add");
 
                     // Remove first in case this is an update (device already in list)
                     let _ = LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr)
@@ -377,7 +377,7 @@ where
             ResolvingListUpdate::Remove(identity) => {
                 let peer_addr_kind = identity.addr.kind;
 
-                info!("[host] incremental resolving list remove");
+                debug!("[host] incremental resolving list remove");
 
                 if let Err(e) = LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr)
                     .exec(&self.controller)
@@ -410,7 +410,7 @@ where
             + ControllerCmdSync<LeSetPrivacyMode>,
         T::Error: crate::fmt::Format,
     {
-        info!("[host] full resolving list sync");
+        debug!("[host] full resolving list sync");
 
         // Clear resolving list
         LeClearResolvingList::new().exec(&self.controller).await?;
@@ -462,7 +462,7 @@ where
             }
         }
 
-        info!("[host] resolving list synced");
+        debug!("[host] resolving list synced");
         Ok(())
     }
 
@@ -743,11 +743,11 @@ where
                     w.write_hci(&l2cap)?;
                     w.write(rsp)?;
 
-                    info!("[host] agreed att MTU of {}", mtu);
+                    debug!("[host] agreed att MTU of {}", mtu);
                     let len = w.len();
                     self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
                 } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
-                    info!("[host] remote agreed att MTU of {}", mtu);
+                    debug!("[host] remote agreed att MTU of {}", mtu);
                     self.connections.exchange_att_mtu(acl.handle(), mtu);
                     #[cfg(feature = "gatt")]
                     self.connections.post_gatt_client(acl.handle(), pdu)?;
