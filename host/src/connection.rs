@@ -857,7 +857,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         if self.role() == LeConnRole::Peripheral || cfg!(feature = "connection-params-update") {
             use crate::types::l2cap::ConnParamUpdateReq;
             // Use L2CAP signaling to update connection parameters
-            info!(
+            debug!(
                 "Connection parameters request procedure not supported, use l2cap connection parameter update req instead"
             );
             let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);

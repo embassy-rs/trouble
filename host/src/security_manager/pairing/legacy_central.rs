@@ -247,7 +247,7 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<Self, Error> {
-        info!("[smp legacy central] Link encrypted!");
+        debug!("[smp legacy central] Link encrypted!");
         if pairing_data.want_bonding() {
             // Receive keys from peripheral first, then send ours
             if pairing_data.peer_features.responder_key_distribution.encryption_key() {
@@ -375,7 +375,7 @@ impl Pairing {
         pairing_data.peer_features = peer_features;
         pairing_data.pairing_method =
             choose_legacy_pairing_method(pairing_data.local_features, pairing_data.peer_features);
-        info!("[smp legacy central] Pairing method {:?}", pairing_data.pairing_method);
+        debug!("[smp legacy central] Pairing method {:?}", pairing_data.pairing_method);
 
         match pairing_data.pairing_method {
             PairingMethod::OutOfBand => {

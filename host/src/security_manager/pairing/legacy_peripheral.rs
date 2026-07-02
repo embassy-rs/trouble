@@ -249,7 +249,7 @@ impl Pairing {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<Self, Error> {
-        info!("[smp legacy peripheral] Link encrypted!");
+        debug!("[smp legacy peripheral] Link encrypted!");
         if matches!(previous, Self::WaitingPairingRequest) {
             pairing_data.bond_information = ops.try_enable_bonded_encryption()?;
         }
@@ -448,7 +448,7 @@ impl Pairing {
         }
         pairing_data.pairing_method =
             choose_legacy_pairing_method(pairing_data.peer_features, pairing_data.local_features);
-        info!("[smp legacy] Pairing method {:?}", pairing_data.pairing_method);
+        debug!("[smp legacy] Pairing method {:?}", pairing_data.pairing_method);
 
         // Send PairingResponse and store the command bytes for c1
         let mut packet = prepare_packet::<P>(Command::PairingResponse)?;

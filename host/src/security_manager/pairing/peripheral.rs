@@ -365,7 +365,7 @@ impl Pairing {
         ops: &mut OPS,
     ) -> Result<Self, Error> {
         if res {
-            info!("Link encrypted!");
+            debug!("Link encrypted!");
             if matches!(current, Self::WaitingPairingRequest) {
                 pairing_data.bond_information = ops.try_enable_bonded_encryption()?;
             }
@@ -517,7 +517,7 @@ impl Pairing {
             pairing_data.local_features.use_oob = crate::security_manager::types::UseOutOfBand::Present;
         }
         pairing_data.pairing_method = choose_pairing_method(pairing_data.peer_features, pairing_data.local_features);
-        info!("[smp] Pairing method {:?}", pairing_data.pairing_method);
+        debug!("[smp] Pairing method {:?}", pairing_data.pairing_method);
         Ok(())
     }
 
@@ -655,10 +655,10 @@ impl Pairing {
         );
 
         if pairing_data.pairing_method == PairingMethod::JustWorks {
-            info!("[smp] Just works pairing with compare {}", vb.0);
+            debug!("[smp] Just works pairing with compare {}", vb.0);
             Ok(Self::WaitingDHKeyEa(phase_data))
         } else {
-            info!("[smp] Numeric comparison pairing with compare {}", vb.0);
+            debug!("[smp] Numeric comparison pairing with compare {}", vb.0);
             ops.try_send_connection_event(ConnectionEvent::PassKeyConfirm(PassKey(vb.0)))?;
             Ok(Self::WaitingNumericComparisonResult { phase_data, ea: None })
         }

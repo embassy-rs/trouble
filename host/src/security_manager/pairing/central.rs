@@ -277,7 +277,7 @@ impl Pairing {
                 Self::handle_oob_data_received(local, peer, phase_data, pairing_data, ops, rng)
             }
             (Step::WaitingLinkEncrypted, Input::Event(Event::LinkEncryptedResult(true))) => {
-                info!("Link encrypted!");
+                debug!("Link encrypted!");
                 if pairing_data.peer_features.responder_key_distribution.identity_key() {
                     Ok(Step::WaitingIdentitityInformation)
                 } else {
@@ -289,7 +289,7 @@ impl Pairing {
                 Err(Error::Security(Reason::KeyRejected))
             }
             (Step::WaitingBondedLinkEncryption, Input::Event(Event::LinkEncryptedResult(true))) => {
-                info!("Link encrypted using bonded key!");
+                debug!("Link encrypted using bonded key!");
                 Ok(Step::Success)
             }
             (Step::WaitingBondedLinkEncryption, Input::Event(Event::LinkEncryptedResult(false))) => {
@@ -648,7 +648,7 @@ impl Pairing {
 
         pairing_data.peer_features = peer_features;
         pairing_data.pairing_method = choose_pairing_method(pairing_data.local_features, pairing_data.peer_features);
-        info!("[smp] Pairing method {:?}", pairing_data.pairing_method);
+        debug!("[smp] Pairing method {:?}", pairing_data.pairing_method);
 
         Ok(())
     }
@@ -715,10 +715,10 @@ impl Pairing {
         );
 
         if pairing_data.pairing_method == PairingMethod::JustWorks {
-            info!("[smp] Just works pairing with compare {}", va.0);
+            debug!("[smp] Just works pairing with compare {}", va.0);
             Self::send_dhkey_ea_and_transition(ops, pairing_data, &phase_data)
         } else {
-            info!("[smp] Numeric comparison pairing with compare {}", va.0);
+            debug!("[smp] Numeric comparison pairing with compare {}", va.0);
             ops.try_send_connection_event(ConnectionEvent::PassKeyConfirm(PassKey(va.0)))?;
             Ok(Step::WaitingNumericComparisonResult(phase_data))
         }
