@@ -411,8 +411,11 @@ impl SecretKey {
     /// Computes a shared secret from the local secret key and remote public
     /// key. Returns [`None`] if the public key is either invalid or derived
     /// from the same secret key ([Vol 3] Part H, Section 2.3.5.6.1).
+    ///
+    /// `local_pk` must be the public key of `self`; passing it in avoids an
+    /// expensive scalar multiplication to recompute it.
     #[must_use]
-    pub fn dh_key(&self, pk: PublicKey) -> Option<DHKey> {
+    pub fn dh_key(&self, pk: PublicKey, local_pk: &PublicKey) -> Option<DHKey> {
         use p256::elliptic_curve::sec1::FromEncodedPoint;
         if pk.is_debug() {
             return None; // TODO: Compile-time option for debug-only mode
@@ -420,11 +423,16 @@ impl SecretKey {
 
         let (x, y) = (&pk.x.0 .0.into(), &pk.y.0.into());
         let rep = p256::EncodedPoint::from_affine_coordinates(x, y, false);
-        let lpk = p256::PublicKey::from_secret_scalar(&self.0);
+        let (lx, ly) = (&local_pk.x.0 .0.into(), &local_pk.y.0.into());
+        let lrep = p256::EncodedPoint::from_affine_coordinates(lx, ly, false);
+        let lpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_encoded_point(&lrep));
         // Constant-time ops not required:
         // https://github.com/RustCrypto/traits/issues/1227
-        let rpk = Option::from(p256::PublicKey::from_encoded_point(&rep)).unwrap_or(lpk);
-        (rpk != lpk).then(|| DHKey(ecdh::diffie_hellman(&self.0, rpk.as_affine())))
+        let rpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_encoded_point(&rep));
+        match (rpk, lpk) {
+            (Some(rpk), Some(lpk)) if rpk != lpk => Some(DHKey(ecdh::diffie_hellman(&self.0, rpk.as_affine()))),
+            _ => None,
+        }
     }
 }
 
@@ -748,12 +756,12 @@ mod tests {
         assert_eq!(ska.public_key(), pka);
         assert_eq!(skb.public_key(), pkb);
         assert_eq!(
-            ska.dh_key(pkb).unwrap().0.raw_secret_bytes(),
+            ska.dh_key(pkb, &pka).unwrap().0.raw_secret_bytes(),
             dh_key.0.raw_secret_bytes()
         );
 
         assert!(!pkb.is_debug());
-        assert!(skb.dh_key(pkb).is_none());
+        assert!(skb.dh_key(pkb, &pkb).is_none());
     }
 
     /// P-256 data set 2 ([Vol 2] Part G, Section 7.1.2.2).
@@ -798,7 +806,7 @@ mod tests {
         assert_eq!(ska.public_key(), pka);
         assert_eq!(skb.public_key(), pkb);
         assert_eq!(
-            ska.dh_key(pkb).unwrap().0.raw_secret_bytes(),
+            ska.dh_key(pkb, &pka).unwrap().0.raw_secret_bytes(),
             dh_key.0.raw_secret_bytes()
         );
     }
@@ -832,12 +840,12 @@ mod tests {
     #[test]
     fn testtest() {
         let skb = SecretKey::new(&mut OsRng::default());
-        let _pkb = skb.public_key();
+        let pkb = skb.public_key();
 
         let ska = SecretKey::new(&mut OsRng::default());
         let pka = ska.public_key();
 
-        let _dh_key = skb.dh_key(pka).unwrap();
+        let _dh_key = skb.dh_key(pka, &pkb).unwrap();
     }
 
     #[test]
@@ -850,11 +858,11 @@ mod tests {
         ];
 
         let skb = SecretKey::new(&mut OsRng::default());
-        let _pkb = skb.public_key();
+        let pkb = skb.public_key();
 
         let pka = PublicKey::from_bytes(&bytes);
 
-        let _dh_key = skb.dh_key(pka).unwrap();
+        let _dh_key = skb.dh_key(pka, &pkb).unwrap();
     }
 
     #[test]

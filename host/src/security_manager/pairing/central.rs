@@ -435,7 +435,7 @@ impl Pairing {
     ) -> Result<Step, Error> {
         let peer_public_key = PublicKey::from_bytes(payload);
         let dh_key = private_key
-            .dh_key(peer_public_key)
+            .dh_key(peer_public_key, &local_public_key)
             .ok_or(Error::Security(Reason::DHKeyCheckFailed))?;
 
         let mut phase_data = LescPhaseData {
