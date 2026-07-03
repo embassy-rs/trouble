@@ -43,14 +43,18 @@ use bt_hci::param::{
     LeEventMask, Status,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
-use embassy_futures::select::{select3, select4, Either3, Either4};
-#[cfg(feature = "scan")]
+use embassy_futures::select::{select3, select5, Either3, Either5};
+#[cfg(any(feature = "scan", all(feature = "security", feature = "central")))]
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+#[cfg(all(feature = "security", feature = "central"))]
+use embassy_sync::mutex::Mutex;
 use embassy_sync::once_lock::OnceLock;
 #[cfg(feature = "scan")]
 use embassy_sync::signal::Signal;
 use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::Duration;
+#[cfg(all(feature = "security", feature = "central"))]
+use embassy_time::{Instant, Timer};
 use futures::pin_mut;
 
 use crate::att::{AttClient, AttServer};
@@ -137,7 +141,11 @@ pub(crate) struct BleHost<'d, T, P: PacketPool> {
     pub(crate) connect_command_state: CommandState<bool>,
     pub(crate) scan_command_state: CommandState<bool>,
     #[cfg(feature = "security")]
+    pub(crate) command_request_gate: Mutex<NoopRawMutex, ()>,
+    #[cfg(feature = "security")]
     pub(crate) rpa_timeout: Cell<embassy_time::Duration>,
+    #[cfg(all(feature = "security", feature = "central"))]
+    pub(crate) rpa_expires_at: Cell<Instant>,
     #[cfg(feature = "security")]
     pub(crate) resolving_list_state: RefCell<ResolvingListSignal>,
     #[cfg(feature = "scan")]
@@ -277,7 +285,11 @@ where
             scan_command_state: CommandState::new(),
             connect_command_state: CommandState::new(),
             #[cfg(feature = "security")]
+            command_request_gate: Mutex::new(()),
+            #[cfg(feature = "security")]
             rpa_timeout: Cell::new(embassy_time::Duration::from_secs(900)),
+            #[cfg(all(feature = "security", feature = "central"))]
+            rpa_expires_at: Cell::new(Instant::from_ticks(0)),
             #[cfg(feature = "security")]
             resolving_list_state: RefCell::new(ResolvingListSignal::new()),
             #[cfg(feature = "scan")]
@@ -295,6 +307,11 @@ where
         }
         if let Poll::Ready(ctx) = self.scan_command_state.poll_cancelled(cx) {
             return Poll::Ready(CancelledCommandState::Scan(ctx));
+        }
+
+        #[cfg(all(feature = "security", feature = "central"))]
+        if self.is_privacy_enabled() && self.is_rpa_rotation_ready() {
+            return Poll::Ready(CancelledCommandState::RotateRpa);
         }
 
         #[cfg(feature = "security")]
@@ -329,6 +346,51 @@ where
         self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC)
     }
 
+    /// Atomically mark an address-using procedure active relative to RPA rotation.
+    pub(crate) async fn request_operation<CTX: Clone + Copy>(&self, state: &CommandState<CTX>, ctx: CTX) {
+        #[cfg(feature = "security")]
+        let _guard = self.command_request_gate.lock().await;
+        state.request(ctx).await;
+    }
+
+    #[cfg(all(feature = "security", feature = "central"))]
+    fn is_rpa_rotation_ready(&self) -> bool {
+        self.is_privacy_enabled()
+            && self.connect_command_state.is_idle()
+            && !self.advertise_command_state.is_active_with(|extended| !extended)
+            && self.scan_command_state.is_idle()
+            && Instant::now() >= self.rpa_expires_at.get()
+    }
+
+    #[cfg(all(feature = "security", feature = "central"))]
+    async fn wait_for_rpa_expiration(&self) {
+        while Instant::now() < self.rpa_expires_at.get() {
+            Timer::at(self.rpa_expires_at.get()).await
+        }
+        if !self.is_rpa_rotation_ready() {
+            // A command is still active, so rely on poll_cancelled to wake the runner loop instead
+            core::future::pending::<()>().await;
+        }
+    }
+
+    #[cfg(all(feature = "security", feature = "central"))]
+    async fn rotate_rpa(&self) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdSync<LeSetRandomAddr>,
+    {
+        let _guard = self.command_request_gate.lock().await;
+        if !self.is_rpa_rotation_ready() {
+            return Ok(());
+        }
+        let Some(rpa) = self.connections.security_manager.generate_local_rpa() else {
+            return Ok(());
+        };
+        LeSetRandomAddr::new(rpa).exec(&self.controller).await?;
+        self.rpa_expires_at.set(Instant::now() + self.rpa_timeout.get());
+        trace!("[host] rotated private address");
+        Ok(())
+    }
+
     /// Sync the controller's resolving list based on a pending update.
     #[cfg(feature = "security")]
     pub(crate) async fn sync_resolving_list(&self, update: ResolvingListUpdate) -> Result<(), BleHostError<T::Error>>
@@ -340,6 +402,14 @@ where
             + ControllerCmdSync<LeSetPrivacyMode>,
         T::Error: crate::fmt::Format,
     {
+        let _guard = self.command_request_gate.lock().await;
+        if !(self.connect_command_state.is_idle()
+            && self.advertise_command_state.is_idle()
+            && self.scan_command_state.is_idle())
+        {
+            return Ok(());
+        }
+
         let local_irk = self.connections.security_manager.get_local_irk();
         let local_irk_bytes = local_irk.map(|k| k.to_le_bytes()).unwrap_or_default();
 
@@ -1466,6 +1536,8 @@ enum CancelledCommandState {
     Scan(bool),
     #[cfg(feature = "security")]
     SyncResolvingList(ResolvingListUpdate),
+    #[cfg(all(feature = "security", feature = "central"))]
+    RotateRpa,
 }
 
 impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
@@ -1506,8 +1578,20 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             host.connections.security_manager.set_random_generator_seed(seed);
         }
 
-        if let Some(addr) = host.address {
-            LeSetRandomAddr::new(addr.addr).exec(&host.controller).await?;
+        {
+            let addr = host.address.map(|a| a.addr);
+
+            #[cfg(all(feature = "security", feature = "central"))]
+            let addr = host.connections.security_manager.generate_local_rpa().or(addr);
+
+            if let Some(addr) = addr {
+                LeSetRandomAddr::new(addr).exec(&host.controller).await?;
+
+                #[cfg(all(feature = "security", feature = "central"))]
+                if host.is_privacy_enabled() {
+                    host.rpa_expires_at.set(Instant::now() + host.rpa_timeout.get());
+                }
+            }
         }
 
         SetEventMask::new(
@@ -1624,7 +1708,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         }
 
         loop {
-            match select4(
+            match select5(
                 poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
                 poll_fn(|cx| host.channels.poll_disconnecting(Some(cx))),
                 poll_fn(|cx| host.poll_cancelled(cx)),
@@ -1634,12 +1718,20 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 },
                 #[cfg(not(feature = "security"))]
                 {
-                    poll_fn(|cx| Poll::<()>::Pending)
+                    core::future::pending::<()>()
+                },
+                #[cfg(all(feature = "security", feature = "central"))]
+                {
+                    host.wait_for_rpa_expiration()
+                },
+                #[cfg(not(all(feature = "security", feature = "central")))]
+                {
+                    core::future::pending::<()>()
                 },
             )
             .await
             {
-                Either4::First(request) => {
+                Either5::First(request) => {
                     trace!("[host] poll disconnecting links");
                     match host.command(Disconnect::new(request.handle(), request.reason())).await {
                         Ok(_) => {}
@@ -1652,7 +1744,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     }
                     request.confirm();
                 }
-                Either4::Second(request) => {
+                Either5::Second(request) => {
                     trace!("[host] poll disconnecting channels");
                     match request.send(host).await {
                         Ok(_) => {}
@@ -1665,7 +1757,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     }
                     request.confirm();
                 }
-                Either4::Third(action) => match action {
+                Either5::Third(action) => match action {
                     CancelledCommandState::Connect(_) => {
                         trace!("[host] cancel connection create");
                         if let Err(err) = host.command(LeCreateConnCancel::new()).await {
@@ -1703,12 +1795,22 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     CancelledCommandState::SyncResolvingList(update) => {
                         host.sync_resolving_list(update).await?;
                     }
+                    #[cfg(all(feature = "security", feature = "central"))]
+                    CancelledCommandState::RotateRpa => {
+                        host.rotate_rpa().await?;
+                    }
                 },
-                Either4::Fourth(request) => {
+                Either5::Fourth(request) => {
                     #[cfg(feature = "security")]
                     {
                         let event_data = request.unwrap_or(SecurityEventData::Timeout);
                         host.connections.handle_security_event(host, event_data).await?;
+                    }
+                }
+                Either5::Fifth(()) => {
+                    #[cfg(all(feature = "security", feature = "central"))]
+                    {
+                        host.rotate_rpa().await?;
                     }
                 }
             }

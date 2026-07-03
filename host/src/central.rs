@@ -33,9 +33,9 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
 
         let host = self.host;
         let _drop = crate::host::OnDrop::new(|| {
-            host.connect_command_state.cancel(true);
+            host.connect_command_state.cancel(false);
         });
-        host.connect_command_state.request().await;
+        host.request_operation(&host.connect_command_state, false).await;
 
         let peer = if config.scan_config.filter_accept_list.len() == 1 {
             config.scan_config.filter_accept_list[0]
@@ -94,7 +94,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         let _drop = crate::host::OnDrop::new(|| {
             host.connect_command_state.cancel(true);
         });
-        host.connect_command_state.request().await;
+        host.request_operation(&host.connect_command_state, true).await;
 
         let peer = if config.scan_config.filter_accept_list.len() == 1 {
             config.scan_config.filter_accept_list[0]
