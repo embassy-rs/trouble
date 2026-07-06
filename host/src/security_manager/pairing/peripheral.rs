@@ -283,7 +283,7 @@ impl Pairing {
         let secret_key = ops.secret_key().clone();
         let local_public_key = *ops.public_key();
         let dh_key = secret_key
-            .dh_key(peer_public_key)
+            .dh_key(peer_public_key, &local_public_key)
             .ok_or(Error::Security(Reason::DHKeyCheckFailed))?;
 
         Self::send_public_key(ops, &local_public_key)?;
