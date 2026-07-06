@@ -64,7 +64,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         let drop = crate::host::OnDrop::new(|| {
             host.advertise_command_state.cancel(false);
         });
-        host.advertise_command_state.request().await;
+        host.request_operation(&host.advertise_command_state, false).await;
 
         // Clear current advertising terminations
         host.advertise_state.reset();
@@ -209,7 +209,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         let drop = crate::host::OnDrop::new(|| {
             host.advertise_command_state.cancel(true);
         });
-        host.advertise_command_state.request().await;
+        host.request_operation(&host.advertise_command_state, true).await;
 
         // Clear current advertising terminations
         host.advertise_state.reset();
@@ -218,7 +218,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             let handle = AdvHandle::new(i as u8);
             let data: RawAdvertisement<'k> = set.data.into();
             let params = set.params;
-            let peer = data.peer.unwrap_or(Address::new(AddrKind::PUBLIC, BdAddr::default()));
+            let peer = data.peer.unwrap_or_default();
             let own_addr_kind = params.own_addr_kind.unwrap_or_else(|| host.own_addr_kind());
             let random_addr = if let Some(addr) = set.address {
                 Some(addr)

@@ -12,6 +12,8 @@ use core::task::Poll;
 
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
+#[cfg(feature = "central")]
+use bt_hci::param::BdAddr;
 use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
 use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
@@ -748,6 +750,14 @@ impl<'d> SecurityManager<'d> {
     /// Returns `Some` when privacy is enabled, `None` otherwise.
     pub(crate) fn get_local_irk(&self) -> Option<IdentityResolvingKey> {
         self.inner.borrow().state.local_irk
+    }
+
+    /// Generate a local resolvable private address when privacy is enabled.
+    #[cfg(feature = "central")]
+    pub(crate) fn generate_local_rpa(&self) -> Option<BdAddr> {
+        let mut inner = self.inner.borrow_mut();
+        let irk = inner.state.local_irk?;
+        Some(BdAddr::new(irk.generate_resolvable_address(&mut inner.rng)))
     }
 
     /// Add a bonded device

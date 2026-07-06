@@ -5,7 +5,7 @@ use core::task::{Context, Poll};
 use embassy_sync::waitqueue::WakerRegistration;
 
 pub enum State<CTX> {
-    Active,
+    Active(CTX),
     Cancel(CTX),
     Idle,
 }
@@ -38,13 +38,13 @@ impl<CTX: Clone + Copy> CommandState<CTX> {
     }
 
     /// Request a new command
-    pub async fn request(&self) {
+    pub async fn request(&self, ctx: CTX) {
         poll_fn(|cx| {
             self.with_inner(|inner| {
                 inner.host.register(cx.waker());
                 match inner.state {
                     State::Idle => {
-                        inner.state = State::Active;
+                        inner.state = State::Active(ctx);
                         Poll::Ready(())
                     }
                     _ => Poll::Pending,
@@ -99,6 +99,15 @@ impl<CTX: Clone + Copy> CommandState<CTX> {
     /// Check if the command state is idle.
     pub fn is_idle(&self) -> bool {
         self.with_inner(|inner| matches!(inner.state, State::Idle))
+    }
+
+    /// Check whether an active or canceling command's context matches a predicate.
+    #[cfg(all(feature = "security", feature = "central"))]
+    pub fn is_active_with(&self, predicate: impl Fn(CTX) -> bool) -> bool {
+        self.with_inner(|inner| match inner.state {
+            State::Active(ctx) | State::Cancel(ctx) => predicate(ctx),
+            State::Idle => false,
+        })
     }
 
     pub fn done(&self) {

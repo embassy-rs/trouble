@@ -1,4 +1,6 @@
 //! Scan config.
+use core::future::Future;
+
 use bt_hci::cmd::le::{
     LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeSetExtScanEnable, LeSetExtScanParams, LeSetScanEnable,
     LeSetScanParams,
@@ -6,6 +8,8 @@ use bt_hci::cmd::le::{
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{FilterDuplicates, ScanningPhy};
 pub use bt_hci::param::{LeAdvReportsIter, LeExtAdvReportsIter};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::Instant;
 
 use crate::command::CommandState;
@@ -17,25 +21,23 @@ use crate::{bt_hci_duration, BleHostError, Central, PacketPool};
 ///
 /// The buffer size can be tuned if in a noisy environment that
 /// returns a lot of results.
-pub struct Scanner<'d, C: Controller, P: PacketPool> {
-    central: Central<'d, C, P>,
+pub struct Scanner<'d, 'stack, C: Controller, P: PacketPool> {
+    central: &'d mut Central<'stack, C, P>,
 }
 
-impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
+impl<'d, 'stack, C: Controller, P: PacketPool> Scanner<'d, 'stack, C, P> {
     /// Create a new scanner with the provided central.
-    pub fn new(central: Central<'d, C, P>) -> Self {
+    pub fn new(central: &'d mut Central<'stack, C, P>) -> Self {
         Self { central }
-    }
-
-    /// Retrieve the underlying central
-    pub fn into_inner(self) -> Central<'d, C, P> {
-        self.central
     }
 
     /// Performs an extended BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan_ext(&mut self, config: &ScanConfig<'_>) -> Result<ScanSession<'_, true>, BleHostError<C::Error>>
+    pub async fn scan_ext(
+        &mut self,
+        config: &ScanConfig<'_>,
+    ) -> Result<ScanSession<'stack, true>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeSetExtScanEnable>
             + ControllerCmdSync<LeSetExtScanParams>
@@ -46,7 +48,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         let drop = crate::host::OnDrop::new(|| {
             host.scan_command_state.cancel(true);
         });
-        host.scan_command_state.request().await;
+        host.request_operation(&host.scan_command_state, true).await;
         self.central.set_accept_filter(config.filter_accept_list).await?;
 
         let scanning = ScanningPhy {
@@ -67,6 +69,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         ))
         .await?;
 
+        host.scan_timeout.reset();
         host.command(LeSetExtScanEnable::new(
             true,
             config.filter_duplicates,
@@ -82,6 +85,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             } else {
                 Some(Instant::now() + config.timeout)
             },
+            timeout: &host.scan_timeout,
             done: false,
         })
     }
@@ -89,7 +93,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
     /// Performs a BLE scan, return a report for discovering peripherals.
     ///
     /// Scan is stopped when a report is received. Call this method repeatedly to continue scanning.
-    pub async fn scan(&mut self, config: &ScanConfig<'_>) -> Result<ScanSession<'_, false>, BleHostError<C::Error>>
+    pub async fn scan(&mut self, config: &ScanConfig<'_>) -> Result<ScanSession<'stack, false>, BleHostError<C::Error>>
     where
         C: ControllerCmdSync<LeSetScanParams>
             + ControllerCmdSync<LeSetScanEnable>
@@ -100,9 +104,11 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
         let drop = crate::host::OnDrop::new(|| {
             host.scan_command_state.cancel(false);
         });
-        host.scan_command_state.request().await;
+        host.request_operation(&host.scan_command_state, false).await;
 
-        self.central.set_accept_filter(config.filter_accept_list).await?;
+        if !config.filter_accept_list.is_empty() {
+            self.central.set_accept_filter(config.filter_accept_list).await?;
+        }
 
         let params = LeSetScanParams::new(
             if config.active {
@@ -131,6 +137,7 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
             } else {
                 Some(Instant::now() + config.timeout)
             },
+            timeout: &host.scan_timeout,
             done: false,
         })
     }
@@ -140,11 +147,32 @@ impl<'d, C: Controller, P: PacketPool> Scanner<'d, C, P> {
 pub struct ScanSession<'d, const EXTENDED: bool> {
     command_state: &'d CommandState<bool>,
     deadline: Option<Instant>,
+    timeout: &'d Signal<NoopRawMutex, ()>,
     done: bool,
+}
+
+impl<const EXTENDED: bool> ScanSession<'_, EXTENDED> {
+    /// Stop scanning and wait until the controller has disabled scanning.
+    pub async fn stop(mut self) {
+        self.command_state.cancel(EXTENDED);
+        self.command_state.wait_idle().await;
+        self.done = true;
+    }
 }
 
 impl<const EXTENDED: bool> Drop for ScanSession<'_, EXTENDED> {
     fn drop(&mut self) {
-        self.command_state.cancel(EXTENDED);
+        if !self.done {
+            self.command_state.cancel(EXTENDED);
+        }
+    }
+}
+
+impl<'d> Future for ScanSession<'d, true> {
+    type Output = ();
+
+    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        core::pin::pin!(this.timeout.wait()).poll(cx)
     }
 }
