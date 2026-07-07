@@ -84,6 +84,8 @@ channel-metrics = []
 security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:rand_core", "dep:rand_chacha", "dep:rand" ]
 # Enable LE Legacy Pairing (BLE 4.0/4.1 fallback when peer doesn't support Secure Connections)
 legacy-pairing = ["security"]
+# Enable Isochronous endpoint support
+iso = []
 
 # Enable ATT queued writes (long characteristic writes)
 att-queued-writes = ["gatt"]
