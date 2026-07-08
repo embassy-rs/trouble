@@ -25,6 +25,8 @@ use bt_hci::cmd::le::{
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{self, AsyncCmd, SyncCmd};
 use bt_hci::controller::{blocking, Controller, ControllerCmdAsync, ControllerCmdSync};
+#[cfg(feature = "iso")]
+use bt_hci::data::IsoPacket;
 use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 #[cfg(feature = "scan")]
 use bt_hci::event::le::LeAdvertisingReport;
@@ -35,6 +37,8 @@ use bt_hci::event::le::{
     LeDataLengthChange, LeEnhancedConnectionComplete, LeEventKind, LeEventPacket, LeFrameSpaceUpdateComplete,
     LePhyUpdateComplete, LeRemoteConnectionParameterRequest,
 };
+#[cfg(feature = "iso")]
+use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
 use bt_hci::event::{DisconnectionComplete, EventKind, NumberOfCompletedPackets, Vendor};
 #[cfg(feature = "security")]
 use bt_hci::param::BdAddr;
@@ -1123,6 +1127,16 @@ pub trait EventHandler {
     /// ACL data packets have been transmitted over the air. Useful for
     /// measuring actual air delivery rate and estimating connection event timing.
     fn on_packets_completed(&self, _num_completed: usize) {}
+
+    /// Handle an LE CIS Request event
+    #[cfg(feature = "iso")]
+    fn on_cis_request(&self, _event: &LeCisRequest) {}
+    /// Handle an LE CIS Established event
+    #[cfg(feature = "iso")]
+    fn on_cis_established(&self, _event: &LeCisEstablished) {}
+    /// Handle an incoming HCI ISO data packet
+    #[cfg(feature = "iso")]
+    fn on_iso_data(&self, _packet: &IsoPacket<'_>) {}
 }
 
 struct DummyHandler;
@@ -1465,6 +1479,16 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         .connections
                                         .post_handle_event(event.handle, ConnectionEvent::RequestConnectionParams(req));
                                 }
+                                #[cfg(feature = "iso")]
+                                LeEventKind::LeCisRequest => {
+                                    let e = unwrap!(LeCisRequest::from_hci_bytes_complete(event.data));
+                                    event_handler.on_cis_request(&e);
+                                }
+                                #[cfg(feature = "iso")]
+                                LeEventKind::LeCisEstablished => {
+                                    let e = unwrap!(LeCisEstablished::from_hci_bytes_complete(event.data));
+                                    event_handler.on_cis_established(&e);
+                                }
                                 _ => {
                                     warn!("Unknown LE event!");
                                 }
@@ -1519,6 +1543,10 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                         // Ignore
                         _ => {}
                     }
+                }
+                #[cfg(feature = "iso")]
+                Ok(ControllerToHostPacket::Iso(packet)) => {
+                    event_handler.on_iso_data(&packet);
                 }
                 // Ignore
                 Ok(_) => {}
@@ -1628,6 +1656,9 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             .enable_le_long_term_key_request(true)
             .enable_le_phy_update_complete(true)
             .enable_le_data_length_change(true);
+
+        #[cfg(feature = "iso")]
+        let mask = mask.enable_le_cis_established_v1(true).enable_le_cis_request(true);
 
         #[cfg(feature = "connection-params-update")]
         let mask = mask.enable_le_remote_conn_parameter_request(true);
