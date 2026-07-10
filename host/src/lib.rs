@@ -42,6 +42,8 @@ mod command;
 pub mod config;
 mod connection_manager;
 mod cursor;
+#[cfg(feature = "iso")]
+pub mod iso;
 #[cfg(feature = "default-packet-pool")]
 mod packet_pool;
 mod pdu;
@@ -97,6 +99,8 @@ pub mod prelude {
     #[cfg(feature = "gatt")]
     pub use crate::gatt::*;
     pub use crate::host::{ControlRunner, EventHandler, HostMetrics, Runner, RxRunner, TxRunner};
+    #[cfg(feature = "iso")]
+    pub use crate::iso::Iso;
     pub use crate::l2cap::*;
     #[cfg(feature = "default-packet-pool")]
     pub use crate::packet_pool::DefaultPacketPool;
@@ -863,6 +867,14 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     #[cfg(feature = "peripheral")]
     pub fn peripheral(&self) -> Peripheral<'_, C, P> {
         Peripheral::new(self.host)
+    }
+
+    /// Obtain an [`Iso`](iso::Iso) handle for isochronous-stream (CIS/BIS) HCI commands and data.
+    ///
+    /// This is a lightweight handle that can be created multiple times.
+    #[cfg(feature = "iso")]
+    pub fn iso(&self) -> iso::Iso<'_, C, P> {
+        iso::Iso::new(self.host)
     }
 
     /// Set the IO capabilities used by the security manager.

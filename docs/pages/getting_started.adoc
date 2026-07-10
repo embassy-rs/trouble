@@ -55,16 +55,20 @@ they generally do not need to be changed from the defaults.
 The `HostResources` type holds references to all packets, connections, channels and other data used by Trouble. The following
 generic parameters can be set:
 
+* *Controller* - Type implementing the `Controller` trait required by the host.
 * *PacketPool* - Allocator used for payloads. Should be sized according to your attribute size or l2cap MTU.
 * *CONNS* - max number of BLE connections supported.
 * *CHANNELS* - max number of L2CAP channels supported (not including GATT).
 * *ADV_SETS* - max number of advertising sets (the default of 1 is appropriate for most applications).
+* *BONDS* - max number of stored bond records when the `security` feature is enabled. The default is 10.
 
 The following instance would allow you to have up to 4 connections and 2 l2cap channels with an MTU configured by the `default-packet-pool-mtu-N` feature.
 
 ```
-let mut resources: HostResources<DefaultPacketPool, 4, 2, 1> = HostResources::new();
+let mut resources: HostResources<C, DefaultPacketPool, 4, 2, 1, 10> = HostResources::new();
 ```
+
+where `C` is a type implementing the `Controller` trait. In many cases, the `C` parameter can be written as `_` in the resource declaration, allowing the compiler to infer it from the concrete controller value passed to `trouble_host::new`.
 
 == Creating the stack
 
