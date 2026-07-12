@@ -101,31 +101,50 @@ impl ServerBuilder {
             let service_name = service.ident.as_ref().expect("All fields should have names");
             let service_type = &service.ty;
 
+            let cfg_attrs: Vec<_> = service
+                .attrs
+                .iter()
+                .filter(|attr| attr.path().is_ident("cfg"))
+                .collect();
+
             code_service_definition.extend(quote_spanned! {service_span=>
+                #(#cfg_attrs)*
                 #vis #service_name: #service_type,
             });
 
             code_service_init.extend(quote_spanned! {service_span=>
+                #(#cfg_attrs)*
                 let #service_name = #service_type::new(&mut table);
             });
 
             code_server_populate.extend(quote_spanned! {service_span=>
+                #(#cfg_attrs)*
                 #service_name,
             });
 
             code_attribute_summation.extend(quote_spanned! {service_span=>
-               + #service_type::ATTRIBUTE_COUNT
+                #(#cfg_attrs)* {
+                    attr_sum += #service_type::ATTRIBUTE_COUNT;
+                }
+
             });
 
             code_cccd_summation.extend(quote_spanned! {service_span=>
-               + #service_type::CCCD_COUNT
+                #(#cfg_attrs)* {
+                   cccd_sum += #service_type::CCCD_COUNT;
+                }
             })
         }
+
+        let attr_sum = quote!({let mut attr_sum = trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT;
+            #code_attribute_summation
+            attr_sum
+        });
 
         let attribute_table_size = if let Some(value) = self.arguments.attribute_table_size {
             value
         } else {
-            parse_quote!(trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation)
+            parse_quote!(#attr_sum)
         };
 
         let connections_max = if let Some(value) = self.arguments.connections_max {
@@ -137,11 +156,16 @@ impl ServerBuilder {
         quote! {
             const _ATTRIBUTE_TABLE_SIZE: usize = const {
                 let size = #attribute_table_size;
-                core::assert!(size >= trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT #code_attribute_summation, "Specified attribute table size is insufficient. Please increase attribute_table_size or remove the argument entirely to allow automatic sizing of the attribute table.");
+                core::assert!(size >= #attr_sum, "Specified attribute table size is insufficient. Please increase attribute_table_size or remove some services.");
                 size
             };
             const _: () = const {
-                let exact = 4 + 6 * (0 #code_cccd_summation);
+                let exact = {4 + 6 * ({
+                    let mut cccd_sum = 0;
+                    #code_cccd_summation
+                    cccd_sum
+                }
+                )};
                 let configured = trouble_host::config::CLIENT_ATT_TABLE_SIZE;
                 core::assert!(
                     configured >= exact,
