@@ -1857,12 +1857,16 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
         loop {
             let (conn, pdu) = host.connections.outbound().await;
             match host.l2cap_pdu(conn).await {
-                Ok(mut sender) => {
-                    if let Err(e) = sender.send(pdu.as_ref()).await {
+                Ok(mut sender) => match sender.send(pdu.as_ref()).await {
+                    Ok(()) => {}
+                    Err(BleHostError::BleHost(Error::NotFound)) | Err(BleHostError::BleHost(Error::Disconnected)) => {
+                        warn!("[host] link disconnected while sending outbound pdu (ignored)");
+                    }
+                    Err(e) => {
                         warn!("[host] error sending outbound pdu");
                         return Err(e);
                     }
-                }
+                },
                 Err(BleHostError::BleHost(Error::NotFound)) => {
                     warn!("[host] unable to send data to disconnected host (ignored)");
                 }
