@@ -423,8 +423,8 @@ impl Pairing {
                 .initiator_key_distribution
                 .set_encryption_key();
         }
-        // Always agree to distribute identity key when the peer requests it
-        if peer_features.responder_key_distribution.identity_key() {
+        // Without a local IRK, decline identity key distribution instead of sending a zero IRK.
+        if peer_features.responder_key_distribution.identity_key() && ops.local_irk() != [0; 16] {
             pairing_data
                 .local_features
                 .responder_key_distribution
