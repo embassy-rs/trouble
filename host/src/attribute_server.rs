@@ -561,7 +561,13 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
             }
             Ok::<(), codec::Error>(())
         })?;
-        header.write(t)?;
+        // FIND_INFORMATION_RSP "Format" byte (Core spec, Vol 3 Part F, 3.4.3.2):
+        // 0x01 = handle(s) + 16-bit UUID(s), 0x02 = handle(s) + 128-bit UUID(s).
+        // `Uuid::get_type()` returns a uuid-kind tag (16-bit => 0x01, 32-bit =>
+        // 0x02, 128-bit => 0x03), which is NOT the ATT format code, so writing it
+        // straight emits Format=0x03 (reserved) whenever the response carries
+        // 128-bit UUIDs. Map it to the spec value.
+        header.write(if t == 0x01 { 0x01u8 } else { 0x02u8 })?;
 
         if body.len() > 2 {
             Ok(header.len() + body.len())
