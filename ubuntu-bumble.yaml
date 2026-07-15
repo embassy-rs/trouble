@@ -1,0 +1,53 @@
+# Lima VM with BlueZ + Bumble for Wokwi HCI UART bridge testing.
+#
+# Usage:
+#   limactl start ubuntu-bumble.yaml
+#   limactl shell ubuntu-bumble
+
+vmType: qemu
+arch: "aarch64"
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release-20240423/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+cpus: 4
+memory: "4GiB"
+disk: "20GiB"
+
+mounts:
+  - location: "~"
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      apt-get update
+      apt-get install -y \
+        bluez \
+        bluez-test-tools \
+        socat \
+        python3-pip \
+        python3-dev \
+        python3-venv \
+        build-essential \
+        libssl-dev \
+        kmod \
+        linux-modules-extra-$(uname -r)
+
+      python3 -m venv /opt/bumble-venv
+      /opt/bumble-venv/bin/pip install --upgrade pip
+      /opt/bumble-venv/bin/pip install bumble
+
+      if modprobe hci_vhci; then
+          echo hci_vhci > /etc/modules-load.d/hci_vhci.conf
+      else
+          echo "hci_vhci module not available on this kernel"
+      fi
+
+probes:
+  - script: |
+      #!/bin/bash
+      command -v python3
+      command -v socat
+      python3 -m pip show bumble
