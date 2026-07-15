@@ -335,7 +335,7 @@ where
     info!("Pre-server phase complete, building stack and creating server");
 
     // Build the stack, applying deferred GAP settings to the builder
-    let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let mut builder = trouble_host::new(controller, &mut resources).set_random_address(config.address);
 
     if let Some(ref listener_config) = pre.l2cap_listener {

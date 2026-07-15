@@ -126,18 +126,10 @@ impl ResolvingListSignal {
     }
 }
 
-/// A BLE Host.
-///
-/// The BleHost holds the runtime state of the host, and is the entry point
-/// for all interactions with the controller.
-///
-/// The host performs connection management, l2cap channel management, and
-/// multiplexes events and data across connections and l2cap channels.
-pub(crate) struct BleHost<'d, T, P: PacketPool> {
+pub(crate) struct HostState<'d, P: PacketPool> {
     initialized: OnceLock<InitialState>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
-    pub(crate) controller: T,
     pub(crate) connections: ConnectionManager<'d, P>,
     pub(crate) channels: ChannelManager<'d, P>,
     pub(crate) advertise_state: AdvState<'d>,
@@ -155,6 +147,61 @@ pub(crate) struct BleHost<'d, T, P: PacketPool> {
     #[cfg(feature = "scan")]
     pub(crate) scan_timeout: Signal<NoopRawMutex, ()>,
 }
+
+impl<'d, P: PacketPool> HostState<'d, P> {
+    pub(crate) fn new(
+        connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
+        channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
+        advertise_handles: &'d RefCell<[AdvHandleState]>,
+        #[cfg(feature = "security")] bond_storage: &'d RefCell<heapless::VecView<crate::BondInformation>>,
+    ) -> Self {
+        Self {
+            address: None,
+            initialized: OnceLock::new(),
+            metrics: RefCell::new(HostMetrics::default()),
+            connections: ConnectionManager::new(
+                connections,
+                #[cfg(feature = "security")]
+                bond_storage,
+            ),
+            channels: ChannelManager::new(channels),
+            advertise_state: AdvState::new(advertise_handles),
+            advertise_command_state: CommandState::new(),
+            scan_command_state: CommandState::new(),
+            connect_command_state: CommandState::new(),
+            #[cfg(feature = "security")]
+            command_request_gate: Mutex::new(()),
+            #[cfg(feature = "security")]
+            rpa_timeout: Cell::new(embassy_time::Duration::from_secs(900)),
+            #[cfg(all(feature = "security", feature = "central"))]
+            rpa_expires_at: Cell::new(Instant::from_ticks(0)),
+            #[cfg(feature = "security")]
+            resolving_list_state: RefCell::new(ResolvingListSignal::new()),
+            #[cfg(feature = "scan")]
+            scan_timeout: Signal::new(),
+        }
+    }
+}
+
+/// A BLE Host.
+///
+/// The BleHost holds the runtime state of the host, and is the entry point
+/// for all interactions with the controller.
+///
+/// The host performs connection management, l2cap channel management, and
+/// multiplexes events and data across connections and l2cap channels.
+pub(crate) struct BleHost<'d, T, P: PacketPool> {
+    controller: &'d T,
+    state: &'d HostState<'d, P>,
+}
+
+impl<'d, T, P: PacketPool> Clone for BleHost<'d, T, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'d, T, P: PacketPool> Copy for BleHost<'d, T, P> {}
 
 #[derive(Clone, Copy)]
 pub(crate) struct InitialState {
@@ -258,58 +305,74 @@ pub struct HostMetrics {
 
 impl<'d, T, P> BleHost<'d, T, P>
 where
-    T: Controller,
     P: PacketPool,
 {
     /// Create a new instance of the BLE host.
     ///
     /// The host requires a HCI driver (a particular HCI-compatible controller implementing the required traits), and
     /// a reference to resources that are created outside the host but which the host is the only accessor of.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        controller: T,
-        connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
-        channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
-        advertise_handles: &'d RefCell<[AdvHandleState]>,
-        #[cfg(feature = "security")] bond_storage: &'d RefCell<heapless::VecView<crate::BondInformation>>,
-    ) -> Self {
-        Self {
-            address: None,
-            initialized: OnceLock::new(),
-            metrics: RefCell::new(HostMetrics::default()),
-            controller,
-            connections: ConnectionManager::new(
-                connections,
-                #[cfg(feature = "security")]
-                bond_storage,
-            ),
-            channels: ChannelManager::new(channels),
-            advertise_state: AdvState::new(advertise_handles),
-            advertise_command_state: CommandState::new(),
-            scan_command_state: CommandState::new(),
-            connect_command_state: CommandState::new(),
-            #[cfg(feature = "security")]
-            command_request_gate: Mutex::new(()),
-            #[cfg(feature = "security")]
-            rpa_timeout: Cell::new(embassy_time::Duration::from_secs(900)),
-            #[cfg(all(feature = "security", feature = "central"))]
-            rpa_expires_at: Cell::new(Instant::from_ticks(0)),
-            #[cfg(feature = "security")]
-            resolving_list_state: RefCell::new(ResolvingListSignal::new()),
-            #[cfg(feature = "scan")]
-            scan_timeout: Signal::new(),
-        }
+    pub(crate) fn new(controller: &'d T, state: &'d HostState<'d, P>) -> Self {
+        Self { controller, state }
     }
 
+    pub(crate) fn address(&self) -> Option<Address> {
+        self.state.address
+    }
+
+    pub(crate) fn connect_command_state(&self) -> &CommandState<bool> {
+        &self.state.connect_command_state
+    }
+
+    pub(crate) fn advertise_command_state(&self) -> &CommandState<bool> {
+        &self.state.advertise_command_state
+    }
+
+    pub(crate) fn scan_command_state(&self) -> &'d CommandState<bool> {
+        &self.state.scan_command_state
+    }
+
+    pub(crate) fn connections(&self) -> &'d ConnectionManager<'d, P> {
+        &self.state.connections
+    }
+
+    pub(crate) fn channels(&self) -> &'d ChannelManager<'d, P> {
+        &self.state.channels
+    }
+
+    pub(crate) fn advertise_state(&self) -> &AdvState<'d> {
+        &self.state.advertise_state
+    }
+
+    #[cfg(feature = "scan")]
+    pub(crate) fn scan_timeout(&self) -> &'d Signal<NoopRawMutex, ()> {
+        &self.state.scan_timeout
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) fn resolving_list_state(&self) -> &RefCell<ResolvingListSignal> {
+        &self.state.resolving_list_state
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) fn rpa_timeout(&self) -> &Cell<Duration> {
+        &self.state.rpa_timeout
+    }
+}
+
+impl<'d, T, P> BleHost<'d, T, P>
+where
+    T: Controller,
+    P: PacketPool,
+{
     /// Poll whether any command should be cancelled or the resolving list should be synced.
     fn poll_cancelled(&self, cx: &mut Context<'_>) -> Poll<CancelledCommandState> {
-        if let Poll::Ready(ctx) = self.connect_command_state.poll_cancelled(cx) {
+        if let Poll::Ready(ctx) = self.state.connect_command_state.poll_cancelled(cx) {
             return Poll::Ready(CancelledCommandState::Connect(ctx));
         }
-        if let Poll::Ready(ctx) = self.advertise_command_state.poll_cancelled(cx) {
+        if let Poll::Ready(ctx) = self.state.advertise_command_state.poll_cancelled(cx) {
             return Poll::Ready(CancelledCommandState::Advertise(ctx));
         }
-        if let Poll::Ready(ctx) = self.scan_command_state.poll_cancelled(cx) {
+        if let Poll::Ready(ctx) = self.state.scan_command_state.poll_cancelled(cx) {
             return Poll::Ready(CancelledCommandState::Scan(ctx));
         }
 
@@ -319,11 +382,11 @@ where
         }
 
         #[cfg(feature = "security")]
-        if self.connect_command_state.is_idle()
-            && self.advertise_command_state.is_idle()
-            && self.scan_command_state.is_idle()
+        if self.state.connect_command_state.is_idle()
+            && self.state.advertise_command_state.is_idle()
+            && self.state.scan_command_state.is_idle()
         {
-            if let Poll::Ready(update) = self.resolving_list_state.borrow_mut().poll_changed(cx) {
+            if let Poll::Ready(update) = self.state.resolving_list_state.borrow_mut().poll_changed(cx) {
                 return Poll::Ready(CancelledCommandState::SyncResolvingList(update));
             }
         }
@@ -334,42 +397,42 @@ where
     /// Check whether BLE address privacy is enabled.
     #[cfg(feature = "security")]
     pub(crate) fn is_privacy_enabled(&self) -> bool {
-        self.connections.security_manager.get_local_irk().is_some()
+        self.state.connections.security_manager.get_local_irk().is_some()
     }
 
     /// Get the appropriate own address kind based on the host address and privacy state.
     pub(crate) fn own_addr_kind(&self) -> AddrKind {
         #[cfg(feature = "security")]
         if self.is_privacy_enabled() {
-            return if self.address.is_some() {
+            return if self.state.address.is_some() {
                 AddrKind::RESOLVABLE_PRIVATE_OR_RANDOM
             } else {
                 AddrKind::RESOLVABLE_PRIVATE_OR_PUBLIC
             };
         }
-        self.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC)
+        self.state.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC)
     }
 
     /// Atomically mark an address-using procedure active relative to RPA rotation.
     pub(crate) async fn request_operation<CTX: Clone + Copy>(&self, state: &CommandState<CTX>, ctx: CTX) {
         #[cfg(feature = "security")]
-        let _guard = self.command_request_gate.lock().await;
+        let _guard = self.state.command_request_gate.lock().await;
         state.request(ctx).await;
     }
 
     #[cfg(all(feature = "security", feature = "central"))]
     fn is_rpa_rotation_ready(&self) -> bool {
         self.is_privacy_enabled()
-            && self.connect_command_state.is_idle()
-            && !self.advertise_command_state.is_active_with(|extended| !extended)
-            && self.scan_command_state.is_idle()
-            && Instant::now() >= self.rpa_expires_at.get()
+            && self.state.connect_command_state.is_idle()
+            && !self.state.advertise_command_state.is_active_with(|extended| !extended)
+            && self.state.scan_command_state.is_idle()
+            && Instant::now() >= self.state.rpa_expires_at.get()
     }
 
     #[cfg(all(feature = "security", feature = "central"))]
     async fn wait_for_rpa_expiration(&self) {
-        while Instant::now() < self.rpa_expires_at.get() {
-            Timer::at(self.rpa_expires_at.get()).await
+        while Instant::now() < self.state.rpa_expires_at.get() {
+            Timer::at(self.state.rpa_expires_at.get()).await
         }
         if !self.is_rpa_rotation_ready() {
             // A command is still active, so rely on poll_cancelled to wake the runner loop instead
@@ -382,15 +445,17 @@ where
     where
         T: ControllerCmdSync<LeSetRandomAddr>,
     {
-        let _guard = self.command_request_gate.lock().await;
+        let _guard = self.state.command_request_gate.lock().await;
         if !self.is_rpa_rotation_ready() {
             return Ok(());
         }
-        let Some(rpa) = self.connections.security_manager.generate_local_rpa() else {
+        let Some(rpa) = self.state.connections.security_manager.generate_local_rpa() else {
             return Ok(());
         };
-        LeSetRandomAddr::new(rpa).exec(&self.controller).await?;
-        self.rpa_expires_at.set(Instant::now() + self.rpa_timeout.get());
+        LeSetRandomAddr::new(rpa).exec(self.controller).await?;
+        self.state
+            .rpa_expires_at
+            .set(Instant::now() + self.state.rpa_timeout.get());
         trace!("[host] rotated private address");
         Ok(())
     }
@@ -406,19 +471,19 @@ where
             + ControllerCmdSync<LeSetPrivacyMode>,
         T::Error: crate::fmt::Format,
     {
-        let _guard = self.command_request_gate.lock().await;
-        if !(self.connect_command_state.is_idle()
-            && self.advertise_command_state.is_idle()
-            && self.scan_command_state.is_idle())
+        let _guard = self.state.command_request_gate.lock().await;
+        if !(self.state.connect_command_state.is_idle()
+            && self.state.advertise_command_state.is_idle()
+            && self.state.scan_command_state.is_idle())
         {
             return Ok(());
         }
 
-        let local_irk = self.connections.security_manager.get_local_irk();
+        let local_irk = self.state.connections.security_manager.get_local_irk();
         let local_irk_bytes = local_irk.map(|k| k.to_le_bytes()).unwrap_or_default();
 
         // Disable address resolution while modifying the list
-        LeSetAddrResolutionEnable::new(false).exec(&self.controller).await?;
+        LeSetAddrResolutionEnable::new(false).exec(self.controller).await?;
 
         let res = match update {
             ResolvingListUpdate::FullSync => self.full_resolving_list_sync(local_irk).await,
@@ -431,7 +496,7 @@ where
 
                     // Remove first in case this is an update (device already in list)
                     let _ = LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr)
-                        .exec(&self.controller)
+                        .exec(self.controller)
                         .await;
 
                     if let Err(e) = LeAddDeviceToResolvingList::new(
@@ -440,7 +505,7 @@ where
                         peer_irk_bytes,
                         local_irk_bytes,
                     )
-                    .exec(&self.controller)
+                    .exec(self.controller)
                     .await
                     {
                         warn!("[host] failed to add device to resolving list: {:?}", e);
@@ -448,7 +513,7 @@ where
 
                     if let Err(e) =
                         LeSetPrivacyMode::new(peer_addr_kind, identity.addr.addr, bt_hci::param::PrivacyMode::Device)
-                            .exec(&self.controller)
+                            .exec(self.controller)
                             .await
                     {
                         warn!("[host] failed to set privacy mode: {:?}", e);
@@ -462,7 +527,7 @@ where
                 debug!("[host] incremental resolving list remove");
 
                 if let Err(e) = LeRemoveDeviceFromResolvingList::new(peer_addr_kind, identity.addr.addr)
-                    .exec(&self.controller)
+                    .exec(self.controller)
                     .await
                 {
                     warn!("[host] failed to remove device from resolving list: {:?}", e);
@@ -472,7 +537,7 @@ where
         };
 
         // Always re-enable address resolution
-        if let Err(e) = LeSetAddrResolutionEnable::new(true).exec(&self.controller).await {
+        if let Err(e) = LeSetAddrResolutionEnable::new(true).exec(self.controller).await {
             warn!("[host] failed to re-enable address resolution: {:?}", e);
             return res.and(Err(e.into()));
         }
@@ -495,7 +560,7 @@ where
         debug!("[host] full resolving list sync");
 
         // Clear resolving list
-        LeClearResolvingList::new().exec(&self.controller).await?;
+        LeClearResolvingList::new().exec(self.controller).await?;
 
         let local_irk_bytes = local_irk.map(|k| k.to_le_bytes()).unwrap_or_default();
 
@@ -504,7 +569,7 @@ where
         if local_irk.is_some() {
             if let Err(e) =
                 LeAddDeviceToResolvingList::new(AddrKind::PUBLIC, BdAddr::default(), [0u8; 16], local_irk_bytes)
-                    .exec(&self.controller)
+                    .exec(self.controller)
                     .await
             {
                 warn!("[host] failed to add default resolving list entry: {:?}", e);
@@ -513,7 +578,7 @@ where
 
         // Add entries for all bonded peers with IRKs
         let mut i = 0;
-        while let Some(bond) = self.connections.security_manager.get_bond(i) {
+        while let Some(bond) = self.state.connections.security_manager.get_bond(i) {
             i += 1;
             if let Some(peer_irk) = bond.identity.irk {
                 let peer_addr_kind = bond.identity.addr.kind;
@@ -524,7 +589,7 @@ where
                     peer_irk_bytes,
                     local_irk_bytes,
                 )
-                .exec(&self.controller)
+                .exec(self.controller)
                 .await
                 {
                     warn!("[host] failed to add device to resolving list: {:?}", e);
@@ -536,7 +601,7 @@ where
                     bond.identity.addr.addr,
                     bt_hci::param::PrivacyMode::Device,
                 )
-                .exec(&self.controller)
+                .exec(self.controller)
                 .await
                 {
                     warn!("[host] failed to set privacy mode: {:?}", e);
@@ -550,7 +615,7 @@ where
 
     /// Returns true if the host has been initialized by the Runner.
     pub(crate) fn is_initialized(&self) -> bool {
-        self.initialized.try_get().is_some()
+        self.state.initialized.try_get().is_some()
     }
 
     /// Run a HCI command and return the response.
@@ -559,8 +624,8 @@ where
         C: SyncCmd,
         T: ControllerCmdSync<C>,
     {
-        let _ = self.initialized.get().await;
-        let ret = cmd.exec(&self.controller).await?;
+        let _ = self.state.initialized.get().await;
+        let ret = cmd.exec(self.controller).await?;
         Ok(ret)
     }
 
@@ -570,9 +635,14 @@ where
         C: AsyncCmd,
         T: ControllerCmdAsync<C>,
     {
-        let _ = self.initialized.get().await;
-        cmd.exec(&self.controller).await?;
+        let _ = self.state.initialized.get().await;
+        cmd.exec(self.controller).await?;
         Ok(())
+    }
+
+    #[cfg(feature = "iso")]
+    pub(crate) async fn write_iso_data(&self, packet: &bt_hci::data::IsoPacket<'_>) -> Result<(), T::Error> {
+        self.controller.write_iso_data(packet).await
     }
 
     fn handle_connection(
@@ -586,7 +656,7 @@ where
     ) -> bool {
         match status.to_result() {
             Ok(_) => {
-                if let Err(err) = self.connections.connect_with_rpas(
+                if let Err(err) = self.state.connections.connect_with_rpas(
                     handle,
                     peer_addr,
                     role,
@@ -608,27 +678,27 @@ where
                         "[host] connection with handle {:?} established to {}",
                         handle, peer_addr
                     );
-                    let mut m = self.metrics.borrow_mut();
+                    let mut m = self.state.metrics.borrow_mut();
                     m.connect_events = m.connect_events.wrapping_add(1);
                 }
             }
             Err(bt_hci::param::Error::ADV_TIMEOUT) => {
-                self.advertise_state.reset();
+                self.state.advertise_state.reset();
             }
             Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
                 warn!("[host] connect cancelled");
-                self.connect_command_state.canceled();
+                self.state.connect_command_state.canceled();
             }
             Err(e) => {
                 warn!("Error connection complete event: {:?}", e);
-                self.connect_command_state.canceled();
+                self.state.connect_command_state.canceled();
             }
         }
         true
     }
 
     fn handle_acl(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
-        self.connections.received(acl.handle())?;
+        self.state.connections.received(acl.handle())?;
         let handle = acl.handle();
         let (header, pdu) = match acl.boundary_flag() {
             AclPacketBoundary::FirstFlushable => {
@@ -653,7 +723,7 @@ where
 
                 // Fast-path for complete signalling packets
                 if header.channel == L2CAP_CID_LE_U_SIGNAL && data.len() == header.length as usize {
-                    return self.channels.signal(acl.handle(), data, &self.connections);
+                    return self.state.channels.signal(acl.handle(), data, &self.state.connections);
                 }
 
                 trace!(
@@ -669,16 +739,17 @@ where
                     #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
                     if header.channel >= L2CAP_CID_DYN_START {
                         // This is the start of the frame, so make sure to adjust the credits.
-                        self.channels.received(header.channel, 1)?;
-                        self.channels.check_pdu_len(header.channel, header.length)?;
+                        self.state.channels.received(header.channel, 1)?;
+                        self.state.channels.check_pdu_len(header.channel, header.length)?;
 
-                        self.connections
+                        self.state
+                            .connections
                             .reassembly(acl.handle(), |p| {
                                 let r = if !p.in_progress() {
                                     // Init the new assembly assuming the length of the SDU.
                                     let (first, payload) = data.split_at(2);
                                     let len: u16 = u16::from_le_bytes([first[0], first[1]]);
-                                    self.channels.check_sdu_len(header.channel, len)?;
+                                    self.state.channels.check_sdu_len(header.channel, len)?;
                                     let Some(packet) = P::allocate() else {
                                         warn!("[host] no memory for packets on channel {}", header.channel);
                                         return Err(Error::OutOfMemory);
@@ -695,20 +766,20 @@ where
                                     Ok(())
                                 }
                             })
-                            .inspect_err(|_| self.channels.disconnect_by_cid(header.channel))?;
+                            .inspect_err(|_| self.state.channels.disconnect_by_cid(header.channel))?;
                         return Ok(());
                     }
 
                     // For dynamic channels, validate PDU length against MPS before reassembly.
                     if header.channel >= L2CAP_CID_DYN_START {
-                        self.channels.check_pdu_len(header.channel, header.length)?;
+                        self.state.channels.check_pdu_len(header.channel, header.length)?;
                     }
 
                     let Some(packet) = P::allocate() else {
                         warn!("[host] no memory for packets on channel {}", header.channel);
                         return Err(Error::OutOfMemory);
                     };
-                    self.connections.reassembly(acl.handle(), |p| {
+                    self.state.connections.reassembly(acl.handle(), |p| {
                         p.init(header.channel, header.length, packet)?;
                         let r = p.update(data)?;
                         if r.is_some() {
@@ -727,16 +798,17 @@ where
                     #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
                     if header.channel >= L2CAP_CID_DYN_START {
                         // This is a complete L2CAP K-frame, so make sure to adjust the credits.
-                        self.channels.received(header.channel, 1)?;
-                        self.channels.check_pdu_len(header.channel, header.length)?;
+                        self.state.channels.received(header.channel, 1)?;
+                        self.state.channels.check_pdu_len(header.channel, header.length)?;
 
                         if let Some((state, pdu)) = self
+                            .state
                             .connections
                             .reassembly(acl.handle(), |p| {
                                 if !p.in_progress() {
                                     let (first, payload) = data.split_at(2);
                                     let len: u16 = u16::from_le_bytes([first[0], first[1]]);
-                                    self.channels.check_sdu_len(header.channel, len)?;
+                                    self.state.channels.check_sdu_len(header.channel, len)?;
                                     let Some(packet) = P::allocate() else {
                                         warn!("[host] no memory for packets on channel {}", header.channel);
                                         return Err(Error::OutOfMemory);
@@ -747,7 +819,7 @@ where
                                     p.update(data)
                                 }
                             })
-                            .inspect_err(|_| self.channels.disconnect_by_cid(header.channel))?
+                            .inspect_err(|_| self.state.channels.disconnect_by_cid(header.channel))?
                         {
                             result.replace((state, pdu));
                         } else {
@@ -760,14 +832,14 @@ where
                     } else {
                         // For dynamic channels, validate PDU length against MPS before reassembly.
                         if header.channel >= L2CAP_CID_DYN_START {
-                            self.channels.check_pdu_len(header.channel, header.length)?;
+                            self.state.channels.check_pdu_len(header.channel, header.length)?;
                         }
 
                         let Some(packet) = P::allocate() else {
                             warn!("[host] no memory for packets on channel {}", header.channel);
                             return Err(Error::OutOfMemory);
                         };
-                        let result = self.connections.reassembly(acl.handle(), |p| {
+                        let result = self.state.connections.reassembly(acl.handle(), |p| {
                             p.init(header.channel, header.length, packet)?;
                             p.update(data)
                         })?;
@@ -782,7 +854,7 @@ where
             AclPacketBoundary::Continuing => {
                 trace!("[host] inbound l2cap len = {}", acl.data().len(),);
                 // Get the existing fragment
-                if let Some((header, p)) = self.connections.reassembly(acl.handle(), |p| {
+                if let Some((header, p)) = self.state.connections.reassembly(acl.handle(), |p| {
                     if !p.in_progress() {
                         warn!(
                             "[host] unexpected continuation fragment of length {} for handle {}: {:?}",
@@ -812,7 +884,7 @@ where
                 // gatt to be enabled.
                 let a = att::Att::decode(pdu.as_ref());
                 if let Ok(att::Att::Client(AttClient::Request(att::AttReq::ExchangeMtu { mtu }))) = a {
-                    let mtu = self.connections.exchange_att_mtu(acl.handle(), mtu);
+                    let mtu = self.state.connections.exchange_att_mtu(acl.handle(), mtu);
 
                     let rsp = att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }));
                     let l2cap = L2capHeader {
@@ -827,20 +899,22 @@ where
 
                     debug!("[host] agreed att MTU of {}", mtu);
                     let len = w.len();
-                    self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
+                    self.state
+                        .connections
+                        .try_outbound(acl.handle(), Pdu::new(packet, len))?;
                 } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
                     debug!("[host] remote agreed att MTU of {}", mtu);
-                    self.connections.exchange_att_mtu(acl.handle(), mtu);
+                    self.state.connections.exchange_att_mtu(acl.handle(), mtu);
                     #[cfg(feature = "gatt")]
-                    self.connections.post_gatt_client(acl.handle(), pdu)?;
+                    self.state.connections.post_gatt_client(acl.handle(), pdu)?;
                 } else {
                     #[cfg(feature = "gatt")]
                     match a {
                         Ok(att::Att::Client(AttClient::Confirmation(_))) => {
-                            self.connections.signal_indication_confirmation(acl.handle());
+                            self.state.connections.signal_indication_confirmation(acl.handle());
                         }
                         Ok(att::Att::Client(_)) => {
-                            self.connections.post_gatt(acl.handle(), pdu)?;
+                            self.state.connections.post_gatt(acl.handle(), pdu)?;
                         }
                         Ok(att::Att::Server(AttServer::Unsolicited(att::AttUns::Indicate { .. }))) => {
                             // Per BLE spec, ATT_HANDLE_VALUE_CFM must always be sent in response
@@ -855,13 +929,13 @@ where
                             w.write_hci(&l2cap)?;
                             w.write(cfm)?;
                             let len = w.len();
-                            self.connections.try_outbound(acl.handle(), Pdu::new(buf, len))?;
+                            self.state.connections.try_outbound(acl.handle(), Pdu::new(buf, len))?;
 
                             // Also queue the indication for the GATT client if possible
-                            let _ = self.connections.post_gatt_client(acl.handle(), pdu);
+                            let _ = self.state.connections.post_gatt_client(acl.handle(), pdu);
                         }
                         Ok(att::Att::Server(_)) => {
-                            if let Err(e) = self.connections.post_gatt_client(acl.handle(), pdu) {
+                            if let Err(e) = self.state.connections.post_gatt_client(acl.handle(), pdu) {
                                 return Err(Error::OutOfMemory);
                             }
                         }
@@ -884,7 +958,9 @@ where
                                 w.write_hci(&l2cap)?;
                                 w.write(rsp)?;
                                 let len = w.len();
-                                self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
+                                self.state
+                                    .connections
+                                    .try_outbound(acl.handle(), Pdu::new(packet, len))?;
                             }
                         }
                     }
@@ -912,7 +988,9 @@ where
                             w.write(rsp)?;
 
                             let len = w.len();
-                            self.connections.try_outbound(acl.handle(), Pdu::new(packet, len))?;
+                            self.state
+                                .connections
+                                .try_outbound(acl.handle(), Pdu::new(packet, len))?;
                             warn!("[host] got attribute request but 'gatt' feature is not enabled.");
                             return Ok(());
                         } else {
@@ -923,13 +1001,16 @@ where
                 }
             }
             L2CAP_CID_LE_U_SIGNAL => {
-                self.channels.signal(handle, pdu.as_ref(), &self.connections)?;
+                self.state
+                    .channels
+                    .signal(handle, pdu.as_ref(), &self.state.connections)?;
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                self.connections
+                self.state
+                    .connections
                     .handle_security_channel(acl.handle(), pdu, event_handler)?;
             }
-            other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header.channel, pdu) {
+            other if other >= L2CAP_CID_DYN_START => match self.state.channels.dispatch(header.channel, pdu) {
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Error dispatching l2cap packet to channel: {:?}", e);
@@ -989,15 +1070,15 @@ where
     // This function cannot be used to send an SDU split among multiple k-frames.
     pub(crate) async fn l2cap_pdu(&self, handle: ConnHandle) -> Result<L2capSender<'_, T, P>, BleHostError<T::Error>> {
         // Take into account l2cap header.
-        let initial_state = self.initialized.get().await;
+        let initial_state = self.state.initialized.get().await;
         let acl_max = initial_state.acl_max as u16;
         if acl_max == 0 {
             return Err(Error::NoPermits.into());
         }
 
-        let acl_send_lock = poll_fn(|cx| self.connections.poll_acquire_acl_send_lock(handle, Some(cx))).await?;
+        let acl_send_lock = poll_fn(|cx| self.state.connections.poll_acquire_acl_send_lock(handle, Some(cx))).await?;
         Ok(L2capSender {
-            controller: &self.controller,
+            controller: self.controller,
             handle,
             acl_send_lock,
             fragment_size: acl_max,
@@ -1014,13 +1095,13 @@ where
         sdu_len: u16,
         mps: u16,
     ) -> Result<L2capSender<'_, T, P>, BleHostError<T::Error>> {
-        let initial_state = self.initialized.try_get().ok_or(Error::NoPermits)?;
+        let initial_state = self.state.initialized.try_get().ok_or(Error::NoPermits)?;
         let acl_max = initial_state.acl_max;
         if acl_max == 0 {
             return Err(Error::NoPermits.into());
         }
 
-        let acl_send_lock = match self.connections.poll_acquire_acl_send_lock(handle, None) {
+        let acl_send_lock = match self.state.connections.poll_acquire_acl_send_lock(handle, None) {
             Poll::Ready(res) => res?,
             Poll::Pending => {
                 return Err(Error::Busy.into());
@@ -1048,7 +1129,7 @@ where
         }
 
         Ok(L2capSender {
-            controller: &self.controller,
+            controller: self.controller,
             handle,
             acl_send_lock,
             fragment_size: acl_max as u16,
@@ -1061,7 +1142,10 @@ where
         handle: ConnHandle,
         param: &ConnParamUpdateReq,
     ) -> Result<(), BleHostError<T::Error>> {
-        self.channels.send_conn_param_update_req(handle, self, param).await
+        self.state
+            .channels
+            .send_conn_param_update_req(handle, self, param)
+            .await
     }
 
     pub(crate) async fn send_conn_param_update_res(
@@ -1069,23 +1153,26 @@ where
         handle: ConnHandle,
         param: &ConnParamUpdateRes,
     ) -> Result<(), BleHostError<T::Error>> {
-        self.channels.send_conn_param_update_res(handle, self, param).await
+        self.state
+            .channels
+            .send_conn_param_update_res(handle, self, param)
+            .await
     }
 
     /// Read current host metrics
     pub(crate) fn metrics<F: FnOnce(&HostMetrics) -> R, R>(&self, f: F) -> R {
-        let m = self.metrics.borrow();
+        let m = self.state.metrics.borrow();
         f(&m)
     }
 
     /// Log status information of the host
     pub(crate) fn log_status(&self, verbose: bool) {
-        let m = self.metrics.borrow();
+        let m = self.state.metrics.borrow();
         debug!("[host] connect events: {}", m.connect_events);
         debug!("[host] disconnect events: {}", m.disconnect_events);
         debug!("[host] rx errors: {}", m.rx_errors);
-        self.connections.log_status(verbose);
-        self.channels.log_status(verbose);
+        self.state.connections.log_status(verbose);
+        self.state.channels.log_status(verbose);
     }
 }
 
@@ -1098,17 +1185,17 @@ pub struct Runner<'d, C, P: PacketPool> {
 
 /// The receiver part of the host runner.
 pub struct RxRunner<'d, C, P: PacketPool> {
-    host: &'d BleHost<'d, C, P>,
+    host: BleHost<'d, C, P>,
 }
 
 /// The control part of the host runner.
 pub struct ControlRunner<'d, C, P: PacketPool> {
-    host: &'d BleHost<'d, C, P>,
+    host: BleHost<'d, C, P>,
 }
 
 /// The transmit part of the host runner.
 pub struct TxRunner<'d, C, P: PacketPool> {
-    host: &'d BleHost<'d, C, P>,
+    host: BleHost<'d, C, P>,
 }
 
 /// Event handler.
@@ -1143,7 +1230,7 @@ struct DummyHandler;
 impl EventHandler for DummyHandler {}
 
 impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
-    pub(crate) fn new(host: &'d BleHost<'d, C, P>) -> Self {
+    pub(crate) fn new(host: BleHost<'d, C, P>) -> Self {
         Self {
             rx: RxRunner { host },
             control: ControlRunner { host },
@@ -1273,8 +1360,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                         match e {
                             Error::InvalidState | Error::Disconnected => {
                                 warn!("[host] requesting {:?} to be disconnected", acl.handle());
-                                host.connections.log_status(true);
-                                host.connections.request_handle_disconnect(
+                                host.state.connections.log_status(true);
+                                host.state.connections.request_handle_disconnect(
                                     acl.handle(),
                                     DisconnectReason::RemoteUserTerminatedConn,
                                 );
@@ -1282,7 +1369,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             _ => {}
                         }
 
-                        let mut m = host.metrics.borrow_mut();
+                        let mut m = host.state.metrics.borrow_mut();
                         m.rx_errors = m.rx_errors.wrapping_add(1);
                     }
                 },
@@ -1314,7 +1401,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                                 DisconnectReason::RemoteDeviceTerminatedConnLowResources,
                                             ))
                                             .await;
-                                        host.connect_command_state.canceled();
+                                        host.state.connect_command_state.canceled();
                                     }
                                 }
                                 LeEventKind::LeEnhancedConnectionComplete => {
@@ -1343,16 +1430,16 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                                 DisconnectReason::RemoteDeviceTerminatedConnLowResources,
                                             ))
                                             .await;
-                                        host.connect_command_state.canceled();
+                                        host.state.connect_command_state.canceled();
                                     }
                                 }
                                 LeEventKind::LeScanTimeout => {
                                     #[cfg(feature = "scan")]
-                                    host.scan_timeout.signal(());
+                                    host.state.scan_timeout.signal(());
                                 }
                                 LeEventKind::LeAdvertisingSetTerminated => {
                                     let set = unwrap!(LeAdvertisingSetTerminated::from_hci_bytes_complete(event.data));
-                                    host.advertise_state.terminate(set.adv_handle);
+                                    host.state.advertise_state.terminate(set.adv_handle);
                                 }
                                 LeEventKind::LeExtendedAdvertisingReport => {
                                     #[cfg(feature = "scan")]
@@ -1370,14 +1457,14 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     }
                                 }
                                 LeEventKind::LeLongTermKeyRequest => {
-                                    host.connections.handle_security_hci_le_event(event)?;
+                                    host.state.connections.handle_security_hci_le_event(event)?;
                                 }
                                 LeEventKind::LePhyUpdateComplete => {
                                     let event = unwrap!(LePhyUpdateComplete::from_hci_bytes_complete(event.data));
                                     if let Err(e) = event.status.to_result() {
                                         warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
                                     } else {
-                                        let _ = host.connections.post_handle_event(
+                                        let _ = host.state.connections.post_handle_event(
                                             event.handle,
                                             ConnectionEvent::PhyUpdated {
                                                 tx_phy: event.tx_phy,
@@ -1395,7 +1482,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             event.handle, e
                                         );
                                     } else {
-                                        let _ = host.connections.post_handle_event(
+                                        let _ = host.state.connections.post_handle_event(
                                             event.handle,
                                             ConnectionEvent::ConnectionParamsUpdated {
                                                 conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
@@ -1409,7 +1496,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 }
                                 LeEventKind::LeDataLengthChange => {
                                     let event = unwrap!(LeDataLengthChange::from_hci_bytes_complete(event.data));
-                                    let _ = host.connections.post_handle_event(
+                                    let _ = host.state.connections.post_handle_event(
                                         event.handle,
                                         ConnectionEvent::DataLengthUpdated {
                                             max_tx_octets: event.max_tx_octets,
@@ -1425,7 +1512,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     if let Err(e) = event.status.to_result() {
                                         warn!("[host] error updating frame space for {:?}: {:?}", event.handle, e);
                                     } else {
-                                        let _ = host.connections.post_handle_event(
+                                        let _ = host.state.connections.post_handle_event(
                                             event.handle,
                                             ConnectionEvent::FrameSpaceUpdated {
                                                 frame_space: Duration::from_micros(event.frame_space.as_micros()),
@@ -1441,7 +1528,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     if let Err(e) = event.status.to_result() {
                                         warn!("[host] error in connection rate change for {:?}: {:?}", event.handle, e);
                                     } else {
-                                        let _ = host.connections.post_handle_event(
+                                        let _ = host.state.connections.post_handle_event(
                                             event.handle,
                                             ConnectionEvent::ConnectionRateChanged {
                                                 conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
@@ -1476,6 +1563,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         false,
                                     );
                                     let _ = host
+                                        .state
                                         .connections
                                         .post_handle_event(event.handle, ConnectionEvent::RequestConnectionParams(req));
                                 }
@@ -1512,9 +1600,9 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 None
                             }
                             .unwrap_or(Status::UNSPECIFIED);
-                            let _ = host.connections.disconnected(handle, reason);
-                            let _ = host.channels.disconnected(handle);
-                            let mut m = host.metrics.borrow_mut();
+                            let _ = host.state.connections.disconnected(handle, reason);
+                            let _ = host.state.channels.disconnected(handle);
+                            let mut m = host.state.metrics.borrow_mut();
                             m.disconnect_events = m.disconnect_events.wrapping_add(1);
                         }
                         EventKind::NumberOfCompletedPackets => {
@@ -1523,7 +1611,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             for entry in c.completed_packets.iter() {
                                 match (entry.handle(), entry.num_completed_packets()) {
                                     (Ok(handle), Ok(completed)) => {
-                                        let _ = host.connections.confirm_sent(handle, completed as usize);
+                                        let _ = host.state.connections.confirm_sent(handle, completed as usize);
                                         event_handler.on_packets_completed(completed as usize);
                                     }
                                     (Ok(handle), Err(e)) => {
@@ -1538,7 +1626,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             event_handler.on_vendor(&vendor);
                         }
                         EventKind::EncryptionChangeV1 | EventKind::EncryptionKeyRefreshComplete => {
-                            host.connections.handle_security_hci_event(event)?;
+                            host.state.connections.handle_security_hci_event(event)?;
                         }
                         // Ignore
                         _ => {}
@@ -1594,30 +1682,32 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         C::Error: crate::fmt::Format,
     {
         let host = &self.host;
-        Reset::new().exec(&host.controller).await?;
+        Reset::new().exec(host.controller).await?;
 
         #[cfg(feature = "security")]
         {
             let mut seed = [0u8; 32];
             for chunk in seed.chunks_mut(8) {
-                let bytes: [u8; 8] = LeRand::new().exec(&host.controller).await?;
+                let bytes: [u8; 8] = LeRand::new().exec(host.controller).await?;
                 chunk.copy_from_slice(&bytes);
             }
-            host.connections.security_manager.set_random_generator_seed(seed);
+            host.state.connections.security_manager.set_random_generator_seed(seed);
         }
 
         {
-            let addr = host.address.map(|a| a.addr);
+            let addr = host.state.address.map(|a| a.addr);
 
             #[cfg(all(feature = "security", feature = "central"))]
-            let addr = host.connections.security_manager.generate_local_rpa().or(addr);
+            let addr = host.state.connections.security_manager.generate_local_rpa().or(addr);
 
             if let Some(addr) = addr {
-                LeSetRandomAddr::new(addr).exec(&host.controller).await?;
+                LeSetRandomAddr::new(addr).exec(host.controller).await?;
 
                 #[cfg(all(feature = "security", feature = "central"))]
                 if host.is_privacy_enabled() {
-                    host.rpa_expires_at.set(Instant::now() + host.rpa_timeout.get());
+                    host.state
+                        .rpa_expires_at
+                        .set(Instant::now() + host.state.rpa_timeout.get());
                 }
             }
         }
@@ -1632,11 +1722,11 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 .enable_encryption_change_v1(true)
                 .enable_encryption_key_refresh_complete(true),
         )
-        .exec(&host.controller)
+        .exec(host.controller)
         .await?;
 
         if let Err(e) = SetEventMaskPage2::new(EventMaskPage2::new().enable_encryption_change_v2(true))
-            .exec(&host.controller)
+            .exec(host.controller)
             .await
         {
             match e {
@@ -1663,7 +1753,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         #[cfg(feature = "connection-params-update")]
         let mask = mask.enable_le_remote_conn_parameter_request(true);
 
-        LeSetEventMask::new(mask).exec(&host.controller).await?;
+        LeSetEventMask::new(mask).exec(host.controller).await?;
 
         info!(
             "[host] using packet pool with MTU {} capacity {}",
@@ -1671,15 +1761,16 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             P::capacity(),
         );
 
-        let ret = LeReadFilterAcceptListSize::new().exec(&host.controller).await?;
+        let ret = LeReadFilterAcceptListSize::new().exec(host.controller).await?;
         info!("[host] filter accept list size: {}", ret);
 
-        let ret = LeReadBufferSize::new().exec(&host.controller).await?;
+        let ret = LeReadBufferSize::new().exec(host.controller).await?;
         info!(
             "[host] setting txq to {}, fragmenting at {}",
             ret.total_num_le_acl_data_packets as usize, ret.le_acl_data_packet_length as usize
         );
-        host.connections
+        host.state
+            .connections
             .set_link_credits(ret.total_num_le_acl_data_packets as usize);
 
         {
@@ -1689,7 +1780,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 "[host] configuring host buffers ({} packets of size {})",
                 ACL_N, ACL_LEN,
             );
-            if let Err(_e) = HostBufferSize::new(ACL_LEN, 0, ACL_N, 0).exec(&host.controller).await {
+            if let Err(_e) = HostBufferSize::new(ACL_LEN, 0, ACL_N, 0).exec(host.controller).await {
                 warn!("[host] error configuring host buffers (continuing)");
             }
         }
@@ -1704,7 +1795,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 }
         */
 
-        let _ = host.initialized.init(InitialState {
+        let _ = host.state.initialized.init(InitialState {
             acl_max: ret.le_acl_data_packet_length as usize,
             acl_total: ret.total_num_le_acl_data_packets as usize,
         });
@@ -1714,18 +1805,21 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         if *device_address.raw() != [0, 0, 0, 0, 0, 0] {
             let device_address = Address::new(AddrKind::PUBLIC, device_address);
             info!("[host] Device Address {}", device_address);
-            if host.address.is_none() {
+            if host.state.address.is_none() {
                 #[cfg(feature = "security")]
-                host.connections.security_manager.set_local_address(device_address);
+                host.state
+                    .connections
+                    .security_manager
+                    .set_local_address(device_address);
             }
         }
 
         // Set default RPA timeout in controller
         #[cfg(feature = "security")]
         {
-            let timeout_secs = host.rpa_timeout.get().as_secs();
+            let timeout_secs = host.state.rpa_timeout.get().as_secs();
             LeSetResolvablePrivateAddrTimeout::new(bt_hci::param::Duration::from_secs(timeout_secs as u32))
-                .exec(&host.controller)
+                .exec(host.controller)
                 .await?;
             info!("[host] RPA timeout set to {}s", timeout_secs);
         }
@@ -1733,19 +1827,19 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         // Initialize privacy: sync resolving list
         #[cfg(feature = "security")]
         if host.is_privacy_enabled() {
-            host.resolving_list_state.borrow_mut().clear();
+            host.state.resolving_list_state.borrow_mut().clear();
             host.sync_resolving_list(ResolvingListUpdate::FullSync).await?;
             info!("[host] privacy initialized");
         }
 
         loop {
             match select5(
-                poll_fn(|cx| host.connections.poll_disconnecting(Some(cx))),
-                poll_fn(|cx| host.channels.poll_disconnecting(Some(cx))),
+                poll_fn(|cx| host.state.connections.poll_disconnecting(Some(cx))),
+                poll_fn(|cx| host.state.channels.poll_disconnecting(Some(cx))),
                 poll_fn(|cx| host.poll_cancelled(cx)),
                 #[cfg(feature = "security")]
                 {
-                    host.connections.poll_security_events()
+                    host.state.connections.poll_security_events()
                 },
                 #[cfg(not(feature = "security"))]
                 {
@@ -1795,7 +1889,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                             warn!("[host] error cancelling connection: {:?}", err);
                         }
                         // Signal to ensure no one is stuck
-                        host.connect_command_state.canceled();
+                        host.state.connect_command_state.canceled();
                     }
                     CancelledCommandState::Advertise(ext) => {
                         trace!("[host] disabling advertising");
@@ -1804,7 +1898,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                         } else {
                             host.command(LeSetAdvEnable::new(false)).await?
                         }
-                        host.advertise_command_state.canceled();
+                        host.state.advertise_command_state.canceled();
                     }
                     CancelledCommandState::Scan(ext) => {
                         trace!("[host] disabling scanning");
@@ -1820,7 +1914,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                         } else {
                             host.command(LeSetScanEnable::new(false, false)).await?;
                         }
-                        host.scan_command_state.canceled();
+                        host.state.scan_command_state.canceled();
                     }
                     #[cfg(feature = "security")]
                     CancelledCommandState::SyncResolvingList(update) => {
@@ -1835,7 +1929,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     #[cfg(feature = "security")]
                     {
                         let event_data = request.unwrap_or(SecurityEventData::Timeout);
-                        host.connections.handle_security_event(host, event_data).await?;
+                        host.state.connections.handle_security_event(host, event_data).await?;
                     }
                 }
                 Either5::Fifth(()) => {
@@ -1853,9 +1947,9 @@ impl<'d, C: Controller, P: PacketPool> TxRunner<'d, C, P> {
     /// Run the transmit loop for the host.
     pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>> {
         let host = &self.host;
-        let params = host.initialized.get().await;
+        let params = host.state.initialized.get().await;
         loop {
-            let (conn, pdu) = host.connections.outbound().await;
+            let (conn, pdu) = host.state.connections.outbound().await;
             match host.l2cap_pdu(conn).await {
                 Ok(mut sender) => match sender.send(pdu.as_ref()).await {
                     Ok(()) => {}
