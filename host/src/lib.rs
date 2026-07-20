@@ -380,6 +380,8 @@ pub enum Error {
     NotFound,
     /// Invalid state.
     InvalidState,
+    /// The peer has not subscribed to notifications or indications for the characteristic.
+    NotSubscribed,
     /// Out of memory.
     OutOfMemory,
     /// Unsupported operation.
