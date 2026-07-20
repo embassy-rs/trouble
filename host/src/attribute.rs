@@ -984,6 +984,14 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
     pub(crate) phantom: PhantomData<T>,
 }
 
+fn ensure_subscribed(subscribed: bool) -> Result<(), Error> {
+    if subscribed {
+        Ok(())
+    } else {
+        Err(Error::NotSubscribed)
+    }
+}
+
 impl<T: AsGatt + ?Sized> Characteristic<T> {
     /// Check if notifications should be sent to `connection` for this characteristic.
     pub fn should_notify<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>) -> bool {
@@ -997,7 +1005,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If `store` is true, the new value will be written to the table before sending the notification.
     ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
+    /// If the provided connection has not subscribed for this characteristic, [`Error::NotSubscribed`] is returned.
     ///
     /// If the characteristic does not support notifications, an error is returned.
     pub async fn notify<P: PacketPool>(
@@ -1013,7 +1021,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If `store` is true, the new value will be written to the table before sending the notification.
     ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
+    /// If the provided connection has not subscribed for this characteristic, [`Error::NotSubscribed`] is returned.
     ///
     /// If the characteristic does not support notifications, an error is returned.
     pub async fn notify_raw<P: PacketPool>(
@@ -1029,10 +1037,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
-        if !server.should_notify(conn, cccd_handle) {
-            // No reason to fail?
-            return Ok(());
-        }
+        ensure_subscribed(server.should_notify(conn, cccd_handle))?;
 
         self.authorize_unsolicited(connection, cccd_handle).await?;
 
@@ -1057,7 +1062,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If `store` is true, the new value will be written to the table before sending the indication.
     ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
+    /// If the provided connection has not subscribed for this characteristic, [`Error::NotSubscribed`] is returned.
     ///
     /// If the characteristic does not support indications, an error is returned.
     ///
@@ -1079,7 +1084,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If `store` is true, the new value will be written to the table before sending the indication.
     ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
+    /// If the provided connection has not subscribed for this characteristic, [`Error::NotSubscribed`] is returned.
     ///
     /// If the characteristic does not support indications, an error is returned.
     ///
@@ -1101,10 +1106,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
-        if !server.should_indicate(conn, cccd_handle) {
-            // No reason to fail?
-            return Ok(());
-        }
+        ensure_subscribed(server.should_indicate(conn, cccd_handle))?;
 
         self.authorize_unsolicited(connection, cccd_handle).await?;
 
@@ -1709,6 +1711,12 @@ impl CCCD {
 #[cfg(test)]
 mod tests {
     extern crate std;
+
+    #[test]
+    fn subscription_is_required_for_unsolicited_updates() {
+        assert_eq!(super::ensure_subscribed(true), Ok(()));
+        assert_eq!(super::ensure_subscribed(false), Err(crate::Error::NotSubscribed));
+    }
 
     #[cfg(feature = "security")]
     #[test]
