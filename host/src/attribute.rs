@@ -984,14 +984,6 @@ pub struct Characteristic<T: AsGatt + ?Sized> {
     pub(crate) phantom: PhantomData<T>,
 }
 
-fn ensure_subscribed(subscribed: bool) -> Result<(), Error> {
-    if subscribed {
-        Ok(())
-    } else {
-        Err(Error::NotSubscribed)
-    }
-}
-
 impl<T: AsGatt + ?Sized> Characteristic<T> {
     /// Check if notifications should be sent to `connection` for this characteristic.
     pub fn should_notify<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>) -> bool {
@@ -1037,7 +1029,10 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
-        ensure_subscribed(server.should_notify(conn, cccd_handle))?;
+        server
+            .should_notify(conn, cccd_handle)
+            .then_some(())
+            .ok_or(Error::NotSubscribed)?;
 
         self.authorize_unsolicited(connection, cccd_handle).await?;
 
@@ -1106,7 +1101,10 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
-        ensure_subscribed(server.should_indicate(conn, cccd_handle))?;
+        server
+            .should_indicate(conn, cccd_handle)
+            .then_some(())
+            .ok_or(Error::NotSubscribed)?;
 
         self.authorize_unsolicited(connection, cccd_handle).await?;
 
@@ -1711,12 +1709,6 @@ impl CCCD {
 #[cfg(test)]
 mod tests {
     extern crate std;
-
-    #[test]
-    fn subscription_is_required_for_unsolicited_updates() {
-        assert_eq!(super::ensure_subscribed(true), Ok(()));
-        assert_eq!(super::ensure_subscribed(false), Err(crate::Error::NotSubscribed));
-    }
 
     #[cfg(feature = "security")]
     #[test]
