@@ -648,18 +648,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         handle: ConnHandle,
         cx: Option<&mut Context<'_>>,
     ) -> Poll<Result<AclSendLock<'_, P>, Error>> {
-        for (index, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
-            if storage.handle != handle {
-                continue;
-            }
-
-            if !matches!(storage.state, ConnectionState::Connecting | ConnectionState::Connected) {
-                return Poll::Ready(Err(Error::Disconnected));
-            }
-
+        if let Some(mut storage) = self.connection_by_handle_mut(handle) {
             if !storage.acl_send_locked {
                 storage.acl_send_locked = true;
-                return Poll::Ready(Ok(AclSendLock::new(handle, self)));
+                Poll::Ready(Ok(AclSendLock::new(handle, self)))
             } else {
                 if let Some(cx) = cx {
                     storage.acl_send_lock_waker.register(cx.waker());
@@ -667,11 +659,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.blocked_send();
 
-                return Poll::Pending;
+                Poll::Pending
             }
+        } else {
+            warn!("[link][poll_acquire_acl_send_lock] connection {:?} not found", handle);
+            Poll::Ready(Err(Error::NotFound))
         }
-        warn!("[link][poll_acquire_acl_send_lock] connection {:?} not found", handle);
-        Poll::Ready(Err(Error::NotFound))
     }
 
     pub(crate) fn get_att_mtu(&self, index: u8) -> u16 {
