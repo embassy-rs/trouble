@@ -908,7 +908,14 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         {
             for storage in self.connections.borrow().iter() {
                 match storage.state {
-                    ConnectionState::Connected if storage.handle == handle => {
+                    // Also handle SMP while the connection is still `Connecting`.
+                    // A central can send its Pairing Request as soon as the link is
+                    // up, before the peripheral has `accept()`ed the connection; if
+                    // we only match `Connected` here that packet is silently dropped
+                    // and pairing never starts.
+                    ConnectionState::Connected | ConnectionState::Connecting
+                        if storage.handle == handle =>
+                    {
                         if storage.smp_timeout {
                             warn!("Ignoring security channel packet after SMP timeout");
                             return Ok(());
