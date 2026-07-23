@@ -842,6 +842,12 @@ impl<'stack, C, P: PacketPool> Stack<'stack, C, P> {
 }
 
 impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
+    /// Wait for the host runner to complete controller startup before starting
+    /// a role operation such as advertising, scanning, or connecting.
+    pub async fn wait_ready(&self) {
+        let _ = self.host_state.ready.get().await;
+    }
+
     /// Obtain a [`Runner`] to drive the BLE host.
     ///
     /// The runner must be polled (e.g. via [`Runner::run()`]) to drive the BLE host.
