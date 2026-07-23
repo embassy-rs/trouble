@@ -48,10 +48,12 @@ use bt_hci::param::{
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select5, Either3, Either5};
+#[cfg(any(feature = "scan", all(feature = "security", feature = "central")))]
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 #[cfg(all(feature = "security", feature = "central"))]
 use embassy_sync::mutex::Mutex;
 use embassy_sync::once_lock::OnceLock;
+#[cfg(feature = "scan")]
 use embassy_sync::signal::Signal;
 use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::Duration;
@@ -126,7 +128,7 @@ impl ResolvingListSignal {
 
 pub(crate) struct HostState<'d, P: PacketPool> {
     initialized: OnceLock<InitialState>,
-    pub(crate) ready: Signal<NoopRawMutex, ()>,
+    pub(crate) ready: OnceLock<()>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
     pub(crate) connections: ConnectionManager<'d, P>,
@@ -157,7 +159,7 @@ impl<'d, P: PacketPool> HostState<'d, P> {
         Self {
             address: None,
             initialized: OnceLock::new(),
-            ready: Signal::new(),
+            ready: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             connections: ConnectionManager::new(
                 connections,
@@ -1832,7 +1834,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             info!("[host] privacy initialized");
         }
 
-        host.state.ready.signal(());
+        let _ = host.state.ready.init(());
         info!("[host] ready");
 
         loop {
