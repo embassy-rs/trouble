@@ -845,6 +845,9 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     /// Wait for the host runner to complete controller startup before starting
     /// a role operation such as advertising, scanning, or connecting.
     pub async fn wait_ready(&self) {
+        if self.host_state.ready.signaled() {
+            return;
+        }
         self.host_state.ready.wait().await;
     }
 

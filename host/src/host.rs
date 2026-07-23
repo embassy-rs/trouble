@@ -48,8 +48,6 @@ use bt_hci::param::{
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select5, Either3, Either5};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-#[cfg(any(feature = "scan", all(feature = "security", feature = "central")))]
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 #[cfg(all(feature = "security", feature = "central"))]
 use embassy_sync::mutex::Mutex;
@@ -128,7 +126,7 @@ impl ResolvingListSignal {
 
 pub(crate) struct HostState<'d, P: PacketPool> {
     initialized: OnceLock<InitialState>,
-    pub(crate) ready: Signal<CriticalSectionRawMutex, ()>,
+    pub(crate) ready: Signal<NoopRawMutex, ()>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
     pub(crate) connections: ConnectionManager<'d, P>,
