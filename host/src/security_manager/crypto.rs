@@ -460,8 +460,6 @@ impl PublicKey {
 
 #[cfg(not(feature = "embedded-cal"))]
 mod backend {
-    use aes::cipher::generic_array::GenericArray;
-
     use super::*;
 
     /// P-256 elliptic curve secret key.
