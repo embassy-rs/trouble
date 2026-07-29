@@ -460,13 +460,14 @@ impl PublicKey {
 
 #[cfg(not(feature = "embedded-cal"))]
 mod backend {
+
     use super::*;
 
     /// P-256 elliptic curve secret key.
     #[derive(Clone)]
     #[must_use]
     #[repr(transparent)]
-    pub struct SecretKey(p256::NonZeroScalar);
+    pub struct SecretKey(pub(super) p256::NonZeroScalar);
 
     impl core::fmt::Debug for SecretKey {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -582,6 +583,8 @@ mod backend {
     #[cfg(test)]
     impl DHKey {
         pub(super) fn from_raw_bytes(b: [u8; 32]) -> Self {
+            use aes::cipher::generic_array::GenericArray;
+
             Self(ecdh::SharedSecret::from(GenericArray::from(b)))
         }
     }
