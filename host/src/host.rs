@@ -128,6 +128,7 @@ impl ResolvingListSignal {
 
 pub(crate) struct HostState<'d, P: PacketPool> {
     initialized: OnceLock<InitialState>,
+    pub(crate) ready: OnceLock<()>,
     metrics: RefCell<HostMetrics>,
     pub(crate) address: Option<Address>,
     pub(crate) connections: ConnectionManager<'d, P>,
@@ -158,6 +159,7 @@ impl<'d, P: PacketPool> HostState<'d, P> {
         Self {
             address: None,
             initialized: OnceLock::new(),
+            ready: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             connections: ConnectionManager::new(
                 connections,
@@ -1831,6 +1833,9 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             host.sync_resolving_list(ResolvingListUpdate::FullSync).await?;
             info!("[host] privacy initialized");
         }
+
+        let _ = host.state.ready.init(());
+        info!("[host] ready");
 
         loop {
             match select5(
