@@ -337,7 +337,7 @@ impl Pairing {
             let mut ltk_bytes = [0u8; 16];
             rng.fill_bytes(&mut ltk_bytes);
             let long_term_key = LongTermKey::from_le_bytes(ltk_bytes);
-            let ediv: u16 = rng.gen();
+            let ediv: u16 = rng.r#gen();
             let mut rand = [0u8; 8];
             rng.fill_bytes(&mut rand);
 
