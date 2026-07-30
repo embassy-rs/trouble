@@ -903,6 +903,16 @@ fn process_reject<'stack, P: PacketPool>(
     let Att::Client(att) = att else {
         unreachable!("Expected Att::Client, got {:?}", att)
     };
+    // An Execute Write empties the prepare queue regardless of outcome (Core
+    // Spec Vol 3, Part F, §3.4.6.3). `process_accept` clears it via the attribute
+    // server (`handle_execute_write`), and `accept_unprocessed` clears it too, but
+    // the reject path did not — leaving a stale queue that makes the *next*
+    // client's Prepare Write fail with `PREPARE_QUEUE_FULL` on every other
+    // rejected long write.
+    #[cfg(feature = "att-queued-writes")]
+    if let AttClient::Request(AttReq::ExecuteWrite { .. }) = &att {
+        connection.clear_prepare_write();
+    }
     let handle = match att {
         AttClient::Request(AttReq::Write { handle, .. }) => handle,
         AttClient::Command(AttCmd::Write { handle, .. }) => handle,
@@ -2156,5 +2166,76 @@ mod tests {
 
         let stored: u8 = server.table().get(&characteristic).unwrap();
         assert_eq!(stored, payload[0]);
+    }
+
+    /// Regression test: a *rejected* Execute Write must empty the prepare queue.
+    ///
+    /// `process_accept` clears the queue via the attribute server, and
+    /// `accept_unprocessed` clears it explicitly, but `process_reject` did not.
+    /// A leftover queue makes the *next* client's Prepare Write fail with
+    /// `PREPARE_QUEUE_FULL` on every other rejected long write.
+    #[cfg(feature = "att-queued-writes")]
+    #[test]
+    fn test_execute_write_reject_clears_prepare_queue() {
+        let _ = env_logger::try_init();
+
+        const MAX_ATTRIBUTES: usize = 16;
+        const CONNECTIONS_MAX: usize = 3;
+        let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
+        let mut storage = [0u8; 1];
+        let characteristic: Characteristic<u8> = table
+            .add_service(Service {
+                uuid: Uuid::new_long([0x44; 16]),
+            })
+            .add_characteristic(
+                Uuid::new_long([0x45; 16]),
+                [CharacteristicProp::Read, CharacteristicProp::Write],
+                0u8,
+                &mut storage[..],
+            )
+            .build();
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
+
+        let mgr = setup();
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        // Populate the prepare queue, then reject the Execute Write that flushes it.
+        conn.prepare_write(characteristic.handle, 0, &[1, 2, 3, 4]).unwrap();
+        assert_ne!(
+            conn.with_prepare_write(|pw| pw.handle),
+            0,
+            "prepare queue should be populated after a Prepare Write",
+        );
+
+        // Build the Execute Write request PDU by hand (opcode + flags): the ATT
+        // encoder does not implement client-request encoding.
+        let mut packet = DefaultPacketPool::allocate().unwrap();
+        packet.as_mut()[0] = att::ATT_EXECUTE_WRITE_REQ;
+        packet.as_mut()[1] = 0x01; // flags = execute (not cancel)
+        let pdu = Pdu::new(packet, 2);
+
+        let event = GattEvent::new(GattData::new(pdu, conn.clone()), &server);
+        let GattEvent::Write(write) = event else {
+            panic!("expected write event for execute write with a populated queue");
+        };
+        let reply = write.reject(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH).unwrap();
+        core::mem::forget(reply);
+
+        // The fix: a rejected Execute Write empties the prepare queue, so the
+        // next Prepare Write starts fresh instead of hitting PREPARE_QUEUE_FULL.
+        assert_eq!(
+            conn.with_prepare_write(|pw| pw.handle),
+            0,
+            "rejected Execute Write must clear the prepare queue",
+        );
     }
 }
