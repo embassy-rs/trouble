@@ -2,7 +2,7 @@
 # https://rust-lang.github.io/rustup-components-history
 [toolchain]
 channel = "1.92"
-components = [ "rust-src", "rustfmt", "llvm-tools-preview", "clippy"]
+components = [ "rust-src", "rustfmt", "llvm-tools-preview", "clippy", "rust-analyzer"]
 targets = [
     "thumbv8m.main-none-eabihf",
     "thumbv7em-none-eabi",
