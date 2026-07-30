@@ -450,6 +450,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 #[cfg(feature = "gatt")]
                 {
                     storage.gatt.clear();
+                    storage.gatt_client.clear();
                     storage.gatt_client_waker.wake();
                     storage.indication_in_flight = false;
                     storage.indication_cfm_received = false;
