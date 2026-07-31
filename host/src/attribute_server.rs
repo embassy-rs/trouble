@@ -547,27 +547,29 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         self.att_table.iterate_from(start, |it| {
             for (handle, att) in it {
                 if handle <= end {
+                    // FIND_INFORMATION_RSP "Format" byte (Core spec, Vol 3 Part F, 3.4.3.2):
+                    // 0x01 = handle(s) + 16-bit UUID(s), 0x02 = handle(s) + 128-bit UUID(s).
+                    // `get_att_type()` returns the real format code (32-bit reports 0x02 and is
+                    // widened to 128-bit by `att_bytes()`), so the header byte, this same-type
+                    // batching check, and the body written below all agree.
+                    let format = att.uuid.get_att_type();
                     if t == 0 {
-                        t = att.uuid.get_type();
-                    } else if t != att.uuid.get_type() {
+                        t = format;
+                    } else if t != format {
                         break;
                     }
-                    if body.available() < 2 + att.uuid.as_raw().len() {
+                    let (uuid, len) = att.uuid.att_bytes();
+                    let uuid = &uuid[..len];
+                    if body.available() < 2 + uuid.len() {
                         break;
                     }
                     body.write(handle)?;
-                    body.append(att.uuid.as_raw())?;
+                    body.append(uuid)?;
                 }
             }
             Ok::<(), codec::Error>(())
         })?;
-        // FIND_INFORMATION_RSP "Format" byte (Core spec, Vol 3 Part F, 3.4.3.2):
-        // 0x01 = handle(s) + 16-bit UUID(s), 0x02 = handle(s) + 128-bit UUID(s).
-        // `Uuid::get_type()` returns a uuid-kind tag (16-bit => 0x01, 32-bit =>
-        // 0x02, 128-bit => 0x03), which is NOT the ATT format code, so writing it
-        // straight emits Format=0x03 (reserved) whenever the response carries
-        // 128-bit UUIDs. Map it to the spec value.
-        header.write(if t == 0x01 { 0x01u8 } else { 0x02u8 })?;
+        header.write(t)?;
 
         if body.len() > 2 {
             Ok(header.len() + body.len())
@@ -1000,5 +1002,65 @@ mod tests {
                 panic!("expected connection to be accepted");
             };
         }
+    }
+
+    #[test]
+    fn find_information_reports_128bit_format_and_widens_32bit() {
+        // Regression: FIND_INFORMATION_RSP must report Format 0x02 (Core spec Vol 3 Part F,
+        // 3.4.3.2) and a full 16-byte UUID body for both 128-bit and 32-bit characteristic
+        // UUIDs. Before the fix the format byte was the uuid-kind tag (0x03 for 128-bit, which
+        // is reserved), and a 32-bit UUID emitted a 4-byte body under a 0x02 header — both
+        // malformed. A 32-bit UUID has no ATT format of its own, so it is widened against the
+        // Bluetooth base UUID.
+        let _ = env_logger::try_init();
+        const MAX_ATTRIBUTES: usize = 64;
+        const CONNECTIONS_MAX: usize = 3;
+
+        let uuid128 = [
+            0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 0x34, 0x12, 0x78, 0x56, 0xF0, 0xDE, 0xBC, 0x9A,
+        ];
+        let uuid32 = Uuid::Uuid32([0x11, 0x22, 0x33, 0x44]);
+
+        let mut table: AttributeTable<'_, NoopRawMutex, { MAX_ATTRIBUTES }> = AttributeTable::new();
+        let (h128, h32) = {
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_long([0; 16]),
+            });
+            let c128 = svc
+                .add_characteristic_ro::<[u8; 2], _>(Uuid::new_long(uuid128), &[0, 0])
+                .build();
+            let c32 = svc.add_characteristic_ro::<[u8; 2], _>(uuid32, &[0, 0]).build();
+            (c128.handle, c32.handle)
+        };
+
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
+        let mut buf = [0u8; 64];
+
+        // 128-bit characteristic value: Format 0x02, the 16-byte UUID echoed back verbatim.
+        let len = server.handle_find_information(&mut buf, h128, h128).unwrap();
+        let rsp = &buf[..len];
+        assert_eq!(rsp[0], att::ATT_FIND_INFORMATION_RSP);
+        assert_eq!(
+            rsp[1], 0x02,
+            "128-bit UUID must report Format 0x02, not the 0x03 kind tag"
+        );
+        assert_eq!(len, 2 + 2 + 16, "one 18-byte entry: 2-byte handle + 16-byte UUID");
+        assert_eq!(u16::from_le_bytes([rsp[2], rsp[3]]), h128);
+        assert_eq!(&rsp[4..20], &uuid128);
+
+        // 32-bit characteristic value: Format 0x02, widened to the 128-bit base UUID.
+        let len = server.handle_find_information(&mut buf, h32, h32).unwrap();
+        let rsp = &buf[..len];
+        assert_eq!(rsp[0], att::ATT_FIND_INFORMATION_RSP);
+        assert_eq!(
+            rsp[1], 0x02,
+            "32-bit UUID has no ATT format of its own; must report 0x02"
+        );
+        assert_eq!(len, 2 + 2 + 16, "32-bit UUID must be widened to a 16-byte body");
+        assert_eq!(u16::from_le_bytes([rsp[2], rsp[3]]), h32);
+        let expected = bt_hci::uuid::BluetoothUuid128::base()
+            .set_initial_group(0x4433_2211)
+            .to_le_bytes();
+        assert_eq!(&rsp[4..20], &expected);
     }
 }
