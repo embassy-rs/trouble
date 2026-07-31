@@ -90,12 +90,37 @@ impl Uuid {
         }
     }
 
-    /// Get the UUID type.
-    pub fn get_type(&self) -> u8 {
+    /// Get the ATT Find Information Response format code for the UUID.
+    ///
+    /// Core Spec Vol 3 Part F, 3.4.3.2 defines only 0x01 (handle + 16-bit UUID pairs) and 0x02
+    /// (handle + 128-bit UUID pairs). A 32-bit UUID has no form of its own, so it reports 0x02 and
+    /// is written as its 128-bit equivalent; see [`Uuid::att_bytes`].
+    pub fn get_att_type(&self) -> u8 {
         match self {
             Uuid::Uuid16(_) => 0x01,
-            Uuid::Uuid32(_) => 0x02,
-            Uuid::Uuid128(_) => 0x03,
+            Uuid::Uuid32(_) | Uuid::Uuid128(_) => 0x02,
+        }
+    }
+
+    /// The UUID as an ATT Find Information Response carries it, and its length: two bytes under
+    /// format 0x01, sixteen under 0x02.
+    ///
+    /// A 32-bit UUID is expanded against the Bluetooth base UUID, which is the only way the 0x02
+    /// [`get_att_type`](Self::get_att_type) reports for it can be honoured on air.
+    pub(crate) fn att_bytes(&self) -> ([u8; 16], usize) {
+        match self {
+            Uuid::Uuid16(uuid) => {
+                let mut bytes = [0; 16];
+                bytes[..2].copy_from_slice(uuid);
+                (bytes, 2)
+            }
+            Uuid::Uuid32(uuid) => (
+                BluetoothUuid128::base()
+                    .set_initial_group(u32::from_le_bytes(*uuid))
+                    .to_le_bytes(),
+                16,
+            ),
+            Uuid::Uuid128(uuid) => (*uuid, 16),
         }
     }
 
