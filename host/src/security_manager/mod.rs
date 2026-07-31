@@ -200,6 +200,9 @@ struct Inner {
     finished_waker: WakerRegistration,
     /// Io capabilities
     io_capabilities: IoCapabilities,
+    /// Optional fixed passkey to use for PassKey Entry pairing (DisplayOnly).
+    /// If Some, this value is used instead of a randomly generated one.
+    passkey: Option<u32>,
     /// When true, reject legacy pairing even if the feature is compiled in
     #[cfg(feature = "legacy-pairing")]
     secure_connections_only: bool,
@@ -332,6 +335,7 @@ impl Inner {
             events,
             secret_key: &self.secret_key,
             public_key: &self.public_key,
+            passkey: self.passkey,
             conn_handle: handle,
             connections,
             storage,
@@ -399,6 +403,7 @@ impl Inner {
             events,
             secret_key: &self.secret_key,
             public_key: &self.public_key,
+            passkey: self.passkey,
             conn_handle: handle,
             connections,
             storage,
@@ -422,6 +427,7 @@ impl Inner {
                 events,
                 secret_key: &self.secret_key,
                 public_key: &self.public_key,
+                passkey: self.passkey,
                 peer_identity: storage.peer_identity,
                 conn_handle: storage.handle,
                 connections,
@@ -454,6 +460,7 @@ impl Inner {
                 events,
                 secret_key: &self.secret_key,
                 public_key: &self.public_key,
+                passkey: self.passkey,
                 peer_identity: storage.peer_identity,
                 connections,
                 storage,
@@ -536,6 +543,7 @@ impl Inner {
                     events,
                     secret_key: &self.secret_key,
                     public_key: &self.public_key,
+                    passkey: self.passkey,
                     peer_identity: storage.peer_identity,
                     connections,
                     storage,
@@ -583,6 +591,7 @@ impl Inner {
             events,
             secret_key: &self.secret_key,
             public_key: &self.public_key,
+            passkey: self.passkey,
             conn_handle: handle,
             connections,
             storage,
@@ -635,6 +644,7 @@ impl<'d> SecurityManager<'d> {
                 pairing_sm: None,
                 finished_waker: WakerRegistration::new(),
                 io_capabilities: IoCapabilities::NoInputNoOutput,
+                passkey: None,
                 #[cfg(feature = "legacy-pairing")]
                 secure_connections_only: false,
             }),
@@ -646,6 +656,14 @@ impl<'d> SecurityManager<'d> {
     /// Set the IO capabilities
     pub(crate) fn set_io_capabilities(&self, io_capabilities: IoCapabilities) {
         self.inner.borrow_mut().io_capabilities = io_capabilities;
+    }
+
+    /// Set a fixed passkey to use for PassKey Entry pairing (DisplayOnly).
+    ///
+    /// When set, this passkey will be displayed/used instead of a randomly generated one.
+    /// Set to `None` to return to random passkey generation (the default).
+    pub(crate) fn set_passkey(&self, passkey: Option<u32>) {
+        self.inner.borrow_mut().passkey = passkey;
     }
 
     /// Enable or disable secure connections only mode.
@@ -1160,6 +1178,7 @@ struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> {
     events: &'sm Channel<NoopRawMutex, SecurityEventData, 3>,
     secret_key: &'sm crypto::SecretKey,
     public_key: &'sm crypto::PublicKey,
+    passkey: Option<u32>,
     connections: &'cm ConnectionManager<'cm2, P>,
     storage: &'cs ConnectionStorage<P::Packet>,
     conn_handle: ConnHandle,
@@ -1234,6 +1253,10 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         } else {
             Ok(None)
         }
+    }
+
+    fn passkey(&self) -> Option<u32> {
+        self.passkey
     }
 
     fn bonding_flag(&self) -> BondingFlag {
