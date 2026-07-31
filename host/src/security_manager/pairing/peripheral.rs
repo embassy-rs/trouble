@@ -306,11 +306,13 @@ impl Pairing {
             }
             PairingMethod::PassKeyEntry { peripheral, .. } => {
                 if peripheral == PassKeyEntryAction::Display {
-                    phase_data.local_secret_rb = rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                    // Use configured passkey if available, otherwise generate a random one
+                    let passkey = ops
+                        .passkey()
+                        .unwrap_or(rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999)));
+                    phase_data.local_secret_rb = passkey as u128;
                     phase_data.peer_secret_ra = phase_data.local_secret_rb;
-                    ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
-                        phase_data.local_secret_rb as u32,
-                    )))?;
+                    ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(passkey)))?;
                     Ok(Self::WaitingPassKeyEntryConfirm { phase_data, round: 0 })
                 } else {
                     ops.try_send_connection_event(ConnectionEvent::PassKeyInput)?;

@@ -79,6 +79,9 @@ pub trait PairingOps<P: PacketPool> {
     fn bonding_flag(&self) -> BondingFlag;
     /// Whether OOB data is available for this connection.
     fn oob_available(&self) -> bool;
+    /// Get the configured passkey, if any.
+    /// When Some, this passkey should be used for PassKey Entry pairing instead of generating a random one.
+    fn passkey(&self) -> Option<u32>;
     /// The persistent LESC secret key.
     fn secret_key(&self) -> &crate::security_manager::crypto::SecretKey;
     /// The persistent LESC public key.
