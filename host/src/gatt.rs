@@ -130,6 +130,12 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     /// The peer has lost its bond.
     BondLost,
     #[cfg(feature = "security")]
+    /// The peer tried to resume encryption with a key this device does not have, and was refused.
+    ///
+    /// See [`ConnectionEvent::LongTermKeyMissing`]: the link is kept so the peer can re-pair over
+    /// it, and applying a policy if it does not is up to the application.
+    LongTermKeyMissing,
+    #[cfg(feature = "security")]
     /// The link is now encrypted.
     Encrypted {
         /// Security level achieved by the encryption.
@@ -267,6 +273,9 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::BondLost => GattConnectionEvent::BondLost,
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::LongTermKeyMissing => GattConnectionEvent::LongTermKeyMissing,
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::Encrypted { security_level, bond } => {

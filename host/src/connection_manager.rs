@@ -1050,6 +1050,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                         {
                             warn!("[host] Long term key request negative reply failed");
                             self.request_handle_disconnect(handle, DisconnectReason::AuthenticationFailure);
+                        } else {
+                            // Tell the application. Keeping the link is a bet that the peer will
+                            // re-pair over it, and only the application can decide what to do if
+                            // it does not.
+                            let _ = self.post_handle_event(handle, ConnectionEvent::LongTermKeyMissing);
                         }
                     }
                 } else {
