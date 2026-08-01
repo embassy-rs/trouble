@@ -532,10 +532,16 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
         // packet-pool buffer and then post-hoc truncated, which can split an
         // entry in half and produce a malformed PDU.
         let mtu = self.data.connection.get_att_mtu() as usize;
-        let len = payload.len().saturating_sub(offset).min(mtu - 1);
 
         payload.write(rsp)?;
-        payload.append(&data.as_gatt()[offset..][..len])?;
+        // Everything from the blob offset on, bounded by what the peer will accept (the ATT MTU,
+        // less the opcode already written) and by what is left in the buffer. `get` rather than
+        // an index: `offset` comes from the peer, and a ReadBlob past the end of the value must
+        // not panic.
+        let value = data.as_gatt();
+        let value = value.get(offset..).unwrap_or(&[]);
+        let len = value.len().min(mtu.saturating_sub(1)).min(payload.available());
+        payload.append(&value[..len])?;
         header.write(payload.len() as u16)?;
         header.write(4_u16)?;
 
@@ -2237,5 +2243,95 @@ mod tests {
             0,
             "rejected Execute Write must clear the prepare queue",
         );
+    }
+
+    /// Build a Read request PDU (ATT payload only, no L2CAP header).
+    fn build_read_pdu(handle: u16) -> (<DefaultPacketPool as PacketPool>::Packet, usize) {
+        let att = Att::Client(AttClient::Request(AttReq::Read { handle }));
+        let mut packet = DefaultPacketPool::allocate().unwrap();
+        let mut w = WriteCursor::new(packet.as_mut());
+        w.write(att).unwrap();
+        let len = w.len();
+        (packet, len)
+    }
+
+    /// Build a ReadBlob request PDU (ATT payload only, no L2CAP header).
+    fn build_read_blob_pdu(handle: u16, offset: u16) -> (<DefaultPacketPool as PacketPool>::Packet, usize) {
+        let att = Att::Client(AttClient::Request(AttReq::ReadBlob { handle, offset }));
+        let mut packet = DefaultPacketPool::allocate().unwrap();
+        let mut w = WriteCursor::new(packet.as_mut());
+        w.write(att).unwrap();
+        let len = w.len();
+        (packet, len)
+    }
+
+    /// Regression test: `accept_unprocessed` must actually send the value it is given.
+    ///
+    /// It sized the value against `payload.len()`, which is bytes *written* to a cursor that had
+    /// just been split and so was always 0 — making the read response an opcode and nothing else,
+    /// for every input. Observed on air as a peer receiving "0 B of 12 B" for every read.
+    #[test]
+    fn test_accept_unprocessed_returns_the_value() {
+        let _ = env_logger::try_init();
+
+        const MAX_ATTRIBUTES: usize = 32;
+        const CONNECTIONS_MAX: usize = 3;
+        const VALUE: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+        let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
+        let handle = {
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_short(0x1234),
+            });
+            svc.add_characteristic_ro::<[u8; 12], _>(Uuid::new_short(0x5678), &VALUE)
+                .build()
+                .handle
+        };
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
+
+        let mgr = setup();
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        conn.set_att_mtu(23);
+
+        // A plain Read returns the whole value after the opcode.
+        let (packet, len) = build_read_pdu(handle);
+        let GattEvent::Read(read) = GattEvent::new(GattData::new(Pdu::new(packet, len), conn.clone()), &server) else {
+            panic!("expected a read event");
+        };
+        let reply = read.accept_unprocessed(&VALUE).unwrap();
+        let att = reply.att_payload().expect("accept_unprocessed must produce a PDU");
+        assert_eq!(att[0], att::ATT_READ_RSP);
+        assert_eq!(&att[1..], &VALUE, "the value must survive the round trip");
+        core::mem::forget(reply);
+
+        // A ReadBlob returns the value from the offset on.
+        let (packet, len) = build_read_blob_pdu(handle, 5);
+        let GattEvent::Read(read) = GattEvent::new(GattData::new(Pdu::new(packet, len), conn.clone()), &server) else {
+            panic!("expected a read event");
+        };
+        let reply = read.accept_unprocessed(&VALUE).unwrap();
+        let att = reply.att_payload().expect("accept_unprocessed must produce a PDU");
+        assert_eq!(att[0], att::ATT_READ_BLOB_RSP);
+        assert_eq!(&att[1..], &VALUE[5..]);
+        core::mem::forget(reply);
+
+        // A ReadBlob past the end of the value is empty, not a panic.
+        let (packet, len) = build_read_blob_pdu(handle, 99);
+        let GattEvent::Read(read) = GattEvent::new(GattData::new(Pdu::new(packet, len), conn.clone()), &server) else {
+            panic!("expected a read event");
+        };
+        let reply = read.accept_unprocessed(&VALUE).unwrap();
+        let att = reply.att_payload().expect("accept_unprocessed must produce a PDU");
+        assert_eq!(att.len(), 1, "an out-of-range blob offset yields just the opcode");
+        core::mem::forget(reply);
     }
 }
