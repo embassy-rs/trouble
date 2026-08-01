@@ -176,9 +176,35 @@ impl Address {
     pub fn to_bytes(&self) -> [u8; 7] {
         let mut bytes = [0; 7];
         bytes[0] = self.kind.into_inner();
-        let mut addr_bytes = self.addr.into_inner();
-        addr_bytes.reverse();
-        bytes[1..].copy_from_slice(&addr_bytes);
+        bytes[1..].copy_from_slice(&self.addr_bytes_mso());
+        bytes
+    }
+
+    /// The `AT` byte of `AT || A` as the pairing crypto expects it: 0 for a public address,
+    /// 1 for a random one.
+    ///
+    /// Normalises the HCI identity address types the same way `PartialEq` above does. A
+    /// controller that resolved a peer's RPA reports its kind as 0x02 (Public Identity) or 0x03
+    /// (Random Static Identity), values `AT` has no encoding for; feeding one to f5/f6/c1
+    /// silently corrupts the result.
+    #[cfg(feature = "security")]
+    pub(crate) fn crypto_addr_type(&self) -> u8 {
+        self.kind.into_inner() & 1
+    }
+
+    /// `AT || A` as fed to f5 and f6, with `A` in MSO order.
+    #[cfg(feature = "security")]
+    pub(crate) fn to_crypto_bytes(self) -> [u8; 7] {
+        let mut bytes = [0; 7];
+        bytes[0] = self.crypto_addr_type();
+        bytes[1..].copy_from_slice(&self.addr_bytes_mso());
+        bytes
+    }
+
+    /// The address value in MSO order (reversed from the `BdAddr` raw, little-endian, form).
+    fn addr_bytes_mso(&self) -> [u8; 6] {
+        let mut bytes = self.addr.into_inner();
+        bytes.reverse();
         bytes
     }
 }
@@ -1072,4 +1098,29 @@ pub(crate) fn bt_hci_ext_duration<const US: u16>(d: Duration) -> bt_hci::param::
 #[doc(hidden)]
 pub mod __export {
     pub use embassy_sync;
+}
+
+// The helpers under test are part of the pairing crypto and gated with it.
+#[cfg(all(test, feature = "security"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn address_to_crypto_bytes_normalises_identity_kinds() {
+        let addr = BdAddr::new([1, 2, 3, 4, 5, 6]);
+        // AT||A as fed to f5/f6/c1: the type byte is 0 for public and 1 for random, never the
+        // 0x02/0x03 identity kinds a controller reports after resolving a peer's RPA.
+        for (kind, expected_at) in [
+            (AddrKind::PUBLIC, 0),
+            (AddrKind::RANDOM, 1),
+            (AddrKind::RESOLVABLE_PRIVATE_OR_PUBLIC, 0),
+            (AddrKind::RESOLVABLE_PRIVATE_OR_RANDOM, 1),
+        ] {
+            let address = Address::new(kind, addr);
+            assert_eq!(address.crypto_addr_type(), expected_at);
+            assert_eq!(address.to_crypto_bytes(), [expected_at, 6, 5, 4, 3, 2, 1]);
+            // `to_bytes` stays faithful: it is public API and not part of the crypto path.
+            assert_eq!(address.to_bytes(), [kind.into_inner(), 6, 5, 4, 3, 2, 1]);
+        }
+    }
 }
