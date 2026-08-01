@@ -1395,12 +1395,15 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         #[cfg(feature = "security")]
                                         ResolvablePrivateAddrs::none(),
                                     ) {
-                                        let _ = host
-                                            .command(Disconnect::new(
-                                                e.handle,
-                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                            ))
-                                            .await;
+                                        // Queue the disconnect for the control runner rather than
+                                        // issuing it here. `Controller::read` is what dispatches
+                                        // `CommandComplete` to a waiting command and this loop is
+                                        // its only caller, so awaiting a command from inside it
+                                        // deadlocks on a completion only it could have read.
+                                        host.state.connections.request_handle_disconnect(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        );
                                         host.state.connect_command_state.canceled();
                                     }
                                 }
@@ -1424,12 +1427,15 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             peer: Some(e.peer_resolvable_private_addr).filter(|a| *a.raw() != [0; 6]),
                                         },
                                     ) {
-                                        let _ = host
-                                            .command(Disconnect::new(
-                                                e.handle,
-                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                            ))
-                                            .await;
+                                        // Queue the disconnect for the control runner rather than
+                                        // issuing it here. `Controller::read` is what dispatches
+                                        // `CommandComplete` to a waiting command and this loop is
+                                        // its only caller, so awaiting a command from inside it
+                                        // deadlocks on a completion only it could have read.
+                                        host.state.connections.request_handle_disconnect(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        );
                                         host.state.connect_command_state.canceled();
                                     }
                                 }

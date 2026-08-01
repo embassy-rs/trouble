@@ -11,6 +11,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "security")]
 use embassy_time::TimeoutError;
+use heapless::Deque;
 
 use crate::connection::{ConnParams, Connection, ConnectionEvent, SecurityLevel};
 use crate::host::EventHandler;
@@ -91,11 +92,20 @@ impl PrepareWriteState {
     }
 }
 
+/// How many links may be waiting to be disconnected without a connection slot behind them.
+///
+/// These only accumulate while every slot is occupied and the controller keeps establishing
+/// links, and each entry is drained by the control runner as soon as it is scheduled.
+const UNTRACKED_DISCONNECT_QUEUE_SIZE: usize = 4;
+
 struct State {
     central_waker: WakerRegistration,
     peripheral_waker: WakerRegistration,
     disconnect_waker: WakerRegistration,
     default_link_credits: usize,
+    /// Links to disconnect that have no connection slot to record the request in — a connection
+    /// the host refused because it had nowhere to put it.
+    untracked_disconnects: Deque<(ConnHandle, DisconnectReason), UNTRACKED_DISCONNECT_QUEUE_SIZE>,
 }
 
 type EventChannel = Channel<NoopRawMutex, ConnectionEvent, { config::CONNECTION_EVENT_QUEUE_SIZE }>;
@@ -120,6 +130,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 peripheral_waker: WakerRegistration::new(),
                 disconnect_waker: WakerRegistration::new(),
                 default_link_credits: 0,
+                untracked_disconnects: Deque::new(),
             }),
             connections,
             outbound: Channel::new(),
@@ -344,13 +355,49 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         }
     }
 
+    /// True while any slot holds this handle in a state other than fully disconnected — including
+    /// the states that mean a teardown is already under way.
+    fn is_handle_tracked(&self, handle: ConnHandle) -> bool {
+        self.connections
+            .borrow()
+            .iter()
+            .any(|storage| storage.handle == handle && storage.state != ConnectionState::Disconnected)
+    }
+
     pub(crate) fn request_handle_disconnect(&self, handle: ConnHandle, reason: DisconnectReason) {
         if let Some(mut entry) = self.connection_by_handle_mut(handle) {
             if entry.state == ConnectionState::Connected && handle == entry.handle {
                 entry.state = ConnectionState::DisconnectRequest(reason);
                 self.state.borrow_mut().disconnect_waker.wake();
             }
+            return;
         }
+        self.request_untracked_disconnect(handle, reason);
+    }
+
+    /// Request a disconnect for a link that has no connection slot behind it.
+    ///
+    /// The state a tracked link uses to carry the request lives in its `ConnectionStorage`, so a
+    /// handle with no entry — a connection the host refused because every slot was taken — has
+    /// nowhere to record it and would otherwise be left up forever, untracked by the host and
+    /// occupying a link in the controller. Queue it separately instead.
+    fn request_untracked_disconnect(&self, handle: ConnHandle, reason: DisconnectReason) {
+        if self.is_handle_tracked(handle) {
+            // A slot holds this handle in a state that already carries a teardown of its own.
+            return;
+        }
+        let mut state = self.state.borrow_mut();
+        if state.untracked_disconnects.iter().any(|(h, _)| *h == handle) {
+            return;
+        }
+        if state.untracked_disconnects.push_back((handle, reason)).is_err() {
+            warn!(
+                "[link] no room to queue a disconnect for untracked handle {:?}, link will stay up",
+                handle
+            );
+            return;
+        }
+        state.disconnect_waker.wake();
     }
 
     pub(crate) fn poll_disconnecting<'m>(
@@ -361,11 +408,28 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         if let Some(cx) = cx {
             state.disconnect_waker.register(cx.waker());
         }
+        // Links the host never got to track come first: they hold a connection in the controller
+        // that nothing else will ever release.
+        while let Some((handle, reason)) = state.untracked_disconnects.pop_front() {
+            // Controllers reuse handles. If a slot has since taken this one over, the link behind
+            // the queued request is gone and the entry now refers to somebody else's connection —
+            // one that carries its own disconnect state. Dropping it here would take down a
+            // perfectly good link.
+            if self.is_handle_tracked(handle) {
+                continue;
+            }
+            return Poll::Ready(DisconnectRequest {
+                index: None,
+                handle,
+                reason,
+                connections: self.connections,
+            });
+        }
         core::mem::drop(state);
         for (idx, storage) in self.connections.borrow().iter().enumerate() {
             if let ConnectionState::DisconnectRequest(reason) = storage.state {
                 return Poll::Ready(DisconnectRequest {
-                    index: idx,
+                    index: Some(idx),
                     handle: storage.handle,
                     reason,
                     connections: self.connections,
@@ -1121,7 +1185,8 @@ impl<'d, P: PacketPool> Iterator for ConnectedIter<'d, P> {
 }
 
 pub struct DisconnectRequest<'a, P> {
-    index: usize,
+    /// The connection slot carrying this request, or `None` for a link the host never tracked.
+    index: Option<usize>,
     handle: ConnHandle,
     reason: DisconnectReason,
     connections: &'a RefCell<[ConnectionStorage<P>]>,
@@ -1137,8 +1202,12 @@ impl<P> DisconnectRequest<'_, P> {
     }
 
     pub fn confirm(self) {
+        // Nothing to transition for an untracked link: the disconnect command was the whole of it.
+        let Some(index) = self.index else {
+            return;
+        };
         let mut connections = self.connections.borrow_mut();
-        let storage = &mut connections[self.index];
+        let storage = &mut connections[index];
         // Only transition if still in DisconnectRequest. The HCI
         // disconnect_complete handler (`disconnected()`) may race ahead and
         // set state = Disconnected; in that case we must NOT overwrite it
@@ -1832,5 +1901,80 @@ pub(crate) mod tests {
         handle.disconnect();
 
         assert!(!mgr.is_handle_connected(ConnHandle::new(3)));
+    }
+
+    /// Fill every slot, so the next connection cannot be tracked, and check that asking for it to
+    /// be disconnected actually produces a request.
+    ///
+    /// A rejected connection has no `ConnectionStorage` to record the request in, so it used to be
+    /// dropped on the floor: the controller kept a link the host had no idea about, and nothing
+    /// would ever tear it down.
+    #[test]
+    fn untracked_handle_is_disconnected() {
+        let mgr = setup();
+
+        for handle in 0..3 {
+            unwrap!(mgr.connect(
+                ConnHandle::new(handle),
+                Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            ));
+        }
+
+        assert!(
+            mgr.connect(
+                ConnHandle::new(9),
+                Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            )
+            .is_err(),
+            "no slot should be left for a fourth connection"
+        );
+
+        mgr.request_handle_disconnect(
+            ConnHandle::new(9),
+            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+        );
+
+        let Poll::Ready(request) = mgr.poll_disconnecting(None) else {
+            panic!("a refused connection must still be disconnected");
+        };
+        assert_eq!(request.handle(), ConnHandle::new(9));
+        assert_eq!(
+            request.reason(),
+            DisconnectReason::RemoteDeviceTerminatedConnLowResources
+        );
+        request.confirm();
+
+        assert!(
+            mgr.poll_disconnecting(None).is_pending(),
+            "the request must not be repeated once confirmed"
+        );
+    }
+
+    /// Controllers reuse connection handles. A queued disconnect must not take down the link that
+    /// inherited the handle in the meantime.
+    #[test]
+    fn queued_disconnect_yields_to_a_reused_handle() {
+        let mgr = setup();
+
+        mgr.request_handle_disconnect(
+            ConnHandle::new(9),
+            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+        );
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(9),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+
+        assert!(
+            mgr.poll_disconnecting(None).is_pending(),
+            "a tracked connection must not be disconnected by a stale queued request"
+        );
     }
 }
