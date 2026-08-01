@@ -943,9 +943,10 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     ) -> Result<(), crate::BleHostError<C::Error>>
     where
         C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
+            + crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestNegativeReply>
             + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
     {
-        use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
+        use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestNegativeReply, LeLongTermKeyRequestReply};
 
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
@@ -969,12 +970,27 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                             .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
                             .await?;
                     } else {
-                        warn!("[host] Long term key request reply failed, no long term key");
-                        // Send disconnect event to the controller
-                        self.request_handle_disconnect(handle, DisconnectReason::AuthenticationFailure);
+                        warn!("[host] Long term key request, no long term key: rejecting");
+                        // Answer the controller so it sends LL_REJECT_IND and the peer's
+                        // encryption procedure fails immediately. Staying silent leaves the
+                        // peer with no way to tell "wrong key" from "slow peer", so it waits
+                        // out a timeout measured in tens of seconds. The link survives the
+                        // rejection — [Vol 6] Part B, 5.1.3.1 lets both Link Layers resume
+                        // unencrypted PDUs afterwards, except for a start that followed an
+                        // Encryption Pause — so a central that learns the key is gone can
+                        // drop the bond and re-pair over the same connection.
+                        if host
+                            .command(LeLongTermKeyRequestNegativeReply::new(handle))
+                            .await
+                            .is_err()
+                        {
+                            warn!("[host] Long term key request negative reply failed");
+                            self.request_handle_disconnect(handle, DisconnectReason::AuthenticationFailure);
+                        }
                     }
                 } else {
-                    warn!("[host] Long term key request reply failed, unknown peer")
+                    warn!("[host] Long term key request, unknown peer: rejecting");
+                    let _ = host.command(LeLongTermKeyRequestNegativeReply::new(handle)).await;
                 }
             }
             crate::security_manager::SecurityEventData::EnableEncryption(handle, bond_info) => {
