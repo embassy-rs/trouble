@@ -525,9 +525,11 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
 
     /// Accept the event without server processing.
     pub fn accept_unprocessed<T: AsGatt + ?Sized>(mut self, data: &T) -> Result<Reply<'stack, P>, Error> {
-        let (rsp, offset) = match self.data.incoming() {
-            AttClient::Request(AttReq::Read { .. }) => (att::ATT_READ_RSP, 0),
-            AttClient::Request(AttReq::ReadBlob { offset, .. }) => (att::ATT_READ_BLOB_RSP, offset as usize),
+        let (req, rsp, handle, offset) = match self.data.incoming() {
+            AttClient::Request(AttReq::Read { handle }) => (att::ATT_READ_REQ, att::ATT_READ_RSP, handle, 0),
+            AttClient::Request(AttReq::ReadBlob { handle, offset }) => {
+                (att::ATT_READ_BLOB_REQ, att::ATT_READ_BLOB_RSP, handle, offset as usize)
+            }
             _ => unreachable!(),
         };
         self.data.pdu = None;
@@ -542,15 +544,25 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
         // entry in half and produce a malformed PDU.
         let mtu = self.data.connection.get_att_mtu() as usize;
 
-        payload.write(rsp)?;
-        // Everything from the blob offset on, bounded by what the peer will accept (the ATT MTU,
-        // less the opcode already written) and by what is left in the buffer. `get` rather than
-        // an index: `offset` comes from the peer, and a ReadBlob past the end of the value must
-        // not panic.
         let value = data.as_gatt();
-        let value = value.get(offset..).unwrap_or(&[]);
-        let len = value.len().min(mtu.saturating_sub(1)).min(payload.available());
-        payload.append(&value[..len])?;
+        match value.get(offset..) {
+            // Everything from the blob offset on, bounded by what the peer will accept (the ATT
+            // MTU, less the opcode) and by what is left in the buffer.
+            Some(value) => {
+                payload.write(rsp)?;
+                let len = value.len().min(mtu.saturating_sub(1)).min(payload.available());
+                payload.append(&value[..len])?;
+            }
+            // [Vol 3] Part F, 3.4.4.5: an offset past the end of the value is an Invalid Offset
+            // error. An offset *equal* to the length is not — that is the empty Read Blob Response
+            // ending a blob read, and `get` returns an empty slice for it.
+            None => {
+                payload.write(att::ATT_ERROR_RSP)?;
+                payload.write(req)?;
+                payload.write(handle)?;
+                payload.write(att::AttErrorCode::INVALID_OFFSET)?;
+            }
+        }
         header.write(payload.len() as u16)?;
         header.write(4_u16)?;
 
@@ -2333,14 +2345,34 @@ mod tests {
         assert_eq!(&att[1..], &VALUE[5..]);
         core::mem::forget(reply);
 
-        // A ReadBlob past the end of the value is empty, not a panic.
+        // A ReadBlob at exactly the end of the value is the empty response that ends a blob read.
+        let (packet, len) = build_read_blob_pdu(handle, VALUE.len() as u16);
+        let GattEvent::Read(read) = GattEvent::new(GattData::new(Pdu::new(packet, len), conn.clone()), &server) else {
+            panic!("expected a read event");
+        };
+        let reply = read.accept_unprocessed(&VALUE).unwrap();
+        let att = reply.att_payload().expect("accept_unprocessed must produce a PDU");
+        assert_eq!(att, &[att::ATT_READ_BLOB_RSP], "offset == len is an empty response");
+        core::mem::forget(reply);
+
+        // A ReadBlob past the end of the value is an Invalid Offset error, not a panic.
         let (packet, len) = build_read_blob_pdu(handle, 99);
         let GattEvent::Read(read) = GattEvent::new(GattData::new(Pdu::new(packet, len), conn.clone()), &server) else {
             panic!("expected a read event");
         };
         let reply = read.accept_unprocessed(&VALUE).unwrap();
         let att = reply.att_payload().expect("accept_unprocessed must produce a PDU");
-        assert_eq!(att.len(), 1, "an out-of-range blob offset yields just the opcode");
+        assert_eq!(
+            att,
+            &[
+                att::ATT_ERROR_RSP,
+                att::ATT_READ_BLOB_REQ,
+                handle as u8,
+                (handle >> 8) as u8,
+                0x07, // AttErrorCode::INVALID_OFFSET
+            ],
+            "an out-of-range blob offset is an error response",
+        );
         core::mem::forget(reply);
     }
 }
