@@ -2301,6 +2301,7 @@ version = "0.1.0"
 dependencies = [
  "embassy-embedded-hal",
  "embassy-executor",
+ "embedded-storage",
  "esp-alloc",
  "esp-backtrace",
  "esp-bootloader-esp-idf",

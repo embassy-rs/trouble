@@ -59,11 +59,10 @@ pub(super) enum Pairing {
 
 /// Get address type flag for c1 (0=public, 1=random)
 fn addr_type_flag(addr: &Address) -> u8 {
-    if addr.kind == AddrKind::PUBLIC {
-        0
-    } else {
-        1
-    }
+    // Not `addr.kind == AddrKind::PUBLIC`: that is `AddrKind`'s exact comparison, so a peer the
+    // controller reports as 0x02 (Public Identity) would be flagged random and corrupt the
+    // confirm value. `Address` normalises the identity kinds, `AddrKind` on its own does not.
+    addr.crypto_addr_type()
 }
 
 /// Get address bytes in MSO order for c1

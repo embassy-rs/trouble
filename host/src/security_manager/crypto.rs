@@ -302,8 +302,8 @@ impl MacKey {
             .update(n2.0.to_be_bytes())
             .update(r.to_be_bytes())
             .update(io_cap.0)
-            .update(a1.to_bytes())
-            .update(a2.to_bytes());
+            .update(a1.to_crypto_bytes())
+            .update(a2.to_crypto_bytes());
         Check(m.finalize())
     }
 }
@@ -553,8 +553,8 @@ impl DHKey {
                 .update(b"btle")
                 .update(n1)
                 .update(n2)
-                .update(a1.to_bytes())
-                .update(a2.to_bytes())
+                .update(a1.to_crypto_bytes())
+                .update(a2.to_crypto_bytes())
                 .update(256_u16.to_be_bytes())
                 .finalize_key()
         };
