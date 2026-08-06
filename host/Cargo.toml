@@ -23,7 +23,8 @@ targets = ["thumbv7em-none-eabi"]
 
 [dependencies]
 aes = { version = "0.8.2", optional = true }
-bt-hci = { version = "0.9", features = ["uuid"] }
+#bt-hci = { version = "0.9", features = ["uuid"] }
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci", features = ["uuid"] }
 cmac = { version = "0.7.2", optional = true }
 embedded-io = { version = "0.7" }
 embassy-sync = "0.8"

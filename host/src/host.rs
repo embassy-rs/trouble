@@ -1336,9 +1336,14 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
         let host = &self.host;
         // use embassy_time::Instant;
         // let mut last = Instant::now();
+        // Task handling receiving data from the controller.
+        let mut rx = self
+            .host
+            .controller
+            .alloc_buf()
+            .map_err(|e| BleHostError::Controller(e))?;
+
         loop {
-            // Task handling receiving data from the controller.
-            let mut rx = [0u8; MAX_HCI_PACKET_LEN];
             // let now = Instant::now();
             // let elapsed = (now - last).as_millis();
             // if elapsed >= 1 {

@@ -1,15 +1,15 @@
+use std::convert::Infallible;
 use std::io;
 use std::pin::pin;
 use std::time::Duration;
 
-use bt_hci::data::AclPacket;
-use bt_hci::event::EventPacket;
-use bt_hci::{ControllerToHostPacket, FromHciBytes, HostToControllerPacket, PacketKind};
+use bt_hci_driver::{self, PacketKind, PacketToController, PacketToHost, ReadHciError};
+use embedded_io::ReadExactError;
 use futures::future::Either;
-use nusb::io::{EndpointRead, EndpointWrite};
+use nusb::io::{EndpointRead, EndpointReadUntilShortPacket, EndpointWrite};
 use nusb::transfer::{Bulk, BulkOrInterrupt, ControlOut, ControlType, Interrupt, Recipient};
 use nusb::{Device, DeviceInfo, Interface};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 const USB_CLASS_WIRELESS: u8 = 0xE0;
@@ -22,7 +22,7 @@ const ENDPOINT_ACL_OUT: u8 = 0x02;
 
 #[derive(Debug)]
 pub enum Error {
-    FromHciBytesError(bt_hci::FromHciBytesError),
+    FromHciBytesError(ReadHciError<Infallible>),
     UsbTransfer(nusb::transfer::TransferError),
     Io(io::Error),
 }
@@ -45,9 +45,16 @@ impl embedded_io::Error for Error {
     }
 }
 
-impl From<bt_hci::FromHciBytesError> for Error {
-    fn from(e: bt_hci::FromHciBytesError) -> Self {
-        Self::FromHciBytesError(e)
+impl From<ReadHciError<io::Error>> for Error {
+    fn from(e: ReadHciError<io::Error>) -> Self {
+        match e {
+            ReadHciError::BufferTooSmall => Error::FromHciBytesError(ReadHciError::BufferTooSmall),
+            ReadHciError::InvalidValue => Error::FromHciBytesError(ReadHciError::InvalidValue),
+            ReadHciError::Read(ReadExactError::UnexpectedEof) => {
+                Error::FromHciBytesError(ReadHciError::Read(ReadExactError::UnexpectedEof))
+            }
+            ReadHciError::Read(ReadExactError::Other(io)) => Error::Io(io),
+        }
     }
 }
 
@@ -62,25 +69,51 @@ struct InEndpoints {
     acl_reader: EndpointRead<Bulk>,
 }
 
-async fn read_packet<R>(reader: &mut EndpointRead<R>, rx: &mut [u8]) -> Result<(), Error>
+struct UsbReader<'a, R>
 where
     R: BulkOrInterrupt,
 {
-    let mut reader = reader.until_short_packet();
-    match reader.read_exact(rx).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-            // Short packet, so we have the full data.
-        }
-        Err(_) => {
-            return Err(Error::Io(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "buffer too small",
-            )));
-        }
+    reader: EndpointReadUntilShortPacket<'a, R>,
+}
+
+impl<R> embedded_io::ErrorType for UsbReader<'_, R>
+where
+    R: BulkOrInterrupt,
+{
+    type Error = io::Error;
+}
+
+impl<R> embedded_io_async::Read for UsbReader<'_, R>
+where
+    R: BulkOrInterrupt,
+{
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        tokio::io::AsyncReadExt::read(&mut self.reader, buf).await
     }
-    reader.consume_end().unwrap();
-    Ok(())
+}
+
+impl<R> Drop for UsbReader<'_, R>
+where
+    R: BulkOrInterrupt,
+{
+    fn drop(&mut self) {
+        self.reader.consume_end().unwrap();
+    }
+}
+
+async fn read_packet<'a, P: PacketToHost<'a>, R>(
+    kind: PacketKind,
+    reader: &mut EndpointRead<R>,
+    rx: &'a mut [u8],
+) -> Result<P, Error>
+where
+    R: BulkOrInterrupt,
+{
+    let mut reader = UsbReader {
+        reader: reader.until_short_packet(),
+    };
+    let packet = P::read_hci_async(kind, &mut reader, rx).await?;
+    Ok(packet)
 }
 
 impl Transport {
@@ -110,8 +143,8 @@ impl Transport {
     }
 }
 
-impl bt_hci::transport::Transport for Transport {
-    async fn read<'a>(&self, rx: &'a mut [u8]) -> Result<ControllerToHostPacket<'a>, Self::Error> {
+impl bt_hci_driver::Transport for Transport {
+    async fn read<'a, P: PacketToHost<'a>>(&self, rx: &'a mut [u8]) -> Result<P, Self::Error> {
         let mut in_endpoints = self.in_endpoints.lock().await;
         let InEndpoints {
             event_reader,
@@ -121,26 +154,16 @@ impl bt_hci::transport::Transport for Transport {
         let event_ready = pin!(event_reader.fill_buf());
         let acl_ready = pin!(acl_reader.fill_buf());
 
-        let packet = match futures::future::select(event_ready, acl_ready).await {
-            Either::Left(_) => {
-                read_packet(event_reader, rx).await?;
-                let (packet, _) = EventPacket::from_hci_bytes(rx).map_err(Error::FromHciBytesError)?;
-                ControllerToHostPacket::Event(packet)
-            }
-            Either::Right(_) => {
-                read_packet(acl_reader, rx).await?;
-                let (packet, _) = AclPacket::from_hci_bytes(rx).map_err(Error::FromHciBytesError)?;
-                ControllerToHostPacket::Acl(packet)
-            }
-        };
-
-        Ok(packet)
+        match futures::future::select(event_ready, acl_ready).await {
+            Either::Left(_) => read_packet::<P, _>(PacketKind::Event, event_reader, rx).await,
+            Either::Right(_) => read_packet::<P, _>(PacketKind::AclData, event_reader, rx).await,
+        }
     }
 
-    async fn write<T: HostToControllerPacket>(&self, val: &T) -> Result<(), Self::Error> {
+    async fn write<P: PacketToController>(&self, val: &P) -> Result<(), Self::Error> {
         let mut buf = Vec::<u8>::new();
         val.write_hci(&mut buf).unwrap();
-        match T::KIND {
+        match P::KIND {
             PacketKind::Cmd => {
                 let data = ControlOut {
                     control_type: ControlType::Class,

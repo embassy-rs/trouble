@@ -8,8 +8,9 @@ keywords = ["no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [dependencies]
-bt-hci = "0.9"
+bt-hci-driver = { git = "https://github.com/embassy-rs/bt-hci" }
 embedded-io = { version = "0.7.1", features = ["std"] }
+embedded-io-async = { version = "0.7.0", features = ["std"] }
 futures = { version = "0.3.32", default-features = false }
 nusb = { version = "0.2.3", features = ["tokio"] }
 tokio = { version = "1", features = ["io-util", "rt", "sync"] }
