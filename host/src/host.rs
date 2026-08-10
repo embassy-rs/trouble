@@ -1476,6 +1476,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 LeEventKind::LeConnectionUpdateComplete => {
                                     let event =
                                         unwrap!(LeConnectionUpdateComplete::from_hci_bytes_complete(event.data));
+                                    host.connections().notify_conn_param_update(event.handle, event.status);
                                     if let Err(e) = event.status.to_result() {
                                         warn!(
                                             "[host] error updating connection parameters for {:?}: {:?}",

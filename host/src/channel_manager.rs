@@ -722,10 +722,14 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 }
                 L2capSignalCode::CONN_PARAM_UPDATE_RES => {
                     let res = ConnParamUpdateRes::from_hci_bytes_complete(signal_data)?;
-                    debug!(
-                        "[l2cap][conn = {:?}] connection param update response: {}",
-                        conn, res.result,
-                    );
+                    if res.result == 0 {
+                        debug!("[l2cap][conn = {:?}] connection param update accepted", conn);
+                    } else {
+                        warn!(
+                            "[l2cap][conn = {:?}] connection param update rejected result={}",
+                            conn, res.result
+                        );
+                    }
                     Ok(())
                 }
                 _ => {

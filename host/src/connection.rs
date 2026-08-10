@@ -873,7 +873,22 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         let features = stack.host().command(LeReadLocalSupportedFeatures::new()).await?;
         if features.supports_conn_parameters_request_procedure() || self.role() == LeConnRole::Central {
             match stack.host().async_command(into_le_conn_update(handle, params)).await {
-                Ok(_) => return Ok(()),
+                Ok(_) => {
+                    // The final outcome is reported later via
+                    // [`LeEventKind::LeConnectionUpdateComplete`], wait for that.
+                    let status = core::future::poll_fn(|cx| self.manager.poll_conn_param_update(handle, cx)).await;
+                    match status.to_result() {
+                        Ok(()) => return Ok(()),
+                        Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
+                            return Err(crate::Error::Disconnected.into());
+                        }
+                        Err(bt_hci::param::Error::UNSUPPORTED_REMOTE_FEATURE) => {
+                            // Fall through to the L2CAP fallback below, same as the immediate
+                            // command-status-level rejection arm.
+                        }
+                        Err(e) => return Err(BleHostError::BleHost(crate::Error::Hci(e))),
+                    }
+                }
                 Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                     return Err(crate::Error::Disconnected.into());
                 }
