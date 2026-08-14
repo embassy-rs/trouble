@@ -72,6 +72,11 @@ pub const GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS: usize = raw::GATT_CLIENT_NOT
 /// Default: 1.
 pub const GATT_CLIENT_NOTIFICATION_QUEUE_SIZE: usize = raw::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
 
+/// Payload capacity of each queued GATT client notification.
+///
+/// Default: `min(PacketPool::MTU - 7, 512)` when `default-packet-pool-mtu-*` is enabled, else 512.
+pub const GATT_CLIENT_NOTIFICATION_MTU: usize = raw::GATT_CLIENT_NOTIFICATION_MTU;
+
 /// Maximum buffer size per connection for client-specific attribute values, such as CCCDs.
 ///
 /// Default: 64.
