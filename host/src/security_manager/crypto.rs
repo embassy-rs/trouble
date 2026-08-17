@@ -7,6 +7,7 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
 use bt_hci::param::BdAddr;
 use cmac::digest;
+#[cfg(not(feature = "security-p256-cortex-m4"))]
 use p256::ecdh;
 use rand_core::{CryptoRng, RngCore};
 
@@ -368,10 +369,18 @@ pub struct Confirm(pub u128);
 pub struct NumCompare(pub u32);
 
 /// P-256 elliptic curve secret key.
+#[cfg(not(feature = "security-p256-cortex-m4"))]
 #[derive(Clone)]
 #[must_use]
 #[repr(transparent)]
 pub struct SecretKey(p256::NonZeroScalar);
+
+/// P-256 elliptic curve secret key.
+#[cfg(feature = "security-p256-cortex-m4")]
+#[derive(Clone)]
+#[must_use]
+#[repr(transparent)]
+pub struct SecretKey(p256_cortex_m4::SecretKey);
 
 impl core::fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -386,15 +395,60 @@ impl defmt::Format for SecretKey {
     }
 }
 
+#[cfg(feature = "security-p256-cortex-m4")]
 impl SecretKey {
     /// Generates a new random secret key.
     #[allow(clippy::new_without_default)]
-    #[inline(always)]
+    pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
+        Self(p256_cortex_m4::SecretKey::random(rng))
+    }
+
+    /// Computes the associated public key.
+    pub fn public_key(&self) -> PublicKey {
+        let pk = self.0.public_key();
+        PublicKey {
+            x: PublicKeyX(Coord(pk.x())),
+            y: Coord(pk.y()),
+        }
+    }
+
+    /// Computes a shared secret from the local secret key and remote public
+    /// key. Returns [`None`] if the public key is either invalid or derived
+    /// from the same secret key ([Vol 3] Part H, Section 2.3.5.6.1).
+    ///
+    /// `local_pk` must be the public key of `self`; passing it in avoids an
+    /// expensive scalar multiplication to recompute it.
+    #[must_use]
+    pub fn dh_key(&self, pk: PublicKey, local_pk: &PublicKey) -> Option<DHKey> {
+        if pk.is_debug() {
+            return None; // TODO: Compile-time option for debug-only mode
+        }
+        if pk == *local_pk {
+            return None;
+        }
+
+        let mut bytes = [0u8; 64];
+        bytes[..32].copy_from_slice(pk.x.as_be_bytes());
+        bytes[32..].copy_from_slice(&pk.y.0);
+        // from_untagged_bytes validates that the point is on the curve
+        let rpk = p256_cortex_m4::PublicKey::from_untagged_bytes(&bytes).ok()?;
+        let mut secret = [0u8; 32];
+        secret.copy_from_slice(self.0.agree(&rpk).as_bytes());
+        Some(DHKey(secret))
+    }
+}
+
+#[cfg(not(feature = "security-p256-cortex-m4"))]
+impl SecretKey {
+    /// Generates a new random secret key.
+    #[allow(clippy::new_without_default)]
+    #[inline(never)]
     pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
         Self(p256::NonZeroScalar::random(rng))
     }
 
     /// Computes the associated public key.
+    #[inline(never)]
     pub fn public_key(&self) -> PublicKey {
         use p256::elliptic_curve::sec1::Coordinates::Uncompressed;
         use p256::elliptic_curve::sec1::ToEncodedPoint;
@@ -415,6 +469,7 @@ impl SecretKey {
     /// `local_pk` must be the public key of `self`; passing it in avoids an
     /// expensive scalar multiplication to recompute it.
     #[must_use]
+    #[inline(never)]
     pub fn dh_key(&self, pk: PublicKey, local_pk: &PublicKey) -> Option<DHKey> {
         use p256::elliptic_curve::sec1::FromEncodedPoint;
         if pk.is_debug() {
@@ -518,10 +573,19 @@ impl PublicKeyX {
 }
 
 /// P-256 elliptic curve shared secret ([Vol 3] Part H, Section 2.3.5.6.1).
+#[cfg(not(feature = "security-p256-cortex-m4"))]
 #[must_use]
 #[repr(transparent)]
 pub struct DHKey(ecdh::SharedSecret);
 
+/// P-256 elliptic curve shared secret ([Vol 3] Part H, Section 2.3.5.6.1).
+#[cfg(feature = "security-p256-cortex-m4")]
+#[derive(Clone)]
+#[must_use]
+#[repr(transparent)]
+pub struct DHKey([u8; 32]);
+
+#[cfg(not(feature = "security-p256-cortex-m4"))]
 impl Clone for DHKey {
     fn clone(&self) -> Self {
         Self(ecdh::SharedSecret::from(*self.0.raw_secret_bytes()))
@@ -542,6 +606,18 @@ impl defmt::Format for DHKey {
 }
 
 impl DHKey {
+    /// Big-endian x-coordinate of the shared secret.
+    #[cfg(not(feature = "security-p256-cortex-m4"))]
+    fn secret_bytes(&self) -> [u8; 32] {
+        (*self.0.raw_secret_bytes()).into()
+    }
+
+    /// Big-endian x-coordinate of the shared secret.
+    #[cfg(feature = "security-p256-cortex-m4")]
+    fn secret_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
     /// Generates LE Secure Connections `MacKey` and `LTK`
     /// ([Vol 3] Part H, Section 2.2.7).
     #[inline]
@@ -559,7 +635,7 @@ impl DHKey {
                 .finalize_key()
         };
         let mut m = AesCmac::new(&Key::new(0x6C88_8391_AAF5_A538_6037_0BDB_5A60_83BE));
-        m.update(self.0.raw_secret_bytes());
+        m.update(self.secret_bytes());
         let mut m = AesCmac::new(&m.finalize_key());
         (MacKey(half(&mut m, 0)), LongTermKey(u128::from(&half(&mut m, 1))))
     }
