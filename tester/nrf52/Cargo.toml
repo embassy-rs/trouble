@@ -17,7 +17,7 @@ embassy-sync = { version = "0.8", features = ["defmt"] }
 futures = { version = "0.3.31", default-features = false, features = ["async-await"] }
 nrf-sdc = { version = "0.4.0", default-features = false, features = ["central", "peripheral", "defmt"] }
 nrf-mpsl = { version = "0.3.0", default-features = false, features = ["defmt", "critical-section-impl"] }
-bt-hci = { version = "0.9", default-features = false, features = ["defmt", "embassy-time"] }
+bt-hci = { version = "0.10", default-features = false, features = ["defmt", "embassy-time"] }
 trouble-host = { path = "../../host", features = ["derive", "scan", "gatt"] }
 trouble-tester-app = { path = "../app", features = ["defmt"] }
 
@@ -36,6 +36,8 @@ embedded-alloc = { version = "0.7.0", default-features = false, features = ["llf
 debug = 2
 
 [patch.crates-io]
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "95860ef0ef517bfc775c37997b00b6b95394a4b7" }
+bt-hci-transport = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "95860ef0ef517bfc775c37997b00b6b95394a4b7" }
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
 #embassy-time-queue-utils = {path = "../../../embassy/embassy-time-queue-utils"}
 #embassy-sync = {path = "../../../embassy/embassy-sync"}
@@ -51,5 +53,5 @@ debug = 2
 # embassy-time = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
 # embassy-time-driver = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
 # embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55"}
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55"}
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1a6e661155cdd1d6a86f3ae7b7fb117343781533"}
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1a6e661155cdd1d6a86f3ae7b7fb117343781533"}

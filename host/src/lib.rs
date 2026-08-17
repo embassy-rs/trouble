@@ -76,7 +76,6 @@ pub mod prelude {
     //! Convenience include of most commonly used types.
     pub use bt_hci::controller::ExternalController;
     pub use bt_hci::param::{AddrKind, BdAddr, LeConnRole as Role, PhyKind, PhyMask};
-    pub use bt_hci::transport::SerialTransport;
     pub use bt_hci::uuid::*;
     #[cfg(feature = "derive")]
     pub use heapless::String as HeaplessString;
