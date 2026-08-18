@@ -511,6 +511,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.link_credits = default_credits;
                 storage.acl_send_locked = false;
                 storage.att_mtu = None;
+                storage.conn_param_update_status = None;
                 storage.handle = handle;
                 #[cfg(feature = "security")]
                 let identity = self
@@ -628,6 +629,36 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) const fn default_att_mtu(&self) -> u16 {
         (P::MTU - 4) as u16
+    }
+
+    pub(crate) fn notify_conn_param_update(&self, handle: ConnHandle, status: Status) {
+        for storage in self.connections.borrow_mut().iter_mut() {
+            match storage.state {
+                ConnectionState::Connecting | ConnectionState::Connected if storage.handle == handle => {
+                    storage.conn_param_update_status = Some(status);
+                    storage.conn_param_update_waker.wake();
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub(crate) fn poll_conn_param_update(&self, handle: ConnHandle, cx: &mut Context<'_>) -> Poll<Status> {
+        for storage in self.connections.borrow_mut().iter_mut() {
+            match storage.state {
+                ConnectionState::Connecting | ConnectionState::Connected if storage.handle == handle => {
+                    if let Some(status) = storage.conn_param_update_status.take() {
+                        return Poll::Ready(status);
+                    }
+                    storage.conn_param_update_waker.register(cx.waker());
+                    return Poll::Pending;
+                }
+                _ => {}
+            }
+        }
+
+        Poll::Ready(Status::UNKNOWN_CONN_IDENTIFIER)
     }
 
     pub(crate) fn confirm_sent(&self, handle: ConnHandle, packets: usize) -> Result<(), Error> {
@@ -1150,6 +1181,8 @@ pub struct ConnectionStorage<P> {
     pub link_credit_waker: WakerRegistration,
     pub acl_send_locked: bool,
     pub acl_send_lock_waker: WakerRegistration,
+    pub conn_param_update_status: Option<Status>,
+    pub conn_param_update_waker: WakerRegistration,
     pub refcount: u8,
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
@@ -1270,6 +1303,8 @@ impl<P> ConnectionStorage<P> {
             link_credit_waker: WakerRegistration::new(),
             acl_send_locked: false,
             acl_send_lock_waker: WakerRegistration::new(),
+            conn_param_update_status: None,
+            conn_param_update_waker: WakerRegistration::new(),
             refcount: 0,
             #[cfg(feature = "connection-metrics")]
             metrics: Metrics::new(),
