@@ -2,18 +2,28 @@
 use core::task::Poll;
 
 use bt_hci::cmd::le::{
-    LeAddDeviceToFilterAcceptList, LeClearAdvSets, LeClearFilterAcceptList, LeReadNumberOfSupportedAdvSets,
-    LeSetAdvData, LeSetAdvEnable, LeSetAdvParams, LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable,
-    LeSetExtAdvParams, LeSetExtScanResponseData, LeSetScanResponseData,
+    LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
+    LeSetScanResponseData,
+};
+#[cfg(feature = "extended-advertising")]
+use bt_hci::cmd::le::{
+    LeClearAdvSets, LeReadNumberOfSupportedAdvSets, LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable,
+    LeSetExtAdvParams, LeSetExtScanResponseData,
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
-use bt_hci::param::{AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, LeConnRole, Operation};
+#[cfg(feature = "extended-advertising")]
+use bt_hci::param::Operation;
+use bt_hci::param::{AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, LeConnRole};
 use embassy_futures::select::{select, Either};
 
-use crate::advertise::{Advertisement, AdvertisementParameters, AdvertisementSet, RawAdvertisement};
+#[cfg(feature = "extended-advertising")]
+use crate::advertise::AdvertisementSet;
+use crate::advertise::{Advertisement, AdvertisementParameters, RawAdvertisement};
+#[cfg(feature = "extended-advertising")]
+use crate::bt_hci_ext_duration;
 use crate::connection::Connection;
 use crate::host::BleHost;
-use crate::{bt_hci_duration, bt_hci_ext_duration, Address, BleHostError, Error, PacketPool};
+use crate::{bt_hci_duration, Address, BleHostError, Error, PacketPool};
 
 /// Type which implements the BLE peripheral role.
 pub struct Peripheral<'d, C, P: PacketPool> {
@@ -173,6 +183,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     /// in which case a handle for the connection is returned.
     ///
     /// Returns a handle to accept connections.
+    #[cfg(feature = "extended-advertising")]
     pub async fn advertise_ext<'k>(
         &mut self,
         sets: &[AdvertisementSet<'k>],
@@ -289,6 +300,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
     /// no advertising is active, this will not produce any observable effect.
     /// This is typically useful when implementing a BLE beacon that only
     /// broadcasts advertisement data and does not accept any connections.
+    #[cfg(feature = "extended-advertising")]
     pub async fn update_adv_data_ext<'k>(
         &mut self,
         sets: &[AdvertisementSet<'k>],

@@ -42,15 +42,17 @@ use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
 use bt_hci::event::{DisconnectionComplete, EventKind, NumberOfCompletedPackets, Vendor};
 #[cfg(feature = "security")]
 use bt_hci::param::BdAddr;
+#[cfg(feature = "scan")]
+use bt_hci::param::FilterDuplicates;
 use bt_hci::param::{
-    AddrKind, AdvHandle, AdvSet, ConnHandle, DisconnectReason, EventMask, EventMaskPage2, FilterDuplicates, LeConnRole,
-    LeEventMask, Status,
+    AddrKind, AdvHandle, AdvSet, ConnHandle, DisconnectReason, EventMask, EventMaskPage2, LeConnRole, LeEventMask,
+    Status,
 };
 use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select5, Either3, Either5};
-#[cfg(any(feature = "scan", all(feature = "security", feature = "central")))]
+#[cfg(any(feature = "scan", feature = "security"))]
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-#[cfg(all(feature = "security", feature = "central"))]
+#[cfg(feature = "security")]
 use embassy_sync::mutex::Mutex;
 use embassy_sync::once_lock::OnceLock;
 #[cfg(feature = "scan")]
@@ -366,12 +368,18 @@ where
 {
     /// Poll whether any command should be cancelled or the resolving list should be synced.
     fn poll_cancelled(&self, cx: &mut Context<'_>) -> Poll<CancelledCommandState> {
+        // Not every branch below survives every feature combination.
+        let _ = cx;
+
+        #[cfg(feature = "central")]
         if let Poll::Ready(ctx) = self.state.connect_command_state.poll_cancelled(cx) {
             return Poll::Ready(CancelledCommandState::Connect(ctx));
         }
+        #[cfg(feature = "peripheral")]
         if let Poll::Ready(ctx) = self.state.advertise_command_state.poll_cancelled(cx) {
             return Poll::Ready(CancelledCommandState::Advertise(ctx));
         }
+        #[cfg(feature = "scan")]
         if let Poll::Ready(ctx) = self.state.scan_command_state.poll_cancelled(cx) {
             return Poll::Ready(CancelledCommandState::Scan(ctx));
         }
@@ -1647,8 +1655,11 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
 }
 
 enum CancelledCommandState {
+    #[cfg(feature = "central")]
     Connect(bool),
+    #[cfg(feature = "peripheral")]
     Advertise(bool),
+    #[cfg(feature = "scan")]
     Scan(bool),
     #[cfg(feature = "security")]
     SyncResolvingList(ResolvingListUpdate),
@@ -1883,6 +1894,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     request.confirm();
                 }
                 Either5::Third(action) => match action {
+                    #[cfg(feature = "central")]
                     CancelledCommandState::Connect(_) => {
                         trace!("[host] cancel connection create");
                         if let Err(err) = host.command(LeCreateConnCancel::new()).await {
@@ -1891,15 +1903,26 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                         // Signal to ensure no one is stuck
                         host.state.connect_command_state.canceled();
                     }
+                    #[cfg(feature = "peripheral")]
                     CancelledCommandState::Advertise(ext) => {
                         trace!("[host] disabling advertising");
+                        #[cfg(feature = "extended-advertising")]
                         if ext {
                             host.command(LeSetExtAdvEnable::new(false, &[])).await?
                         } else {
                             host.command(LeSetAdvEnable::new(false)).await?
                         }
+                        #[cfg(not(feature = "extended-advertising"))]
+                        {
+                            // Extended advertising cannot have been started
+                            // (`advertise_ext` is compiled out), so `ext` is
+                            // always false here.
+                            let _ = ext;
+                            host.command(LeSetAdvEnable::new(false)).await?
+                        }
                         host.state.advertise_command_state.canceled();
                     }
+                    #[cfg(feature = "scan")]
                     CancelledCommandState::Scan(ext) => {
                         trace!("[host] disabling scanning");
                         if ext {
