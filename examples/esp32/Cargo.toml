@@ -21,7 +21,7 @@ embassy-embedded-hal = "0.6.0"
 esp-storage = { version = "0.9.0" }
 
 [features]
-default = ["esp32s3"]
+default = ["esp32c3"]
 
 esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-println/esp32", "esp-radio/esp32", "esp-rtos/esp32", "esp-storage/esp32", "esp-bootloader-esp-idf/esp32"]
 esp32c2 = ["esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-println/esp32c2", "esp-radio/esp32c2", "esp-rtos/esp32c2", "esp-storage/esp32c2", "esp-bootloader-esp-idf/esp32c2"]
