@@ -101,7 +101,7 @@ default-packet-pool = []
 # Optimization where l2cap SDU reassembly saves some buffer copy.
 l2cap-sdu-reassembly-optimization = []
 
-# Support connection parameter update procedure
+# Enable Connection Parameters Request procedure ([Vol 6] Part B, Section 5.1.7) support.
 connection-params-update = []
 
 # Allow L2CAP SPSU values that are reserved for future use
