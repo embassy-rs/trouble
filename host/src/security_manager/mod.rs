@@ -1337,6 +1337,7 @@ mod tests {
             rng,
             secret_key,
             public_key,
+            passkey: None,
             state: SecurityManagerData {
                 local_address: Some(Address::random([1, 2, 3, 4, 5, 6])),
                 local_irk: None,

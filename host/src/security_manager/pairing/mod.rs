@@ -423,6 +423,7 @@ mod tests {
         pub(crate) bond_information: Option<BondInformation>,
         pub(crate) bondable: bool,
         pub(crate) oob_available: bool,
+        pub(crate) passkey: Option<u32>,
         pub(crate) secret_key: crate::security_manager::crypto::SecretKey,
         pub(crate) public_key: crate::security_manager::crypto::PublicKey,
     }
@@ -439,6 +440,7 @@ mod tests {
                 bond_information: None,
                 bondable: false,
                 oob_available: false,
+                passkey: None,
                 secret_key,
                 public_key,
             }
@@ -510,6 +512,10 @@ mod tests {
 
         fn oob_available(&self) -> bool {
             self.oob_available
+        }
+
+        fn passkey(&self) -> Option<u32> {
+            self.passkey
         }
 
         fn secret_key(&self) -> &crate::security_manager::crypto::SecretKey {
