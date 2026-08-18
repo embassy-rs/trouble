@@ -309,7 +309,7 @@ impl Pairing {
                     // Use configured passkey if available, otherwise generate a random one
                     let passkey = ops
                         .passkey()
-                        .unwrap_or(rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999)));
+                        .unwrap_or_else(|| rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999)));
                     phase_data.local_secret_rb = passkey as u128;
                     phase_data.peer_secret_ra = phase_data.local_secret_rb;
                     ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(passkey)))?;
