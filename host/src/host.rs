@@ -1403,12 +1403,15 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         #[cfg(feature = "security")]
                                         ResolvablePrivateAddrs::none(),
                                     ) {
-                                        let _ = host
-                                            .command(Disconnect::new(
-                                                e.handle,
-                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                            ))
-                                            .await;
+                                        // Queue the disconnect for the control runner rather than
+                                        // issuing it here. `Controller::read` is what dispatches
+                                        // `CommandComplete` to a waiting command and this loop is
+                                        // its only caller, so awaiting a command from inside it
+                                        // deadlocks on a completion only it could have read.
+                                        host.state.connections.request_handle_disconnect(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        );
                                         host.state.connect_command_state.canceled();
                                     }
                                 }
@@ -1432,12 +1435,15 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             peer: Some(e.peer_resolvable_private_addr).filter(|a| *a.raw() != [0; 6]),
                                         },
                                     ) {
-                                        let _ = host
-                                            .command(Disconnect::new(
-                                                e.handle,
-                                                DisconnectReason::RemoteDeviceTerminatedConnLowResources,
-                                            ))
-                                            .await;
+                                        // Queue the disconnect for the control runner rather than
+                                        // issuing it here. `Controller::read` is what dispatches
+                                        // `CommandComplete` to a waiting command and this loop is
+                                        // its only caller, so awaiting a command from inside it
+                                        // deadlocks on a completion only it could have read.
+                                        host.state.connections.request_handle_disconnect(
+                                            e.handle,
+                                            DisconnectReason::RemoteDeviceTerminatedConnLowResources,
+                                        );
                                         host.state.connect_command_state.canceled();
                                     }
                                 }
@@ -1465,7 +1471,18 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     }
                                 }
                                 LeEventKind::LeLongTermKeyRequest => {
-                                    host.state.connections.handle_security_hci_le_event(event)?;
+                                    // A full security event queue is back pressure, not a host
+                                    // fault: the control runner is the only drainer and it may be
+                                    // mid-command. Dropping the request stalls one encryption
+                                    // attempt until the peer times out; propagating it would take
+                                    // every connection down with the runner.
+                                    match host.state.connections.handle_security_hci_le_event(event) {
+                                        Ok(()) => {}
+                                        Err(Error::OutOfMemory) => {
+                                            warn!("[host] security event queue full, dropping long term key request");
+                                        }
+                                        Err(e) => return Err(e.into()),
+                                    }
                                 }
                                 LeEventKind::LePhyUpdateComplete => {
                                     let event = unwrap!(LePhyUpdateComplete::from_hci_bytes_complete(event.data));
@@ -1634,7 +1651,17 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             event_handler.on_vendor(&vendor);
                         }
                         EventKind::EncryptionChangeV1 | EventKind::EncryptionKeyRefreshComplete => {
-                            host.state.connections.handle_security_hci_event(event)?;
+                            // An encryption event for a handle that is already gone is expected,
+                            // not a host-level fault: nothing orders one against the Disconnection
+                            // Complete for the same link. A MIC failure, which the spec reports as
+                            // a disconnection ([Vol 6] Part B, 5.1.3.1), can still be followed by a
+                            // trailing Encryption Change with nothing left to find. Propagating that
+                            // would tear down the whole runner over a routine condition, and no
+                            // EventHandler hook sits between here and the application.
+                            match host.state.connections.handle_security_hci_event(event) {
+                                Ok(()) | Err(Error::Disconnected) => {}
+                                Err(e) => return Err(e.into()),
+                            }
                         }
                         // Ignore
                         _ => {}

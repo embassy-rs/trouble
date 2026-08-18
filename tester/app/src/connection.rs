@@ -101,6 +101,9 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     info!("BondLost addr={:?}", address);
                     events.send(Event::BondLost { address }).await;
                 }
+                GattConnectionEvent::LongTermKeyMissing => {
+                    info!("LongTermKeyMissing addr={:?}", address);
+                }
                 GattConnectionEvent::Encrypted { security_level, .. } => {
                     info!("Encrypted addr={:?} level={:?}", address, security_level);
                     events

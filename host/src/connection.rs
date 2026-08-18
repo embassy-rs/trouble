@@ -277,6 +277,18 @@ pub enum ConnectionEvent {
     /// The peer has lost its bond (received pairing request for a bonded peer).
     BondLost,
     #[cfg(feature = "security")]
+    /// The peer tried to resume encryption with a key this device does not have, and was refused.
+    ///
+    /// The mirror of [`ConnectionEvent::BondLost`]: there the bond we hold was rejected, here the
+    /// bond the peer holds is one we cannot honour — after a factory reset, a bond-store wipe, or
+    /// an eviction from a full store.
+    ///
+    /// The link is kept, because re-pairing needs a connection to happen over and a peer that
+    /// notices the refusal will start it. Nothing enforces that, though: a peer that neither
+    /// re-pairs nor disconnects leaves the link up and the slot occupied, so an application that
+    /// cares should apply its own policy — a timeout, a prompt, or [`Connection::disconnect()`].
+    LongTermKeyMissing,
+    #[cfg(feature = "security")]
     /// The link is now encrypted. Fires once per encryption-enable transition,
     /// for both fresh pairings and resumed bonded sessions. For pairings, this
     /// fires alongside `PairingComplete`.
