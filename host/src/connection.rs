@@ -328,6 +328,10 @@ impl ConnectionParamsRequest {
     /// Accept the connection parameters update request.
     ///
     /// If `params` is `None`, use the parameters requested by the peer.
+    ///
+    /// Applying the parameters takes `HCI_LE_Connection_Update`, and only a Central
+    /// ever receives this request, so this needs the `central` feature.
+    #[cfg(feature = "central")]
     pub async fn accept<C, P: PacketPool>(
         mut self,
         params: Option<&RequestedConnParams>,
@@ -869,21 +873,24 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         T: ControllerCmdAsync<LeConnUpdate> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
     {
         let handle = self.handle();
-        // First, check the local supported features to ensure that the connection update is supported.
-        let features = stack.host().command(LeReadLocalSupportedFeatures::new()).await?;
-        if features.supports_conn_parameters_request_procedure() || self.role() == LeConnRole::Central {
-            match stack.host().async_command(into_le_conn_update(handle, params)).await {
-                Ok(_) => return Ok(()),
-                Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
-                    return Err(crate::Error::Disconnected.into());
+        #[cfg(any(feature = "central", feature = "connection-params-update"))]
+        {
+            // First, check the local supported features to ensure that the connection update is supported.
+            let features = stack.host().command(LeReadLocalSupportedFeatures::new()).await?;
+            if features.supports_conn_parameters_request_procedure() || self.role() == LeConnRole::Central {
+                match stack.host().async_command(into_le_conn_update(handle, params)).await {
+                    Ok(_) => return Ok(()),
+                    Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                        return Err(crate::Error::Disconnected.into());
+                    }
+                    Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNSUPPORTED_REMOTE_FEATURE))) => {
+                        // We tried to send the request as a periperhal but the remote central does not support procedure.
+                        // Use the L2CAP signaling method below instead.
+                        // This code path should never be reached when acting as a central. If a bugged controller implementation
+                        // returns this error code we transmit an invalid L2CAP signal which then is rejected by the remote.
+                    }
+                    Err(e) => return Err(e),
                 }
-                Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNSUPPORTED_REMOTE_FEATURE))) => {
-                    // We tried to send the request as a periperhal but the remote central does not support procedure.
-                    // Use the L2CAP signaling method below instead.
-                    // This code path should never be reached when acting as a central. If a bugged controller implementation
-                    // returns this error code we transmit an invalid L2CAP signal which then is rejected by the remote.
-                }
-                Err(e) => return Err(e),
             }
         }
 
@@ -990,6 +997,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 }
 
+#[cfg(any(feature = "central", feature = "connection-params-update"))]
 fn into_le_conn_update(handle: ConnHandle, params: &RequestedConnParams) -> LeConnUpdate {
     LeConnUpdate::new(
         handle,
