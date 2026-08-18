@@ -30,8 +30,6 @@ static_cell = "2"
 debug = 2
 
 [patch.crates-io]
-bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "95860ef0ef517bfc775c37997b00b6b95394a4b7" }
-bt-hci-transport = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "95860ef0ef517bfc775c37997b00b6b95394a4b7" }
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
 #embassy-time-queue-utils = {path = "../../../embassy/embassy-time-queue-utils"}
 #embassy-sync = {path = "../../../embassy/embassy-sync"}
@@ -40,13 +38,13 @@ bt-hci-transport = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "95
 #embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
 #embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
 #embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
-# embassy-executor = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
-# embassy-nrf = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
-# embassy-sync = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
-# embassy-futures = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
-# embassy-time = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
-# embassy-time-driver = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
-# embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="7a0b1cf453a496240d04545c19aa86009f0fe058"}
+# embassy-executor = {git = "https://github.com/embassy-rs/embassy.git", rev="3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"}
+# embassy-nrf = {git = "https://github.com/embassy-rs/embassy.git", rev="3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"}
+# embassy-sync = {git = "https://github.com/embassy-rs/embassy.git", rev="3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"}
+# embassy-futures = {git = "https://github.com/embassy-rs/embassy.git", rev="3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"}
+# embassy-time = {git = "https://github.com/embassy-rs/embassy.git", rev="3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"}
+# embassy-time-driver = {git = "https://github.com/embassy-rs/embassy.git", rev="3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"}
+# embassy-embedded-hal = {git = "https://github.com/embassy-rs/embassy.git", rev="3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"}
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1a6e661155cdd1d6a86f3ae7b7fb117343781533"}
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1a6e661155cdd1d6a86f3ae7b7fb117343781533"}
 

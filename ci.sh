@@ -42,14 +42,12 @@ cargo batch \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52832 --artifact-dir examples/tests/bins/nrf52 \
     --- build --release --manifest-path examples/nrf54/Cargo.toml --target thumbv8m.main-none-eabihf --features nrf54l15 \
     --- build --release --manifest-path benchmarks/nrf-sdc/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
-    --- build --release --manifest-path tester/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840
-#    --- build --release --manifest-path examples/apache-nimble/Cargo.toml --target thumbv7em-none-eabihf
-# TODO: re-enable once cyw43, embassy-stm32-wpan and esp-radio are migrated to bt-hci 0.10:
-#    --- build --release --manifest-path examples/stm32wb/Cargo.toml --target thumbv7em-none-eabihf --features stm32wb55rg \
-#    --- build --release --manifest-path examples/stm32wba6/Cargo.toml --target thumbv7em-none-eabihf --features stm32wba65ri \
-#    --- build --release --manifest-path examples/rp-pico-w/Cargo.toml --target thumbv6m-none-eabi --features skip-cyw43-firmware \
-#    --- build --release --manifest-path examples/rp-pico-2-w/Cargo.toml --target thumbv8m.main-none-eabihf --features skip-cyw43-firmware \
-#    --- build --release --manifest-path examples/esp32/Cargo.toml --features esp32c3 --target riscv32imc-unknown-none-elf --artifact-dir examples/tests/bins/esp32 \
+    --- build --release --manifest-path tester/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
+    --- build --release --manifest-path examples/rp-pico-w/Cargo.toml --target thumbv6m-none-eabi --features skip-cyw43-firmware \
+    --- build --release --manifest-path examples/rp-pico-2-w/Cargo.toml --target thumbv8m.main-none-eabihf --features skip-cyw43-firmware \
+    --- build --release --manifest-path examples/stm32wb/Cargo.toml --target thumbv7em-none-eabihf --features stm32wb55rg \
+    --- build --release --manifest-path examples/stm32wba6/Cargo.toml --target thumbv7em-none-eabihf --features stm32wba65ri \
+    --- build --release --manifest-path examples/esp32/Cargo.toml --features esp32c3 --target riscv32imc-unknown-none-elf --artifact-dir examples/tests/bins/esp32
 
 cargo fmt --check --manifest-path ./host/Cargo.toml
 cargo fmt --check --manifest-path ./tester/app/Cargo.toml

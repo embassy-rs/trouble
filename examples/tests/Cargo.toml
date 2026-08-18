@@ -34,7 +34,4 @@ anyhow = "1"
 tempfile = "3.15"
 
 [patch.crates-io]
-bt-hci = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "95860ef0ef517bfc775c37997b00b6b95394a4b7" }
-bt-hci-transport = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "95860ef0ef517bfc775c37997b00b6b95394a4b7" }
-bt-hci-serial = { git = "https://github.com/embassy-rs/bt-hci.git", rev = "95860ef0ef517bfc775c37997b00b6b95394a4b7" }
 hilbench-agent = { git = "https://github.com/lulf/hilbench.git", rev = "82a5348f2494e3bd380ba60b316275aae56e8d9e" }

@@ -36,12 +36,12 @@ skip-cyw43-firmware = []
 debug = 2
 
 [patch.crates-io]
-cyw43 = { version = "0.7.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
-cyw43-pio = { version = "0.10.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
-embassy-rp = { version = "0.10.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
-embassy-sync = { version = "0.8.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
-embassy-executor = { version = "0.10.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
-embassy-time = { version = "0.5.1", git = "https://github.com/embassy-rs/embassy.git", rev = "1d3c3de"}
+cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
+cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
 
 #embassy-executor = {path = "../../../embassy/embassy-executor"}
 #embassy-nrf = {path = "../../../embassy/embassy-nrf"}
