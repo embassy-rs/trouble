@@ -1340,13 +1340,12 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     where
         C: ControllerCmdSync<Disconnect>,
     {
-        const MAX_HCI_PACKET_LEN: usize = 259;
         let host = &self.host;
         // use embassy_time::Instant;
         // let mut last = Instant::now();
         loop {
             // Task handling receiving data from the controller.
-            let mut rx = [0u8; MAX_HCI_PACKET_LEN];
+            let mut rx = host.controller.alloc_buf().map_err(BleHostError::Controller)?;
             // let now = Instant::now();
             // let elapsed = (now - last).as_millis();
             // if elapsed >= 1 {
