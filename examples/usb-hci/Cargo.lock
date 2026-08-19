@@ -116,8 +116,9 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.10.0"
-source = "git+https://github.com/embassy-rs/bt-hci.git?rev=95860ef0ef517bfc775c37997b00b6b95394a4b7#95860ef0ef517bfc775c37997b00b6b95394a4b7"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f63b3d6f0ef006d9b87a075705d6c142b03681ad34090659647f0e227c1c667f"
 dependencies = [
  "bt-hci-transport",
  "btuuid",
@@ -133,7 +134,8 @@ dependencies = [
 [[package]]
 name = "bt-hci-transport"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/bt-hci.git?rev=95860ef0ef517bfc775c37997b00b6b95394a4b7#95860ef0ef517bfc775c37997b00b6b95394a4b7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ffb9819c69cf88877f5eebc8c5ade0ab50f2bf9475bbb3eb714d66c55b0cb64"
 dependencies = [
  "embedded-io",
  "embedded-io-async",
@@ -142,7 +144,8 @@ dependencies = [
 [[package]]
 name = "bt-hci-usb"
 version = "0.2.0"
-source = "git+https://github.com/embassy-rs/bt-hci.git?rev=95860ef0ef517bfc775c37997b00b6b95394a4b7#95860ef0ef517bfc775c37997b00b6b95394a4b7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "724ecc0c4e8b10206055ed24536582eab96c3ab771d81f4f611a9f9c64be7186"
 dependencies = [
  "bt-hci-transport",
  "embedded-io",
@@ -587,9 +590,9 @@ dependencies = [
 
 [[package]]
 name = "fixed"
-version = "1.30.0"
+version = "1.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c566da967934c6c7ee0458a9773de9b2a685bd2ce26a3b28ddfc740e640182f5"
+checksum = "9af2cbf772fa6d1c11358f92ef554cb6b386201210bcf0e91fb7fba8a907fb40"
 dependencies = [
  "az",
  "bytemuck",
