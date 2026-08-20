@@ -53,4 +53,7 @@ flash, this matters on the nRF52810 which has only 192K flash.
 cargo build --release --no-default-features --features nrf52810 --target thumbv7em-none-eabi --bin ble_bas_peripheral
 ```
 
+This is required for the GATT examples on the nRF52810: with the default features they overflow
+flash by a few KB.
+
 See [microbit-bsp](https://github.com/lulf/microbit-bsp) for more examples of setting up nrf devices with trouble, specifically the BBC Microbit which is an nrf52833.

@@ -32,6 +32,14 @@ fn linker_data() -> &'static [u8] {
 }
 
 fn main() {
+    // The multirole SoftDevice Controller leaves too little of the nRF52810's 192K of flash
+    // for the GATT examples to link. Building without the default features selects the
+    // peripheral-only library instead.
+    #[cfg(all(feature = "nrf52810", feature = "central"))]
+    println!(
+        "cargo::warning=nRF52810 with the central role enabled: the GATT examples will not fit in flash, build with --no-default-features"
+    );
+
     // Put `memory.x` in our output directory and ensure it's
     // on the linker search path.
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
