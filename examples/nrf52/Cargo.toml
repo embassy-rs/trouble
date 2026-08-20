@@ -12,11 +12,11 @@ embassy-futures = "0.1.1"
 embassy-sync = { version = "0.8", features = ["defmt"] }
 
 futures = { version = "0.3", default-features = false, features = ["async-await"]}
-nrf-sdc = { version = "0.4", default-features = false, features = ["defmt", "peripheral", "central"] }
+nrf-sdc = { version = "0.4", default-features = false, features = ["defmt", "peripheral"] }
 nrf-mpsl = { version = "0.3", default-features = false, features = ["defmt", "critical-section-impl"] }
 bt-hci = { version = "0.10", default-features = false, features = ["defmt"] }
-trouble-host = { path = "../../host", features = ["derive", "scan", "gatt"] }
-trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
+trouble-host = { path = "../../host", default-features = false, features = ["derive", "gatt", "peripheral", "default-packet-pool"] }
+trouble-example-apps = { version = "0.1.0", path = "../apps", default-features = false, features = ["defmt"] }
 
 defmt = "1.0"
 defmt-rtt = "1.0"
@@ -49,6 +49,22 @@ nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1a6e661155cd
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1a6e661155cdd1d6a86f3ae7b7fb117343781533"}
 
 [features]
+default = ["central", "scan", "extended-advertising"]
+# Enable the central role. Building without it links the smaller peripheral-only
+# SoftDevice Controller library, which matters on flash-constrained parts.
+central = [
+    "nrf-sdc/central",
+    "trouble-host/central",
+    "trouble-example-apps/central",
+]
+scan = [
+    "trouble-host/scan",
+    "trouble-example-apps/scan",
+]
+extended-advertising = [
+    "trouble-host/extended-advertising",
+    "trouble-example-apps/extended-advertising",
+]
 # The nRF52810 only has 24K of RAM, so the default packet pool and L2CAP queues
 # have to be scaled down to leave room for the SoftDevice Controller.
 nrf52810 = [
@@ -76,8 +92,24 @@ security = [
 ]
 
 [[bin]]
+name = "ble_advertise_multiple"
+required-features = ["extended-advertising"]
+
+[[bin]]
+name = "ble_bas_central"
+required-features = ["central"]
+
+[[bin]]
+name = "ble_l2cap_central"
+required-features = ["central"]
+
+[[bin]]
+name = "ble_scanner"
+required-features = ["scan"]
+
+[[bin]]
 name = "ble_bas_central_sec"
-required-features = ["security"]
+required-features = ["security", "central"]
 
 [[bin]]
 name = "ble_bas_peripheral_sec"
@@ -89,7 +121,7 @@ required-features = ["security"]
 
 [[bin]]
 name = "ble_bas_central_auth"
-required-features = ["security"]
+required-features = ["security", "central"]
 
 [[bin]]
 name = "ble_bas_peripheral_pass_key"
@@ -97,11 +129,11 @@ required-features = ["security"]
 
 [[bin]]
 name = "ble_bas_central_pass_key"
-required-features = ["security"]
+required-features = ["security", "central"]
 
 [[bin]]
 name = "ble_bas_central_bonding"
-required-features = ["security", "nrf52840"]
+required-features = ["security", "nrf52840", "central"]
 
 [[bin]]
 name = "ble_bas_peripheral_bonding"
