@@ -804,6 +804,17 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
         self
     }
 
+    /// Set a fixed passkey to use for PassKey Entry pairing (DisplayOnly).
+    ///
+    /// When set, this passkey will be displayed to the user instead of a randomly generated one.
+    ///
+    /// Set to `None` to return to random passkey generation (the default).
+    #[cfg(feature = "security")]
+    pub fn set_passkey(mut self, passkey: Option<u32>) -> Self {
+        self.host_state().connections.security_manager.set_passkey(passkey);
+        self
+    }
+
     /// Enable or disable secure connections only mode.
     ///
     /// When enabled, legacy pairing is rejected even if the `legacy-pairing` feature is compiled in.
@@ -887,6 +898,16 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
             .connections
             .security_manager
             .set_io_capabilities(io_capabilities);
+    }
+
+    /// Set a fixed passkey to use for PassKey Entry pairing (DisplayOnly).
+    ///
+    /// When set, this passkey will be displayed to the user instead of a randomly generated one.
+    ///
+    /// Set to `None` to return to random passkey generation (the default).
+    #[cfg(feature = "security")]
+    pub fn set_passkey(&self, passkey: Option<u32>) {
+        self.host_state.connections.security_manager.set_passkey(passkey);
     }
 
     /// Enable or disable secure connections only mode.

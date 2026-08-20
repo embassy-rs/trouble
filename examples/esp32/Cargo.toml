@@ -13,8 +13,8 @@ esp-alloc = { version = "0.10.0" }
 esp-println = { version = "0.17.0", features = ["log-04"] }
 esp-radio = { version = "1.0.0-beta.0", features = ["ble", "log-04", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
-trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log"] }
-trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
+trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["log", "security"] }
+trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255", "security"] }
 
 # for 'ble_bas_peripheral_bonding'
 embassy-embedded-hal = "0.6.0"
