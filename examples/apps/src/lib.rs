@@ -25,6 +25,8 @@ pub mod ble_bas_peripheral_auth;
 #[cfg(feature = "security")]
 pub mod ble_bas_peripheral_bonding;
 #[cfg(feature = "security")]
+pub mod ble_bas_peripheral_custom_pass_key;
+#[cfg(feature = "security")]
 pub mod ble_bas_peripheral_pass_key;
 #[cfg(feature = "security")]
 pub mod ble_bas_peripheral_sec;
