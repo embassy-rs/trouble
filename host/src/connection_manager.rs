@@ -902,7 +902,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         {
             for storage in self.connections.borrow().iter() {
                 match storage.state {
-                    ConnectionState::Connected if storage.handle == handle => {
+                    // Also handle SMP while the connection is still `Connecting`.
+                    // A central can send its Pairing Request as soon as the link is
+                    // up, before the peripheral has `accept()`ed the connection; if
+                    // we only match `Connected` here that packet is silently dropped
+                    // and pairing never starts.
+                    ConnectionState::Connected | ConnectionState::Connecting if storage.handle == handle => {
                         if storage.smp_timeout {
                             warn!("Ignoring security channel packet after SMP timeout");
                             return Ok(());
@@ -945,7 +950,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
             + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
     {
-        use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
+        #[cfg(feature = "central")]
+        use bt_hci::cmd::le::LeEnableEncryption;
+        use bt_hci::cmd::le::LeLongTermKeyRequestReply;
 
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
@@ -980,6 +987,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             crate::security_manager::SecurityEventData::EnableEncryption(handle, bond_info) => {
                 let role = self.connection_by_handle(handle).map(|x| x.role);
                 if let Some(role) = role {
+                    #[cfg(feature = "central")]
                     if LeConnRole::Central == role {
                         #[cfg(feature = "legacy-pairing")]
                         let (ediv, rand) = (bond_info.ediv, bond_info.rand);

@@ -4,7 +4,8 @@ use log::*;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_example_apps::{high_throughput_ble_l2cap_peripheral, BigAlloc};
-use trouble_host::prelude::{ExternalController, SerialTransport};
+use bt_hci_serial::SerialTransport;
+use trouble_host::prelude::ExternalController;
 
 #[tokio::main]
 async fn main() {

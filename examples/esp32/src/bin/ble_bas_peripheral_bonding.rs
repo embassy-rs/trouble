@@ -18,16 +18,15 @@ async fn main(_s: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     esp_alloc::heap_allocator!(size: 72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    let software_interrupt = esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
 
-    esp_rtos::start(timg0.timer0, software_interrupt.software_interrupt0);
+    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     let bluetooth = peripherals.BT;
     let connector = BleConnector::new(bluetooth, Default::default()).unwrap();
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
     let flash_storage = FlashStorage::new(peripherals.FLASH);
-    use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
+    use embedded_storage::nor_flash::NorFlash;
     let erase_size = <FlashStorage as NorFlash>::ERASE_SIZE as u32;
     let capacity = flash_storage.capacity() as u32;
     let storage_range = (capacity - erase_size * 2)..capacity;

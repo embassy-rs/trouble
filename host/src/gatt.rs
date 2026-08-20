@@ -1018,6 +1018,7 @@ impl<'lst, const MTU: usize> NotificationListener<'lst, MTU> {
 
 const MAX_NOTIF: usize = config::GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS;
 const NOTIF_QSIZE: usize = config::GATT_CLIENT_NOTIFICATION_QUEUE_SIZE;
+const NOTIF_MTU: usize = config::GATT_CLIENT_NOTIFICATION_MTU;
 
 /// BT Core Spec Vol 3, Part F, Section 3.3.3: ATT transaction timeout.
 pub(crate) const ATT_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1030,7 +1031,7 @@ pub struct GattClient<'reference, T: Controller, P: PacketPool, const MAX_SERVIC
     response_channel: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), 1>,
 
     // TODO: Wait for something like https://github.com/rust-lang/rust/issues/132980 (min_generic_const_args) to allow using P::MTU
-    notifications: PubSubChannel<NoopRawMutex, Notification<512>, NOTIF_QSIZE, MAX_NOTIF, 1>,
+    notifications: PubSubChannel<NoopRawMutex, Notification<NOTIF_MTU>, NOTIF_QSIZE, MAX_NOTIF, 1>,
 }
 
 /// A notification payload.
@@ -1837,7 +1838,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         &self,
         characteristic: &Characteristic<T>,
         indication: bool,
-    ) -> Result<NotificationListener<'_, 512>, BleHostError<C::Error>> {
+    ) -> Result<NotificationListener<'_, NOTIF_MTU>, BleHostError<C::Error>> {
         let properties = u16::to_le_bytes(if indication { 0x02 } else { 0x01 });
 
         // set the CCCD
@@ -1863,7 +1864,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     pub fn listen<T: AsGatt + ?Sized>(
         &self,
         characteristic: &Characteristic<T>,
-    ) -> Result<NotificationListener<'_, 512>, BleHostError<C::Error>> {
+    ) -> Result<NotificationListener<'_, NOTIF_MTU>, BleHostError<C::Error>> {
         match self.notifications.dyn_subscriber() {
             Ok(listener) => Ok(NotificationListener {
                 listener,
@@ -1880,7 +1881,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     ///
     /// Returns a catch-all listener that receives notifications for ALL handles.
     /// Use [`Notification::handle()`] to determine which characteristic the notification is for.
-    pub fn listen_all(&self) -> Result<NotificationListener<'_, 512>, BleHostError<C::Error>> {
+    pub fn listen_all(&self) -> Result<NotificationListener<'_, NOTIF_MTU>, BleHostError<C::Error>> {
         match self.notifications.dyn_subscriber() {
             Ok(listener) => Ok(NotificationListener { listener, handle: None }),
             Err(embassy_sync::pubsub::Error::MaximumSubscribersReached) => {
@@ -1913,8 +1914,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         let handle = value_handle;
 
-        // TODO: Wait for something like https://github.com/rust-lang/rust/issues/132980 (min_generic_const_args) to allow using P::MTU
-        let mut data = [0u8; 512];
+        // TODO: make it `P::MTU` in the future — see the note on `GattClient::notifications`.
+        let mut data = [0u8; NOTIF_MTU];
         let to_copy = data.len().min(value_attr.len());
         data[..to_copy].copy_from_slice(&value_attr[..to_copy]);
         let n = Notification {

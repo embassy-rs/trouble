@@ -29,10 +29,10 @@ Dependencies:
 [source,toml]
 ----
 [dependencies]
-bt-hci = "0.9"
-bt-hci-linux = { path = "../../bt-hci-linux" }
+bt-hci = "0.10"
+bt-hci-linux = "0.2.0"
 tokio = { version = "1", features = ["macros", "rt"] }
-trouble-host = { version = "0.6", features = ["log"] }
+trouble-host = { version = "0.8", features = ["log"] }
 ----
 
 The generic parameter on `ExternalController` (`8`) is the number of HCI command slots.

@@ -181,6 +181,21 @@ fn main() {
         writeln!(&mut data, "pub const {}: usize = {};", name, cfg.value).unwrap();
     }
 
+    // A notification holds at most `ATT_MTU - 3` bytes, and `ATT_MTU` here is `PacketPool::MTU - 4`.
+    // When the default-packet-pool-mtu-* is not set, use 512, which is the largest allowed value.
+    let pool = &configs["DEFAULT_PACKET_POOL_MTU"];
+    let notification_mtu = if pool.seen_feature || pool.seen_env {
+        pool.value.saturating_sub(7).min(512)
+    } else {
+        512
+    };
+    writeln!(
+        &mut data,
+        "pub const GATT_CLIENT_NOTIFICATION_MTU: usize = {};",
+        notification_mtu
+    )
+    .unwrap();
+
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let out_file = out_dir.join("config.rs").to_string_lossy().to_string();
     fs::write(out_file, data).unwrap();
