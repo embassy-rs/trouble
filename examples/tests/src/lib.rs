@@ -81,7 +81,8 @@ pub async fn await_test<E: Debug>(
     tokio::pin!(dut);
     tokio::pin!(other);
 
-    let result = tokio::time::timeout(Duration::from_secs(30), async {
+    // Includes flashing, the test itself and post-test cleanup (device erase).
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
         // Use select to detect DUT failure early instead of waiting for both
         loop {
             tokio::select! {
@@ -107,9 +108,11 @@ pub async fn await_test<E: Debug>(
                 }
                 other_result = &mut other => {
                     let other_result = other_result.expect("test task panicked");
-                    // Other side finished, cancel DUT and collect logs
+                    // Other side finished, cancel DUT and collect logs.
+                    // The DUT erases the device on the way out, so give it time
+                    // to finish to avoid racing the next test for the probe.
                     cancel.cancel();
-                    let dut_result = tokio::time::timeout(Duration::from_secs(5), &mut dut).await;
+                    let dut_result = tokio::time::timeout(Duration::from_secs(30), &mut dut).await;
                     if other_result.is_err() {
                         if let Ok(Ok(Ok(logs))) = &dut_result {
                             logs.print();
