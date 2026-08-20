@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-trouble-host = { path = "../../host", features = ["derive", "scan"] }
+trouble-host = { path = "../../host", default-features = false, features = ["derive", "gatt", "peripheral", "default-packet-pool"] }
 bt-hci = "0.10"
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.8" }
@@ -25,6 +25,13 @@ serde = { version = "1.0.228", default-features = false, features = ["derive"], 
 fixed = "=1.31.0"
 
 [features]
+default = ["central", "scan", "extended-advertising"]
+# Enable the central-role example apps
+central = ["trouble-host/central"]
+# Enable the scanner example app
+scan = ["central", "trouble-host/scan"]
+# Enable the extended-advertising example app
+extended-advertising = ["trouble-host/extended-advertising"]
 defmt = [
     "dep:defmt",
     "trouble-host/defmt",
