@@ -15,6 +15,19 @@ async fn ble_bas_peripheral_nrf52() {
         .await;
 }
 
+#[tokio::test]
+async fn ble_bas_peripheral_nrf54() {
+    let _ = pretty_env_logger::try_init();
+    let firmware = "bins/nrf54/ble_bas_peripheral";
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(run_bas_peripheral_test(
+            &[("target", "nrf54")],
+            firmware,
+        ))
+        .await;
+}
+
 async fn run_bas_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
     let ctx = TestContext::new();
     let central = ctx.serial_adapters[0].clone();

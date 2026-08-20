@@ -11,6 +11,14 @@
         "target": "nrf52",
         "board": "nrf52dk"
       }
+    },
+    {
+      "chip": "nRF54L15",
+      "probe": "1366:1069:001057715729",
+      "labels": {
+        "target": "nrf54",
+        "board": "nrf54dk"
+      }
     }
   ]
 }
