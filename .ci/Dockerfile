@@ -5,7 +5,7 @@ RUN apt-get update && \
     apt-get clean
 
 RUN cargo install --git https://github.com/embassy-rs/cargo-batch cargo --bin cargo-batch --locked
-RUN cargo install probe-rs-tools --git https://github.com/probe-rs/probe-rs --locked --features remote
+RUN cargo install probe-rs-tools --git https://github.com/akiles-dev/probe-rs --branch remote-cycle-power --locked --features remote
 
 FROM debian:trixie-slim
 

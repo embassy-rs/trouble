@@ -15,6 +15,19 @@ async fn ble_l2cap_peripheral_nrf52() {
         .await;
 }
 
+#[tokio::test]
+async fn ble_l2cap_peripheral_nrf54() {
+    let _ = pretty_env_logger::try_init();
+    let firmware = "bins/nrf54/ble_l2cap_peripheral";
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(run_l2cap_peripheral_test(
+            &[("target", "nrf54")],
+            firmware,
+        ))
+        .await;
+}
+
 /*#[tokio::test]
 async fn ble_l2cap_peripheral_esp32c3() {
     let _ = pretty_env_logger::try_init();

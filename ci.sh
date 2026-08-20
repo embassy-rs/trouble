@@ -41,7 +41,7 @@ cargo batch \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52833 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabi --no-default-features --features nrf52810 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52832 --artifact-dir examples/tests/bins/nrf52 \
-    --- build --release --manifest-path examples/nrf54/Cargo.toml --target thumbv8m.main-none-eabihf --features nrf54l15 \
+    --- build --release --manifest-path examples/nrf54/Cargo.toml --target thumbv8m.main-none-eabihf --features nrf54l15 --artifact-dir examples/tests/bins/nrf54 \
     --- build --release --manifest-path benchmarks/nrf-sdc/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
     --- build --release --manifest-path tester/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
     --- build --release --manifest-path examples/rp-pico-w/Cargo.toml --target thumbv6m-none-eabi --features skip-cyw43-firmware \
