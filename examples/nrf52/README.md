@@ -28,6 +28,7 @@ brew install llvm
 
 We use features to turn on the appropriate configurations for the chip you are flashing to.  Currently supported chips are:
 
+- `nrf52810`
 - `nrf52832`
 - `nrf52833`
 - `nrf52840`

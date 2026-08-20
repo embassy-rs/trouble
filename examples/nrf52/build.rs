@@ -14,13 +14,20 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn linker_data() -> &'static [u8] {
+    #[cfg(feature = "nrf52810")]
+    return include_bytes!("memory-nrf52810.x");
     #[cfg(feature = "nrf52832")]
     return include_bytes!("memory-nrf52832.x");
     #[cfg(feature = "nrf52833")]
     return include_bytes!("memory-nrf52833.x");
     #[cfg(feature = "nrf52840")]
     return include_bytes!("memory-nrf52840.x");
-    #[cfg(not(any(feature = "nrf52832", feature = "nrf52833", feature = "nrf52840")))]
+    #[cfg(not(any(
+        feature = "nrf52810",
+        feature = "nrf52832",
+        feature = "nrf52833",
+        feature = "nrf52840"
+    )))]
     unimplemented!("must select a target")
 }
 

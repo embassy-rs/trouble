@@ -49,6 +49,16 @@ nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1a6e661155cd
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "1a6e661155cdd1d6a86f3ae7b7fb117343781533"}
 
 [features]
+# The nRF52810 only has 24K of RAM, so the default packet pool and L2CAP queues
+# have to be scaled down to leave room for the SoftDevice Controller.
+nrf52810 = [
+    "embassy-nrf/nrf52810",
+    "nrf-sdc/nrf52810",
+    "trouble-host/l2cap-rx-queue-size-4",
+    "trouble-host/l2cap-tx-queue-size-4",
+    "trouble-host/default-packet-pool-mtu-128",
+    "trouble-host/default-packet-pool-size-8",
+]
 nrf52832 = [
     "embassy-nrf/nrf52832",
     "nrf-sdc/nrf52832",

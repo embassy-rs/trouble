@@ -1,0 +1,10 @@
+MEMORY
+{
+  /* NOTE 1 K = 1 KiBi = 1024 bytes */
+  FLASH   : ORIGIN = 0x00000000, LENGTH = 192K - 8K
+  STORAGE : ORIGIN = 0x0002E000, LENGTH = 8K
+  RAM     : ORIGIN = 0x20000000, LENGTH = 24K
+}
+
+__storage_start = ORIGIN(STORAGE);
+__storage_end = ORIGIN(STORAGE) + LENGTH(STORAGE);
