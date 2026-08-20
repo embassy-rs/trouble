@@ -34,4 +34,4 @@ anyhow = "1"
 tempfile = "3.15"
 
 [patch.crates-io]
-hilbench-agent = { git = "https://github.com/lulf/hilbench.git", rev = "eb395d854bb6aa9ce8ba0b70c1fab4bc784ddf2f" }
+hilbench-agent = { git = "https://github.com/lulf/hilbench.git", rev = "f45627c9df1af76efa231e15f824dc23894a0cd4" }

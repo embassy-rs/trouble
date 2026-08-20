@@ -44,7 +44,13 @@ impl DeviceUnderTest {
                         MAX_FLASH_ATTEMPTS,
                         e
                     );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    // Power cycle the probe to recover from wedged probe/USB state.
+                    // cycle_power waits for the probe to re-enumerate, so only
+                    // sleep if it failed.
+                    if let Err(e) = self.target.cycle_power(self.server.as_ref()).await {
+                        log::warn!("Power cycle failed: {}", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    }
                 }
             }
         }
