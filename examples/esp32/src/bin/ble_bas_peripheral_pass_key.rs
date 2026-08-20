@@ -16,6 +16,9 @@ async fn main(_s: Spawner) {
     esp_println::logger::init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     esp_alloc::heap_allocator!(size: 72 * 1024);
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+
+    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     let bluetooth = peripherals.BT;
     let connector = BleConnector::new(bluetooth, Default::default()).unwrap();
