@@ -239,6 +239,18 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                         entry.params.supervision_timeout = supervision_timeout;
                         entry.subrating_params = Self::subrating(subrate_factor, continuation_number);
                     }
+                    ConnectionEvent::ConnectionRateChanged {
+                        conn_interval,
+                        subrate_factor,
+                        peripheral_latency,
+                        continuation_number,
+                        supervision_timeout,
+                    } => {
+                        entry.params.conn_interval = conn_interval;
+                        entry.params.peripheral_latency = peripheral_latency;
+                        entry.params.supervision_timeout = supervision_timeout;
+                        entry.subrating_params = Self::subrating(subrate_factor, continuation_number);
+                    }
                     _ => {}
                 }
 
@@ -1563,6 +1575,50 @@ pub(crate) mod tests {
         );
 
         handle.disconnect();
+    }
+
+    #[test]
+    fn subrating_tracks_connection_rate_changes() {
+        let mgr = setup();
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        assert_eq!(conn.subrating_params(), None);
+
+        let rate_change = |subrate_factor| ConnectionEvent::ConnectionRateChanged {
+            conn_interval: Duration::from_micros(7_500),
+            subrate_factor,
+            peripheral_latency: 2,
+            continuation_number: 1,
+            supervision_timeout: Duration::from_millis(4_000),
+        };
+
+        unwrap!(mgr.post_handle_event(ConnHandle::new(0), rate_change(4)));
+        block_on(mgr.next(0));
+
+        assert_eq!(
+            conn.subrating_params(),
+            Some(SubratingParams {
+                subrate_factor: 4,
+                continuation_number: 1,
+            })
+        );
+        // Unlike the subrate procedure, this one also sets the connection interval.
+        assert_eq!(conn.params().conn_interval, Duration::from_micros(7_500));
+        assert_eq!(conn.params().peripheral_latency, 2);
+        assert_eq!(conn.params().supervision_timeout, Duration::from_millis(4_000));
+
+        // A subrate factor of 1 means the connection is no longer subrated.
+        unwrap!(mgr.post_handle_event(ConnHandle::new(0), rate_change(1)));
+        block_on(mgr.next(0));
+        assert_eq!(conn.subrating_params(), None);
     }
 
     #[test]

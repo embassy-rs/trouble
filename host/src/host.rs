@@ -1777,7 +1777,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             .enable_le_long_term_key_request(true)
             .enable_le_phy_update_complete(true)
             .enable_le_data_length_change(true)
-            .enable_le_subrate_change(true);
+            .enable_le_subrate_change(true)
+            .enable_le_connection_rate_change(true);
 
         #[cfg(feature = "iso")]
         let mask = mask.enable_le_cis_established_v1(true).enable_le_cis_request(true);
