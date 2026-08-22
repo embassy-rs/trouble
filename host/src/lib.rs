@@ -516,6 +516,7 @@ pub trait Controller:
     + ControllerCmdSync<SetEventMask>
     + ControllerCmdSync<SetEventMaskPage2>
     + ControllerCmdSync<LeSetEventMask>
+    + ControllerCmdSync<LeSetHostFeature>
     + ControllerCmdSync<LeSetRandomAddr>
     + ControllerCmdSync<HostBufferSize>
     + ControllerCmdAsync<LeConnUpdate>
@@ -550,6 +551,7 @@ impl<
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<LeSetHostFeature>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdAsync<LeConnUpdate>
