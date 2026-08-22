@@ -20,7 +20,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::le::{
     LeConnUpdate, LeCreateConnCancel, LeReadBufferSize, LeReadFilterAcceptListSize, LeSetAdvEnable, LeSetEventMask,
-    LeSetExtAdvEnable, LeSetExtScanEnable, LeSetRandomAddr, LeSetScanEnable,
+    LeSetExtAdvEnable, LeSetExtScanEnable, LeSetHostFeature, LeSetRandomAddr, LeSetScanEnable,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::cmd::{self, AsyncCmd, SyncCmd};
@@ -1258,6 +1258,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<LeSetHostFeature>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdAsync<LeConnUpdate>
@@ -1286,6 +1287,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<LeSetHostFeature>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<LeReadFilterAcceptListSize>
             + ControllerCmdSync<HostBufferSize>
@@ -1692,6 +1694,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>
+            + ControllerCmdSync<LeSetHostFeature>
             + ControllerCmdSync<LeSetRandomAddr>
             + ControllerCmdSync<HostBufferSize>
             + ControllerCmdAsync<LeConnUpdate>
@@ -1783,6 +1786,24 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         let mask = mask.enable_le_remote_conn_parameter_request(true);
 
         LeSetEventMask::new(mask).exec(host.controller).await?;
+
+        // Without the Connection Subrating (Host Support) bit set, a peer central is not allowed to
+        // start the Connection Subrate Update procedure on us.
+        #[cfg(feature = "subrating")]
+        {
+            const LE_FEATURE_CONN_SUBRATING_HOST: u8 = 38;
+            if let Err(e) = LeSetHostFeature::new(LE_FEATURE_CONN_SUBRATING_HOST, 1)
+                .exec(host.controller)
+                .await
+            {
+                match e {
+                    cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD) => {
+                        warn!("[host] connection subrating is not supported")
+                    }
+                    e => Err(e)?,
+                }
+            }
+        }
 
         info!(
             "[host] using packet pool with MTU {} capacity {}",
