@@ -164,6 +164,16 @@ pub struct ConnParams {
     pub supervision_timeout: Duration,
 }
 
+/// Connection subrating parameters
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SubratingParams {
+    /// Subrate factor: only every `subrate_factor`-th connection event is used.
+    pub subrate_factor: u16,
+    /// Number of connection events to stay awake for after a non-empty packet.
+    pub continuation_number: u16,
+}
+
 /// Connection rate parameters.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -210,6 +220,17 @@ pub enum ConnectionEvent {
         conn_interval: Duration,
         /// Peripheral latency.
         peripheral_latency: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
+    },
+    /// The subrating was updated for this connection.
+    SubratingParamsUpdated {
+        /// Subrate factor: only every `subrate_factor`-th connection event is used.
+        subrate_factor: u16,
+        /// Peripheral latency, in subrated connection events.
+        peripheral_latency: u16,
+        /// Number of connection events to stay awake for after a non-empty packet.
+        continuation_number: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
     },
@@ -645,6 +666,12 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// The current connection params
     pub fn params(&self) -> ConnParams {
         self.manager.params(self.index)
+    }
+
+    /// The subrating currently in effect, or `None` if the connection is not subrated.
+    #[cfg(feature = "subrating")]
+    pub fn subrating_params(&self) -> Option<SubratingParams> {
+        self.manager.subrating_params(self.index)
     }
 
     /// Request a certain security level

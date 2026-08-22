@@ -13,6 +13,8 @@ use bt_hci::cmd::controller_baseband::{
     SetEventMaskPage2,
 };
 use bt_hci::cmd::info::ReadBdAddr;
+#[cfg(feature = "subrating")]
+use bt_hci::cmd::le::LeSetHostFeature;
 #[cfg(feature = "security")]
 use bt_hci::cmd::le::{
     LeAddDeviceToResolvingList, LeClearResolvingList, LeRand, LeRemoveDeviceFromResolvingList,
@@ -32,6 +34,8 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeAdvertisingReport;
 #[cfg(feature = "scan")]
 use bt_hci::event::le::LeExtendedAdvertisingReport;
+#[cfg(feature = "subrating")]
+use bt_hci::event::le::LeSubrateChange;
 use bt_hci::event::le::{
     LeAdvertisingSetTerminated, LeConnectionComplete, LeConnectionRateChange, LeConnectionUpdateComplete,
     LeDataLengthChange, LeEnhancedConnectionComplete, LeEventKind, LeEventPacket, LeFrameSpaceUpdateComplete,
@@ -1272,7 +1276,8 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<ReadBdAddr>
-            + crate::SecurityCmds,
+            + crate::SecurityCmds
+            + crate::SubratingCmds,
         C::Error: crate::fmt::Format,
     {
         let dummy = DummyHandler;
@@ -1300,7 +1305,8 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<LeCreateConnCancel>
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<ReadBdAddr>
-            + crate::SecurityCmds,
+            + crate::SecurityCmds
+            + crate::SubratingCmds,
         C::Error: crate::fmt::Format,
     {
         let control_fut = self.control.run();
@@ -1530,6 +1536,25 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         );
                                     }
                                 }
+                                #[cfg(feature = "subrating")]
+                                LeEventKind::LeSubrateChange => {
+                                    let event = unwrap!(LeSubrateChange::from_hci_bytes_complete(event.data));
+                                    if let Err(e) = event.status.to_result() {
+                                        warn!("[host] error in subrate change for {:?}: {:?}", event.handle, e);
+                                    } else {
+                                        let _ = host.state.connections.post_handle_event(
+                                            event.handle,
+                                            ConnectionEvent::SubratingParamsUpdated {
+                                                subrate_factor: event.subrate_factor,
+                                                peripheral_latency: event.peripheral_latency,
+                                                continuation_number: event.continuation_number,
+                                                supervision_timeout: Duration::from_micros(
+                                                    event.supervision_timeout.as_micros(),
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
                                 LeEventKind::LeConnectionRateChange => {
                                     let event = unwrap!(LeConnectionRateChange::from_hci_bytes_complete(event.data));
                                     if let Err(e) = event.status.to_result() {
@@ -1688,7 +1713,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + for<'t> ControllerCmdSync<HostNumberOfCompletedPackets<'t>>
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<ReadBdAddr>
-            + crate::SecurityCmds,
+            + crate::SecurityCmds
+            + crate::SubratingCmds,
         C::Error: crate::fmt::Format,
     {
         let host = &self.host;
@@ -1757,6 +1783,9 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             .enable_le_phy_update_complete(true)
             .enable_le_data_length_change(true);
 
+        #[cfg(feature = "subrating")]
+        let mask = mask.enable_le_subrate_change(true);
+
         #[cfg(feature = "iso")]
         let mask = mask.enable_le_cis_established_v1(true).enable_le_cis_request(true);
 
@@ -1764,6 +1793,24 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         let mask = mask.enable_le_remote_conn_parameter_request(true);
 
         LeSetEventMask::new(mask).exec(host.controller).await?;
+
+        // Without the Connection Subrating (Host Support) bit set, a peer central is not allowed to
+        // start the Connection Subrate Update procedure on us.
+        #[cfg(feature = "subrating")]
+        {
+            const LE_FEATURE_CONN_SUBRATING_HOST: u8 = 38;
+            if let Err(e) = LeSetHostFeature::new(LE_FEATURE_CONN_SUBRATING_HOST, 1)
+                .exec(host.controller)
+                .await
+            {
+                match e {
+                    cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD) => {
+                        warn!("[host] connection subrating is not supported")
+                    }
+                    e => Err(e)?,
+                }
+            }
+        }
 
         info!(
             "[host] using packet pool with MTU {} capacity {}",

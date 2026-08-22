@@ -505,6 +505,20 @@ pub trait SecurityCmds: bt_hci::controller::Controller {}
 #[cfg(not(feature = "security"))]
 impl<C: bt_hci::controller::Controller> SecurityCmds for C {}
 
+/// Auto-implemented when the `subrating` feature is enabled.
+#[cfg(feature = "subrating")]
+pub trait SubratingCmds: bt_hci::controller::Controller + ControllerCmdSync<LeSetHostFeature> {}
+
+#[cfg(feature = "subrating")]
+impl<C: bt_hci::controller::Controller + ControllerCmdSync<LeSetHostFeature>> SubratingCmds for C {}
+
+/// Auto-implemented when subrating is not enabled.
+#[cfg(not(feature = "subrating"))]
+pub trait SubratingCmds: bt_hci::controller::Controller {}
+
+#[cfg(not(feature = "subrating"))]
+impl<C: bt_hci::controller::Controller> SubratingCmds for C {}
+
 /// Trait that defines the controller implementation required by the host.
 ///
 /// The controller must implement the required commands and events to be able to be used with Trouble.
@@ -539,6 +553,7 @@ pub trait Controller:
     + for<'t> ControllerCmdSync<LeSetScanResponseData>
     + ControllerCmdSync<ReadBdAddr>
     + SecurityCmds
+    + SubratingCmds
 {
 }
 
@@ -572,7 +587,8 @@ impl<
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetScanResponseData>
             + ControllerCmdSync<ReadBdAddr>
-            + SecurityCmds,
+            + SecurityCmds
+            + SubratingCmds,
     > Controller for C
 {
 }
