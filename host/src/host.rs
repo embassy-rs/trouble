@@ -35,7 +35,7 @@ use bt_hci::event::le::LeExtendedAdvertisingReport;
 use bt_hci::event::le::{
     LeAdvertisingSetTerminated, LeConnectionComplete, LeConnectionRateChange, LeConnectionUpdateComplete,
     LeDataLengthChange, LeEnhancedConnectionComplete, LeEventKind, LeEventPacket, LeFrameSpaceUpdateComplete,
-    LePhyUpdateComplete, LeRemoteConnectionParameterRequest,
+    LePhyUpdateComplete, LeRemoteConnectionParameterRequest, LeSubrateChange,
 };
 #[cfg(feature = "iso")]
 use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
@@ -1530,6 +1530,24 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         );
                                     }
                                 }
+                                LeEventKind::LeSubrateChange => {
+                                    let event = unwrap!(LeSubrateChange::from_hci_bytes_complete(event.data));
+                                    if let Err(e) = event.status.to_result() {
+                                        warn!("[host] error in subrate change for {:?}: {:?}", event.handle, e);
+                                    } else {
+                                        let _ = host.state.connections.post_handle_event(
+                                            event.handle,
+                                            ConnectionEvent::SubrateParamsUpdated {
+                                                subrate_factor: event.subrate_factor,
+                                                peripheral_latency: event.peripheral_latency,
+                                                continuation_number: event.continuation_number,
+                                                supervision_timeout: Duration::from_micros(
+                                                    event.supervision_timeout.as_micros(),
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
                                 LeEventKind::LeConnectionRateChange => {
                                     let event = unwrap!(LeConnectionRateChange::from_hci_bytes_complete(event.data));
                                     if let Err(e) = event.status.to_result() {
@@ -1755,7 +1773,8 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             .enable_le_ext_adv_report(true)
             .enable_le_long_term_key_request(true)
             .enable_le_phy_update_complete(true)
-            .enable_le_data_length_change(true);
+            .enable_le_data_length_change(true)
+            .enable_le_subrate_change(true);
 
         #[cfg(feature = "iso")]
         let mask = mask.enable_le_cis_established_v1(true).enable_le_cis_request(true);

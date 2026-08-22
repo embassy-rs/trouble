@@ -201,17 +201,26 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEvent) -> Result<(), Error> {
         for entry in self.connections.borrow_mut().iter_mut() {
             if entry.state == ConnectionState::Connected && handle == entry.handle {
-                if let ConnectionEvent::ConnectionParamsUpdated {
-                    conn_interval,
-                    peripheral_latency,
-                    supervision_timeout,
-                } = event
-                {
-                    entry.params = ConnParams {
+                match event {
+                    ConnectionEvent::ConnectionParamsUpdated {
                         conn_interval,
                         peripheral_latency,
                         supervision_timeout,
+                    } => {
+                        entry.params = ConnParams {
+                            conn_interval,
+                            peripheral_latency,
+                            supervision_timeout,
+                        }
                     }
+                    // The peripheral latency the subrate procedure reports counts subrated events,
+                    // which ConnParams cannot express.
+                    ConnectionEvent::SubrateParamsUpdated {
+                        supervision_timeout, ..
+                    } => {
+                        entry.params.supervision_timeout = supervision_timeout;
+                    }
+                    _ => {}
                 }
 
                 entry.events.try_send(event).map_err(|_| Error::OutOfMemory)?;

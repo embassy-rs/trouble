@@ -213,6 +213,20 @@ pub enum ConnectionEvent {
         /// Supervision timeout.
         supervision_timeout: Duration,
     },
+    /// The subrating was updated for this connection.
+    ///
+    /// The connection interval is left alone by the subrate procedure, only some of its connection
+    /// events are used from now on.
+    SubrateParamsUpdated {
+        /// Subrate factor: only every `subrate_factor`-th connection event is used.
+        subrate_factor: u16,
+        /// Peripheral latency, in subrated connection events.
+        peripheral_latency: u16,
+        /// Number of underlying connection events to stay awake for after a non-empty packet.
+        continuation_number: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
+    },
     /// The data length was changed for this connection.
     DataLengthUpdated {
         /// Max TX octets.
