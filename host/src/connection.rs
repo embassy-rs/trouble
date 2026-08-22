@@ -159,9 +159,28 @@ pub struct ConnParams {
     /// Connection interval.
     pub conn_interval: Duration,
     /// Peripheral latency.
+    ///
+    /// Counted in subrated connection events while the connection is subrated (see
+    /// [`Connection::subrating_params`]), in connection events otherwise.
     pub peripheral_latency: u16,
     /// Supervision timeout.
     pub supervision_timeout: Duration,
+}
+
+/// Connection subrating currently in effect.
+///
+/// Subrating leaves the underlying connection alone and instead has both sides skip connection
+/// events, so this describes [`ConnParams`] rather than replacing it: the peer is only listening
+/// every `conn_interval * subrate_factor`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SubratingParams {
+    /// Subrate factor: only every `subrate_factor`-th connection event is used.
+    pub subrate_factor: u16,
+    /// Number of underlying connection events the peripheral stays awake for after exchanging a
+    /// non-empty packet. Counted in connection events, not subrated ones, and always less than
+    /// `subrate_factor`.
+    pub continuation_number: u16,
 }
 
 /// Connection rate parameters.
@@ -657,8 +676,16 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 
     /// The current connection params
+    ///
+    /// These always describe the underlying connection. When subrating is active the connection
+    /// events are not all used; see [`Connection::subrating_params`].
     pub fn params(&self) -> ConnParams {
         self.manager.params(self.index)
+    }
+
+    /// The subrating currently in effect, or `None` if the connection is not subrated.
+    pub fn subrating_params(&self) -> Option<SubratingParams> {
+        self.manager.subrating_params(self.index)
     }
 
     /// Request a certain security level
