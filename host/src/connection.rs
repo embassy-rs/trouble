@@ -2,7 +2,7 @@
 
 use bt_hci::cmd::le::{
     LeConnUpdate, LeConnectionRateRequest, LeFrameSpaceUpdate, LeReadLocalSupportedFeatures, LeReadPhy,
-    LeSetDataLength, LeSetPhy,
+    LeSetDataLength, LeSetPhy, LeSubrateRequest,
 };
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -1017,6 +1017,47 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                 timeout,
                 min_ce,
                 max_ce,
+            ))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                Err(crate::Error::Disconnected.into())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Request a change to the subrating of this connection.
+    ///
+    /// May be used by both a central and a peripheral. The outcome is reported as a
+    /// [`ConnectionEvent::ConnectionRateChanged`], and is not necessarily what was asked for.
+    ///
+    /// `max_latency` is the maximum peripheral latency in subrated connection events, and applies
+    /// whichever subrate factor ends up being picked. `continuation_number` must be less than
+    /// `subrate_max`, and `supervision_timeout` must be greater than
+    /// `2 * conn_interval * subrate_max * (max_latency + 1)`.
+    pub async fn request_subrate<T>(
+        &self,
+        stack: &Stack<'_, T, P>,
+        subrate_min: u16,
+        subrate_max: u16,
+        max_latency: u16,
+        continuation_number: u16,
+        supervision_timeout: Duration,
+    ) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdAsync<LeSubrateRequest>,
+    {
+        match stack
+            .host()
+            .async_command(LeSubrateRequest::new(
+                self.handle(),
+                subrate_min,
+                subrate_max,
+                max_latency,
+                continuation_number,
+                bt_hci_duration(supervision_timeout),
             ))
             .await
         {
