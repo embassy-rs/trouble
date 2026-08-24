@@ -111,6 +111,9 @@ connection-params-update = []
 # Enable Connection Subrating host support.
 subrating = []
 
+# Enable Shorter Connection Intervals
+shorter-connection-intervals = []
+
 # Allow L2CAP SPSU values that are reserved for future use
 allow-reserved-l2cap-psu = []
 

@@ -10,6 +10,8 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 
 use advertise::AdvertisementDataError;
 use bt_hci::cmd::le::LeReadMinimumSupportedConnectionInterval;
+#[cfg(feature = "shorter-connection-intervals")]
+use bt_hci::cmd::le::LeSetHostFeatureV2;
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle};
@@ -505,6 +507,20 @@ pub trait SecurityCmds: bt_hci::controller::Controller {}
 #[cfg(not(feature = "security"))]
 impl<C: bt_hci::controller::Controller> SecurityCmds for C {}
 
+/// Auto-implemented when the `iso` feature is enabled.
+#[cfg(feature = "iso")]
+pub trait IsoStreamCmds: bt_hci::controller::Controller + ControllerCmdSync<LeSetHostFeature> {}
+
+#[cfg(feature = "iso")]
+impl<C: bt_hci::controller::Controller + ControllerCmdSync<LeSetHostFeature>> IsoStreamCmds for C {}
+
+/// Auto-implemented when `iso` is not enabled.
+#[cfg(not(feature = "iso"))]
+pub trait IsoStreamCmds: bt_hci::controller::Controller {}
+
+#[cfg(not(feature = "iso"))]
+impl<C: bt_hci::controller::Controller> IsoStreamCmds for C {}
+
 /// Auto-implemented when the `subrating` feature is enabled.
 #[cfg(feature = "subrating")]
 pub trait SubratingCmds: bt_hci::controller::Controller + ControllerCmdSync<LeSetHostFeature> {}
@@ -518,6 +534,20 @@ pub trait SubratingCmds: bt_hci::controller::Controller {}
 
 #[cfg(not(feature = "subrating"))]
 impl<C: bt_hci::controller::Controller> SubratingCmds for C {}
+
+/// Auto-implemented when `shorter-connection-intervals` isenabled.
+#[cfg(feature = "shorter-connection-intervals")]
+pub trait ShortConnIntervalCmds: bt_hci::controller::Controller + ControllerCmdSync<LeSetHostFeatureV2> {}
+
+#[cfg(feature = "shorter-connection-intervals")]
+impl<C: bt_hci::controller::Controller + ControllerCmdSync<LeSetHostFeatureV2>> ShortConnIntervalCmds for C {}
+
+/// Auto-implemented when `shorter-connection-intervals` is not enabled.
+#[cfg(not(feature = "shorter-connection-intervals"))]
+pub trait ShortConnIntervalCmds: bt_hci::controller::Controller {}
+
+#[cfg(not(feature = "shorter-connection-intervals"))]
+impl<C: bt_hci::controller::Controller> ShortConnIntervalCmds for C {}
 
 /// Trait that defines the controller implementation required by the host.
 ///
@@ -554,6 +584,8 @@ pub trait Controller:
     + ControllerCmdSync<ReadBdAddr>
     + SecurityCmds
     + SubratingCmds
+    + IsoStreamCmds
+    + ShortConnIntervalCmds
 {
 }
 
@@ -588,7 +620,9 @@ impl<
             + for<'t> ControllerCmdSync<LeSetScanResponseData>
             + ControllerCmdSync<ReadBdAddr>
             + SecurityCmds
-            + SubratingCmds,
+            + SubratingCmds
+            + IsoStreamCmds
+            + ShortConnIntervalCmds,
     > Controller for C
 {
 }

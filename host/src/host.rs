@@ -15,6 +15,8 @@ use bt_hci::cmd::controller_baseband::{
 use bt_hci::cmd::info::ReadBdAddr;
 #[cfg(feature = "subrating")]
 use bt_hci::cmd::le::LeSetHostFeature;
+#[cfg(feature = "shorter-connection-intervals")]
+use bt_hci::cmd::le::LeSetHostFeatureV2;
 #[cfg(feature = "security")]
 use bt_hci::cmd::le::{
     LeAddDeviceToResolvingList, LeClearResolvingList, LeRand, LeRemoveDeviceFromResolvingList,
@@ -1277,7 +1279,9 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<ReadBdAddr>
             + crate::SecurityCmds
-            + crate::SubratingCmds,
+            + crate::IsoStreamCmds
+            + crate::SubratingCmds
+            + crate::ShortConnIntervalCmds,
         C::Error: crate::fmt::Format,
     {
         let dummy = DummyHandler;
@@ -1306,7 +1310,9 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<ReadBdAddr>
             + crate::SecurityCmds
-            + crate::SubratingCmds,
+            + crate::IsoStreamCmds
+            + crate::SubratingCmds
+            + crate::ShortConnIntervalCmds,
         C::Error: crate::fmt::Format,
     {
         let control_fut = self.control.run();
@@ -1714,7 +1720,9 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             + ControllerCmdSync<LeReadBufferSize>
             + ControllerCmdSync<ReadBdAddr>
             + crate::SecurityCmds
-            + crate::SubratingCmds,
+            + crate::IsoStreamCmds
+            + crate::SubratingCmds
+            + crate::ShortConnIntervalCmds,
         C::Error: crate::fmt::Format,
     {
         let host = &self.host;
@@ -1792,7 +1800,28 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         #[cfg(feature = "connection-params-update")]
         let mask = mask.enable_le_remote_conn_parameter_request(true);
 
+        #[cfg(feature = "shorter-connection-intervals")]
+        let mask = mask.enable_le_connection_rate_change(true);
+
         LeSetEventMask::new(mask).exec(host.controller).await?;
+
+        // Without the Connection Isochronous Stream (Host Support) bit set, a peer central is not allowed to
+        // create or accept a CIS.
+        #[cfg(feature = "iso")]
+        {
+            const LE_FEATURE_CIS_HOST: u8 = 32;
+            if let Err(e) = LeSetHostFeature::new(LE_FEATURE_CIS_HOST, 1)
+                .exec(host.controller)
+                .await
+            {
+                match e {
+                    cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD) => {
+                        warn!("[host] connection isochronous streams are not supported")
+                    }
+                    e => Err(e)?,
+                }
+            }
+        }
 
         // Without the Connection Subrating (Host Support) bit set, a peer central is not allowed to
         // start the Connection Subrate Update procedure on us.
@@ -1806,6 +1835,24 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 match e {
                     cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD) => {
                         warn!("[host] connection subrating is not supported")
+                    }
+                    e => Err(e)?,
+                }
+            }
+        }
+
+        // Without the Shorter Connection Intervals (Host Support) bit set, a peer central is not allowed to
+        // start the Connection Rate Change procedure on us.
+        #[cfg(feature = "shorter-connection-intervals")]
+        {
+            const LE_FEATURE_SHORTER_CONNECTION_INTERVALS_HOST: u16 = 73;
+            if let Err(e) = LeSetHostFeatureV2::new(LE_FEATURE_SHORTER_CONNECTION_INTERVALS_HOST, 1)
+                .exec(host.controller)
+                .await
+            {
+                match e {
+                    cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED | bt_hci::param::Error::UNKNOWN_CMD) => {
+                        warn!("[host] shorter connection intervals are not supported")
                     }
                     e => Err(e)?,
                 }
