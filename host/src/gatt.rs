@@ -60,6 +60,17 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         /// Supervision timeout.
         supervision_timeout: Duration,
     },
+    /// The subrating was updated for this connection.
+    SubratingParamsUpdated {
+        /// Subrate factor: only every `subrate_factor`-th connection event is used.
+        subrate_factor: u16,
+        /// Peripheral latency, in subrated connection events.
+        peripheral_latency: u16,
+        /// Number of underlying connection events to stay awake for after a non-empty packet.
+        continuation_number: u16,
+        /// Supervision timeout.
+        supervision_timeout: Duration,
+    },
     /// A request to change the connection parameters.
     ///
     /// [`ConnectionParamsRequest::accept()`] or [`ConnectionParamsRequest::reject()`]
@@ -208,6 +219,17 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                 } => GattConnectionEvent::ConnectionParamsUpdated {
                     conn_interval,
                     peripheral_latency,
+                    supervision_timeout,
+                },
+                ConnectionEvent::SubratingParamsUpdated {
+                    subrate_factor,
+                    peripheral_latency,
+                    continuation_number,
+                    supervision_timeout,
+                } => GattConnectionEvent::SubratingParamsUpdated {
+                    subrate_factor,
+                    peripheral_latency,
+                    continuation_number,
                     supervision_timeout,
                 },
                 ConnectionEvent::RequestConnectionParams(req) => GattConnectionEvent::RequestConnectionParams(req),

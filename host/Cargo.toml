@@ -108,6 +108,9 @@ l2cap-sdu-reassembly-optimization = []
 # Enable Connection Parameters Request procedure ([Vol 6] Part B, Section 5.1.7) support.
 connection-params-update = []
 
+# Enable Connection Subrating host support.
+subrating = []
+
 # Allow L2CAP SPSU values that are reserved for future use
 allow-reserved-l2cap-psu = []
 
