@@ -125,7 +125,8 @@ impl DeviceUnderTest {
                 .arg("--chip")
                 .arg(&self.target.config().chip)
                 .arg("--probe")
-                .arg(&self.target.config().probe);
+                .arg(&self.target.config().probe)
+                .arg("--allow-erase-all");
 
             if let Some(server) = self.server.as_ref() {
                 cmd.arg("--host").arg(&server.url);
