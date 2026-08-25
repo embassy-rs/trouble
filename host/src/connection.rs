@@ -1,5 +1,7 @@
 //! BLE connection.
 
+#[cfg(feature = "subrating")]
+use bt_hci::cmd::le::LeSubrateRequest;
 use bt_hci::cmd::le::{
     LeConnUpdate, LeConnectionRateRequest, LeFrameSpaceUpdate, LeReadLocalSupportedFeatures, LeReadPhy,
     LeSetDataLength, LeSetPhy,
@@ -964,6 +966,47 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                 frame_space_max_dur,
                 phys,
                 spacing_types,
+            ))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                Err(crate::Error::Disconnected.into())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Request a change in connection subrate for this connection.
+    ///
+    /// Uses the LE Subrate Request HCI command (0x007e), which may be issued by both the
+    /// central and the peripheral, unlike [`request_connection_rate`][Self::request_connection_rate]
+    /// which is central-only. The subrate change takes effect within a few base connection
+    /// intervals, much faster than a full connection parameter update.
+    ///
+    /// Requires the `subrating` feature.
+    #[cfg(feature = "subrating")]
+    pub async fn request_conn_subrate<T>(
+        &self,
+        stack: &Stack<'_, T, P>,
+        subrate_min: u16,
+        subrate_max: u16,
+        max_latency: u16,
+        continuation_number: u16,
+        supervision_timeout: Duration,
+    ) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdAsync<LeSubrateRequest>,
+    {
+        match stack
+            .host()
+            .async_command(LeSubrateRequest::new(
+                self.handle(),
+                subrate_min,
+                subrate_max,
+                max_latency,
+                continuation_number,
+                bt_hci_duration(supervision_timeout),
             ))
             .await
         {
