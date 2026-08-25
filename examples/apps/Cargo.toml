@@ -50,3 +50,4 @@ security = [
     "dep:serde"
 ]
 std = []
+subrating = ["trouble-host/subrating"]

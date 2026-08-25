@@ -90,6 +90,10 @@ nrf52840 = [
 security = [
     "trouble-example-apps/security",
 ]
+subrating = [
+    "trouble-host/subrating",
+    "trouble-example-apps/subrating",
+]
 
 [[bin]]
 name = "ble_advertise_multiple"
@@ -138,3 +142,11 @@ required-features = ["security", "nrf52840", "central"]
 [[bin]]
 name = "ble_bas_peripheral_bonding"
 required-features = ["security", "nrf52840"]
+
+[[bin]]
+name = "ble_subrate_central"
+required-features = ["subrating", "central"]
+
+[[bin]]
+name = "ble_subrate_peripheral"
+required-features = ["subrating"]
