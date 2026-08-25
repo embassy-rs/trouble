@@ -33,7 +33,10 @@ impl DeviceUnderTest {
         const MAX_FLASH_ATTEMPTS: usize = 5;
         for attempt in 1..=MAX_FLASH_ATTEMPTS {
             match self.try_run(&firmware).await {
-                Ok(logs) => return Ok(logs),
+                Ok(logs) => {
+                    self.erase().await;
+                    return Ok(logs);
+                }
                 Err(e) => {
                     if attempt == MAX_FLASH_ATTEMPTS || self.token.is_cancelled() {
                         return Err(e);
@@ -44,11 +47,63 @@ impl DeviceUnderTest {
                         MAX_FLASH_ATTEMPTS,
                         e
                     );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    // Power cycle the probe to recover from wedged probe/USB state.
+                    // cycle_power waits for the probe to re-enumerate, so only
+                    // sleep if it failed.
+                    if let Err(e) = self.target.cycle_power(self.server.as_ref()).await {
+                        log::warn!("Power cycle failed: {}", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    }
                 }
             }
         }
         unreachable!()
+    }
+
+    /// Erase the target after a test so the test program cannot interfere
+    /// with (or false-pass) the next test that uses this device.
+    async fn erase(&self) {
+        const MAX_ERASE_ATTEMPTS: usize = 3;
+        if self.target.config().chip.starts_with("esp32") {
+            // espflash has no equivalent erase flow wired up here.
+            return;
+        }
+        for attempt in 1..=MAX_ERASE_ATTEMPTS {
+            let mut cmd = Command::new("probe-rs");
+            cmd.arg("erase")
+                .arg("--chip")
+                .arg(&self.target.config().chip)
+                .arg("--probe")
+                .arg(&self.target.config().probe)
+                .arg("--allow-erase-all");
+            if let Some(server) = self.server.as_ref() {
+                cmd.arg("--host").arg(&server.url);
+                cmd.arg("--token").arg(&server.token);
+            }
+
+            match cmd.output().await {
+                Ok(output) if output.status.success() => {
+                    log::info!("Erased target probe={}", self.target.config().probe);
+                    return;
+                }
+                Ok(output) => {
+                    log::warn!(
+                        "Erase attempt {}/{} failed: {}",
+                        attempt,
+                        MAX_ERASE_ATTEMPTS,
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    );
+                }
+                Err(e) => {
+                    log::warn!("Erase attempt {}/{} failed: {}", attempt, MAX_ERASE_ATTEMPTS, e);
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+        log::warn!(
+            "Giving up erasing target probe={}, leftover firmware may remain",
+            self.target.config().probe
+        );
     }
 
     async fn try_run(&self, firmware: &str) -> Result<FirmwareLogs, anyhow::Error> {
