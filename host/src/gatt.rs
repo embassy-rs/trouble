@@ -554,7 +554,7 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
         // packet-pool buffer and then post-hoc truncated, which can split an
         // entry in half and produce a malformed PDU.
         let mtu = self.data.connection.get_att_mtu() as usize;
-        let len = payload.len().saturating_sub(offset).min(mtu - 1);
+        let len = data.as_gatt().len().saturating_sub(offset).min(mtu - 1);
 
         payload.write(rsp)?;
         payload.append(&data.as_gatt()[offset..][..len])?;
