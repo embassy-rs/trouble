@@ -402,7 +402,6 @@ impl<'stack, P: PacketPool> GattData<'stack, P> {
 }
 
 /// An event returned while processing GATT requests.
-#[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GattEvent<'stack, 'server, P: PacketPool> {
     /// A characteristic was read.
@@ -413,6 +412,17 @@ pub enum GattEvent<'stack, 'server, P: PacketPool> {
     Other(OtherEvent<'stack, 'server, P>),
     /// A request was made that was not allowed by the permissions of the attribute.
     NotAllowed(NotAllowedEvent<'stack, 'server, P>),
+}
+
+impl<P: PacketPool> core::fmt::Debug for GattEvent<'_, '_, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Read(event) => f.debug_tuple("Read").field(event).finish(),
+            Self::Write(event) => f.debug_tuple("Write").field(event).finish(),
+            Self::Other(event) => f.debug_tuple("Other").field(event).finish(),
+            Self::NotAllowed(event) => f.debug_tuple("NotAllowed").field(event).finish(),
+        }
+    }
 }
 
 impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
