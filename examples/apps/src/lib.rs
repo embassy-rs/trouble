@@ -37,6 +37,10 @@ pub mod ble_l2cap_central;
 pub mod ble_l2cap_peripheral;
 #[cfg(feature = "scan")]
 pub mod ble_scanner;
+#[cfg(all(feature = "shorter-connection-intervals", feature = "central"))]
+pub mod ble_sci_central;
+#[cfg(feature = "shorter-connection-intervals")]
+pub mod ble_sci_peripheral;
 #[cfg(feature = "central")]
 pub mod high_throughput_ble_l2cap_central;
 pub mod high_throughput_ble_l2cap_peripheral;

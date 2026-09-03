@@ -50,3 +50,4 @@ security = [
     "dep:serde"
 ]
 std = []
+shorter-connection-intervals = ["trouble-host/shorter-connection-intervals"]

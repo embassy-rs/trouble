@@ -90,6 +90,10 @@ nrf52840 = [
 security = [
     "trouble-example-apps/security",
 ]
+shorter-connection-intervals = [
+    "trouble-host/shorter-connection-intervals",
+    "trouble-example-apps/shorter-connection-intervals",
+]
 
 [[bin]]
 name = "ble_advertise_multiple"
@@ -138,3 +142,11 @@ required-features = ["security", "nrf52840", "central"]
 [[bin]]
 name = "ble_bas_peripheral_bonding"
 required-features = ["security", "nrf52840"]
+
+[[bin]]
+name = "ble_sci_central"
+required-features = ["shorter-connection-intervals", "central"]
+
+[[bin]]
+name = "ble_sci_peripheral"
+required-features = ["shorter-connection-intervals"]
