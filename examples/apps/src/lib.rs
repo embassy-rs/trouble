@@ -37,6 +37,10 @@ pub mod ble_l2cap_central;
 pub mod ble_l2cap_peripheral;
 #[cfg(feature = "scan")]
 pub mod ble_scanner;
+#[cfg(all(feature = "subrating", feature = "central"))]
+pub mod ble_subrate_central;
+#[cfg(feature = "subrating")]
+pub mod ble_subrate_peripheral;
 #[cfg(feature = "central")]
 pub mod high_throughput_ble_l2cap_central;
 pub mod high_throughput_ble_l2cap_peripheral;
