@@ -22,9 +22,8 @@ features = ["defmt", "peripheral", "central", "gatt", "scan", "derive", "securit
 targets = ["thumbv7em-none-eabi"]
 
 [dependencies]
-aes = { version = "0.8.2", optional = true }
 bt-hci = { version = "0.10", features = ["uuid"] }
-cmac = { version = "0.7.2", optional = true }
+embassy-crypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c", optional = true }
 embedded-io = { version = "0.7" }
 embassy-sync = "0.8"
 embassy-time = "0.5.1"
@@ -32,11 +31,6 @@ embassy-futures = "0.1"
 futures = { version = "0.3", default-features = false }
 heapless = "0.9"
 trouble-host-macros = { path = "../host-macros", version = "0.6.0", optional = true }
-p256 = { version = "0.13.2", default-features = false, features = ["ecdh","arithmetic"], optional = true }
-p256-cortex-m4 = { version = "0.1.0-alpha.6", default-features = false, optional = true }
-rand_core = { version = "0.6", optional = true }
-rand_chacha = { version = "0.3", default-features = false, optional = true }
-rand = { version="0.8", default-features = false, optional = true}
 serde = { version = "1.0.228", optional = true, default-features = false, features = ["derive"] }
 static_cell = "2.1.0"
 zerocopy = "0.8.21"
@@ -58,13 +52,14 @@ tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] }  # needed for CI builds
 rand = "0.8.5"
-rand_core = { version = "0.6", features = ["getrandom"]}
+embassy-crypto-rustcrypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c", features = ["embassy-crypto-aes128-ecb", "embassy-crypto-aes128-cmac", "embassy-crypto-p256-ecdh"] }
+embassy-crypto-rand = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c" }
 heapless = "0.9"
 embassy-executor = { version = "0.10", features = ["platform-std", "executor-thread"]}
 embassy-time = { version = "0.5.1", features = ["std", "generic-queue-8"] }
 
 [features]
-defmt = ["dep:defmt", "embassy-time/defmt", "bt-hci/defmt"]
+defmt = ["dep:defmt", "embassy-time/defmt", "bt-hci/defmt", "embassy-crypto?/defmt"]
 log = ["dep:log"]
 
 # Enable peripheral role
@@ -88,9 +83,7 @@ controller-host-flow-control = []
 connection-metrics = []
 # Enable additional channel metrics
 channel-metrics = []
-security = [ "dep:p256", "dep:aes", "dep:cmac", "dep:rand_core", "dep:rand_chacha", "dep:rand" ]
-# Use the assembly-optimized P-256 implementation for LESC pairing (ARM Cortex-M4 targets only).
-security-p256-cortex-m4 = [ "security", "dep:p256-cortex-m4" ]
+security = ["dep:embassy-crypto"]
 # Enable LE Legacy Pairing (BLE 4.0/4.1 fallback when peer doesn't support Secure Connections)
 legacy-pairing = ["security"]
 # Enable Isochronous endpoint support

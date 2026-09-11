@@ -30,6 +30,13 @@ critical-section = "1"
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 static_cell = "2.1.1"
+embassy-crypto-rustcrypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c", features = [
+    "embassy-crypto-aes128-ecb",
+    "embassy-crypto-aes128-cmac",
+    "embassy-crypto-p256-ecdh",
+] }
+embassy-crypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c" }
+rand_chacha = { version = "0.3", default-features = false }
 embedded-alloc = { version = "0.7.0", default-features = false, features = ["llff"] }
 
 [profile.release]

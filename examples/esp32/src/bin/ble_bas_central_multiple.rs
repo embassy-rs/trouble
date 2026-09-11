@@ -7,7 +7,10 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_radio::ble::controller::BleConnector;
 use trouble_example_apps::ble_bas_central_multiple;
 use trouble_host::prelude::ExternalController;
-use {esp_alloc as _, esp_backtrace as _};
+use {embassy_crypto_rustcrypto as _, esp_alloc as _, esp_backtrace as _};
+
+#[path = "../csprng.rs"]
+mod csprng;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -15,9 +18,12 @@ esp_bootloader_esp_idf::esp_app_desc!();
 async fn main(_s: Spawner) {
     esp_println::logger::init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+
+    let mut seed = [0u8; 32];
+    esp_hal::rng::Rng::new().read(&mut seed);
+    csprng::seed(seed);
     esp_alloc::heap_allocator!(size: 72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-
 
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 

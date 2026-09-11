@@ -4,16 +4,33 @@ Trouble supports BLE pairing and encryption via the Security Manager, including 
 
 == Setup
 
-Security requires a cryptographically secure random seed:
+The security manager uses the https://github.com/embassy-rs/embassy/tree/main/embassy-crypto[`embassy-crypto`] crate for all cryptographic operations (AES-128, AES-CMAC, P-256 ECDH and random number generation). `embassy-crypto` resolves its drivers at link time, so the application must link a driver crate providing implementations for these operations. For a software implementation, add `embassy-crypto-rustcrypto` to your application:
+
+[source,toml]
+----
+embassy-crypto-rustcrypto = { version = "0.1", features = [
+    "embassy-crypto-aes128-ecb",
+    "embassy-crypto-aes128-cmac",
+    "embassy-crypto-p256-ecdh",
+] }
+----
+
+and make sure it is linked in:
 
 [source,rust]
 ----
-let stack = trouble_host::new(controller, &mut resources)
-    .set_random_address(address)
-    .build();
+use embassy_crypto_rustcrypto as _;
 ----
 
-WARNING: The stack will panic at build time if the random generator is not seeded (unless the `dev-disable-csprng-seed-requirement` feature is enabled for development).
+The application must also register an `embassy_crypto::driver::Rng` driver backed by a cryptographically secure random number generator, from one of these sources:
+
+* *HAL driver*: if your HAL provides an `embassy-crypto` RNG driver, enabling the corresponding cargo feature registers a driver backed by the hardware RNG peripheral. For example, `embassy-rp` provides the `embassy-crypto-rng` feature (backed by the TRNG).
+* *Operating system*: on a hosted platform, `embassy-crypto-rand` provides a driver backed by the operating system.
+* *Your own driver*: if your HAL does not provide one, register a CSPRNG seeded from a hardware entropy source, as the trouble examples do.
+
+WARNING: The RNG driver must be registered with a cryptographically secure source of randomness, and it must be usable before the BLE stack is created.
+
+The same applies to the other operations: prefer hardware drivers where your HAL provides them, and use the software implementations for the rest. Missing drivers show up as unresolved `_embassy_crypto_*` symbols at link time; see the trouble examples for per-platform driver selection.
 
 == IO Capabilities
 

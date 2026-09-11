@@ -3,15 +3,25 @@
 
 use core::num::NonZeroU128;
 
-use aes::cipher::{BlockEncrypt, KeyInit};
-use aes::Aes128;
 use bt_hci::param::BdAddr;
-use cmac::digest;
-#[cfg(not(feature = "security-p256-cortex-m4"))]
-use p256::ecdh;
-use rand_core::{CryptoRng, RngCore};
+use embassy_crypto::p256 as ec;
+use embassy_crypto::{rng_fill_bytes, Aes128, Aes128Cmac};
 
 use crate::Address;
+
+/// Generates a uniformly distributed random passkey in `0..=999_999`.
+pub(super) fn random_passkey() -> u32 {
+    // Rejection sampling to avoid modulo bias.
+    const LIMIT: u32 = u32::MAX - (u32::MAX % 1_000_000);
+    loop {
+        let mut b = [0u8; 4];
+        rng_fill_bytes(&mut b);
+        let v = u32::from_ne_bytes(b);
+        if v < LIMIT {
+            return v % 1_000_000;
+        }
+    }
+}
 
 /// LE Secure Connections Long Term Key.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -109,10 +119,10 @@ impl IdentityResolvingKey {
     ///
     /// The generated address follows the format described in
     /// Bluetooth Core Specification [Vol 3] Part C, Section 10.8.2.
-    pub fn generate_resolvable_address<T: RngCore + CryptoRng>(&self, rng: &mut T) -> [u8; 6] {
+    pub fn generate_resolvable_address(&self) -> [u8; 6] {
         // Generate prand (24 bits with top 2 bits set to 0b01 to indicate resolvable private address)
         let mut prand = [0u8; 3];
-        rng.fill_bytes(&mut prand);
+        rng_fill_bytes(&mut prand);
 
         // Set the top 2 bits to 0b01 to indicate resolvable private address
         prand[2] &= 0b00111111; // Clear top 2 bits
@@ -161,8 +171,7 @@ impl IdentityResolvingKey {
         let mut r_prime = [0u8; 16];
         r_prime[13..].copy_from_slice(&r);
 
-        let cipher = Aes128::new_from_slice(&self.0.get().to_be_bytes()).unwrap();
-        cipher.encrypt_block((&mut r_prime).into());
+        Aes128::new(&self.0.get().to_be_bytes()).encrypt_block(&mut r_prime);
         // Extract least significant 24 bits (3 bytes) as the result
         r_prime[13..16].try_into().unwrap()
     }
@@ -191,14 +200,14 @@ impl defmt::Format for IdentityResolvingKey {
 /// RFC-4493 AES-CMAC ([Vol 3] Part H, Section 2.2.5).
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct AesCmac(cmac::Cmac<aes::Aes128>);
+pub struct AesCmac(Aes128Cmac);
 
 impl AesCmac {
     /// Creates new AES-CMAC state using key `k`.
     #[inline(always)]
     #[must_use]
     pub(super) fn new(k: &Key) -> Self {
-        Self(digest::KeyInit::new(&k.0))
+        Self(Aes128Cmac::new(&k.0))
     }
 
     /// Creates new AES-CMAC state using an all-zero key for GAP database hash
@@ -212,7 +221,7 @@ impl AesCmac {
     /// Updates CMAC state.
     #[inline(always)]
     pub fn update(&mut self, b: impl AsRef<[u8]>) -> &mut Self {
-        digest::Update::update(&mut self.0, b.as_ref());
+        self.0.update(b.as_ref());
         self
     }
 
@@ -220,16 +229,15 @@ impl AesCmac {
     #[inline(always)]
     #[must_use]
     pub fn finalize(self) -> u128 {
-        u128::from_be_bytes(*digest::FixedOutput::finalize_fixed(self.0).as_ref())
+        u128::from_be_bytes(self.0.finalize())
     }
 
     /// Computes the final MAC value for use as a future key and resets the
     /// state.
     #[inline(always)]
     pub(super) fn finalize_key(&mut self) -> Key {
-        // Best effort to avoid leaving copies
-        let mut k = Key::new(0);
-        digest::FixedOutputReset::finalize_into_reset(&mut self.0, &mut k.0);
+        let k = Key(self.0.clone().finalize());
+        self.0.reset();
         k
     }
 }
@@ -242,20 +250,20 @@ pub struct Check(pub u128);
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub(super) struct Key(aes::cipher::Key<aes::Aes128>);
+pub(super) struct Key([u8; 16]);
 
 impl Key {
     /// Creates a key from a `u128` value.
     #[inline(always)]
     pub fn new(k: u128) -> Self {
-        Self(k.to_be_bytes().into())
+        Self(k.to_be_bytes())
     }
 }
 
 impl From<&Key> for u128 {
     #[inline(always)]
     fn from(k: &Key) -> Self {
-        Self::from_be_bytes(k.0.into())
+        Self::from_be_bytes(k.0)
     }
 }
 
@@ -316,16 +324,17 @@ impl MacKey {
 pub struct Nonce(pub u128);
 
 impl Nonce {
-    /// Generates a new non-zero random nonce value from the OS CSPRNG.
+    /// Generates a new non-zero random nonce value from the registered
+    /// [`embassy_crypto::driver::Rng`].
     ///
     /// # Panics
     ///
-    /// Panics if the OS CSPRNG is broken.
+    /// Panics if the CSPRNG is broken.
     #[allow(clippy::new_without_default)]
     #[inline]
-    pub fn new<T: RngCore>(rng: &mut T) -> Self {
+    pub fn new() -> Self {
         let mut b = [0; core::mem::size_of::<u128>()];
-        rng.fill_bytes(b.as_mut_slice());
+        rng_fill_bytes(b.as_mut_slice());
         let n = u128::from_ne_bytes(b);
         assert_ne!(n, 0);
         Self(n)
@@ -369,18 +378,10 @@ pub struct Confirm(pub u128);
 pub struct NumCompare(pub u32);
 
 /// P-256 elliptic curve secret key.
-#[cfg(not(feature = "security-p256-cortex-m4"))]
 #[derive(Clone)]
 #[must_use]
 #[repr(transparent)]
-pub struct SecretKey(p256::NonZeroScalar);
-
-/// P-256 elliptic curve secret key.
-#[cfg(feature = "security-p256-cortex-m4")]
-#[derive(Clone)]
-#[must_use]
-#[repr(transparent)]
-pub struct SecretKey(p256_cortex_m4::SecretKey);
+pub struct SecretKey(ec::SecretKey);
 
 impl core::fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -395,20 +396,21 @@ impl defmt::Format for SecretKey {
     }
 }
 
-#[cfg(feature = "security-p256-cortex-m4")]
 impl SecretKey {
     /// Generates a new random secret key.
     #[allow(clippy::new_without_default)]
-    pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
-        Self(p256_cortex_m4::SecretKey::random(rng))
+    #[inline(never)]
+    pub fn new() -> Self {
+        Self(unwrap!(ec::SecretKey::generate().map_err(|_| "failed to generate key")))
     }
 
     /// Computes the associated public key.
+    #[inline(never)]
     pub fn public_key(&self) -> PublicKey {
-        let pk = self.0.public_key();
+        let p = unwrap!(self.0.public_key().map_err(|_| "invalid secret key"));
         PublicKey {
-            x: PublicKeyX(Coord(pk.x())),
-            y: Coord(pk.y()),
+            x: PublicKeyX(Coord(*p.x())),
+            y: Coord(*p.y()),
         }
     }
 
@@ -419,75 +421,20 @@ impl SecretKey {
     /// `local_pk` must be the public key of `self`; passing it in avoids an
     /// expensive scalar multiplication to recompute it.
     #[must_use]
+    #[inline(never)]
     pub fn dh_key(&self, pk: PublicKey, local_pk: &PublicKey) -> Option<DHKey> {
         if pk.is_debug() {
             return None; // TODO: Compile-time option for debug-only mode
         }
+
+        // Reject the peer using our own public key ([Vol 3] Part H, Section 2.3.5.6.1).
         if pk == *local_pk {
             return None;
         }
 
-        let mut bytes = [0u8; 64];
-        bytes[..32].copy_from_slice(pk.x.as_be_bytes());
-        bytes[32..].copy_from_slice(&pk.y.0);
-        // from_untagged_bytes validates that the point is on the curve
-        let rpk = p256_cortex_m4::PublicKey::from_untagged_bytes(&bytes).ok()?;
-        let mut secret = [0u8; 32];
-        secret.copy_from_slice(self.0.agree(&rpk).as_bytes());
-        Some(DHKey(secret))
-    }
-}
-
-#[cfg(not(feature = "security-p256-cortex-m4"))]
-impl SecretKey {
-    /// Generates a new random secret key.
-    #[allow(clippy::new_without_default)]
-    #[inline(never)]
-    pub fn new<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
-        Self(p256::NonZeroScalar::random(rng))
-    }
-
-    /// Computes the associated public key.
-    #[inline(never)]
-    pub fn public_key(&self) -> PublicKey {
-        use p256::elliptic_curve::sec1::Coordinates::Uncompressed;
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
-        let p = p256::PublicKey::from_secret_scalar(&self.0).to_encoded_point(false);
-        match p.coordinates() {
-            Uncompressed { x, y } => PublicKey {
-                x: PublicKeyX(Coord(*x.as_ref())),
-                y: Coord(*y.as_ref()),
-            },
-            _ => unreachable!("invalid secret key"),
-        }
-    }
-
-    /// Computes a shared secret from the local secret key and remote public
-    /// key. Returns [`None`] if the public key is either invalid or derived
-    /// from the same secret key ([Vol 3] Part H, Section 2.3.5.6.1).
-    ///
-    /// `local_pk` must be the public key of `self`; passing it in avoids an
-    /// expensive scalar multiplication to recompute it.
-    #[must_use]
-    #[inline(never)]
-    pub fn dh_key(&self, pk: PublicKey, local_pk: &PublicKey) -> Option<DHKey> {
-        use p256::elliptic_curve::sec1::FromEncodedPoint;
-        if pk.is_debug() {
-            return None; // TODO: Compile-time option for debug-only mode
-        }
-
-        let (x, y) = (&pk.x.0 .0.into(), &pk.y.0.into());
-        let rep = p256::EncodedPoint::from_affine_coordinates(x, y, false);
-        let (lx, ly) = (&local_pk.x.0 .0.into(), &local_pk.y.0.into());
-        let lrep = p256::EncodedPoint::from_affine_coordinates(lx, ly, false);
-        let lpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_encoded_point(&lrep));
-        // Constant-time ops not required:
-        // https://github.com/RustCrypto/traits/issues/1227
-        let rpk: Option<p256::PublicKey> = Option::from(p256::PublicKey::from_encoded_point(&rep));
-        match (rpk, lpk) {
-            (Some(rpk), Some(lpk)) if rpk != lpk => Some(DHKey(ecdh::diffie_hellman(&self.0, rpk.as_affine()))),
-            _ => None,
-        }
+        let rpk = ec::PublicKey::from_xy(&pk.x.0 .0, &pk.y.0);
+        // The driver validates that the point is on the curve.
+        self.0.diffie_hellman(&rpk).ok().map(|s| DHKey(*s.as_bytes()))
     }
 }
 
@@ -573,24 +520,10 @@ impl PublicKeyX {
 }
 
 /// P-256 elliptic curve shared secret ([Vol 3] Part H, Section 2.3.5.6.1).
-#[cfg(not(feature = "security-p256-cortex-m4"))]
-#[must_use]
-#[repr(transparent)]
-pub struct DHKey(ecdh::SharedSecret);
-
-/// P-256 elliptic curve shared secret ([Vol 3] Part H, Section 2.3.5.6.1).
-#[cfg(feature = "security-p256-cortex-m4")]
 #[derive(Clone)]
 #[must_use]
 #[repr(transparent)]
 pub struct DHKey([u8; 32]);
-
-#[cfg(not(feature = "security-p256-cortex-m4"))]
-impl Clone for DHKey {
-    fn clone(&self) -> Self {
-        Self(ecdh::SharedSecret::from(*self.0.raw_secret_bytes()))
-    }
-}
 
 impl core::fmt::Debug for DHKey {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -606,18 +539,6 @@ impl defmt::Format for DHKey {
 }
 
 impl DHKey {
-    /// Big-endian x-coordinate of the shared secret.
-    #[cfg(not(feature = "security-p256-cortex-m4"))]
-    fn secret_bytes(&self) -> [u8; 32] {
-        (*self.0.raw_secret_bytes()).into()
-    }
-
-    /// Big-endian x-coordinate of the shared secret.
-    #[cfg(feature = "security-p256-cortex-m4")]
-    fn secret_bytes(&self) -> [u8; 32] {
-        self.0
-    }
-
     /// Generates LE Secure Connections `MacKey` and `LTK`
     /// ([Vol 3] Part H, Section 2.2.7).
     #[inline]
@@ -635,7 +556,7 @@ impl DHKey {
                 .finalize_key()
         };
         let mut m = AesCmac::new(&Key::new(0x6C88_8391_AAF5_A538_6037_0BDB_5A60_83BE));
-        m.update(self.secret_bytes());
+        m.update(self.0);
         let mut m = AesCmac::new(&m.finalize_key());
         (MacKey(half(&mut m, 0)), LongTermKey(u128::from(&half(&mut m, 1))))
     }
@@ -684,7 +605,7 @@ pub(super) fn c1(
     p2[4..10].copy_from_slice(ia);
     p2[10..16].copy_from_slice(ra);
 
-    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
+    let cipher = Aes128::new(&k.to_be_bytes());
 
     // e(k, r XOR p1)
     let r_bytes = r.to_be_bytes();
@@ -692,13 +613,13 @@ pub(super) fn c1(
     for i in 0..16 {
         block[i] = r_bytes[i] ^ p1[i];
     }
-    cipher.encrypt_block((&mut block).into());
+    cipher.encrypt_block(&mut block);
 
     // e(k, result XOR p2)
     for i in 0..16 {
         block[i] ^= p2[i];
     }
-    cipher.encrypt_block((&mut block).into());
+    cipher.encrypt_block(&mut block);
 
     u128::from_be_bytes(block)
 }
@@ -719,8 +640,7 @@ pub(super) fn s1(k: u128, r1: u128, r2: u128) -> u128 {
     r_prime[0..8].copy_from_slice(&r1_bytes[8..16]);
     r_prime[8..16].copy_from_slice(&r2_bytes[8..16]);
 
-    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
-    cipher.encrypt_block((&mut r_prime).into());
+    Aes128::new(&k.to_be_bytes()).encrypt_block(&mut r_prime);
 
     u128::from_be_bytes(r_prime)
 }
@@ -735,8 +655,7 @@ pub(super) fn d1(k: u128, d: u16, r: u16) -> u128 {
     d_prime[12..14].copy_from_slice(&r.to_be_bytes());
     d_prime[14..16].copy_from_slice(&d.to_be_bytes());
 
-    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
-    cipher.encrypt_block((&mut d_prime).into());
+    Aes128::new(&k.to_be_bytes()).encrypt_block(&mut d_prime);
 
     u128::from_be_bytes(d_prime)
 }
@@ -755,8 +674,6 @@ pub(super) fn u256<T: From<[u8; 32]>>(hi: u128, lo: u128) -> T {
 #[allow(clippy::unusual_byte_groupings)]
 #[cfg(test)]
 mod tests {
-    use p256::elliptic_curve::rand_core::OsRng;
-
     use super::*;
     extern crate std;
     use bt_hci::param::{AddrKind, BdAddr};
@@ -831,10 +748,7 @@ mod tests {
         );
         assert_eq!(ska.public_key(), pka);
         assert_eq!(skb.public_key(), pkb);
-        assert_eq!(
-            ska.dh_key(pkb, &pka).unwrap().0.raw_secret_bytes(),
-            dh_key.0.raw_secret_bytes()
-        );
+        assert_eq!(ska.dh_key(pkb, &pka).unwrap().0, dh_key.0);
 
         assert!(!pkb.is_debug());
         assert!(skb.dh_key(pkb, &pkb).is_none());
@@ -881,10 +795,7 @@ mod tests {
         );
         assert_eq!(ska.public_key(), pka);
         assert_eq!(skb.public_key(), pkb);
-        assert_eq!(
-            ska.dh_key(pkb, &pka).unwrap().0.raw_secret_bytes(),
-            dh_key.0.raw_secret_bytes()
-        );
+        assert_eq!(ska.dh_key(pkb, &pka).unwrap().0, dh_key.0);
     }
 
     /// Key generation function ([Vol 3] Part H, Section D.3).
@@ -905,20 +816,20 @@ mod tests {
 
     #[inline]
     fn secret_key(hi: u128, lo: u128) -> SecretKey {
-        SecretKey(p256::NonZeroScalar::from_repr(u256(hi, lo)).unwrap())
+        SecretKey(ec::SecretKey::from_bytes(&u256::<[u8; 32]>(hi, lo)).unwrap())
     }
 
     #[inline]
     fn shared_secret(hi: u128, lo: u128) -> DHKey {
-        DHKey(ecdh::SharedSecret::from(u256::<p256::FieldBytes>(hi, lo)))
+        DHKey(u256(hi, lo))
     }
 
     #[test]
     fn testtest() {
-        let skb = SecretKey::new(&mut OsRng::default());
+        let skb = SecretKey::new();
         let pkb = skb.public_key();
 
-        let ska = SecretKey::new(&mut OsRng::default());
+        let ska = SecretKey::new();
         let pka = ska.public_key();
 
         let _dh_key = skb.dh_key(pka, &pkb).unwrap();
@@ -933,7 +844,7 @@ mod tests {
             0x71, 0xe4, 0x95, 0x17, 0x71, 0x98, 0x82, 0x8f, 0xf8, 0x79, 0x94,
         ];
 
-        let skb = SecretKey::new(&mut OsRng::default());
+        let skb = SecretKey::new();
         let pkb = skb.public_key();
 
         let pka = PublicKey::from_bytes(&bytes);
@@ -944,7 +855,7 @@ mod tests {
     #[test]
     fn nonce() {
         // No fair dice rolls for us!
-        assert_ne!(Nonce::new(&mut OsRng::default()), Nonce::new(&mut OsRng::default()));
+        assert_ne!(Nonce::new(), Nonce::new());
     }
 
     /// Confirm value generation function ([Vol 3] Part H, Section D.2).

@@ -42,7 +42,7 @@ See the [documentation](https://embassy.dev/trouble) and the [rustdoc](https://d
 
 ## Minimum supported Rust version (MSRV)
 
-Trouble is guaranteed to compile on stable Rust 1.80 and up. It *might*
+Trouble is guaranteed to compile on stable Rust 1.97 and up. It *might*
 compile with older versions but that may change in any new patch release.
 
 ## Examples

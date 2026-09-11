@@ -23,8 +23,6 @@ use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::VecView;
 pub use pairing::OobData;
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use types::Command;
 pub use types::{PassKey, Reason};
 
@@ -186,9 +184,7 @@ impl<P: PacketPool> TxPacket<P> {
 
 /// Inner mutable state of the security manager
 struct Inner {
-    /// Random generator
-    rng: ChaCha12Rng,
-    /// Persistent LESC keypair (generated once when RNG is seeded)
+    /// Persistent LESC keypair
     secret_key: crypto::SecretKey,
     /// Corresponding public key
     public_key: crypto::PublicKey,
@@ -342,7 +338,7 @@ impl Inner {
             peer_identity,
             state: &self.state,
         };
-        pairing_sm.handle_l2cap_command(command, payload, &mut ops, &mut self.rng)
+        pairing_sm.handle_l2cap_command(command, payload, &mut ops)
     }
 
     fn handle_central<P: PacketPool>(
@@ -410,7 +406,7 @@ impl Inner {
             peer_identity,
             state: &self.state,
         };
-        pairing_sm.handle_l2cap_command(command, payload, &mut ops, &mut self.rng)
+        pairing_sm.handle_l2cap_command(command, payload, &mut ops)
     }
 
     fn handle_pairing_event<P: PacketPool>(
@@ -434,7 +430,7 @@ impl Inner {
                 storage,
                 state: &self.state,
             };
-            let res = sm.handle_event(pairing_event, &mut ops, &mut self.rng);
+            let res = sm.handle_event(pairing_event, &mut ops);
             if res.is_ok() {
                 sm.reset_timeout();
                 let _ = events.try_send(SecurityEventData::TimerChange);
@@ -467,7 +463,7 @@ impl Inner {
                 conn_handle: storage.handle,
                 state: &self.state,
             };
-            let res = sm.handle_event(pairing::Event::LinkEncryptedResult(encrypted), &mut ops, &mut self.rng);
+            let res = sm.handle_event(pairing::Event::LinkEncryptedResult(encrypted), &mut ops);
             if res.is_ok() {
                 storage.security_level = sm.security_level();
                 storage.bond_rejected = false;
@@ -550,7 +546,6 @@ impl Inner {
                     conn_handle: storage.handle,
                     state: &self.state,
                 },
-                &mut self.rng,
             );
             // Don't call handle_security_error here: sending SMP PairingFailed
             // for an HCI-level encryption failure would cause the peer to
@@ -632,12 +627,10 @@ pub struct SecurityManager<'d> {
 impl<'d> SecurityManager<'d> {
     /// Create a new SecurityManager
     pub(crate) fn new(bonds: &'d RefCell<VecView<BondInformation>>) -> Self {
-        let mut rng = ChaCha12Rng::from_seed([0u8; 32]);
-        let secret_key = crypto::SecretKey::new(&mut rng);
+        let secret_key = crypto::SecretKey::new();
         let public_key = secret_key.public_key();
         Self {
             inner: RefCell::new(Inner {
-                rng,
                 secret_key,
                 public_key,
                 state: SecurityManagerData::new(),
@@ -671,14 +664,6 @@ impl<'d> SecurityManager<'d> {
     #[cfg(feature = "legacy-pairing")]
     pub(crate) fn set_secure_connections_only(&self, enabled: bool) {
         self.inner.borrow_mut().secure_connections_only = enabled;
-    }
-
-    /// Seed the security manager's CSPRNG and regenerate the persistent LESC keypair.
-    pub(crate) fn set_random_generator_seed(&self, random_seed: [u8; 32]) {
-        let mut inner = self.inner.borrow_mut();
-        inner.rng = ChaCha12Rng::from_seed(random_seed);
-        inner.secret_key = crypto::SecretKey::new(&mut inner.rng);
-        inner.public_key = inner.secret_key.public_key();
     }
 
     /// Set the current local address
@@ -745,8 +730,8 @@ impl<'d> SecurityManager<'d> {
     /// The persistent keypair is used so the confirm value matches the public key
     /// that will be sent during pairing.
     pub(crate) fn get_local_oob_data(&self) -> pairing::OobData {
-        let mut inner = self.inner.borrow_mut();
-        let r = crypto::Nonce::new(&mut inner.rng);
+        let inner = self.inner.borrow();
+        let r = crypto::Nonce::new();
         let c = r.f4(inner.public_key.x(), inner.public_key.x(), 0);
         pairing::OobData {
             random: r.0.to_le_bytes(),
@@ -773,9 +758,9 @@ impl<'d> SecurityManager<'d> {
     /// Generate a local resolvable private address when privacy is enabled.
     #[cfg(feature = "central")]
     pub(crate) fn generate_local_rpa(&self) -> Option<BdAddr> {
-        let mut inner = self.inner.borrow_mut();
+        let inner = self.inner.borrow();
         let irk = inner.state.local_irk?;
-        Some(BdAddr::new(irk.generate_resolvable_address(&mut inner.rng)))
+        Some(BdAddr::new(irk.generate_resolvable_address()))
     }
 
     /// Add a bonded device
@@ -1313,8 +1298,6 @@ mod tests {
 
     use bt_hci::param::{ConnHandle, LeConnRole};
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-    use rand_chacha::ChaCha12Rng;
-    use rand_core::SeedableRng;
 
     use super::*;
     use crate::connection::ConnParams;
@@ -1330,11 +1313,9 @@ mod tests {
     }
 
     fn test_inner(peer_address: Address) -> Inner {
-        let mut rng = ChaCha12Rng::from_seed([7; 32]);
-        let secret_key = crypto::SecretKey::new(&mut rng);
+        let secret_key = crypto::SecretKey::new();
         let public_key = secret_key.public_key();
         Inner {
-            rng,
             secret_key,
             public_key,
             passkey: None,

@@ -2,6 +2,9 @@ use bt_hci::controller::ExternalController;
 use bt_hci_linux::Transport;
 use trouble_example_apps::ble_l2cap_central;
 
+#[cfg(feature = "security")]
+use {embassy_crypto_rand as _, embassy_crypto_rustcrypto as _};
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), std::io::Error> {
     env_logger::init();

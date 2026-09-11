@@ -23,6 +23,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "aligned"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee4508988c62edf04abd8d92897fca0c2995d907ce1dfeaf369dac3716a40685"
+dependencies = [
+ "as-slice",
+]
+
+[[package]]
+name = "allocator-api2"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c583acf993cf4245c4acb0a2cc2ab1f9cc097de73411bb6d3647ff6af2b1013d"
+
+[[package]]
+name = "as-slice"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "516b6b4f0e40d50dcda9365d53964ec74560ad4284da2e7fc97122cd83174516"
+dependencies = [
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "atomic-polyfill"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -44,45 +68,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be5eb007b7cacc6c660343e96f650fedf4b5a77512399eb952ca6642cf8d13f7"
 
 [[package]]
-name = "bare-metal"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5deb64efa5bd81e31fcd1938615a6d98c82eafcbcd787162b6f63b91d6bac5b3"
-dependencies = [
- "rustc_version 0.2.3",
-]
-
-[[package]]
 name = "base16ct"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd307490d624467aa6f74b0eabb77633d1f758a7b25f12bceb0b22e08d9726f6"
 
 [[package]]
-name = "bindgen"
-version = "0.72.1"
+name = "bitfield"
+version = "0.19.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
+checksum = "b45721c9db4c7a20899d05efb7ad9235f50b256e980db30ffb229abf732934c3"
 dependencies = [
- "bitflags 2.13.1",
- "cexpr",
- "clang-sys",
- "itertools",
- "log",
- "prettyplease",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash",
- "shlex 1.3.0",
- "syn 2.0.119",
+ "bitfield-macros",
 ]
 
 [[package]]
-name = "bitfield"
-version = "0.13.2"
+name = "bitfield-macros"
+version = "0.19.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46afbd2983a5d5a7bd740ccb198caf5b82f45c40c09c0eed36052d91cb92e719"
+checksum = "c0cb6f3d4773a2107b94cbeccaa5b5f0b35a88389b5d522d13d659f64317b22d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
+]
 
 [[package]]
 name = "bitflags"
@@ -91,10 +100,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
-name = "bitflags"
-version = "2.13.1"
+name = "block-buffer"
+version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+dependencies = [
+ "generic-array",
+]
 
 [[package]]
 name = "block-buffer"
@@ -106,6 +118,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "block-device-driver"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c051592f59fe68053524b4c4935249b806f72c1f544cfb7abe4f57c3be258e"
+dependencies = [
+ "aligned",
+]
+
+[[package]]
+name = "bt-hci"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f3c66fd0a41a3b3a5906847b1bf5516048ce083e24fa9341a0fa31d3b4cd73d"
+dependencies = [
+ "btuuid",
+ "embassy-sync 0.8.0",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "futures-intrusive",
+ "heapless 0.9.3",
+]
+
+[[package]]
 name = "bt-hci"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -113,12 +148,12 @@ checksum = "f63b3d6f0ef006d9b87a075705d6c142b03681ad34090659647f0e227c1c667f"
 dependencies = [
  "bt-hci-transport",
  "btuuid",
- "defmt 1.1.1",
- "embassy-sync",
+ "embassy-sync 0.8.0",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
  "heapless 0.9.3",
+ "log",
  "serde",
 ]
 
@@ -128,7 +163,6 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ffb9819c69cf88877f5eebc8c5ade0ab50f2bf9475bbb3eb714d66c55b0cb64"
 dependencies = [
- "defmt 1.1.1",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
 ]
@@ -139,7 +173,6 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5f48f1e9b0aad0a4f05d17bdeae0fa20ff798e272a03a6940ca27ad9c5a6ae7"
 dependencies = [
- "defmt 0.3.100",
  "serde",
  "uuid",
 ]
@@ -164,21 +197,12 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "cc"
-version = "1.4.3"
+version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "509591b7bcd67f4ef775afad7662703b4935daaa6ec0e5605cfb1090b32a2b6d"
+checksum = "005ec2760ca554fae18df7a11195552ec576cd665632a881bc011d5bb2fd4d80"
 dependencies = [
  "find-msvc-tools",
- "shlex 2.0.1",
-]
-
-[[package]]
-name = "cexpr"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
-dependencies = [
- "nom",
+ "shlex",
 ]
 
 [[package]]
@@ -193,19 +217,8 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
 dependencies = [
- "crypto-common",
+ "crypto-common 0.2.2",
  "inout",
-]
-
-[[package]]
-name = "clang-sys"
-version = "1.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
-dependencies = [
- "glob",
- "libc",
- "libloading",
 ]
 
 [[package]]
@@ -216,7 +229,7 @@ checksum = "ac78aa94ce13e432b332a4d1bf2eff167d3a2520188ee05b337180a42fd2e62e"
 dependencies = [
  "cipher",
  "dbl",
- "digest",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -233,6 +246,12 @@ checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
  "thiserror",
 ]
+
+[[package]]
+name = "const-default"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b396d1f76d455557e1218ec8066ae14bba60b4b36ecd55577ba979f5db7ecaa"
 
 [[package]]
 name = "const-oid"
@@ -257,52 +276,6 @@ checksum = "5b9ab7e0ca1d179628fa0172b2b97203c7fa0cd81be2448bd446fb9559ca9261"
 dependencies = [
  "loom",
  "tracing",
-]
-
-[[package]]
-name = "cortex-m"
-version = "0.7.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "844b9697e922c99847eed515c6eb6d101e7ce62ff556fcaec243798291427ee8"
-dependencies = [
- "bare-metal",
- "bitfield",
- "cortex-m-macros",
- "critical-section",
- "embedded-hal 0.2.7",
- "embedded-hal 1.0.0",
- "volatile-register",
-]
-
-[[package]]
-name = "cortex-m-macros"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d1922be58519ad40368fc4ca595a2cefa51a7abf947be3b0c90586dc7dbd0e2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "cortex-m-rt"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c439b23bf18154d8a634543caf1ee73cceb723f2902f7ea243634159a00fd47"
-dependencies = [
- "cortex-m-rt-macros",
-]
-
-[[package]]
-name = "cortex-m-rt-macros"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "061a75f3e7f3f01d649668d68e02d0ef92c7041a9c97b8fe6bc354ddbf40822d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -349,6 +322,16 @@ dependencies = [
 
 [[package]]
 name = "crypto-common"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
+dependencies = [
+ "generic-array",
+ "typenum",
+]
+
+[[package]]
+name = "crypto-common"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
@@ -373,8 +356,28 @@ version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
 dependencies = [
- "darling_core",
- "darling_macro",
+ "darling_core 0.20.11",
+ "darling_macro 0.20.11",
+]
+
+[[package]]
+name = "darling"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+dependencies = [
+ "darling_core 0.21.3",
+ "darling_macro 0.21.3",
+]
+
+[[package]]
+name = "darling"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed17f5901b6630b993ca003def43f2f8ef4014fc13b047b57aad617ff32bc2ec"
+dependencies = [
+ "darling_core 0.24.1",
+ "darling_macro 0.24.1",
 ]
 
 [[package]]
@@ -392,14 +395,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "darling_core"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "darling_core"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6837e2cf7485aaae18f86181d2f0e9a7ed297a025e220aeabf63fdebd3a2ddff"
+dependencies = [
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 3.0.5",
+]
+
+[[package]]
 name = "darling_macro"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
- "darling_core",
+ "darling_core 0.20.11",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+dependencies = [
+ "darling_core 0.21.3",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ac7135c3ef02b2f7833bbeb1be5ba7f966dcde8a87c6b87f65a778d71a02785"
+dependencies = [
+ "darling_core 0.24.1",
+ "quote",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -413,20 +464,11 @@ dependencies = [
 
 [[package]]
 name = "defmt"
-version = "0.3.100"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0963443817029b2024136fc4dd07a5107eb8f977eaf18fcd1fdeb11306b64ad"
-dependencies = [
- "defmt 1.1.1",
-]
-
-[[package]]
-name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2953bfe4f93bbd20cc71198842756f77d161884c99ebbabc41d80231ded88d1"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags",
  "defmt-macros",
 ]
 
@@ -452,13 +494,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "defmt-rtt"
-version = "1.3.0"
+name = "delegate"
+version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05144944c117db54127a8ac17a3c9a28d55e7047bfddb950bcd20b4a94c79b10"
+checksum = "780eb241654bf097afb00fc5f054a09b687dad862e485fdcf8399bb056565370"
 dependencies = [
- "critical-section",
- "defmt 1.1.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -473,14 +516,44 @@ dependencies = [
 
 [[package]]
 name = "digest"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
+dependencies = [
+ "block-buffer 0.10.4",
+ "crypto-common 0.1.7",
+]
+
+[[package]]
+name = "digest"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
- "block-buffer",
+ "block-buffer 0.12.1",
  "const-oid",
- "crypto-common",
+ "crypto-common 0.2.2",
  "ctutils",
+]
+
+[[package]]
+name = "docsplay"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8547ea80db62c5bb9d7796fcce5e6e07d1136bdc1a02269095061e806758fab4"
+dependencies = [
+ "docsplay-macros",
+]
+
+[[package]]
+name = "docsplay-macros"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11772ed3eb3db124d826f3abeadf5a791a557f62c19b123e3f07288158a71fdd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -493,33 +566,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "doxygen-rs"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "415b6ec780d34dcf624666747194393603d0373b7141eef01d12ee58881507d9"
-dependencies = [
- "phf",
-]
-
-[[package]]
 name = "ecdsa"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0681a4fc24c767085329728d8dfba959af91228aa4610cca4f8ce317ba46ae0"
 dependencies = [
  "der",
- "digest",
+ "digest 0.11.3",
  "elliptic-curve",
  "rfc6979",
  "signature",
  "zeroize",
 ]
-
-[[package]]
-name = "either"
-version = "1.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
 name = "elliptic-curve"
@@ -529,8 +587,8 @@ checksum = "9d65aa39b3a5c1c9c1b745c9a019234bb7a21b77abcb4f4d266d706e2d577d65"
 dependencies = [
  "base16ct",
  "crypto-bigint",
- "crypto-common",
- "digest",
+ "crypto-common 0.2.2",
+ "digest 0.11.3",
  "ff",
  "group",
  "hkdf",
@@ -546,7 +604,6 @@ name = "embassy-crypto"
 version = "0.1.0"
 source = "git+https://github.com/embassy-rs/embassy.git?rev=bd35bd7a7d19147c8bcae9c2eda99b25e597294c#bd35bd7a7d19147c8bcae9c2eda99b25e597294c"
 dependencies = [
- "defmt 1.1.1",
  "unitrait",
 ]
 
@@ -558,7 +615,7 @@ dependencies = [
  "aes",
  "cipher",
  "cmac",
- "digest",
+ "digest 0.11.3",
  "elliptic-curve",
  "embassy-crypto",
  "p256",
@@ -570,11 +627,9 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0641612053b2f34fc250bb63f6630ae75de46e02ade7f457268447081d709ce"
 dependencies = [
- "defmt 1.1.1",
  "embassy-futures",
- "embassy-hal-internal 0.4.0",
- "embassy-sync",
- "embassy-time",
+ "embassy-hal-internal",
+ "embassy-sync 0.8.0",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -586,25 +641,21 @@ dependencies = [
 [[package]]
 name = "embassy-executor"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d0d3b15c9d7dc4fec1d8cb77112472fb008b3b28c51ad23838d83587a6d2f1e"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1d3c3de#1d3c3dec8edbf37450d0174b312f8d3d6cc0bf12"
 dependencies = [
  "cordyceps",
- "cortex-m",
  "critical-section",
- "defmt 1.1.1",
  "document-features",
  "embassy-executor-macros",
- "embassy-executor-timer-queue",
+ "embassy-executor-timer-queue 0.1.0 (git+https://github.com/embassy-rs/embassy.git?rev=1d3c3de)",
 ]
 
 [[package]]
 name = "embassy-executor-macros"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d11a246f53de5f97a387f40ac24726817cd0b6f833e7603baac784f29d6ff276"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1d3c3de#1d3c3dec8edbf37450d0174b312f8d3d6cc0bf12"
 dependencies = [
- "darling",
+ "darling 0.20.11",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -615,6 +666,11 @@ name = "embassy-executor-timer-queue"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fc328bf943af66b80b98755db9106bf7e7471b0cf47dc8559cd9a6be504cc9c"
+
+[[package]]
+name = "embassy-executor-timer-queue"
+version = "0.1.0"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=1d3c3de#1d3c3dec8edbf37450d0174b312f8d3d6cc0bf12"
 
 [[package]]
 name = "embassy-futures"
@@ -632,50 +688,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "embassy-hal-internal"
-version = "0.5.0"
+name = "embassy-net-driver"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "568659fc53866d3d85c60fa33723fb751aa69e71507634fc2c19e7649432fb75"
+checksum = "524eb3c489760508f71360112bca70f6e53173e6fe48fc5f0efd0f5ab217751d"
+
+[[package]]
+name = "embassy-sync"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d2c8cdff05a7a51ba0087489ea44b0b1d97a296ca6b1d6d1a33ea7423d34049"
 dependencies = [
- "cortex-m",
+ "cfg-if",
  "critical-section",
- "defmt 1.1.1",
- "num-traits",
+ "embedded-io-async 0.6.1",
+ "futures-sink",
+ "futures-util",
+ "heapless 0.8.0",
 ]
 
 [[package]]
-name = "embassy-nrf"
-version = "0.11.0"
+name = "embassy-sync"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82051f67e8a06a8faebd183f62cfade184c96be68126c5f064abb8223a591ff1"
+checksum = "73974a3edbd0bd286759b3d483540f0ebef705919a5f56f4fc7709066f71689b"
 dependencies = [
- "bitflags 2.13.1",
  "cfg-if",
- "cortex-m",
- "cortex-m-rt",
  "critical-section",
- "defmt 1.1.1",
- "document-features",
- "embassy-embedded-hal",
- "embassy-futures",
- "embassy-hal-internal 0.5.0",
- "embassy-sync",
- "embassy-time-driver",
- "embassy-time-queue-utils",
- "embassy-usb-driver",
- "embassy-usb-synopsys-otg",
- "embedded-hal 0.2.7",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "embedded-io 0.7.1",
- "embedded-io-async 0.7.0",
- "embedded-storage",
- "embedded-storage-async",
- "fixed",
- "nrf-pac",
- "rand_core 0.10.1",
- "rand_core 0.6.4",
- "rand_core 0.9.5",
+ "embedded-io-async 0.6.1",
+ "futures-core",
+ "futures-sink",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -686,7 +729,6 @@ checksum = "7bbd85cf5a5ae56bdf26f618364af642d1d0a4e245cdd75cd9aabda382f65a81"
 dependencies = [
  "cfg-if",
  "critical-section",
- "defmt 1.1.1",
  "embedded-io-async 0.7.0",
  "futures-core",
  "futures-sink",
@@ -701,7 +743,6 @@ checksum = "592b0c143ec626e821d4d90da51a2bd91d559d6c442b7c74a47d368c9e23d97a"
 dependencies = [
  "cfg-if",
  "critical-section",
- "defmt 1.1.1",
  "document-features",
  "embassy-time-driver",
  "embedded-hal 0.2.7",
@@ -725,7 +766,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "168297bf80aaf114b3c9ad589bf38b01b3009b9af7f97cd18086c5bbf96f5693"
 dependencies = [
- "embassy-executor-timer-queue",
+ "embassy-executor-timer-queue 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "heapless 0.9.3",
 ]
 
@@ -735,7 +776,6 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa675c5f4349b6aa0fcffc4bf9b241f18cd11b97c1f8323273fb9a5449937fbd"
 dependencies = [
- "defmt 1.1.1",
  "embedded-io-async 0.6.1",
  "embedded-io-async 0.7.0",
 ]
@@ -747,11 +787,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6efd0c0e0b21bcf91b475b8fa47347c1df32c9a99728ae1e1b0e6625862dfd1a"
 dependencies = [
  "critical-section",
- "defmt 1.1.1",
- "embassy-sync",
+ "embassy-sync 0.8.0",
  "embassy-time",
  "embassy-usb-driver",
  "portable-atomic",
+]
+
+[[package]]
+name = "embedded-can"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9d2e857f87ac832df68fa498d18ddc679175cf3d2e4aa893988e5601baf9438"
+dependencies = [
+ "nb 1.1.0",
 ]
 
 [[package]]
@@ -790,9 +838,6 @@ name = "embedded-io"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
-dependencies = [
- "defmt 1.1.1",
-]
 
 [[package]]
 name = "embedded-io-async"
@@ -809,7 +854,6 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2564b9f813c544241430e147d8bc454815ef9ac998878d30cc3055449f7fd4c0"
 dependencies = [
- "defmt 1.1.1",
  "embedded-io 0.7.1",
 ]
 
@@ -829,6 +873,499 @@ dependencies = [
 ]
 
 [[package]]
+name = "enumset"
+version = "1.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccc5801fd11762e24d1e420d01d2ac518f2a2ca4329d4fbb6639f2412b6204e0"
+dependencies = [
+ "enumset_derive",
+]
+
+[[package]]
+name = "enumset_derive"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bd536557b58c682b217b8fb199afdff47cd3eff260623f19e77074eb073d63a"
+dependencies = [
+ "darling 0.21.3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "equivalent"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "esp-alloc"
+version = "0.10.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "allocator-api2",
+ "document-features",
+ "enumset",
+ "esp-config",
+ "esp-metadata-generated",
+ "esp-sync",
+ "linked_list_allocator",
+ "rlsf",
+]
+
+[[package]]
+name = "esp-backtrace"
+version = "0.19.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "esp-config",
+ "esp-metadata-generated",
+ "esp-println",
+ "heapless 0.9.3",
+ "riscv",
+ "semihosting",
+ "xtensa-lx",
+]
+
+[[package]]
+name = "esp-bootloader-esp-idf"
+version = "0.5.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "esp-config",
+ "esp-hal-procmacros",
+ "esp-metadata-generated",
+ "esp-rom-sys",
+ "esp-storage",
+ "jiff",
+ "sha2",
+ "strum",
+]
+
+[[package]]
+name = "esp-config"
+version = "0.7.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "esp-metadata-generated",
+ "serde",
+ "serde_yaml",
+ "somni-expr",
+]
+
+[[package]]
+name = "esp-hal"
+version = "1.1.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "bitfield",
+ "bytemuck",
+ "critical-section",
+ "delegate",
+ "digest 0.10.7",
+ "digest 0.11.3",
+ "document-features",
+ "embassy-embedded-hal",
+ "embassy-futures",
+ "embassy-net-driver",
+ "embassy-sync 0.8.0",
+ "embassy-usb-driver",
+ "embassy-usb-synopsys-otg",
+ "embedded-can",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-io 0.6.1",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
+ "enumset",
+ "esp-config",
+ "esp-hal-procmacros",
+ "esp-metadata-generated",
+ "esp-riscv-rt",
+ "esp-rom-sys",
+ "esp-sync",
+ "esp32",
+ "esp32c2",
+ "esp32c3",
+ "esp32c5",
+ "esp32c6",
+ "esp32c61",
+ "esp32h2",
+ "esp32p4",
+ "esp32s2",
+ "esp32s3",
+ "esp32s31",
+ "fugit",
+ "instability",
+ "log",
+ "nb 1.1.0",
+ "paste",
+ "portable-atomic",
+ "rand_core 0.10.1",
+ "rand_core 0.6.4",
+ "rand_core 0.9.5",
+ "riscv",
+ "sdio",
+ "sha1",
+ "sha2",
+ "somni-template",
+ "static_cell",
+ "strum",
+ "ufmt-write",
+ "xtensa-lx",
+ "xtensa-lx-rt",
+]
+
+[[package]]
+name = "esp-hal-procmacros"
+version = "0.22.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "object",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "termcolor",
+]
+
+[[package]]
+name = "esp-metadata-generated"
+version = "0.4.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+
+[[package]]
+name = "esp-phy"
+version = "0.2.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "embassy-sync 0.8.0",
+ "esp-config",
+ "esp-hal",
+ "esp-metadata-generated",
+ "esp-sync",
+ "esp-wifi-sys-esp32",
+ "esp-wifi-sys-esp32c2",
+ "esp-wifi-sys-esp32c3",
+ "esp-wifi-sys-esp32c6",
+ "esp-wifi-sys-esp32h2",
+ "esp-wifi-sys-esp32s3",
+ "esp32",
+ "esp32c2",
+ "esp32c3",
+ "esp32c6",
+ "esp32h2",
+ "esp32s3",
+ "log",
+]
+
+[[package]]
+name = "esp-println"
+version = "0.17.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "esp-metadata-generated",
+ "esp-sync",
+ "log",
+ "portable-atomic",
+]
+
+[[package]]
+name = "esp-radio"
+version = "1.0.0-beta.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "allocator-api2",
+ "bt-hci 0.9.0",
+ "bt-hci-transport",
+ "docsplay",
+ "document-features",
+ "embassy-sync 0.8.0",
+ "embedded-io 0.6.1",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
+ "esp-alloc",
+ "esp-config",
+ "esp-hal",
+ "esp-hal-procmacros",
+ "esp-metadata-generated",
+ "esp-phy",
+ "esp-radio-rtos-driver",
+ "esp-rom-sys",
+ "esp-sync",
+ "esp-wifi-sys-esp32",
+ "esp-wifi-sys-esp32c2",
+ "esp-wifi-sys-esp32c3",
+ "esp-wifi-sys-esp32c6",
+ "esp-wifi-sys-esp32h2",
+ "esp-wifi-sys-esp32s2",
+ "esp-wifi-sys-esp32s3",
+ "esp32",
+ "esp32c2",
+ "esp32c3",
+ "esp32c6",
+ "esp32h2",
+ "esp32s3",
+ "heapless 0.9.3",
+ "instability",
+ "log",
+ "num-derive",
+ "num-traits",
+ "portable-atomic",
+ "portable_atomic_enum",
+ "xtensa-lx-rt",
+]
+
+[[package]]
+name = "esp-radio-rtos-driver"
+version = "0.3.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "esp-sync",
+ "portable-atomic",
+]
+
+[[package]]
+name = "esp-riscv-rt"
+version = "0.14.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "riscv",
+ "riscv-rt",
+]
+
+[[package]]
+name = "esp-rom-sys"
+version = "0.1.4"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "esp-metadata-generated",
+ "esp32",
+ "esp32c2",
+ "esp32c3",
+ "esp32c6",
+ "esp32h2",
+ "esp32s3",
+]
+
+[[package]]
+name = "esp-rtos"
+version = "0.3.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "allocator-api2",
+ "defmt",
+ "document-features",
+ "embassy-executor",
+ "embassy-sync 0.8.0",
+ "embassy-time-driver",
+ "embassy-time-queue-utils",
+ "esp-alloc",
+ "esp-config",
+ "esp-hal",
+ "esp-hal-procmacros",
+ "esp-metadata-generated",
+ "esp-radio-rtos-driver",
+ "esp-rom-sys",
+ "esp-sync",
+ "log",
+ "portable-atomic",
+ "riscv",
+ "xtensa-lx",
+]
+
+[[package]]
+name = "esp-storage"
+version = "0.9.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "embedded-storage",
+ "esp-hal",
+ "esp-hal-procmacros",
+ "esp-metadata-generated",
+ "esp-rom-sys",
+ "esp-sync",
+ "esp32",
+ "esp32c2",
+ "esp32c3",
+ "esp32c6",
+ "esp32h2",
+ "esp32s3",
+]
+
+[[package]]
+name = "esp-sync"
+version = "0.2.1"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "embassy-sync 0.6.2",
+ "embassy-sync 0.7.2",
+ "embassy-sync 0.8.0",
+ "esp-metadata-generated",
+ "riscv",
+ "xtensa-lx",
+]
+
+[[package]]
+name = "esp-wifi-sys-esp32"
+version = "0.2.0"
+source = "git+https://github.com/esp-rs/esp-wifi-sys.git?rev=2ea8e3e#2ea8e3e6c2f49be41b8536e0d3b7f8058a6c1aa6"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "esp-wifi-sys-esp32c2"
+version = "0.2.0"
+source = "git+https://github.com/esp-rs/esp-wifi-sys.git?rev=2ea8e3e#2ea8e3e6c2f49be41b8536e0d3b7f8058a6c1aa6"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "esp-wifi-sys-esp32c3"
+version = "0.2.0"
+source = "git+https://github.com/esp-rs/esp-wifi-sys.git?rev=2ea8e3e#2ea8e3e6c2f49be41b8536e0d3b7f8058a6c1aa6"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "esp-wifi-sys-esp32c6"
+version = "0.2.0"
+source = "git+https://github.com/esp-rs/esp-wifi-sys.git?rev=2ea8e3e#2ea8e3e6c2f49be41b8536e0d3b7f8058a6c1aa6"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "esp-wifi-sys-esp32h2"
+version = "0.2.0"
+source = "git+https://github.com/esp-rs/esp-wifi-sys.git?rev=2ea8e3e#2ea8e3e6c2f49be41b8536e0d3b7f8058a6c1aa6"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "esp-wifi-sys-esp32s2"
+version = "0.2.0"
+source = "git+https://github.com/esp-rs/esp-wifi-sys.git?rev=2ea8e3e#2ea8e3e6c2f49be41b8536e0d3b7f8058a6c1aa6"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "esp-wifi-sys-esp32s3"
+version = "0.2.0"
+source = "git+https://github.com/esp-rs/esp-wifi-sys.git?rev=2ea8e3e#2ea8e3e6c2f49be41b8536e0d3b7f8058a6c1aa6"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "esp32"
+version = "0.40.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32c2"
+version = "0.29.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32c3"
+version = "0.32.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32c5"
+version = "0.2.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32c6"
+version = "0.23.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32c61"
+version = "0.3.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32h2"
+version = "0.19.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32p4"
+version = "0.2.0"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "critical-section",
+ "vcell",
+]
+
+[[package]]
+name = "esp32s2"
+version = "0.31.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32s3"
+version = "0.35.2"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32s31"
+version = "0.1.0"
+source = "git+https://github.com/esp-rs/esp-pacs?rev=131062119#131062119ca2460b625c1c118f2f7c16137598d7"
+dependencies = [
+ "critical-section",
+ "vcell",
+]
+
+[[package]]
 name = "ff"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -840,9 +1377,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.11"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
+checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
 name = "fixed"
@@ -861,6 +1398,15 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "fugit"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e88e2d6927cbdbbbdc85fc550cee539e63ae0f76445f13094833f63bb65b62f5"
+dependencies = [
+ "gcd",
+]
 
 [[package]]
 name = "futures"
@@ -909,17 +1455,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
 
 [[package]]
-name = "futures-macro"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.3",
-]
-
-[[package]]
 name = "futures-sink"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -938,12 +1473,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
  "futures-core",
- "futures-macro",
  "futures-sink",
  "futures-task",
  "pin-project-lite",
  "slab",
 ]
+
+[[package]]
+name = "gcd"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
 
 [[package]]
 name = "generator"
@@ -961,10 +1501,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "glob"
-version = "0.3.4"
+name = "generic-array"
+version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
+checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
+dependencies = [
+ "typenum",
+ "version_check",
+]
 
 [[package]]
 name = "group"
@@ -1007,6 +1551,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashbrown"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
 name = "heapless"
 version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1014,9 +1564,19 @@ checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
 dependencies = [
  "atomic-polyfill",
  "hash32 0.2.1",
- "rustc_version 0.4.1",
+ "rustc_version",
  "serde",
  "spin",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32 0.3.1",
  "stable_deref_trait",
 ]
 
@@ -1029,6 +1589,12 @@ dependencies = [
  "hash32 0.3.1",
  "stable_deref_trait",
 ]
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hkdf"
@@ -1045,7 +1611,7 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
 dependencies = [
- "digest",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -1066,6 +1632,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
+name = "indexmap"
+version = "2.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
+dependencies = [
+ "equivalent",
+ "hashbrown",
+]
+
+[[package]]
+name = "indoc"
+version = "2.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "inout"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1075,19 +1660,65 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.13.0"
+name = "instability"
+version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+checksum = "2bf84e73fa6f27f299dec58e13223cf70db80da872eb921d4f6138342a0eabc8"
 dependencies = [
- "either",
+ "darling 0.24.1",
+ "indoc",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
+]
+
+[[package]]
+name = "itoa"
+version = "1.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "jiff"
+version = "0.2.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "668b7183bd07af9a4885f5c35b0cc5c83c4607a913c16b7e17291832910d2dcc"
+dependencies = [
+ "defmt",
+ "jiff-core",
+ "jiff-static",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde_core",
+]
+
+[[package]]
+name = "jiff-core"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7feca88439efe53da3754500c1851dedf3cb36c524dd5cf8225cc0794de95d09"
+dependencies = [
+ "defmt",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a69dcb3a21cfb32ce1cd056169337ca284af0766dd766e7878819b251a49204"
+dependencies = [
+ "jiff-core",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
 name = "js-sys"
-version = "0.3.104"
+version = "0.3.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e0c1080212aad755ea003d18543e8768dd432c48819efd73a7bf1e39b7a5a3a"
+checksum = "ce57d20d1ea864ce2ac172ab472d409214f4fd359f0b2a2775abdf522e2af99e"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -1107,14 +1738,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
-name = "libloading"
-version = "0.8.9"
+name = "linked_list_allocator"
+version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link",
-]
+checksum = "2b23ac50abb8261cb38c6e2a7192d3302e0836dac1628f6a93b82b4fad185897"
 
 [[package]]
 name = "litrs"
@@ -1133,9 +1760,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "loom"
@@ -1166,12 +1793,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "minimal-lexical"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
 name = "nb"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1187,81 +1808,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
 
 [[package]]
-name = "nom"
-version = "7.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
-dependencies = [
- "memchr",
- "minimal-lexical",
-]
-
-[[package]]
-name = "nrf-mpsl"
-version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1a6e661155cdd1d6a86f3ae7b7fb117343781533#1a6e661155cdd1d6a86f3ae7b7fb117343781533"
-dependencies = [
- "cfg-if",
- "cortex-m",
- "critical-section",
- "defmt 1.1.1",
- "embassy-nrf",
- "embassy-sync",
- "embedded-io 0.7.1",
- "embedded-storage",
- "embedded-storage-async",
- "nrf-mpsl-sys",
-]
-
-[[package]]
-name = "nrf-mpsl-sys"
-version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1a6e661155cdd1d6a86f3ae7b7fb117343781533#1a6e661155cdd1d6a86f3ae7b7fb117343781533"
-dependencies = [
- "bindgen",
- "doxygen-rs",
-]
-
-[[package]]
-name = "nrf-pac"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83531b9f1e19f493018da9b8b20359e4cedd6d1357553b1ac50f3fa27a0104fa"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
-]
-
-[[package]]
-name = "nrf-sdc"
-version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1a6e661155cdd1d6a86f3ae7b7fb117343781533#1a6e661155cdd1d6a86f3ae7b7fb117343781533"
-dependencies = [
- "bt-hci",
- "bt-hci-transport",
- "critical-section",
- "defmt 1.1.1",
- "embassy-nrf",
- "embassy-sync",
- "embedded-io 0.7.1",
- "embedded-io-async 0.7.0",
- "nrf-mpsl",
- "nrf-sdc-sys",
- "rand_core 0.9.5",
-]
-
-[[package]]
-name = "nrf-sdc-sys"
-version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1a6e661155cdd1d6a86f3ae7b7fb117343781533#1a6e661155cdd1d6a86f3ae7b7fb117343781533"
-dependencies = [
- "bindgen",
- "doxygen-rs",
- "nrf-mpsl-sys",
- "winnow",
-]
-
-[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1271,12 +1817,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-derive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "object"
+version = "0.37.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -1299,56 +1865,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "panic-probe"
-version = "1.0.0"
+name = "paste"
+version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd402d00b0fb94c5aee000029204a46884b1262e0c443f166d86d2c0747e1a1a"
-dependencies = [
- "cortex-m",
- "defmt 1.1.1",
-]
-
-[[package]]
-name = "phf"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
-dependencies = [
- "phf_macros",
- "phf_shared",
-]
-
-[[package]]
-name = "phf_generator"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
-dependencies = [
- "phf_shared",
- "rand",
-]
-
-[[package]]
-name = "phf_macros"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f84ac04429c13a7ff43785d75ad27569f2951ce0ffd30a3321230db2fc727216"
-dependencies = [
- "phf_generator",
- "phf_shared",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
-dependencies = [
- "siphasher",
-]
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pin-project-lite"
@@ -1361,6 +1881,36 @@ name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
+dependencies = [
+ "portable-atomic",
+]
+
+[[package]]
+name = "portable_atomic_enum"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d48f60c43e0120bb2bb48589a16d4bed2f4b911be41e299f2d0fc0e0e20885"
+dependencies = [
+ "portable-atomic",
+ "portable_atomic_enum_macros",
+]
+
+[[package]]
+name = "portable_atomic_enum_macros"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a33fa6ec7f2047f572d49317cca19c87195de99c6e5b6ee492da701cfe02b053"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "postcard"
@@ -1383,23 +1933,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "primefield"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c555a6e4eb7d4e158fcb028c835c3b8642206ddc279b5c6b202ef9a8bdb592f4"
 dependencies = [
  "crypto-bigint",
- "crypto-common",
+ "crypto-common 0.2.2",
  "ff",
  "rand_core 0.10.1",
  "subtle",
@@ -1418,6 +1958,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro-crate"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
+dependencies = [
+ "toml_edit",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1433,15 +1982,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "rand"
-version = "0.8.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
-dependencies = [
- "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -1473,18 +2013,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
-name = "regex"
-version = "1.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
 name = "regex-automata"
 version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1512,18 +2040,74 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustc-hash"
-version = "2.1.3"
+name = "riscv"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
+checksum = "b05cfa3f7b30c84536a9025150d44d26b8e1cc20ddf436448d74cd9591eefb25"
+dependencies = [
+ "critical-section",
+ "embedded-hal 1.0.0",
+ "paste",
+ "riscv-macros",
+ "riscv-pac",
+]
 
 [[package]]
-name = "rustc_version"
+name = "riscv-macros"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d323d13972c1b104aa036bc692cd08b822c8bbf23d79a27c526095856499799"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "riscv-pac"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8188909339ccc0c68cfb5a04648313f09621e8b87dc03095454f1a11f6c5d436"
+
+[[package]]
+name = "riscv-rt"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d07b9f3a0eff773fc4df11f44ada4fa302e529bff4b7fe7e6a4b98a65ce9174"
+dependencies = [
+ "riscv",
+ "riscv-pac",
+ "riscv-rt-macros",
+ "riscv-target-parser",
+]
+
+[[package]]
+name = "riscv-rt-macros"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "def519ddeeb5e43c2b4fc3952c27b3a86782fc05192f322b2309125cd85b1fc3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "riscv-target-parser"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1376b15f3ff160e9b1e8ea564ce427f2f6fcf77528cc0a8bf405cb476f9cea7"
+
+[[package]]
+name = "rlsf"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "138e3e0acb6c9fb258b19b67cb8abd63c00679d2851805ea151465464fe9030a"
+checksum = "07393724337be2ee43a9d86164df4505746874a3fa65913374bc6d6a92314362"
 dependencies = [
- "semver 0.9.0",
+ "cfg-if",
+ "const-default",
+ "libc",
+ "rustversion",
 ]
 
 [[package]]
@@ -1532,7 +2116,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
- "semver 1.0.28",
+ "semver",
 ]
 
 [[package]]
@@ -1540,6 +2124,12 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "ryu"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "scoped-tls"
@@ -1552,6 +2142,18 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "sdio"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f7328e9dbad1337ef2d94a8404428a42d77a9916cda7c2e51287a1998da9afb"
+dependencies = [
+ "aligned",
+ "block-device-driver",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
 
 [[package]]
 name = "sec1"
@@ -1568,25 +2170,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "semver"
-version = "0.9.0"
+name = "semihosting"
+version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d7eb9ef2c18661902cc47e535f9bc51b78acd254da71d375c2f6720d9a40403"
-dependencies = [
- "semver-parser",
-]
+checksum = "f8e4abf97879f4e80db69a9fba7bd64998e9bdad25f58ef045a778e191172fd4"
 
 [[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
-
-[[package]]
-name = "semver-parser"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
 name = "sequential-storage"
@@ -1626,7 +2219,31 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.5",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -1637,7 +2254,7 @@ checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
 dependencies = [
  "cfg-if",
  "cpufeatures",
- "digest",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -1651,12 +2268,6 @@ dependencies = [
 
 [[package]]
 name = "shlex"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
-
-[[package]]
-name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
@@ -1667,15 +2278,9 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
 dependencies = [
- "digest",
+ "digest 0.11.3",
  "rand_core 0.10.1",
 ]
-
-[[package]]
-name = "siphasher"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "slab"
@@ -1685,9 +2290,35 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.15.2"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
+
+[[package]]
+name = "somni-expr"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f024812d1302010ff9227b80650469e58a3ef129ec5fda36c7a0b6b14ce07371"
+dependencies = [
+ "indexmap",
+ "somni-parser",
+]
+
+[[package]]
+name = "somni-parser"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba0fb59df288988d1f80eab8a0a32b18222e87b48d07b065c2f69cfc54d946c"
+
+[[package]]
+name = "somni-template"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f39bb07107650fb128f05f033a97212e946a3c0625cc729c97ed586bf7f226a3"
+dependencies = [
+ "somni-expr",
+ "somni-parser",
+]
 
 [[package]]
 name = "spin"
@@ -1720,6 +2351,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1738,13 +2390,22 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.3"
+version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
+checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
 dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "termcolor"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
+dependencies = [
+ "winapi-util",
 ]
 
 [[package]]
@@ -1764,7 +2425,7 @@ checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -1774,6 +2435,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "1.1.1+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.25.15+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
+dependencies = [
+ "indexmap",
+ "toml_datetime",
+ "toml_parser",
+ "winnow",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.1.3+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
+dependencies = [
+ "winnow",
 ]
 
 [[package]]
@@ -1838,18 +2529,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "trouble-esp32-examples"
+version = "0.1.0"
+dependencies = [
+ "embassy-crypto",
+ "embassy-crypto-rustcrypto",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-sync 0.8.0",
+ "embedded-storage",
+ "esp-alloc",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "esp-storage",
+ "rand_chacha",
+ "trouble-example-apps",
+ "trouble-host",
+]
+
+[[package]]
 name = "trouble-example-apps"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
- "defmt 1.1.1",
+ "bt-hci 0.10.1",
  "embassy-futures",
- "embassy-sync",
+ "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-hal-async",
  "embedded-storage-async",
  "fixed",
  "heapless 0.9.3",
+ "log",
  "sequential-storage",
  "serde",
  "static_cell",
@@ -1860,15 +2574,15 @@ dependencies = [
 name = "trouble-host"
 version = "0.8.0"
 dependencies = [
- "bt-hci",
- "defmt 1.1.1",
+ "bt-hci 0.10.1",
  "embassy-crypto",
  "embassy-futures",
- "embassy-sync",
+ "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-io 0.7.1",
  "futures",
  "heapless 0.9.3",
+ "log",
  "serde",
  "static_cell",
  "trouble-host-macros",
@@ -1880,7 +2594,7 @@ name = "trouble-host-macros"
 version = "0.6.0"
 dependencies = [
  "convert_case",
- "darling",
+ "darling 0.20.11",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -1888,36 +2602,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "trouble-nrf52-examples"
-version = "0.1.0"
-dependencies = [
- "bt-hci",
- "cortex-m",
- "cortex-m-rt",
- "defmt 1.1.1",
- "defmt-rtt",
- "embassy-crypto",
- "embassy-crypto-rustcrypto",
- "embassy-executor",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync",
- "embassy-time",
- "futures",
- "nrf-mpsl",
- "nrf-sdc",
- "panic-probe",
- "rand_chacha",
- "static_cell",
- "trouble-example-apps",
- "trouble-host",
-]
-
-[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "ufmt-write"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e87a2ed6b42ec5e28cc3b94c09982969e9227600b2e3dcbc1db927a84c06bd69"
 
 [[package]]
 name = "unicode-ident"
@@ -1950,10 +2644,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "uuid"
-version = "1.24.1"
+name = "unsafe-libyaml"
+version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cefc03fd367c0c6d4305de1b312cf00248c4114f4a0418ce6a6af769e3b0bd9"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
+name = "uuid"
+version = "1.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -1972,25 +2672,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77439c1b53d2303b20d9459b1ade71a83c716e3f9c34f3228c00e6f185d6c002"
 
 [[package]]
+name = "version_check"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
 name = "void"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 
 [[package]]
-name = "volatile-register"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de437e2a6208b014ab52972a27e59b33fa2920d3e00fe05026167a1c509d19cc"
-dependencies = [
- "vcell",
-]
-
-[[package]]
 name = "wasm-bindgen"
-version = "0.2.127"
+version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b70935747edd64d89de3efa29d73789b806c15798f8e7dca4d8ac356b50ce70"
+checksum = "aecb87a33d3b0c5e3b7aa46336eaf486cffafbd281b195e4c8b80d50df2351bf"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -2001,9 +2698,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.127"
+version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77775f8f3f7217702089053b94958f8f54061a3f663417df76e19cbdcca29bc1"
+checksum = "a690d511e3c1a8b3a55e33511e3c2c00c78415cd23650f32b808627f5696b9ed"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -2011,24 +2708,33 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.127"
+version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e11d33f857dc2fb11b8bc75aee111aa9cbeb12cd9f25efd3d4c2a3dd4e235284"
+checksum = "411e4887f0071ef2d2164a9d5fdf2d20efbef78fccd3a78b0c10a1dc5295e48a"
 dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.5",
  "wasm-bindgen-shared",
 ]
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.127"
+version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf"
+checksum = "81941cd78d0c92026c33e5e01312845a4cb1e9af3407f9134b100dd03144103e"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "winapi-util"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+dependencies = [
+ "windows-sys",
 ]
 
 [[package]]
@@ -2057,9 +2763,9 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "0.7.15"
+version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
 ]
@@ -2077,19 +2783,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "xtensa-lx"
+version = "0.13.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "critical-section",
+]
+
+[[package]]
+name = "xtensa-lx-rt"
+version = "0.22.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "document-features",
+ "xtensa-lx",
+ "xtensa-lx-rt-proc-macros",
+]
+
+[[package]]
+name = "xtensa-lx-rt-proc-macros"
+version = "0.5.0"
+source = "git+https://github.com/embassy-rs/esp-hal.git?rev=7af0919e56e8298a7cb429da7f078757e350d842#7af0919e56e8298a7cb429da7f078757e350d842"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "zerocopy"
-version = "0.8.56"
+version = "0.8.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "556764e583adb45a9f8d413c2a147fa7e8d821e48e12b14fd560b607998b75eb"
+checksum = "d35102a9f36d089ccae9e4c6802bc118be4487b80aaffc0ab4e0cf5ce92d2873"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.56"
+version = "0.8.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2ab42fc20575779bd240faa45f94a74256f755c0fa9e89f0ede20d91d0cdfc1"
+checksum = "146c01f5ab44258da43cf276c74a2763db2ff3969c9c652c3f2de07041d0b2bc"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -25,6 +25,13 @@ panic-probe = { version = "1.0", features = ["print-defmt"] }
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
 static_cell = "2"
+embassy-crypto-rustcrypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c", optional = true, features = [
+    "embassy-crypto-aes128-ecb",
+    "embassy-crypto-aes128-cmac",
+    "embassy-crypto-p256-ecdh",
+] }
+embassy-crypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c", optional = true }
+rand_chacha = { version = "0.3", default-features = false, optional = true }
 
 [profile.release]
 debug = 2
@@ -89,6 +96,11 @@ nrf52840 = [
 ]
 security = [
     "trouble-example-apps/security",
+    # embassy-nrf provides no embassy-crypto drivers yet: use the software
+    # implementations, with a CSPRNG seeded from the hardware RNG.
+    "dep:embassy-crypto",
+    "dep:embassy-crypto-rustcrypto",
+    "dep:rand_chacha",
 ]
 
 [[bin]]

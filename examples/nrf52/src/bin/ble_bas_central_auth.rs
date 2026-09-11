@@ -3,15 +3,21 @@
 
 use defmt::unwrap;
 use embassy_executor::Spawner;
+use embassy_nrf::gpio::{Input, Pull};
 use embassy_nrf::mode::Async;
 use embassy_nrf::peripherals::RNG;
 use embassy_nrf::{bind_interrupts, rng};
-use embassy_nrf::gpio::{Input, Pull};
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_central_auth;
 use {defmt_rtt as _, panic_probe as _};
+
+#[cfg(feature = "security")]
+use embassy_crypto_rustcrypto as _;
+#[cfg(feature = "security")]
+#[path = "../csprng.rs"]
+mod csprng;
 
 bind_interrupts!(struct Irqs {
     RNG => rng::InterruptHandler<RNG>;
@@ -71,6 +77,12 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
+    #[cfg(feature = "security")]
+    {
+        let mut seed = [0u8; 32];
+        rng.blocking_fill_bytes(&mut seed);
+        csprng::seed(seed);
+    }
 
     let mut sdc_mem = sdc::Mem::<7056>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));

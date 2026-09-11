@@ -520,6 +520,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
+name = "embassy-crypto"
+version = "0.1.0"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=bd35bd7a7d19147c8bcae9c2eda99b25e597294c#bd35bd7a7d19147c8bcae9c2eda99b25e597294c"
+dependencies = [
+ "defmt 1.1.1",
+ "unitrait 2.0.0",
+]
+
+[[package]]
 name = "embassy-embedded-hal"
 version = "0.6.0"
 source = "git+https://github.com/embassy-rs/embassy.git?rev=3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a#3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"
@@ -547,7 +556,7 @@ dependencies = [
  "document-features",
  "embassy-executor-macros",
  "embassy-executor-timer-queue",
- "unitrait",
+ "unitrait 1.0.0",
 ]
 
 [[package]]
@@ -566,7 +575,7 @@ name = "embassy-executor-timer-queue"
 version = "0.1.1"
 source = "git+https://github.com/embassy-rs/embassy.git?rev=3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a#3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a"
 dependencies = [
- "unitrait",
+ "unitrait 1.0.0",
 ]
 
 [[package]]
@@ -2579,6 +2588,7 @@ version = "0.8.0"
 dependencies = [
  "bt-hci",
  "defmt 1.1.1",
+ "embassy-crypto",
  "embassy-futures 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "embassy-sync",
  "embassy-time",
@@ -2667,6 +2677,24 @@ name = "unitrait"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b66b59b4e118746027256db08772826e9e0765e93b0bf15d2714a0ac0f940fbe"
+
+[[package]]
+name = "unitrait"
+version = "2.0.0"
+source = "git+https://github.com/embassy-rs/unitrait?rev=bb96601b3d293fa27d1ca2891f6ea148e534e433#bb96601b3d293fa27d1ca2891f6ea148e534e433"
+dependencies = [
+ "unitrait-macros",
+]
+
+[[package]]
+name = "unitrait-macros"
+version = "2.0.0"
+source = "git+https://github.com/embassy-rs/unitrait?rev=bb96601b3d293fa27d1ca2891f6ea148e534e433#bb96601b3d293fa27d1ca2891f6ea148e534e433"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "untrusted"

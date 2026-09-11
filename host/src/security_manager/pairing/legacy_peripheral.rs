@@ -1,6 +1,4 @@
 use bt_hci::param::{AddrKind, BdAddr};
-use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::connection::ConnectionEvent;
@@ -105,30 +103,28 @@ impl Pairing {
 
     // --- FSM core ---
 
-    pub(super) fn handle_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(super) fn handle_input<P: PacketPool, OPS: PairingOps<P>>(
         &mut self,
         input: Input<'_>,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
         let current = core::mem::replace(self, Self::Error(Error::InvalidState));
-        let next = Self::transition::<P, OPS, RNG>(current, input, pairing_data, ops, rng).unwrap_or_else(Self::Error);
+        let next = Self::transition::<P, OPS>(current, input, pairing_data, ops).unwrap_or_else(Self::Error);
         self.enter(next, pairing_data, ops);
         self.result().unwrap_or(Ok(()))
     }
 
-    fn transition<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn transition<P: PacketPool, OPS: PairingOps<P>>(
         current: Self,
         input: Input<'_>,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         match (current, input) {
             // --- Command transitions ---
             (Self::WaitingPairingRequest, Input::Command(Command::PairingRequest, payload)) => {
-                Self::handle_pairing_request(payload, ops, pairing_data, rng)
+                Self::handle_pairing_request(payload, ops, pairing_data)
             }
             (Self::WaitingOobData { preq, pres }, Input::Event(Event::OobDataReceived { local, .. })) => {
                 let tk = u128::from_le_bytes(local.random);
@@ -143,7 +139,7 @@ impl Pairing {
                 Self::store_confirm_bytes(payload, preq, pres)
             }
             (Self::WaitingPairingConfirm(confirm_data), Input::Command(Command::PairingConfirm, payload)) => {
-                Self::handle_peer_confirm(payload, ops, pairing_data, confirm_data, rng)
+                Self::handle_peer_confirm(payload, ops, pairing_data, confirm_data)
             }
             (
                 Self::WaitingPairingRandom {
@@ -151,7 +147,7 @@ impl Pairing {
                     peer_confirm,
                 },
                 Input::Command(Command::PairingRandom, payload),
-            ) => Self::handle_pairing_random(payload, ops, pairing_data, &confirm_data, peer_confirm, rng),
+            ) => Self::handle_pairing_random(payload, ops, pairing_data, &confirm_data, peer_confirm),
             (Self::WaitingIdentitityInformation, Input::Command(Command::IdentityInformation, payload)) => {
                 Self::handle_identity_information(payload, pairing_data)
             }
@@ -175,7 +171,7 @@ impl Pairing {
             (
                 x @ (Self::WaitingPairingRequest | Self::WaitingLinkEncrypted),
                 Input::Event(Event::LinkEncryptedResult(true)),
-            ) => Self::handle_link_encrypted_success(x, pairing_data, ops, rng),
+            ) => Self::handle_link_encrypted_success(x, pairing_data, ops),
             (
                 Self::WaitingPairingRequest | Self::WaitingLinkEncrypted,
                 Input::Event(Event::LinkEncryptedResult(false)),
@@ -190,7 +186,7 @@ impl Pairing {
                     pres,
                 },
                 Input::Event(Event::PassKeyInput(input)),
-            ) => Self::handle_pass_key_input(input, confirm_bytes, preq, pres, ops, pairing_data, rng),
+            ) => Self::handle_pass_key_input(input, confirm_bytes, preq, pres, ops, pairing_data),
             (Self::WaitingPassKeyInput { .. }, Input::Event(Event::PassKeyCancel)) => {
                 Err(Error::Security(Reason::PasskeyEntryFailed))
             }
@@ -243,11 +239,10 @@ impl Pairing {
 
     // --- Transition helpers ---
 
-    fn handle_link_encrypted_success<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_link_encrypted_success<P: PacketPool, OPS: PairingOps<P>>(
         previous: Self,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         debug!("[smp legacy peripheral] Link encrypted!");
         if matches!(previous, Self::WaitingPairingRequest) {
@@ -255,7 +250,7 @@ impl Pairing {
         }
         if matches!(previous, Self::WaitingLinkEncrypted) && pairing_data.want_bonding() {
             // Peripheral sends its keys first, then receives central's
-            Self::send_all_keys(pairing_data, ops, rng)
+            Self::send_all_keys(pairing_data, ops)
         } else if pairing_data.peer_features.initiator_key_distribution.identity_key() {
             Ok(Self::WaitingIdentitityInformation)
         } else {
@@ -273,19 +268,18 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_peer_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
+    fn handle_peer_confirm<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &PairingData,
         mut confirm_data: ConfirmPhaseData,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         let peer_confirm = u128::from_le_bytes(
             payload
                 .try_into()
                 .map_err(|_| Error::Security(Reason::InvalidParameters))?,
         );
-        Self::send_sconfirm(ops, pairing_data, &mut confirm_data, rng)?;
+        Self::send_sconfirm(ops, pairing_data, &mut confirm_data)?;
         Ok(Self::WaitingPairingRandom {
             confirm_data,
             peer_confirm,
@@ -293,14 +287,13 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_pass_key_input<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
+    fn handle_pass_key_input<P: PacketPool, OPS: PairingOps<P>>(
         input: u32,
         confirm_bytes: Option<[u8; size_of::<u128>()]>,
         preq: [u8; 7],
         pres: [u8; 7],
         ops: &mut OPS,
         pairing_data: &PairingData,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         let tk = input as u128;
         match confirm_bytes {
@@ -312,7 +305,7 @@ impl Pairing {
                     pres,
                     local_nonce: 0,
                 };
-                Self::send_sconfirm(ops, pairing_data, &mut confirm_data, rng)?;
+                Self::send_sconfirm(ops, pairing_data, &mut confirm_data)?;
                 Ok(Self::WaitingPairingRandom {
                     confirm_data,
                     peer_confirm,
@@ -328,18 +321,19 @@ impl Pairing {
     }
 
     /// Send all responder key distribution packets at once.
-    fn send_all_keys<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
+    fn send_all_keys<P: PacketPool, OPS: PairingOps<P>>(
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         if pairing_data.local_features.responder_key_distribution.encryption_key() {
             let mut ltk_bytes = [0u8; 16];
-            rng.fill_bytes(&mut ltk_bytes);
+            embassy_crypto::rng_fill_bytes(&mut ltk_bytes);
             let long_term_key = LongTermKey::from_le_bytes(ltk_bytes);
-            let ediv: u16 = rng.r#gen();
+            let mut ediv = [0u8; 2];
+            embassy_crypto::rng_fill_bytes(&mut ediv);
+            let ediv = u16::from_ne_bytes(ediv);
             let mut rand = [0u8; 8];
-            rng.fill_bytes(&mut rand);
+            embassy_crypto::rng_fill_bytes(&mut rand);
 
             let packet = make_encryption_information_packet(&long_term_key)?;
             ops.try_send_packet(packet)?;
@@ -390,11 +384,10 @@ impl Pairing {
 
     // --- Protocol helpers ---
 
-    fn handle_pairing_request<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_pairing_request<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &mut PairingData,
-        rng: &mut RNG,
     ) -> Result<Pairing, Error> {
         if ops.find_bond().is_some() {
             if let Err(e) = ops.try_send_connection_event(ConnectionEvent::BondLost) {
@@ -469,7 +462,7 @@ impl Pairing {
             }
             PairingMethod::PassKeyEntry { peripheral, .. } => {
                 if peripheral == PassKeyEntryAction::Display {
-                    let tk = rng.sample(rand::distributions::Uniform::new_inclusive(0u32, 999999)) as u128;
+                    let tk = crate::security_manager::crypto::random_passkey() as u128;
                     ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(tk as u32)))?;
                     Ok(Self::WaitingPairingConfirm(ConfirmPhaseData {
                         tk,
@@ -499,15 +492,14 @@ impl Pairing {
         }
     }
 
-    fn send_sconfirm<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
+    fn send_sconfirm<P: PacketPool, OPS: PairingOps<P>>(
         ops: &mut OPS,
         pairing_data: &PairingData,
         confirm_data: &mut ConfirmPhaseData,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
         // Generate Srand
         let mut srand_bytes = [0u8; 16];
-        rng.fill_bytes(&mut srand_bytes);
+        embassy_crypto::rng_fill_bytes(&mut srand_bytes);
         confirm_data.local_nonce = u128::from_be_bytes(srand_bytes);
         if confirm_data.local_nonce == 0 {
             confirm_data.local_nonce = 1;
@@ -532,13 +524,12 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_pairing_random<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
+    fn handle_pairing_random<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &mut PairingData,
         confirm_data: &ConfirmPhaseData,
         peer_confirm: u128,
-        rng: &mut RNG,
     ) -> Result<Pairing, Error> {
         // Parse Mrand from central
         let mrand_le: [u8; 16] = payload
@@ -655,8 +646,6 @@ impl Pairing {
 #[cfg(test)]
 mod tests {
     use embassy_time::Instant;
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
 
     use super::Pairing;
     use crate::security_manager::pairing::tests::{HeaplessPool, TestOps};
@@ -693,16 +682,14 @@ mod tests {
             IoCapabilities::NoInputNoOutput,
         );
         let mut pairing = Pairing::new();
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(42).into();
 
         // Central sends PairingRequest (without SC flag)
         // AuthReq = 0x05 (MITM + Bonding, no SC)
         pairing
-            .handle_input::<HeaplessPool, _, _>(
+            .handle_input::<HeaplessPool, _>(
                 Input::Command(Command::PairingRequest, &[0x03, 0, 0x04, 16, 0, 0]),
                 &mut pairing_data,
                 &mut ops,
-                &mut rng,
             )
             .unwrap();
 

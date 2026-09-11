@@ -20,6 +20,12 @@ use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::{Vec, VecView};
 
+// Register software crypto drivers for unit tests.
+#[cfg(test)]
+use embassy_crypto_rand as _;
+#[cfg(test)]
+use embassy_crypto_rustcrypto as _;
+
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
 use crate::connection::Connection;
@@ -480,7 +486,6 @@ pub trait SecurityCmds:
     + ControllerCmdSync<LeSetAddrResolutionEnable>
     + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
     + ControllerCmdSync<LeSetPrivacyMode>
-    + ControllerCmdSync<LeRand>
 {
 }
 
@@ -494,8 +499,7 @@ impl<
             + ControllerCmdSync<LeClearResolvingList>
             + ControllerCmdSync<LeSetAddrResolutionEnable>
             + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
-            + ControllerCmdSync<LeSetPrivacyMode>
-            + ControllerCmdSync<LeRand>,
+            + ControllerCmdSync<LeSetPrivacyMode>,
     > SecurityCmds for C
 {
 }

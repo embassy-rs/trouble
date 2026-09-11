@@ -14,7 +14,9 @@ use embassy_nrf::{bind_interrupts, rng};
 use embedded_alloc::LlffHeap as Heap;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
-use panic_probe as _;
+use {embassy_crypto_rustcrypto as _, panic_probe as _};
+
+mod csprng;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 use trouble_tester_app::BtpConfig;
@@ -112,6 +114,10 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
+
+    let mut seed = [0u8; 32];
+    rng.blocking_fill_bytes(&mut seed);
+    csprng::seed(seed);
 
     // We use a random IRK because it only needs to remain stable during a single test case
     let mut irk_bytes = [0u8; 16];

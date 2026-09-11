@@ -47,6 +47,6 @@ security = [
     "dep:sequential-storage",
     "dep:embedded-storage-async",
     "trouble-host/serde",
-    "dep:serde"
+    "dep:serde",
 ]
 std = []
