@@ -16,15 +16,14 @@ use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle};
 use bt_hci::FromHciBytesError;
-use embassy_time::Duration;
-#[cfg(feature = "security")]
-use heapless::{Vec, VecView};
-
 // Register software crypto drivers for unit tests.
 #[cfg(test)]
 use embassy_crypto_rand as _;
 #[cfg(test)]
 use embassy_crypto_rustcrypto as _;
+use embassy_time::Duration;
+#[cfg(feature = "security")]
+use heapless::{Vec, VecView};
 
 use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;

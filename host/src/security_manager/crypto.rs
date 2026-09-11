@@ -4,8 +4,7 @@
 use core::num::NonZeroU128;
 
 use bt_hci::param::BdAddr;
-use embassy_crypto::p256 as ec;
-use embassy_crypto::{rng_fill_bytes, Aes128, Aes128Cmac};
+use embassy_crypto::{p256 as ec, rng_fill_bytes, Aes128, Aes128Cmac};
 
 use crate::Address;
 

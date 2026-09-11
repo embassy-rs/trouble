@@ -319,7 +319,6 @@ where
     let scan_mode = Cell::new(ScanMode::default());
     let oob = OobState::new();
 
-
     let mut table = AttributeTable::<NoopRawMutex, ATTRIBUTE_TABLE_SIZE>::new();
     init_table(&mut table, &config);
 
