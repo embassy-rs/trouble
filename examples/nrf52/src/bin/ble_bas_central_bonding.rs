@@ -13,6 +13,12 @@ use static_cell::StaticCell;
 use trouble_example_apps::ble_bas_central_bonding;
 use {defmt_rtt as _, panic_probe as _};
 
+#[cfg(feature = "security")]
+use embassy_crypto_rustcrypto as _;
+#[cfg(feature = "security")]
+#[path = "../csprng.rs"]
+mod csprng;
+
 bind_interrupts!(struct Irqs {
     RNG => rng::InterruptHandler<RNG>;
     EGU0_SWI0 => nrf_sdc::mpsl::LowPrioInterruptHandler;
@@ -72,6 +78,12 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
+    #[cfg(feature = "security")]
+    {
+        let mut seed = [0u8; 32];
+        rng.blocking_fill_bytes(&mut seed);
+        csprng::seed(seed);
+    }
 
     let mut sdc_mem = sdc::Mem::<7056>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
@@ -82,7 +94,7 @@ async fn main(spawner: Spawner) {
     config.write_opcode = qspi::WriteOpcode::Pp4io;
     config.write_page_size = qspi::WritePageSize::_256bytes;
     config.frequency = qspi::Frequency::M32;
-    config.capacity = 8*1024*1024;
+    config.capacity = 8 * 1024 * 1024;
 
     let mut qspi: qspi::Qspi = qspi::Qspi::new(
         p.QSPI, Irqs, p.P0_19, p.P0_17, p.P0_20, p.P0_21, p.P0_22, p.P0_23, config,

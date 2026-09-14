@@ -1,6 +1,3 @@
-use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
-
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, PublicKeyX, SecretKey};
@@ -187,28 +184,26 @@ impl Pairing {
 
     // --- FSM core ---
 
-    pub(super) fn handle_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(super) fn handle_input<P: PacketPool, OPS: PairingOps<P>>(
         &mut self,
         input: Input<'_>,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
         let current = core::mem::replace(&mut self.current_step, Step::Error(Error::InvalidState));
         let next = self
-            .transition::<P, OPS, RNG>(current, input, pairing_data, ops, rng)
+            .transition::<P, OPS>(current, input, pairing_data, ops)
             .unwrap_or_else(Step::Error);
         self.enter(next, pairing_data, ops);
         self.result().unwrap_or(Ok(()))
     }
 
-    fn transition<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn transition<P: PacketPool, OPS: PairingOps<P>>(
         &self,
         current: Step,
         input: Input<'_>,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Step, Error> {
         match (current, input) {
             // --- Command transitions ---
@@ -220,7 +215,7 @@ impl Pairing {
                 Ok(Step::WaitingPairingResponse)
             }
             (Step::WaitingPairingResponse, Input::Command(Command::PairingResponse, payload)) => {
-                Self::handle_pairing_response_and_send_key(payload, pairing_data, ops, rng)
+                Self::handle_pairing_response_and_send_key(payload, pairing_data, ops)
             }
             (
                 Step::WaitingPublicKey {
@@ -228,16 +223,9 @@ impl Pairing {
                     local_public_key,
                 },
                 Input::Command(Command::PairingPublicKey, payload),
-            ) => Self::handle_public_key_and_choose_method(
-                payload,
-                private_key,
-                local_public_key,
-                pairing_data,
-                ops,
-                rng,
-            ),
+            ) => Self::handle_public_key_and_choose_method(payload, private_key, local_public_key, pairing_data, ops),
             (Step::WaitingNumericComparisonConfirm(phase_data), Input::Command(Command::PairingConfirm, payload)) => {
-                Self::handle_confirm_and_send_nonce(payload, phase_data, ops, rng)
+                Self::handle_confirm_and_send_nonce(payload, phase_data, ops)
             }
             (Step::WaitingNumericComparisonRandom(phase_data), Input::Command(Command::PairingRandom, payload)) => {
                 Self::handle_numeric_compare_random(payload, phase_data, pairing_data, ops)
@@ -256,7 +244,7 @@ impl Pairing {
             (
                 Step::WaitingPassKeyEntryRandom { phase_data, round },
                 Input::Command(Command::PairingRandom, payload),
-            ) => Self::handle_pass_key_entry_random(payload, phase_data, round, pairing_data, ops, rng),
+            ) => Self::handle_pass_key_entry_random(payload, phase_data, round, pairing_data, ops),
             (Step::WaitingOobRandom(phase_data), Input::Command(Command::PairingRandom, payload)) => {
                 Self::handle_oob_random(payload, phase_data, pairing_data, ops)
             }
@@ -274,7 +262,7 @@ impl Pairing {
 
             // --- Event transitions ---
             (Step::WaitingOobData(phase_data), Input::Event(Event::OobDataReceived { local, peer })) => {
-                Self::handle_oob_data_received(local, peer, phase_data, pairing_data, ops, rng)
+                Self::handle_oob_data_received(local, peer, phase_data, pairing_data, ops)
             }
             (Step::WaitingLinkEncrypted, Input::Event(Event::LinkEncryptedResult(true))) => {
                 debug!("Link encrypted!");
@@ -307,7 +295,7 @@ impl Pairing {
                     confirm_bytes,
                 },
                 Input::Event(Event::PassKeyInput(input)),
-            ) => Self::handle_pass_key_input(input, phase_data, confirm_bytes, ops, rng),
+            ) => Self::handle_pass_key_input(input, phase_data, confirm_bytes, ops),
             (current, Input::Event(Event::PassKeyConfirm | Event::PassKeyCancel)) => Ok(current),
             // Handle PairingFailed from peer in any state
             (_, Input::Command(Command::PairingFailed, payload)) => {
@@ -408,11 +396,10 @@ impl Pairing {
         }
     }
 
-    fn handle_pairing_response_and_send_key<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_pairing_response_and_send_key<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        _rng: &mut RNG,
     ) -> Result<Step, Error> {
         Self::handle_pairing_response(payload, ops, pairing_data)?;
         let secret_key = ops.secret_key().clone();
@@ -425,13 +412,12 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_public_key_and_choose_method<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_public_key_and_choose_method<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         private_key: SecretKey,
         local_public_key: PublicKey,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Step, Error> {
         let peer_public_key = PublicKey::from_bytes(payload);
         let dh_key = private_key
@@ -456,12 +442,12 @@ impl Pairing {
             }
             PairingMethod::PassKeyEntry { central, .. } => {
                 if central == PassKeyEntryAction::Display {
-                    phase_data.local_secret_ra = rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                    phase_data.local_secret_ra = crate::security_manager::crypto::random_passkey() as u128;
                     phase_data.peer_secret_rb = phase_data.local_secret_ra;
                     ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(
                         phase_data.local_secret_ra as u32,
                     )))?;
-                    Self::send_pass_key_confirm(0, &mut phase_data, ops, rng)?;
+                    Self::send_pass_key_confirm(0, &mut phase_data, ops)?;
                     Ok(Step::WaitingPassKeyEntryConfirm { phase_data, round: 0 })
                 } else {
                     ops.try_send_connection_event(ConnectionEvent::PassKeyInput)?;
@@ -476,13 +462,12 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_confirm_and_send_nonce<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_confirm_and_send_nonce<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         mut phase_data: LescPhaseData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Step, Error> {
-        Self::handle_numeric_compare_confirm(payload, &mut phase_data, rng)?;
+        Self::handle_numeric_compare_confirm(payload, &mut phase_data)?;
         Self::send_nonce(ops, &phase_data.local_nonce)?;
         Ok(Step::WaitingNumericComparisonRandom(phase_data))
     }
@@ -509,19 +494,18 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_pass_key_entry_random<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_pass_key_entry_random<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         mut phase_data: LescPhaseData,
         round: i32,
         pairing_data: &PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Step, Error> {
         Self::handle_pass_key_random(round, payload, ops, &mut phase_data)?;
         if round == 19 {
             Self::send_dhkey_ea_and_transition(ops, pairing_data, &phase_data)
         } else {
-            Self::send_pass_key_confirm(round + 1, &mut phase_data, ops, rng)?;
+            Self::send_pass_key_confirm(round + 1, &mut phase_data, ops)?;
             Ok(Step::WaitingPassKeyEntryConfirm {
                 phase_data,
                 round: round + 1,
@@ -559,16 +543,15 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_pass_key_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_pass_key_input<P: PacketPool, OPS: PairingOps<P>>(
         input: u32,
         mut phase_data: LescPhaseData,
         confirm_bytes: Option<[u8; size_of::<u128>()]>,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Step, Error> {
         phase_data.local_secret_ra = input as u128;
         phase_data.peer_secret_rb = phase_data.local_secret_ra;
-        Self::send_pass_key_confirm(0, &mut phase_data, ops, rng)?;
+        Self::send_pass_key_confirm(0, &mut phase_data, ops)?;
         match confirm_bytes {
             Some(payload) => {
                 Self::store_pass_key_confirm(&payload, &mut phase_data)?;
@@ -579,13 +562,12 @@ impl Pairing {
         }
     }
 
-    fn handle_oob_data_received<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_oob_data_received<P: PacketPool, OPS: PairingOps<P>>(
         local: super::OobData,
         peer: super::OobData,
         mut phase_data: LescPhaseData,
         pairing_data: &PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Step, Error> {
         // Verify peer's confirm value if peer OOB data was received.
         // Per spec 2.3.5.6.3: if a device has not received the peer's OOB data,
@@ -610,7 +592,7 @@ impl Pairing {
         phase_data.peer_secret_rb = u128::from_le_bytes(peer.random);
 
         // Generate and send Na
-        phase_data.local_nonce = Nonce::new(rng);
+        phase_data.local_nonce = Nonce::new();
         Self::send_nonce(ops, &phase_data.local_nonce)?;
         Ok(Step::WaitingOobRandom(phase_data))
     }
@@ -667,15 +649,11 @@ impl Pairing {
         Ok(())
     }
 
-    fn handle_numeric_compare_confirm<RNG: CryptoRng + RngCore>(
-        payload: &[u8],
-        phase_data: &mut LescPhaseData,
-        rng: &mut RNG,
-    ) -> Result<(), Error> {
+    fn handle_numeric_compare_confirm(payload: &[u8], phase_data: &mut LescPhaseData) -> Result<(), Error> {
         phase_data.confirm = Confirm(u128::from_le_bytes(
             payload.try_into().map_err(|_| Error::InvalidValue)?,
         ));
-        phase_data.local_nonce = Nonce::new(rng);
+        phase_data.local_nonce = Nonce::new();
         Ok(())
     }
 
@@ -796,13 +774,12 @@ impl Pairing {
     }
 
     /// Send a passkey entry confirm for the given round.
-    fn send_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn send_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>>(
         round: i32,
         phase_data: &mut LescPhaseData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
-        phase_data.local_nonce = Nonce::new(rng);
+        phase_data.local_nonce = Nonce::new();
         let rai = 0x80u8 | (((phase_data.local_secret_ra & (1 << round as u128)) >> (round as u128)) as u8);
         let cai = phase_data
             .local_nonce

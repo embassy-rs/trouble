@@ -1,6 +1,4 @@
 use bt_hci::param::{AddrKind, BdAddr};
-use rand::Rng;
-use rand_core::{CryptoRng, RngCore};
 
 use crate::codec::{Decode, Encode};
 use crate::prelude::ConnectionEvent;
@@ -117,33 +115,31 @@ impl Pairing {
 
     // --- FSM core ---
 
-    pub(super) fn handle_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(super) fn handle_input<P: PacketPool, OPS: PairingOps<P>>(
         &mut self,
         input: Input<'_>,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
         let current = core::mem::replace(self, Self::Error(Error::InvalidState));
-        let next = Self::transition::<P, OPS, RNG>(current, input, pairing_data, ops, rng).unwrap_or_else(Self::Error);
+        let next = Self::transition::<P, OPS>(current, input, pairing_data, ops).unwrap_or_else(Self::Error);
         self.enter(next, pairing_data, ops);
         self.result().unwrap_or(Ok(()))
     }
 
-    fn transition<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn transition<P: PacketPool, OPS: PairingOps<P>>(
         current: Self,
         input: Input<'_>,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         match (current, input) {
             // --- Command transitions ---
             (Self::WaitingPairingRequest, Input::Command(Command::PairingRequest, payload)) => {
-                Self::handle_pairing_request_command(payload, pairing_data, ops, rng)
+                Self::handle_pairing_request_command(payload, pairing_data, ops)
             }
             (Self::WaitingPublicKey, Input::Command(Command::PairingPublicKey, payload)) => {
-                Self::handle_public_key_and_choose_method(payload, pairing_data, ops, rng)
+                Self::handle_public_key_and_choose_method(payload, pairing_data, ops)
             }
             (Self::WaitingNumericComparisonRandom(phase_data), Input::Command(Command::PairingRandom, payload)) => {
                 Self::handle_numeric_compare_random_and_confirm(payload, phase_data, pairing_data, ops)
@@ -162,13 +158,13 @@ impl Pairing {
             (
                 Self::WaitingPassKeyEntryConfirm { phase_data, round },
                 Input::Command(Command::PairingConfirm, payload),
-            ) => Self::handle_pass_key_confirm(round, payload, ops, pairing_data, phase_data, rng),
+            ) => Self::handle_pass_key_confirm(round, payload, ops, pairing_data, phase_data),
             (
                 Self::WaitingPassKeyEntryRandom { phase_data, round },
                 Input::Command(Command::PairingRandom, payload),
             ) => Self::handle_pass_key_random(round, payload, ops, pairing_data, phase_data),
             (Self::WaitingOobRandom(phase_data), Input::Command(Command::PairingRandom, payload)) => {
-                Self::handle_oob_random(payload, phase_data, pairing_data, ops, rng)
+                Self::handle_oob_random(payload, phase_data, pairing_data, ops)
             }
             (Self::WaitingDHKeyEa(phase_data), Input::Command(Command::PairingDhKeyCheck, payload)) => {
                 Self::handle_dhkey_ea(payload, ops, pairing_data, &phase_data)
@@ -215,7 +211,7 @@ impl Pairing {
                     confirm_bytes,
                 },
                 Input::Event(Event::PassKeyInput(input)),
-            ) => Self::handle_pass_key_input(input, phase_data, confirm_bytes, ops, pairing_data, rng),
+            ) => Self::handle_pass_key_input(input, phase_data, confirm_bytes, ops, pairing_data),
             (current, Input::Event(Event::PassKeyConfirm | Event::PassKeyCancel | Event::PassKeyInput(_))) => {
                 Ok(current)
             }
@@ -257,11 +253,10 @@ impl Pairing {
 
     // --- Transition helpers ---
 
-    fn handle_pairing_request_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_pairing_request_command<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        _rng: &mut RNG,
     ) -> Result<Self, Error> {
         if ops.find_bond().is_some() {
             if let Err(e) = ops.try_send_connection_event(ConnectionEvent::BondLost) {
@@ -273,11 +268,10 @@ impl Pairing {
         Ok(Self::WaitingPublicKey)
     }
 
-    fn handle_public_key_and_choose_method<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_public_key_and_choose_method<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         let peer_public_key = PublicKey::from_bytes(payload);
         let secret_key = ops.secret_key().clone();
@@ -309,7 +303,7 @@ impl Pairing {
                     // Use configured passkey if available, otherwise generate a random one
                     let passkey = ops
                         .passkey()
-                        .unwrap_or_else(|| rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999)));
+                        .unwrap_or_else(crate::security_manager::crypto::random_passkey);
                     phase_data.local_secret_rb = passkey as u128;
                     phase_data.peer_secret_ra = phase_data.local_secret_rb;
                     ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(passkey)))?;
@@ -324,7 +318,7 @@ impl Pairing {
             }
             _ => {
                 // Numeric comparison / Just Works: send confirm
-                Self::send_numeric_compare_confirm(&mut phase_data, ops, rng)?;
+                Self::send_numeric_compare_confirm(&mut phase_data, ops)?;
                 Ok(Self::WaitingNumericComparisonRandom(phase_data))
             }
         }
@@ -404,18 +398,17 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_pass_key_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_pass_key_input<P: PacketPool, OPS: PairingOps<P>>(
         input: u32,
         mut phase_data: LescPhaseData,
         confirm_bytes: Option<[u8; size_of::<u128>()]>,
         ops: &mut OPS,
         pairing_data: &mut PairingData,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         phase_data.local_secret_rb = input as u128;
         phase_data.peer_secret_ra = phase_data.local_secret_rb;
         match confirm_bytes {
-            Some(payload) => Self::handle_pass_key_confirm(0, &payload, ops, pairing_data, phase_data, rng),
+            Some(payload) => Self::handle_pass_key_confirm(0, &payload, ops, pairing_data, phase_data),
             None => Ok(Self::WaitingPassKeyEntryConfirm { phase_data, round: 0 }),
         }
     }
@@ -456,19 +449,18 @@ impl Pairing {
         Ok(Self::WaitingOobRandom(phase_data))
     }
 
-    fn handle_oob_random<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_oob_random<P: PacketPool, OPS: PairingOps<P>>(
         payload: &[u8],
         mut phase_data: LescPhaseData,
         pairing_data: &mut PairingData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<Self, Error> {
         // Receive Na from central
         phase_data.peer_nonce = Nonce(u128::from_le_bytes(
             payload.try_into().map_err(|_| crate::Error::InvalidValue)?,
         ));
         // Generate and send Nb
-        phase_data.local_nonce = Nonce::new(rng);
+        phase_data.local_nonce = Nonce::new();
         Self::send_nonce(ops, &phase_data.local_nonce)?;
         // Wait for DHKey check from central
         Ok(Self::WaitingDHKeyEa(phase_data))
@@ -612,12 +604,11 @@ impl Pairing {
     }
 
     /// Send numeric comparison confirm (peripheral sends first in LESC).
-    fn send_numeric_compare_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: RngCore>(
+    fn send_numeric_compare_confirm<P: PacketPool, OPS: PairingOps<P>>(
         phase_data: &mut LescPhaseData,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
-        phase_data.local_nonce = Nonce::new(rng);
+        phase_data.local_nonce = Nonce::new();
         phase_data.confirm =
             phase_data
                 .local_nonce
@@ -725,20 +716,19 @@ impl Pairing {
     }
 
     #[inline]
-    fn handle_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>>(
         round: i32,
         payload: &[u8],
         ops: &mut OPS,
         _pairing_data: &mut PairingData,
         mut phase_data: LescPhaseData,
-        rng: &mut RNG,
     ) -> Result<Pairing, Error> {
         phase_data.confirm = Confirm(u128::from_le_bytes(
             payload
                 .try_into()
                 .map_err(|_| Error::Security(Reason::InvalidParameters))?,
         ));
-        phase_data.local_nonce = Nonce::new(rng);
+        phase_data.local_nonce = Nonce::new();
         let z = 0x80 | ((phase_data.local_secret_rb & (1 << round)) >> round);
         let confirm_to_send =
             phase_data
@@ -793,17 +783,15 @@ impl Pairing {
 #[cfg(test)]
 mod tests {
     use bt_hci::param::{AddrKind, BdAddr};
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
 
     use super::Pairing;
     use crate::prelude::{ConnectionEvent, SecurityLevel};
-    use crate::security_manager::crypto::SecretKey;
+    use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
     use crate::security_manager::pairing::tests::{HeaplessPool, TestOps};
     use crate::security_manager::pairing::util::make_public_key_packet;
     use crate::security_manager::pairing::{Event, Input, PairingData};
     use crate::security_manager::types::{Command, PairingFeatures};
-    use crate::{Address, IoCapabilities, LongTermKey};
+    use crate::{Address, IoCapabilities};
 
     fn make_default_pairing_data(
         local_address: Address,
@@ -837,14 +825,12 @@ mod tests {
             IoCapabilities::NoInputNoOutput,
         );
         let mut pairing = Pairing::new();
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
         pairing
-            .handle_input::<HeaplessPool, _, _>(
+            .handle_input::<HeaplessPool, _>(
                 Input::Command(Command::PairingRequest, &[0x03, 0, 0x08, 16, 0, 0]),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
         {
@@ -872,70 +858,76 @@ mod tests {
         }
         // Pairing method expected to be just works (numeric comparison)
         // Central sends public key, expects peripheral public key followed by peripheral confirm
-        let secret_key = SecretKey::new(&mut rng);
-        let packet = make_public_key_packet::<HeaplessPool>(&secret_key.public_key()).unwrap();
+        let secret_key = SecretKey::new();
+        let central_public_key = secret_key.public_key();
+        let packet = make_public_key_packet::<HeaplessPool>(&central_public_key).unwrap();
         pairing
-            .handle_input::<HeaplessPool, _, _>(
+            .handle_input::<HeaplessPool, _>(
                 Input::Command(Command::PairingPublicKey, packet.payload()),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
 
-        {
+        let (peripheral_public_key, confirm) = {
             let sent_packets = &pairing_ops.sent_packets;
             assert_eq!(sent_packets.len(), 3);
 
             // Verify public key was sent
             assert_eq!(sent_packets[1].command, Command::PairingPublicKey);
-            // These magic values depends on the random number generator and the seed.
-            assert_eq!(
-                sent_packets[1].payload(),
-                &[
-                    21, 196, 108, 202, 69, 188, 69, 135, 69, 42, 164, 53, 225, 21, 133, 89, 26, 48, 111, 199, 227, 174,
-                    133, 111, 21, 207, 26, 116, 100, 190, 159, 168, 98, 251, 173, 190, 122, 175, 196, 246, 214, 0, 91,
-                    37, 138, 57, 110, 237, 171, 123, 98, 152, 198, 0, 252, 222, 53, 242, 184, 135, 125, 232, 8, 102
-                ]
-            );
+            let peripheral_public_key = PublicKey::from_bytes(sent_packets[1].payload());
 
             assert_eq!(sent_packets[2].command, Command::PairingConfirm);
-            assert_eq!(
-                sent_packets[2].payload(),
-                &[60, 131, 200, 162, 116, 60, 118, 168, 186, 178, 89, 159, 38, 122, 197, 173]
-            );
-        }
+            let confirm: [u8; 16] = sent_packets[2].payload().try_into().unwrap();
+            (peripheral_public_key, confirm)
+        };
 
         // Central sends Nonce, expects Nonce
+        let na = Nonce(u128::from_le_bytes([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+        ]));
         pairing
-            .handle_input::<HeaplessPool, _, _>(
-                Input::Command(
-                    Command::PairingRandom,
-                    &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                ),
+            .handle_input::<HeaplessPool, _>(
+                Input::Command(Command::PairingRandom, &na.0.to_le_bytes()),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
 
-        {
+        let nb = {
             let sent_packets = &pairing_ops.sent_packets;
             assert_eq!(sent_packets.len(), 4);
             assert_eq!(sent_packets[3].command, Command::PairingRandom);
             assert_eq!(pairing_ops.encryptions.len(), 0);
-        }
+            Nonce(u128::from_le_bytes(sent_packets[3].payload().try_into().unwrap()))
+        };
+
+        // The peripheral confirm must verify against its nonce
+        assert_eq!(
+            confirm,
+            nb.f4(peripheral_public_key.x(), central_public_key.x(), 0)
+                .0
+                .to_le_bytes()
+        );
+
+        // Central computes the DH key and sends its check value Ea, expects Eb
+        let dh_key = secret_key.dh_key(peripheral_public_key, &central_public_key).unwrap();
+        let central_address = pairing_data.peer_address;
+        let peripheral_address = pairing_data.local_address;
+        let (mac_key, ltk) = dh_key.f5(na, nb, central_address, peripheral_address);
+        let ea = mac_key.f6(
+            na,
+            nb,
+            0,
+            pairing_data.peer_features.as_io_cap(),
+            central_address,
+            peripheral_address,
+        );
         pairing
-            .handle_input::<HeaplessPool, _, _>(
-                Input::Command(
-                    Command::PairingDhKeyCheck,
-                    &[
-                        221, 215, 144, 142, 100, 9, 130, 242, 165, 163, 136, 234, 41, 58, 197, 162,
-                    ],
-                ),
+            .handle_input::<HeaplessPool, _>(
+                Input::Command(Command::PairingDhKeyCheck, &ea.0.to_le_bytes()),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
 
@@ -943,12 +935,17 @@ mod tests {
             let sent_packets = &pairing_ops.sent_packets;
             assert_eq!(sent_packets.len(), 5);
             assert_eq!(sent_packets[4].command, Command::PairingDhKeyCheck);
-            assert_eq!(
-                sent_packets[4].payload(),
-                [33, 152, 76, 163, 246, 225, 149, 237, 16, 164, 28, 82, 252, 35, 196, 40]
+            let eb = mac_key.f6(
+                nb,
+                na,
+                0,
+                pairing_data.local_features.as_io_cap(),
+                peripheral_address,
+                central_address,
             );
+            assert_eq!(sent_packets[4].payload(), eb.0.to_le_bytes());
             assert_eq!(pairing_ops.encryptions.len(), 1);
-            assert!(matches!(pairing_ops.encryptions[0], LongTermKey(_)));
+            assert_eq!(pairing_ops.encryptions[0], ltk);
         }
     }
 
@@ -965,7 +962,6 @@ mod tests {
             IoCapabilities::NoInputNoOutput,
         );
         let mut pairing = Pairing::new();
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
         // Central sends pairing request with identity_key bit set, expects pairing response from peripheral
         let pairing_request = [
@@ -978,11 +974,10 @@ mod tests {
         ];
 
         pairing
-            .handle_input::<HeaplessPool, _, _>(
+            .handle_input::<HeaplessPool, _>(
                 Input::Command(Command::PairingRequest, &pairing_request),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
 
@@ -1001,51 +996,59 @@ mod tests {
         }
 
         // Central sends public key, expects peripheral public key followed by peripheral confirm
-        let secret_key = SecretKey::new(&mut rng);
-        let packet = make_public_key_packet::<HeaplessPool>(&secret_key.public_key()).unwrap();
+        let secret_key = SecretKey::new();
+        let central_public_key = secret_key.public_key();
+        let packet = make_public_key_packet::<HeaplessPool>(&central_public_key).unwrap();
         pairing
-            .handle_input::<HeaplessPool, _, _>(
+            .handle_input::<HeaplessPool, _>(
                 Input::Command(Command::PairingPublicKey, packet.payload()),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
+        let peripheral_public_key = PublicKey::from_bytes(pairing_ops.sent_packets[1].payload());
 
         // Central sends Nonce, expects Nonce
+        let na = Nonce(u128::from_le_bytes([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+        ]));
         pairing
-            .handle_input::<HeaplessPool, _, _>(
-                Input::Command(
-                    Command::PairingRandom,
-                    &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                ),
+            .handle_input::<HeaplessPool, _>(
+                Input::Command(Command::PairingRandom, &na.0.to_le_bytes()),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
+        let nb = Nonce(u128::from_le_bytes(
+            pairing_ops.sent_packets[3].payload().try_into().unwrap(),
+        ));
 
         // Central sends DHKey Check, expects encrypted link
+        let dh_key = secret_key.dh_key(peripheral_public_key, &central_public_key).unwrap();
+        let central_address = pairing_data.peer_address;
+        let peripheral_address = pairing_data.local_address;
+        let (mac_key, _ltk) = dh_key.f5(na, nb, central_address, peripheral_address);
+        let ea = mac_key.f6(
+            na,
+            nb,
+            0,
+            pairing_data.peer_features.as_io_cap(),
+            central_address,
+            peripheral_address,
+        );
         pairing
-            .handle_input::<HeaplessPool, _, _>(
-                Input::Command(
-                    Command::PairingDhKeyCheck,
-                    &[
-                        70, 123, 121, 123, 91, 126, 242, 102, 238, 164, 153, 99, 69, 175, 183, 215,
-                    ],
-                ),
+            .handle_input::<HeaplessPool, _>(
+                Input::Command(Command::PairingDhKeyCheck, &ea.0.to_le_bytes()),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
 
         pairing
-            .handle_input::<HeaplessPool, _, _>(
+            .handle_input::<HeaplessPool, _>(
                 Input::Event(Event::LinkEncryptedResult(true)),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
 
@@ -1057,11 +1060,10 @@ mod tests {
             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
         ];
         pairing
-            .handle_input::<HeaplessPool, _, _>(
+            .handle_input::<HeaplessPool, _>(
                 Input::Command(Command::IdentityInformation, &irk_data),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
 
@@ -1071,11 +1073,10 @@ mod tests {
             0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, // Address
         ];
         pairing
-            .handle_input::<HeaplessPool, _, _>(
+            .handle_input::<HeaplessPool, _>(
                 Input::Command(Command::IdentityAddressInformation, &addr_data),
                 &mut pairing_data,
                 &mut pairing_ops,
-                &mut rng,
             )
             .unwrap();
 

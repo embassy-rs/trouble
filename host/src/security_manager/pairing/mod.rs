@@ -1,6 +1,5 @@
 use bt_hci::param::ConnHandle;
 use embassy_time::Instant;
-use rand_core::{CryptoRng, RngCore};
 
 use self::util::PairingMethod;
 use crate::connection::{ConnectionEvent, SecurityLevel};
@@ -143,38 +142,35 @@ impl Pairing {
         }
     }
 
-    pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>>(
         &mut self,
         command: Command,
         payload: &[u8],
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
-        self.handle_input(Input::Command(command, payload), ops, rng)
+        self.handle_input(Input::Command(command, payload), ops)
     }
 
-    pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>>(
         &mut self,
         event: Event,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
-        self.handle_input(Input::Event(event), ops, rng)
+        self.handle_input(Input::Event(event), ops)
     }
 
-    fn handle_input<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
+    fn handle_input<P: PacketPool, OPS: PairingOps<P>>(
         &mut self,
         input: Input<'_>,
         ops: &mut OPS,
-        rng: &mut RNG,
     ) -> Result<(), Error> {
         match &mut self.state {
-            State::Central(central) => central.handle_input(input, &mut self.pairing_data, ops, rng),
-            State::Peripheral(peripheral) => peripheral.handle_input(input, &mut self.pairing_data, ops, rng),
+            State::Central(central) => central.handle_input(input, &mut self.pairing_data, ops),
+            State::Peripheral(peripheral) => peripheral.handle_input(input, &mut self.pairing_data, ops),
             #[cfg(feature = "legacy-pairing")]
-            State::LegacyCentral(central) => central.handle_input(input, &mut self.pairing_data, ops, rng),
+            State::LegacyCentral(central) => central.handle_input(input, &mut self.pairing_data, ops),
             #[cfg(feature = "legacy-pairing")]
-            State::LegacyPeripheral(peripheral) => peripheral.handle_input(input, &mut self.pairing_data, ops, rng),
+            State::LegacyPeripheral(peripheral) => peripheral.handle_input(input, &mut self.pairing_data, ops),
         }
     }
 
@@ -375,8 +371,6 @@ pub enum Event {
 
 #[cfg(test)]
 mod tests {
-    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
-    use rand_core::SeedableRng;
 
     use super::*;
     use crate::{Identity, Packet};
@@ -430,8 +424,7 @@ mod tests {
 
     impl<const N: usize> TestOps<N> {
         pub(crate) fn new(seed: u64) -> Self {
-            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(seed).into();
-            let secret_key = crate::security_manager::crypto::SecretKey::new(&mut rng);
+            let secret_key = crate::security_manager::crypto::SecretKey::new();
             let public_key = secret_key.public_key();
             Self {
                 sent_packets: heapless::Vec::new(),
@@ -555,11 +548,9 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -568,10 +559,10 @@ mod tests {
 
         assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(matches!(
@@ -612,11 +603,9 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -639,16 +628,15 @@ mod tests {
 
         assert_eq!(central_numeric, peripheral_numeric);
         central_pairing
-            .handle_event(Event::PassKeyConfirm, &mut central_ops, &mut rng)
+            .handle_event(Event::PassKeyConfirm, &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::PassKeyConfirm, &mut peripheral_ops, &mut rng)
+            .handle_event(Event::PassKeyConfirm, &mut peripheral_ops)
             .unwrap();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -657,10 +645,10 @@ mod tests {
 
         assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(matches!(
@@ -704,11 +692,9 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -725,16 +711,15 @@ mod tests {
         ));
 
         central_pairing
-            .handle_event(Event::PassKeyInput(123456), &mut central_ops, &mut rng)
+            .handle_event(Event::PassKeyInput(123456), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::PassKeyInput(123456), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::PassKeyInput(123456), &mut peripheral_ops)
             .unwrap();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -743,10 +728,10 @@ mod tests {
 
         assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(matches!(
@@ -790,11 +775,9 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -812,13 +795,12 @@ mod tests {
         ));
 
         central_pairing
-            .handle_event(Event::PassKeyInput(pass_key.value()), &mut central_ops, &mut rng)
+            .handle_event(Event::PassKeyInput(pass_key.value()), &mut central_ops)
             .unwrap();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -827,10 +809,10 @@ mod tests {
 
         assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(matches!(
@@ -869,11 +851,9 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -891,13 +871,12 @@ mod tests {
         ));
 
         peripheral_pairing
-            .handle_event(Event::PassKeyInput(pass_key.value()), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::PassKeyInput(pass_key.value()), &mut peripheral_ops)
             .unwrap();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -906,10 +885,10 @@ mod tests {
 
         assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(matches!(
@@ -955,11 +934,9 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -968,17 +945,16 @@ mod tests {
 
         assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         // Exchange identity keys after encryption
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1044,8 +1020,6 @@ mod tests {
             encryption_key_len: 16,
         });
 
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
-
         let mut peripheral_pairing = Pairing::new_peripheral(peripheral, central, IoCapabilities::NoInputNoOutput);
         let mut central_pairing = Pairing::initiate_central(
             central,
@@ -1061,10 +1035,10 @@ mod tests {
         assert_eq!(central_ops.encryptions[0], LongTermKey(1));
 
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(matches!(
@@ -1123,8 +1097,6 @@ mod tests {
             encryption_key_len: 16,
         });
 
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
-
         let mut peripheral_pairing = Pairing::initiate_peripheral(
             peripheral,
             central,
@@ -1140,7 +1112,6 @@ mod tests {
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1153,10 +1124,10 @@ mod tests {
         assert_eq!(central_ops.encryptions[0], LongTermKey(1));
 
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(matches!(
@@ -1185,7 +1156,6 @@ mod tests {
     fn transmit_packets<const N: usize>(
         peripheral_ops: &mut TestOps<N>,
         central_ops: &mut TestOps<N>,
-        rng: &mut ChaCha12Rng,
         peripheral_pairing: &mut Pairing,
         central_pairing: &mut Pairing,
         num_central_data_sent: &mut usize,
@@ -1202,7 +1172,6 @@ mod tests {
                         central_ops.sent_packets[*num_central_data_sent].command,
                         central_ops.sent_packets[*num_central_data_sent].payload(),
                         peripheral_ops,
-                        rng,
                     )
                     .unwrap();
                 *num_central_data_sent += 1;
@@ -1214,7 +1183,6 @@ mod tests {
                         peripheral_ops.sent_packets[*num_peripheral_data_sent].command,
                         peripheral_ops.sent_packets[*num_peripheral_data_sent].payload(),
                         central_ops,
-                        rng,
                     )
                     .unwrap();
                 *num_peripheral_data_sent += 1;
@@ -1247,8 +1215,7 @@ mod tests {
 
         // Generate OOB data for each side from their persistent keypair
         let central_oob = {
-            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(100).into();
-            let r = Nonce::new(&mut rng);
+            let r = Nonce::new();
             let c = r.f4(central_ops.public_key.x(), central_ops.public_key.x(), 0);
             OobData {
                 random: r.0.to_le_bytes(),
@@ -1256,8 +1223,7 @@ mod tests {
             }
         };
         let peripheral_oob = {
-            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(200).into();
-            let r = Nonce::new(&mut rng);
+            let r = Nonce::new();
             let c = r.f4(peripheral_ops.public_key.x(), peripheral_ops.public_key.x(), 0);
             OobData {
                 random: r.0.to_le_bytes(),
@@ -1278,13 +1244,11 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
         // Exchange packets until both sides pause for OOB data
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1310,7 +1274,6 @@ mod tests {
                     peer: peripheral_oob.clone(),
                 },
                 &mut central_ops,
-                &mut rng,
             )
             .unwrap();
         // Peripheral gets: local=peripheral_oob, peer=central_oob
@@ -1321,7 +1284,6 @@ mod tests {
                     peer: central_oob,
                 },
                 &mut peripheral_ops,
-                &mut rng,
             )
             .unwrap();
 
@@ -1329,7 +1291,6 @@ mod tests {
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1341,10 +1302,10 @@ mod tests {
 
         // Simulate encryption success
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         // OOB is authenticated
@@ -1382,8 +1343,7 @@ mod tests {
 
         // Generate OOB data for central (the side that has it)
         let central_oob = {
-            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(100).into();
-            let r = Nonce::new(&mut rng);
+            let r = Nonce::new();
             let c = r.f4(central_ops.public_key.x(), central_ops.public_key.x(), 0);
             OobData {
                 random: r.0.to_le_bytes(),
@@ -1392,8 +1352,7 @@ mod tests {
         };
         // Peripheral generates local OOB but has no peer OOB data
         let peripheral_oob = {
-            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(200).into();
-            let r = Nonce::new(&mut rng);
+            let r = Nonce::new();
             let c = r.f4(peripheral_ops.public_key.x(), peripheral_ops.public_key.x(), 0);
             OobData {
                 random: r.0.to_le_bytes(),
@@ -1418,12 +1377,10 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1438,7 +1395,6 @@ mod tests {
                     peer: peripheral_oob,
                 },
                 &mut central_ops,
-                &mut rng,
             )
             .unwrap();
         // Peripheral has no peer OOB data — zeros for peer
@@ -1449,14 +1405,12 @@ mod tests {
                     peer: no_oob,
                 },
                 &mut peripheral_ops,
-                &mut rng,
             )
             .unwrap();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1466,10 +1420,10 @@ mod tests {
         assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
 
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(central_ops.connection_events.iter().any(|e| matches!(
@@ -1504,8 +1458,7 @@ mod tests {
 
         // Peripheral generates local OOB data
         let peripheral_oob = {
-            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(200).into();
-            let r = Nonce::new(&mut rng);
+            let r = Nonce::new();
             let c = r.f4(peripheral_ops.public_key.x(), peripheral_ops.public_key.x(), 0);
             OobData {
                 random: r.0.to_le_bytes(),
@@ -1514,8 +1467,7 @@ mod tests {
         };
         // Central generates local OOB but has no peer OOB data
         let central_oob = {
-            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(100).into();
-            let r = Nonce::new(&mut rng);
+            let r = Nonce::new();
             let c = r.f4(central_ops.public_key.x(), central_ops.public_key.x(), 0);
             OobData {
                 random: r.0.to_le_bytes(),
@@ -1540,12 +1492,10 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1560,7 +1510,6 @@ mod tests {
                     peer: no_oob,
                 },
                 &mut central_ops,
-                &mut rng,
             )
             .unwrap();
         // Peripheral has central's OOB data (received out of band)
@@ -1571,14 +1520,12 @@ mod tests {
                     peer: central_oob,
                 },
                 &mut peripheral_ops,
-                &mut rng,
             )
             .unwrap();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1588,10 +1535,10 @@ mod tests {
         assert_eq!(central_ops.encryptions[0], peripheral_ops.encryptions[0]);
 
         central_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut central_ops)
             .unwrap();
         peripheral_pairing
-            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops, &mut rng)
+            .handle_event(Event::LinkEncryptedResult(true), &mut peripheral_ops)
             .unwrap();
 
         assert!(central_ops.connection_events.iter().any(|e| matches!(
@@ -1624,8 +1571,7 @@ mod tests {
 
         // Generate valid central OOB
         let central_oob = {
-            let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(100).into();
-            let r = Nonce::new(&mut rng);
+            let r = Nonce::new();
             let c = r.f4(central_ops.public_key.x(), central_ops.public_key.x(), 0);
             OobData {
                 random: r.0.to_le_bytes(),
@@ -1652,12 +1598,10 @@ mod tests {
 
         let mut num_central_data_sent = 0;
         let mut num_peripheral_data_sent = 0;
-        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
 
         transmit_packets(
             &mut peripheral_ops,
             &mut central_ops,
-            &mut rng,
             &mut peripheral_pairing,
             &mut central_pairing,
             &mut num_central_data_sent,
@@ -1671,7 +1615,6 @@ mod tests {
                 peer: peripheral_oob,
             },
             &mut central_ops,
-            &mut rng,
         );
 
         assert!(matches!(

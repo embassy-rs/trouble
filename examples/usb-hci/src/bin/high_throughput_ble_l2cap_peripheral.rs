@@ -2,6 +2,9 @@ use bt_hci::controller::ExternalController;
 use bt_hci_usb::Transport;
 use trouble_example_apps::{BigAlloc, high_throughput_ble_l2cap_peripheral};
 
+#[cfg(feature = "security")]
+use {embassy_crypto_rand as _, embassy_crypto_rustcrypto as _};
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     env_logger::init();

@@ -1,6 +1,9 @@
 use bt_hci::controller::ExternalController;
 use bt_hci_linux::Transport;
-use trouble_example_apps::{BigAlloc, high_throughput_ble_l2cap_central};
+use trouble_example_apps::{high_throughput_ble_l2cap_central, BigAlloc};
+
+#[cfg(feature = "security")]
+use {embassy_crypto_rand as _, embassy_crypto_rustcrypto as _};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), std::io::Error> {

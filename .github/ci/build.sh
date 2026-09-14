@@ -24,10 +24,11 @@ fi
 # used when pointing stm32-metapac to a CI-built one.
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
 
-# Restore lockfiles
+# Restore lockfiles for the workspaces that don't commit one. Lockfiles in
+# the checkout win over cached ones, which may predate dependency changes.
 if [ -f /ci/cache/lockfiles.tar ]; then
     echo Restoring lockfiles...
-    tar xf /ci/cache/lockfiles.tar
+    tar xf /ci/cache/lockfiles.tar --skip-old-files
 fi
 
 cargo install --git https://github.com/embassy-rs/hashtime --locked --rev cfb0a6d8b69adb704ceb58ff81577718913a42a1

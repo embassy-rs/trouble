@@ -12,6 +12,12 @@ use static_cell::StaticCell;
 use trouble_example_apps::ble_advertise_multiple;
 use {defmt_rtt as _, panic_probe as _};
 
+#[cfg(feature = "security")]
+use embassy_crypto_rustcrypto as _;
+#[cfg(feature = "security")]
+#[path = "../csprng.rs"]
+mod csprng;
+
 bind_interrupts!(struct Irqs {
     RNG => rng::InterruptHandler<RNG>;
     EGU0_SWI0 => nrf_sdc::mpsl::LowPrioInterruptHandler;
@@ -61,6 +67,12 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = rng::Rng::new(p.RNG, Irqs);
+    #[cfg(feature = "security")]
+    {
+        let mut seed = [0u8; 32];
+        rng.blocking_fill_bytes(&mut seed);
+        csprng::seed(seed);
+    }
 
     let mut sdc_mem = sdc::Mem::<12848>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));

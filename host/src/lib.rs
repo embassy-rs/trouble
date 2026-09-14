@@ -16,6 +16,11 @@ use bt_hci::cmd::status::ReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle};
 use bt_hci::FromHciBytesError;
+// Register software crypto drivers for unit tests.
+#[cfg(test)]
+use embassy_crypto_rand as _;
+#[cfg(test)]
+use embassy_crypto_rustcrypto as _;
 use embassy_time::Duration;
 #[cfg(feature = "security")]
 use heapless::{Vec, VecView};
@@ -480,7 +485,6 @@ pub trait SecurityCmds:
     + ControllerCmdSync<LeSetAddrResolutionEnable>
     + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
     + ControllerCmdSync<LeSetPrivacyMode>
-    + ControllerCmdSync<LeRand>
 {
 }
 
@@ -494,8 +498,7 @@ impl<
             + ControllerCmdSync<LeClearResolvingList>
             + ControllerCmdSync<LeSetAddrResolutionEnable>
             + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
-            + ControllerCmdSync<LeSetPrivacyMode>
-            + ControllerCmdSync<LeRand>,
+            + ControllerCmdSync<LeSetPrivacyMode>,
     > SecurityCmds for C
 {
 }
