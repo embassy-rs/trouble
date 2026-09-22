@@ -154,6 +154,15 @@ impl RequestedConnParams {
     }
 }
 
+#[cfg(any(feature = "central", feature = "connection-params-update"))]
+fn should_fallback_to_l2cap(role: LeConnRole, error: bt_hci::param::Error) -> bool {
+    role == LeConnRole::Peripheral
+        && matches!(
+            error,
+            bt_hci::param::Error::UNSUPPORTED_REMOTE_FEATURE | bt_hci::param::Error::INVALID_LMP_LL_PARAMETERS
+        )
+}
+
 /// Current parameters for a connection.
 #[derive(Default, Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -901,6 +910,9 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     where
         T: ControllerCmdAsync<LeConnUpdate> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
     {
+        if !params.is_valid() {
+            return Err(crate::Error::InvalidValue.into());
+        }
         let handle = self.handle();
         #[cfg(any(feature = "central", feature = "connection-params-update"))]
         {
@@ -912,11 +924,13 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
                     Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                         return Err(crate::Error::Disconnected.into());
                     }
-                    Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNSUPPORTED_REMOTE_FEATURE))) => {
-                        // We tried to send the request as a periperhal but the remote central does not support procedure.
-                        // Use the L2CAP signaling method below instead.
-                        // This code path should never be reached when acting as a central. If a bugged controller implementation
-                        // returns this error code we transmit an invalid L2CAP signal which then is rejected by the remote.
+                    Err(BleHostError::BleHost(crate::Error::Hci(error)))
+                        if should_fallback_to_l2cap(self.role(), error) =>
+                    {
+                        // The peripheral request failed because the remote central does not
+                        // support the procedure, or because CYW43439 returned Invalid LL
+                        // Parameters. Use L2CAP below instead. This path must never be reached
+                        // as a central, because it would send an invalid L2CAP request.
                     }
                     Err(e) => return Err(e),
                 }
