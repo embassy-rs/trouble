@@ -474,35 +474,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     pub(crate) fn disconnected(&self, h: ConnHandle, reason: Status) -> Result<(), Error> {
-        for (idx, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
+        for storage in self.connections.borrow_mut().iter_mut() {
             if h == storage.handle && storage.state != ConnectionState::Disconnected {
-                storage.state = ConnectionState::Disconnected;
-                storage.reassembly.clear();
-                storage.acl_send_locked = false;
-                storage.link_credit_waker.wake();
-                storage.acl_send_lock_waker.wake();
-                let _ = storage.events.try_send(ConnectionEvent::Disconnected { reason });
-                #[cfg(feature = "gatt")]
-                {
-                    storage.gatt.clear();
-                    storage.gatt_client.clear();
-                    storage.gatt_client_waker.wake();
-                    storage.indication_in_flight = false;
-                    storage.indication_cfm_received = false;
-                    storage.indication_slot_waker.wake();
-                    storage.indication_cfm_waker.wake();
-                }
-                #[cfg(feature = "connection-metrics")]
-                storage.metrics.reset();
+                storage.disconnect(reason);
                 #[cfg(feature = "security")]
-                {
-                    storage.security_level = SecurityLevel::NoEncryption;
-                    storage.bondable = false;
-                    self.security_manager.disconnect(storage);
-                }
-                #[cfg(feature = "att-queued-writes")]
-                storage.prepare_write.clear();
-                storage.l2cap_listening = false;
+                self.security_manager.disconnect(storage);
                 return Ok(());
             }
         }
@@ -538,6 +514,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         let mut state = self.state.borrow_mut();
         let default_credits = state.default_link_credits;
         let default_att_mtu = self.default_att_mtu();
+
         for (idx, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
             if ConnectionState::Disconnected == storage.state && storage.refcount == 0 {
                 storage.events.clear();
@@ -1167,7 +1144,7 @@ impl<P> DisconnectRequest<'_, P> {
         self.reason
     }
 
-    pub fn confirm(self) {
+    pub fn confirm(self, force: bool) {
         let mut connections = self.connections.borrow_mut();
         let storage = &mut connections[self.index];
         // Only transition if still in DisconnectRequest. The HCI
@@ -1178,7 +1155,11 @@ impl<P> DisconnectRequest<'_, P> {
         if !matches!(storage.state, ConnectionState::DisconnectRequest(_)) {
             return;
         }
-        storage.state = ConnectionState::Disconnecting(self.reason);
+        if force {
+            storage.disconnect(Status::UNSPECIFIED);
+        } else {
+            storage.state = ConnectionState::Disconnecting(self.reason);
+        }
     }
 }
 pub struct ConnectionStorage<P> {
@@ -1353,6 +1334,36 @@ impl<P> ConnectionStorage<P> {
             #[cfg(feature = "att-queued-writes")]
             prepare_write: PrepareWriteState::new(),
         }
+    }
+
+    pub(crate) fn disconnect(&mut self, reason: Status) {
+        self.state = ConnectionState::Disconnected;
+        self.reassembly.clear();
+        self.acl_send_locked = false;
+        self.link_credit_waker.wake();
+        self.acl_send_lock_waker.wake();
+        self.events.clear();
+        let _ = self.events.try_send(ConnectionEvent::Disconnected { reason });
+        #[cfg(feature = "gatt")]
+        {
+            self.gatt.clear();
+            self.gatt_client.clear();
+            self.gatt_client_waker.wake();
+            self.indication_in_flight = false;
+            self.indication_cfm_received = false;
+            self.indication_slot_waker.wake();
+            self.indication_cfm_waker.wake();
+        }
+        #[cfg(feature = "connection-metrics")]
+        self.metrics.reset();
+        #[cfg(feature = "security")]
+        {
+            self.security_level = SecurityLevel::NoEncryption;
+            self.bondable = false;
+        }
+        #[cfg(feature = "att-queued-writes")]
+        self.prepare_write.clear();
+        self.l2cap_listening = false;
     }
 
     fn inc_ref(&mut self) {
@@ -1641,7 +1652,7 @@ pub(crate) mod tests {
         unwrap!(mgr.disconnected(ConnHandle::new(2), Status::UNSPECIFIED));
 
         // This should be a noop
-        req.confirm();
+        req.confirm(false);
 
         // Polling should not return anything
         assert!(mgr.poll_disconnecting(None).is_pending());
@@ -1685,7 +1696,7 @@ pub(crate) mod tests {
         };
 
         // This should remove it from the list
-        req.confirm();
+        req.confirm(false);
 
         // Polling should not return anything
         assert!(mgr.poll_disconnecting(None).is_pending());
@@ -1838,9 +1849,48 @@ pub(crate) mod tests {
 
         //        unwrap!(mgr.disconnected(ConnHandle::new(3)));
 
-        req.confirm();
+        req.confirm(false);
 
         assert!(mgr.poll_disconnecting(None).is_pending());
+    }
+
+    #[test]
+    fn controller_disconnect_force() {
+        let mgr = setup();
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(2),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_2)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+
+        let Poll::Ready(peripheral) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        // Disconnect request from us
+        peripheral.disconnect();
+
+        let Poll::Ready(req) = mgr.poll_disconnecting(None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        // Controller returned an error (e.g. UNKNOWN_CONN_IDENTIFIER) -> force disconnect
+        req.confirm(true);
+
+        // Polling should not return anything
+        assert!(mgr.poll_disconnecting(None).is_pending());
+
+        // Slot must now be immediately disconnected
+        assert!(!mgr.is_handle_connected(ConnHandle::new(2)));
+
+        // And peripheral.next() must receive Disconnected
+        use crate::connection::ConnectionEvent;
+        assert!(matches!(
+            block_on(peripheral.next()),
+            ConnectionEvent::Disconnected { .. }
+        ));
     }
 
     #[test]

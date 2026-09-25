@@ -1952,16 +1952,25 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             {
                 Either5::First(request) => {
                     trace!("[host] poll disconnecting links");
-                    match host.command(Disconnect::new(request.handle(), request.reason())).await {
-                        Ok(_) => {}
-                        Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {}
-                        Err(BleHostError::BleHost(Error::NotFound)) => {}
-                        Err(BleHostError::BleHost(Error::Disconnected)) => {}
+                    let force = match host.command(Disconnect::new(request.handle(), request.reason())).await {
+                        Ok(_) => false,
+                        Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
+                            warn!(
+                                "[host] disconnect returned UNKNOWN_CONN_IDENTIFIER for handle {:?}, forcing disconnect",
+                                request.handle()
+                            );
+                            true
+                        }
+                        Err(BleHostError::BleHost(Error::NotFound)) => true,
+                        Err(BleHostError::BleHost(Error::Disconnected)) => true,
                         Err(e) => {
                             return Err(e);
                         }
+                    };
+                    if force {
+                        let _ = host.state.channels.disconnected(request.handle());
                     }
-                    request.confirm();
+                    request.confirm(force);
                 }
                 Either5::Second(request) => {
                     trace!("[host] poll disconnecting channels");
