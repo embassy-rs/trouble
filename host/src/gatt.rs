@@ -51,6 +51,14 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         /// The RX phy.
         rx_phy: PhyKind,
     },
+    /// A PHY update procedure on this connection failed; the PHYs are unchanged.
+    ///
+    /// For example with [`Status::DIFFERENT_TRANSACTION_COLLISION`] when the peer started
+    /// another link layer procedure at the same time. The update can be requested again.
+    PhyUpdateFailed {
+        /// The reason (status code) the procedure failed.
+        status: Status,
+    },
     /// The phy settings was updated for this connection.
     ConnectionParamsUpdated {
         /// Connection interval.
@@ -59,6 +67,12 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         peripheral_latency: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
+    },
+    /// A connection parameters update procedure on this connection failed; the parameters are
+    /// unchanged.
+    ConnectionParamsUpdateFailed {
+        /// The reason (status code) the procedure failed.
+        status: Status,
     },
     /// The subrating was updated for this connection.
     SubratingParamsUpdated {
@@ -234,6 +248,10 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                 },
                 ConnectionEvent::RequestConnectionParams(req) => GattConnectionEvent::RequestConnectionParams(req),
                 ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => GattConnectionEvent::PhyUpdated { tx_phy, rx_phy },
+                ConnectionEvent::PhyUpdateFailed { status } => GattConnectionEvent::PhyUpdateFailed { status },
+                ConnectionEvent::ConnectionParamsUpdateFailed { status } => {
+                    GattConnectionEvent::ConnectionParamsUpdateFailed { status }
+                }
                 ConnectionEvent::DataLengthUpdated {
                     max_tx_octets,
                     max_tx_time,

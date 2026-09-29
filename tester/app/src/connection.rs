@@ -135,6 +135,10 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                     }
                 }
                 GattConnectionEvent::PhyUpdated { .. } => warn!("Ignored Phy update event"),
+                GattConnectionEvent::PhyUpdateFailed { status } => warn!("Phy update failed: {:?}", status),
+                GattConnectionEvent::ConnectionParamsUpdateFailed { status } => {
+                    warn!("Connection parameters update failed: {:?}", status)
+                }
                 GattConnectionEvent::RequestConnectionParams(req) => {
                     let params = req.params();
                     if params.min_connection_interval == Duration::from_secs(4)
