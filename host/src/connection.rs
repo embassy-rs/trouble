@@ -216,6 +216,14 @@ pub enum ConnectionEvent {
         /// The RX phy.
         rx_phy: PhyKind,
     },
+    /// A PHY update procedure on this connection failed; the PHYs are unchanged.
+    ///
+    /// For example with [`Status::DIFFERENT_TRANSACTION_COLLISION`] when the peer started
+    /// another link layer procedure at the same time. The update can be requested again.
+    PhyUpdateFailed {
+        /// The reason (status code) the procedure failed.
+        status: Status,
+    },
     /// The phy settings was updated for this connection.
     ConnectionParamsUpdated {
         /// Connection interval.
@@ -224,6 +232,12 @@ pub enum ConnectionEvent {
         peripheral_latency: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
+    },
+    /// A connection parameters update procedure on this connection failed; the parameters are
+    /// unchanged.
+    ConnectionParamsUpdateFailed {
+        /// The reason (status code) the procedure failed.
+        status: Status,
     },
     /// The subrating was updated for this connection.
     SubratingParamsUpdated {

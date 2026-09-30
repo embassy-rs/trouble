@@ -1482,15 +1482,11 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     let event = unwrap!(LePhyUpdateComplete::from_hci_bytes_complete(event.data));
                                     if let Err(e) = event.status.to_result() {
                                         warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
-                                    } else {
-                                        let _ = host.state.connections.post_handle_event(
-                                            event.handle,
-                                            ConnectionEvent::PhyUpdated {
-                                                tx_phy: event.tx_phy,
-                                                rx_phy: event.rx_phy,
-                                            },
-                                        );
                                     }
+                                    let _ = host
+                                        .state
+                                        .connections
+                                        .post_handle_event(event.handle, phy_update_event(&event));
                                 }
                                 LeEventKind::LeConnectionUpdateComplete => {
                                     let event =
@@ -1500,18 +1496,11 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             "[host] error updating connection parameters for {:?}: {:?}",
                                             event.handle, e
                                         );
-                                    } else {
-                                        let _ = host.state.connections.post_handle_event(
-                                            event.handle,
-                                            ConnectionEvent::ConnectionParamsUpdated {
-                                                conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
-                                                peripheral_latency: event.peripheral_latency,
-                                                supervision_timeout: Duration::from_micros(
-                                                    event.supervision_timeout.as_micros(),
-                                                ),
-                                            },
-                                        );
                                     }
+                                    let _ = host
+                                        .state
+                                        .connections
+                                        .post_handle_event(event.handle, connection_update_event(&event));
                                 }
                                 LeEventKind::LeDataLengthChange => {
                                     let event = unwrap!(LeDataLengthChange::from_hci_bytes_complete(event.data));
@@ -2180,5 +2169,96 @@ impl<F: FnOnce()> OnDrop<F> {
 impl<F: FnOnce()> Drop for OnDrop<F> {
     fn drop(&mut self) {
         unsafe { self.f.as_ptr().read()() }
+    }
+}
+
+/// The connection event for a completed PHY update procedure, successful or not.
+fn phy_update_event(event: &LePhyUpdateComplete) -> ConnectionEvent {
+    match event.status.to_result() {
+        Ok(()) => ConnectionEvent::PhyUpdated {
+            tx_phy: event.tx_phy,
+            rx_phy: event.rx_phy,
+        },
+        Err(_) => ConnectionEvent::PhyUpdateFailed { status: event.status },
+    }
+}
+
+/// The connection event for a completed connection update procedure, successful or not.
+fn connection_update_event(event: &LeConnectionUpdateComplete) -> ConnectionEvent {
+    match event.status.to_result() {
+        Ok(()) => ConnectionEvent::ConnectionParamsUpdated {
+            conn_interval: Duration::from_micros(event.conn_interval.as_micros()),
+            peripheral_latency: event.peripheral_latency,
+            supervision_timeout: Duration::from_micros(event.supervision_timeout.as_micros()),
+        },
+        Err(_) => ConnectionEvent::ConnectionParamsUpdateFailed { status: event.status },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bt_hci::param::{PhyKind, Status};
+
+    use super::*;
+
+    #[test]
+    fn phy_update_complete() {
+        // Status, connection handle, TX PHY, RX PHY
+        let event = unwrap!(LePhyUpdateComplete::from_hci_bytes_complete(&[
+            0x00, 0x01, 0x00, 0x02, 0x02
+        ]));
+        assert!(matches!(
+            phy_update_event(&event),
+            ConnectionEvent::PhyUpdated {
+                tx_phy: PhyKind::Le2M,
+                rx_phy: PhyKind::Le2M
+            }
+        ));
+    }
+
+    #[test]
+    fn phy_update_collision() {
+        // The peer started another procedure at the same time: the PHYs are unchanged
+        let event = unwrap!(LePhyUpdateComplete::from_hci_bytes_complete(&[
+            0x2a, 0x01, 0x00, 0x01, 0x01
+        ]));
+        assert!(matches!(
+            phy_update_event(&event),
+            ConnectionEvent::PhyUpdateFailed {
+                status: Status::DIFFERENT_TRANSACTION_COLLISION
+            }
+        ));
+    }
+
+    #[test]
+    fn connection_update_complete() {
+        // Status, connection handle, interval 12 x 1.25 ms, latency 0, timeout 400 x 10 ms
+        let event = unwrap!(LeConnectionUpdateComplete::from_hci_bytes_complete(&[
+            0x00, 0x01, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x90, 0x01
+        ]));
+        let ConnectionEvent::ConnectionParamsUpdated {
+            conn_interval,
+            peripheral_latency,
+            supervision_timeout,
+        } = connection_update_event(&event)
+        else {
+            panic!("expected ConnectionParamsUpdated");
+        };
+        assert_eq!(conn_interval, Duration::from_micros(15_000));
+        assert_eq!(peripheral_latency, 0);
+        assert_eq!(supervision_timeout, Duration::from_secs(4));
+    }
+
+    #[test]
+    fn connection_update_rejected() {
+        let event = unwrap!(LeConnectionUpdateComplete::from_hci_bytes_complete(&[
+            0x3b, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ]));
+        assert!(matches!(
+            connection_update_event(&event),
+            ConnectionEvent::ConnectionParamsUpdateFailed {
+                status: Status::UNACCEPTABLE_CONN_PARAMETERS
+            }
+        ));
     }
 }

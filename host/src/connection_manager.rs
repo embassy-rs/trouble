@@ -1894,6 +1894,58 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn failed_link_updates_reach_the_connection() {
+        use embassy_time::Duration;
+
+        use crate::connection::ConnectionEvent;
+
+        let mgr = setup();
+        unwrap!(mgr.connect(
+            ConnHandle::new(4),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams {
+                conn_interval: Duration::from_millis(30),
+                peripheral_latency: 0,
+                supervision_timeout: Duration::from_secs(5),
+            },
+        ));
+        let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        unwrap!(mgr.post_handle_event(
+            ConnHandle::new(4),
+            ConnectionEvent::PhyUpdateFailed {
+                status: Status::DIFFERENT_TRANSACTION_COLLISION
+            }
+        ));
+        assert!(matches!(
+            block_on(handle.next()),
+            ConnectionEvent::PhyUpdateFailed {
+                status: Status::DIFFERENT_TRANSACTION_COLLISION
+            }
+        ));
+
+        unwrap!(mgr.post_handle_event(
+            ConnHandle::new(4),
+            ConnectionEvent::ConnectionParamsUpdateFailed {
+                status: Status::UNACCEPTABLE_CONN_PARAMETERS
+            }
+        ));
+        assert!(matches!(
+            block_on(handle.next()),
+            ConnectionEvent::ConnectionParamsUpdateFailed {
+                status: Status::UNACCEPTABLE_CONN_PARAMETERS
+            }
+        ));
+        // A failed update leaves the parameters as they were
+        let params = handle.params();
+        assert_eq!(params.conn_interval, Duration::from_millis(30));
+        assert_eq!(params.supervision_timeout, Duration::from_secs(5));
+    }
+
+    #[test]
     fn nonexisting_handle_is_disconnected() {
         let mgr = setup();
 
