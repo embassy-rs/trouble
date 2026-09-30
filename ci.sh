@@ -38,6 +38,7 @@ cargo batch \
     --- build --release --manifest-path examples/tests/Cargo.toml \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840,security \
+    --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52840,adafruit-bootloader \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52833 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabi --no-default-features --features nrf52810 \
     --- build --release --manifest-path examples/nrf52/Cargo.toml --target thumbv7em-none-eabihf --features nrf52832 --artifact-dir examples/tests/bins/nrf52 \

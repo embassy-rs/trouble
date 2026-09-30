@@ -94,6 +94,9 @@ nrf52840 = [
     "embassy-nrf/nrf52840",
     "nrf-sdc/nrf52840",
 ]
+# Link for an nRF52840 board with the Adafruit nRF52 bootloader, behind the
+# MBR and SoftDevice (see memory-nrf52840-adafruit.x and the README).
+adafruit-bootloader = ["cortex-m-rt/set-vtor"]
 security = [
     "trouble-example-apps/security",
     # embassy-nrf provides no embassy-crypto drivers yet: use the software

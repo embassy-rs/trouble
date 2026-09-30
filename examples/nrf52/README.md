@@ -56,4 +56,36 @@ cargo build --release --no-default-features --features nrf52810 --target thumbv7
 This is required for the GATT examples on the nRF52810: with the default features they overflow
 flash by a few KB.
 
+## Boards with the Adafruit nRF52 bootloader
+
+Many nRF52840 boards (Adafruit Feather nRF52840, nice!nano, Heltec T114, LilyGo T-Echo and
+others) ship with the [Adafruit nRF52 bootloader](https://github.com/adafruit/Adafruit_nRF52_Bootloader)
+and a SoftDevice in flash. The `adafruit-bootloader` feature links the examples behind them, so the
+bootloader keeps working and no SWD probe is needed:
+
+```bash
+cargo build --release --features nrf52840,adafruit-bootloader --target thumbv7em-none-eabihf --bin ble_bas_peripheral
+cargo objcopy --release --features nrf52840,adafruit-bootloader --target thumbv7em-none-eabihf --bin ble_bas_peripheral -- -O ihex ble_bas_peripheral.hex
+uf2conv.py -c -f 0xADA52840 -o ble_bas_peripheral.uf2 ble_bas_peripheral.hex
+```
+
+`cargo objcopy` comes from [cargo-binutils](https://github.com/rust-embedded/cargo-binutils) and
+`uf2conv.py` from [microsoft/uf2](https://github.com/microsoft/uf2/tree/master/utils). Double-tap
+reset to get the bootloader drive, then copy the `.uf2` file onto it.
+
+Things to know:
+
+- `memory-nrf52840-adafruit.x` assumes SoftDevice S140 6.x.x, with the application at `0x26000`.
+  Boards with S140 7.x.x need `0x27000`. `INFO_UF2.TXT` on the bootloader drive shows which one
+  you have.
+- The SoftDevice stays in flash but is never enabled: the examples use the SoftDevice Controller
+  from `nrf-sdc`. The bootloader still uses the SoftDevice for its own BLE DFU.
+- `build.rs` passes `--nmagic` to the linker. Without it, lld puts the ELF headers in a load
+  segment at `0x20000`, which is inside the SoftDevice.
+- The examples log with defmt over RTT, so without a probe you get no output. Use a BLE scanner
+  to check that the device advertises.
+- After a UF2 copy or serial DFU the bootloader jumps into the application without a reset.
+  These examples start fine that way, but an application that also runs USB may hang at startup
+  until the next reset. See [alexmoon/nrf-sdc#103](https://github.com/alexmoon/nrf-sdc/issues/103).
+
 See [microbit-bsp](https://github.com/lulf/microbit-bsp) for more examples of setting up nrf devices with trouble, specifically the BBC Microbit which is an nrf52833.

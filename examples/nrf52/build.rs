@@ -20,8 +20,10 @@ fn linker_data() -> &'static [u8] {
     return include_bytes!("memory-nrf52832.x");
     #[cfg(feature = "nrf52833")]
     return include_bytes!("memory-nrf52833.x");
-    #[cfg(feature = "nrf52840")]
+    #[cfg(all(feature = "nrf52840", not(feature = "adafruit-bootloader")))]
     return include_bytes!("memory-nrf52840.x");
+    #[cfg(all(feature = "nrf52840", feature = "adafruit-bootloader"))]
+    return include_bytes!("memory-nrf52840-adafruit.x");
     #[cfg(not(any(
         feature = "nrf52810",
         feature = "nrf52832",
