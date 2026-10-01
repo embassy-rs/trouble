@@ -997,7 +997,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If `store` is true, the new value will be written to the table before sending the notification.
     ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
+    /// If the provided connection has not subscribed for this characteristic, [`Error::NotSubscribed`] is returned.
     ///
     /// If the characteristic does not support notifications, an error is returned.
     pub async fn notify<P: PacketPool>(
@@ -1013,7 +1013,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If `store` is true, the new value will be written to the table before sending the notification.
     ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be notified.
+    /// If the provided connection has not subscribed for this characteristic, [`Error::NotSubscribed`] is returned.
     ///
     /// If the characteristic does not support notifications, an error is returned.
     pub async fn notify_raw<P: PacketPool>(
@@ -1029,10 +1029,10 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
-        if !server.should_notify(conn, cccd_handle) {
-            // No reason to fail?
-            return Ok(());
-        }
+        server
+            .should_notify(conn, cccd_handle)
+            .then_some(())
+            .ok_or(Error::NotSubscribed)?;
 
         self.authorize_unsolicited(connection, cccd_handle).await?;
 
@@ -1057,7 +1057,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If `store` is true, the new value will be written to the table before sending the indication.
     ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
+    /// If the provided connection has not subscribed for this characteristic, [`Error::NotSubscribed`] is returned.
     ///
     /// If the characteristic does not support indications, an error is returned.
     ///
@@ -1079,7 +1079,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
     ///
     /// If `store` is true, the new value will be written to the table before sending the indication.
     ///
-    /// If the provided connection has not subscribed for this characteristic, it will not be sent an indication.
+    /// If the provided connection has not subscribed for this characteristic, [`Error::NotSubscribed`] is returned.
     ///
     /// If the characteristic does not support indications, an error is returned.
     ///
@@ -1101,10 +1101,10 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
 
         let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
         let conn = connection.raw();
-        if !server.should_indicate(conn, cccd_handle) {
-            // No reason to fail?
-            return Ok(());
-        }
+        server
+            .should_indicate(conn, cccd_handle)
+            .then_some(())
+            .ok_or(Error::NotSubscribed)?;
 
         self.authorize_unsolicited(connection, cccd_handle).await?;
 
