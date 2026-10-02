@@ -955,7 +955,10 @@ where
                         }
                         Err(e) => {
                             warn!("Error decoding attribute payload: {:?}", e);
-                            let opcode = pdu.as_ref()[0];
+                            // An empty PDU has no opcode: ignore it.
+                            let Some(&opcode) = pdu.as_ref().first() else {
+                                return Ok(());
+                            };
                             // Bit 6 = Command Flag. Only send error responses for requests (flag=0)
                             if opcode & 0x40 == 0 {
                                 let rsp = att::Att::Server(AttServer::Response(att::AttRsp::Error {
