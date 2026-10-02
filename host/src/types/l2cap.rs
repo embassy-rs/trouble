@@ -272,6 +272,31 @@ impl L2capSignal for CommandRejectRes {
     }
 }
 
+/// Command Reject with the reason "Invalid CID in request" (0x0002), which has
+/// the CIDs of the rejected request as reason data.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CommandRejectInvalidCid {
+    pub reason: u16,
+    /// The destination CID of the rejected request.
+    pub local_cid: u16,
+    /// The source CID of the rejected request.
+    pub remote_cid: u16,
+}
+
+unsafe impl FixedSizeValue for CommandRejectInvalidCid {
+    fn is_valid(_data: &[u8]) -> bool {
+        true
+    }
+}
+
+impl L2capSignal for CommandRejectInvalidCid {
+    fn code() -> L2capSignalCode {
+        L2capSignalCode::COMMAND_REJECT_RES
+    }
+}
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
