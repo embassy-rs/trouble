@@ -490,6 +490,11 @@ where
             && self.state.advertise_command_state.is_idle()
             && self.state.scan_command_state.is_idle())
         {
+            // `poll_cancelled` took this update when all states were idle, but a procedure can
+            // become active before we get the gate (for example, a new `advertise()` that held
+            // the gate while it waited for the cancel of the previous advertising). Keep the
+            // update for a later sync: `push` merges it with a newer update into a full sync.
+            self.state.resolving_list_state.borrow_mut().push(update);
             return Ok(());
         }
 
@@ -2259,6 +2264,44 @@ mod tests {
             ConnectionEvent::ConnectionParamsUpdateFailed {
                 status: Status::UNACCEPTABLE_CONN_PARAMETERS
             }
+        ));
+    }
+
+    /// A sync that finds an active procedure keeps its update for a later sync.
+    #[cfg(feature = "security")]
+    #[test]
+    fn deferred_resolving_list_sync_keeps_the_update() {
+        use embassy_futures::block_on;
+
+        use crate::mock_controller::MockController;
+        use crate::prelude::DefaultPacketPool;
+        use crate::{Address, HostResources, Identity};
+
+        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let builder = crate::new(MockController::new(), &mut resources);
+        let ble = BleHost::new(
+            builder.controller.as_ref().unwrap(),
+            builder.host_state.as_ref().unwrap(),
+        );
+        let identity = Identity {
+            addr: Address::random([1, 2, 3, 4, 5, 0xC6]),
+            irk: None,
+        };
+
+        // Advertising became active after `poll_cancelled` took the update.
+        block_on(ble.advertise_command_state().request(false));
+        // The mock controller panics on any command, so this also checks that the sync sends none.
+        block_on(ble.sync_resolving_list(ResolvingListUpdate::Add(identity))).unwrap();
+        assert!(matches!(
+            ble.state.resolving_list_state.borrow().state,
+            Some(ResolvingListUpdate::Add(i)) if i == identity
+        ));
+
+        // A second deferred update makes a full sync, so no update is lost.
+        block_on(ble.sync_resolving_list(ResolvingListUpdate::Remove(identity))).unwrap();
+        assert!(matches!(
+            ble.state.resolving_list_state.borrow().state,
+            Some(ResolvingListUpdate::FullSync)
         ));
     }
 }
