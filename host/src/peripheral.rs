@@ -340,6 +340,38 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         Ok(())
     }
 
+    /// Disable legacy advertising in the controller, and wait until the controller has done it.
+    ///
+    /// This also stops advertising that no [`Advertiser`] controls. For example, when an
+    /// [`Advertiser`] accepts a connection that an earlier advertising made, its own advertising
+    /// continues, and dropping the [`Advertiser`] does not stop it.
+    ///
+    /// This waits until no other advertising procedure is active. Disabling legacy advertising
+    /// that is already disabled has no effect.
+    ///
+    /// This is for legacy advertising: it sends the legacy `LE Set Advertising Enable` command. Do
+    /// not use it after extended advertising commands (for example `advertise_ext`): after an
+    /// extended advertising command since the last reset, the controller returns "Command
+    /// Disallowed" for a legacy advertising command.
+    pub async fn stop_advertising(&mut self) -> Result<(), BleHostError<C::Error>>
+    where
+        C: ControllerCmdSync<LeSetAdvEnable>,
+    {
+        let host = &self.host;
+        // This also waits for a resolving list sync, which takes the same gate.
+        host.request_operation(host.advertise_command_state(), false).await;
+        // If this future is dropped before the command completes, let the runner disable
+        // advertising and make the state idle.
+        let cancel = crate::host::OnDrop::new(|| host.advertise_command_state().cancel(false));
+        let result = host.command(LeSetAdvEnable::new(false)).await;
+        cancel.defuse();
+        // Also on error: an active state would block all later advertising, and a cancel would make
+        // the runner send the same command again and stop if it fails.
+        host.advertise_command_state().canceled();
+        result?;
+        Ok(())
+    }
+
     /// Accept any pending available connection.
     ///
     /// Accepts the next pending connection if there are any.
@@ -385,5 +417,34 @@ impl<C, P: PacketPool> Drop for Advertiser<'_, C, P> {
         } else {
             self.host.advertise_command_state().canceled();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::task::Poll;
+
+    use embassy_futures::poll_once;
+
+    use crate::mock_controller::MockController;
+    use crate::prelude::DefaultPacketPool;
+    use crate::HostResources;
+
+    /// A `stop_advertising` that is dropped before the command completes lets the runner disable
+    /// advertising.
+    #[test]
+    fn dropped_stop_advertising_cancels_advertising() {
+        let mut resources: HostResources<DefaultPacketPool, 1, 1> = HostResources::new();
+        let stack = crate::new(MockController::new(), &mut resources).build();
+        let mut peripheral = stack.peripheral();
+
+        // The host is not initialized, so the command waits. `poll_once` then drops the future.
+        assert!(poll_once(peripheral.stop_advertising()).is_pending());
+
+        let state = peripheral.host.advertise_command_state();
+        assert!(!state.is_idle());
+        let waker = core::task::Waker::noop();
+        let mut cx = core::task::Context::from_waker(waker);
+        assert!(matches!(state.poll_cancelled(&mut cx), Poll::Ready(false)));
     }
 }
