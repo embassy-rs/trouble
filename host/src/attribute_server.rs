@@ -707,12 +707,12 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
 
     fn handle_read_multiple(&self, buf: &mut [u8], handles: &[u8]) -> Result<usize, codec::Error> {
         let w = WriteCursor::new(buf);
-        Self::error_response(
-            w,
-            att::ATT_READ_MULTIPLE_REQ,
-            u16::from_le_bytes([handles[0], handles[1]]),
-            AttErrorCode::ATTRIBUTE_NOT_FOUND,
-        )
+        // The list can be shorter than one handle.
+        let first = match handles {
+            [low, high, ..] => u16::from_le_bytes([*low, *high]),
+            _ => 0,
+        };
+        Self::error_response(w, att::ATT_READ_MULTIPLE_REQ, first, AttErrorCode::ATTRIBUTE_NOT_FOUND)
     }
 
     /// Process an event and produce a response if necessary
@@ -867,6 +867,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
 
 #[cfg(test)]
 mod tests {
+
     use core::task::Poll;
 
     use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
@@ -877,6 +878,20 @@ mod tests {
     use crate::connection_manager::tests::{setup, ADDR_1};
     use crate::prelude::*;
     use crate::Address;
+
+    #[test]
+    fn read_multiple_with_short_list() {
+        let table: AttributeTable<'_, NoopRawMutex, 4> = AttributeTable::new();
+        let server = AttributeServer::<_, DefaultPacketPool, 4, 1>::new(table);
+        for handles in [&[][..], &[5][..]] {
+            let mut buf = [0u8; 16];
+            let len = server.handle_read_multiple(&mut buf, handles).unwrap();
+            assert_eq!(
+                &buf[..len],
+                &[att::ATT_ERROR_RSP, att::ATT_READ_MULTIPLE_REQ, 0, 0, 0x0A]
+            );
+        }
+    }
 
     #[test]
     fn test_attribute_server_last_handle_of_group() {
