@@ -1281,13 +1281,24 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 }
                 AttRsp::ReadByGroupType { mut it } => {
                     let mut end: u16 = start.saturating_sub(1);
+                    // A response without services does not advance: fail instead of
+                    // requesting the same range again.
+                    let mut found = false;
                     while let Some(res) = it.next() {
                         let (handle, data) = res?;
+                        found = true;
+
+                        // The handles come from the peer. A service must not start
+                        // before the requested range or before the end of the last one.
+                        if handle < start || (handle <= end && end >= start) {
+                            return Err(Error::UnexpectedGattResponse.into());
+                        }
 
                         // ReadByGroupType responses have uniform-length attribute
                         // data, so services with a different UUID size are skipped.
                         // Push any gaps onto the pending stack to discover them.
-                        if handle > end + 1 {
+                        // Use u32 so that `end + 1` cannot overflow.
+                        if u32::from(handle) > u32::from(end) + 1 {
                             pending
                                 .push((end + 1, handle - 1))
                                 .map_err(|_| Error::InsufficientSpace)?;
@@ -1295,6 +1306,10 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
                         let mut r = ReadCursor::new(data);
                         end = r.read()?;
+                        // A service ends at or after its start.
+                        if end < handle {
+                            return Err(Error::UnexpectedGattResponse.into());
+                        }
                         let uuid = Uuid::try_from(r.remaining())?;
 
                         let svc = ServiceHandle {
@@ -1308,6 +1323,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         if !known.contains(&svc) {
                             known.push(svc).map_err(|_| Error::InsufficientSpace)?;
                         }
+                    }
+                    if !found {
+                        return Err(Error::UnexpectedGattResponse.into());
                     }
                     if end < range_end {
                         pending
@@ -1366,7 +1384,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             known.push(svc).map_err(|_| Error::InsufficientSpace)?;
                         }
                     }
-                    if end == 0xFFFF {
+                    // Stop if the response does not advance (for example an empty
+                    // response), instead of sending the same request again.
+                    if end == 0xFFFF || end < start {
                         break;
                     }
                     start = end + 1;
@@ -1446,10 +1466,10 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         let mut iter = characteristics.iter_mut().peekable();
         while let Some(characteristic) = iter.next() {
-            let end = iter.peek().map(|x| x.handle - 2).unwrap_or(service.end);
+            let end = iter.peek().map(|x| x.handle.saturating_sub(2)).unwrap_or(service.end);
             characteristic.end_handle = end;
             if characteristic.props.has_cccd() {
-                characteristic.cccd_handle = match self.get_characteristic_cccd(characteristic.handle + 1, end).await {
+                characteristic.cccd_handle = match self.get_characteristic_cccd(characteristic.handle, end).await {
                     Ok(handle) => Some(handle),
                     Err(BleHostError::BleHost(Error::NotFound)) => None,
                     Err(err) => return Err(err),
@@ -1524,7 +1544,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 // If we broke early, the next declaration_handle gives us the end.
                 // If we exhausted the range, use service.end.
                 let cccd_handle: Option<u16> = if props.has_cccd() {
-                    Some(self.get_characteristic_cccd(handle + 1, end).await?)
+                    Some(self.get_characteristic_cccd(handle, end).await?)
                 } else {
                     None
                 };
@@ -1546,7 +1566,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         start: u16,
         end: u16,
         mut make_req: impl FnMut(u16, u16) -> AttReq<'static>,
-        mut handle_rsp: impl for<'a> FnMut(AttRsp<'a>) -> Result<ControlFlow<R, u16>, Error>,
+        mut handle_rsp: impl for<'a> FnMut(AttRsp<'a>) -> Result<ControlFlow<R, Option<u16>>, Error>,
     ) -> Result<Option<R>, BleHostError<C::Error>> {
         let mut start_handle = start;
         while start_handle <= end {
@@ -1559,7 +1579,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 AttRsp::Error { code, .. } => return Err(Error::Att(code).into()),
                 rsp => match handle_rsp(rsp)? {
                     ControlFlow::Break(val) => return Ok(Some(val)),
-                    ControlFlow::Continue(next) => start_handle = next,
+                    // The range is exhausted after handle 0xFFFF.
+                    ControlFlow::Continue(None) => return Ok(None),
+                    // Stop if the peer does not advance.
+                    ControlFlow::Continue(Some(next)) if next <= start_handle => return Ok(None),
+                    ControlFlow::Continue(Some(next)) => start_handle = next,
                 },
             }
         }
@@ -1587,7 +1611,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 AttRsp::FindInformation { mut it } => {
                     let mut next_handle = None;
                     while let Some(Ok((handle, uuid))) = it.next() {
-                        next_handle = Some(handle + 1);
+                        next_handle = Some(handle.checked_add(1));
                         if let ControlFlow::Break(val) = callback(handle, uuid) {
                             return Ok(ControlFlow::Break(val));
                         }
@@ -1604,10 +1628,14 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
     async fn get_characteristic_cccd(
         &self,
-        char_start_handle: u16,
+        value_handle: u16,
         char_end_handle: u16,
     ) -> Result<u16, BleHostError<C::Error>> {
-        self.find_information(char_start_handle, char_end_handle, |handle, uuid| {
+        // Descriptors start after the value handle.
+        let Some(start) = value_handle.checked_add(1) else {
+            return Err(Error::NotFound.into());
+        };
+        self.find_information(start, char_end_handle, |handle, uuid| {
             if uuid == CLIENT_CHARACTERISTIC_CONFIGURATION.into() {
                 ControlFlow::Break(handle)
             } else {
@@ -1625,7 +1653,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         &self,
         characteristic: &Characteristic<T>,
     ) -> Result<Vec<Descriptor<[u8]>, N>, BleHostError<C::Error>> {
-        let start = characteristic.handle + 1;
+        let Some(start) = characteristic.handle.checked_add(1) else {
+            return Ok(Vec::new());
+        };
         let end = characteristic.end_handle;
         if start > end {
             return Ok(Vec::new());
@@ -1655,7 +1685,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         characteristic: &Characteristic<T>,
         uuid: &Uuid,
     ) -> Result<Descriptor<DT>, BleHostError<C::Error>> {
-        let start = characteristic.handle + 1;
+        let Some(start) = characteristic.handle.checked_add(1) else {
+            return Err(Error::NotFound.into());
+        };
         let end = characteristic.end_handle;
         self.find_information(start, end, |handle, desc_uuid| {
             if desc_uuid == *uuid {
@@ -1697,7 +1729,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     let mut next_handle = None;
                     while let Some(res) = it.next() {
                         let (handle, data) = res?;
-                        next_handle = Some(handle + 1);
+                        next_handle = Some(handle.checked_add(1));
                         if let ControlFlow::Break(val) = callback(handle, data) {
                             return Ok(ControlFlow::Break(val));
                         }
@@ -2007,6 +2039,7 @@ mod tests {
     extern crate std;
 
     use core::task::Poll;
+    use std::boxed::Box;
 
     use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -2021,6 +2054,190 @@ mod tests {
     use crate::pdu::Pdu;
     use crate::prelude::*;
     use crate::Address;
+
+    type TestClient = GattClient<'static, crate::mock_controller::MockController, DefaultPacketPool, 8>;
+
+    /// Run `test` against a GATT client whose server answers the n-th request with
+    /// `responses[n]` (the last response is repeated). Panics if the client sends
+    /// more than `MAX_REQUESTS` requests, as this means that it does not stop.
+    fn run_client<R>(
+        responses: &[&[u8]],
+        test: impl for<'a> FnOnce(&'a TestClient) -> core::pin::Pin<Box<dyn Future<Output = R> + 'a>>,
+    ) -> R {
+        run_client_counted(responses, test).0
+    }
+
+    /// Like `run_client`, and also returns the number of requests that the client sent.
+    fn run_client_counted<R>(
+        responses: &[&[u8]],
+        test: impl for<'a> FnOnce(&'a TestClient) -> core::pin::Pin<Box<dyn Future<Output = R> + 'a>>,
+    ) -> (R, usize) {
+        use embassy_futures::block_on;
+        use embassy_futures::select::{select, Either};
+
+        const MAX_REQUESTS: usize = 16;
+
+        let mgr = setup();
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        let client: TestClient = GattClient {
+            known_services: RefCell::new(Vec::new()),
+            _phantom: PhantomData,
+            connection: conn,
+            response_channel: Channel::new(),
+            notifications: PubSubChannel::new(),
+        };
+
+        let requests = core::cell::Cell::new(0usize);
+        let server = async {
+            for n in 0..MAX_REQUESTS {
+                let _request = mgr.outbound().await;
+                requests.set(n + 1);
+                let rsp = responses[n.min(responses.len() - 1)];
+                let mut packet = DefaultPacketPool::allocate().unwrap();
+                packet.as_mut()[..rsp.len()].copy_from_slice(rsp);
+                client
+                    .response_channel
+                    .send((ConnHandle::new(0), Pdu::new(packet, rsp.len())))
+                    .await;
+            }
+        };
+        match block_on(select(test(&client), server)) {
+            Either::First(r) => (r, requests.get()),
+            Either::Second(()) => panic!("the client sent more than {MAX_REQUESTS} requests"),
+        }
+    }
+
+    #[test]
+    fn find_information_stops_after_last_handle() {
+        // Information Data for handle 0xFFFF: `handle + 1` must not overflow,
+        // and the range is exhausted: no second request, one callback.
+        let rsp = [att::ATT_FIND_INFORMATION_RSP, 1, 0xFF, 0xFF, 0x02, 0x29];
+        let (found, requests) = run_client_counted(&[&rsp], |c| {
+            Box::pin(async {
+                let mut calls = 0;
+                let res = c
+                    .find_information(1, 0xFFFF, |_, _| {
+                        calls += 1;
+                        ControlFlow::<()>::Continue(())
+                    })
+                    .await;
+                (res, calls)
+            })
+        });
+        assert!(matches!(found.0, Ok(None)));
+        assert_eq!(found.1, 1);
+        assert_eq!(requests, 1);
+    }
+
+    #[test]
+    fn read_by_type_stops_after_last_handle() {
+        // Attribute Data for handle 0xFFFF with a one-byte value.
+        let rsp = [att::ATT_READ_BY_TYPE_RSP, 3, 0xFF, 0xFF, 0x01];
+        let (found, requests) = run_client_counted(&[&rsp], |c| {
+            Box::pin(async {
+                let mut calls = 0;
+                let res = c
+                    .read_by_type(1, 0xFFFF, &Uuid::new_short(0x2803), |_, _| {
+                        calls += 1;
+                        ControlFlow::<()>::Continue(())
+                    })
+                    .await;
+                (res, calls)
+            })
+        });
+        assert!(matches!(found.0, Ok(None)));
+        assert_eq!(found.1, 1);
+        assert_eq!(requests, 1);
+    }
+
+    #[test]
+    fn descriptors_empty_if_value_handle_is_last() {
+        // Descriptors start at value handle + 1, which does not exist for 0xFFFF.
+        let (res, requests) = run_client_counted(&[&[att::ATT_FIND_INFORMATION_RSP, 1, 0xFF, 0xFF, 0x02, 0x29]], |c| {
+            Box::pin(async {
+                let characteristic: Characteristic<[u8]> = Characteristic {
+                    handle: 0xFFFF,
+                    end_handle: 0xFFFF,
+                    cccd_handle: None,
+                    props: CharacteristicProps::from([CharacteristicProp::Read]),
+                    uuid: Uuid::new_short(0x2A00),
+                    phantom: PhantomData,
+                };
+                let descriptors = c.descriptors::<[u8], 4>(&characteristic).await;
+                let by_uuid = c
+                    .descriptor_by_uuid::<[u8], [u8]>(&characteristic, &Uuid::new_short(0x2902))
+                    .await;
+                (descriptors, by_uuid.is_err())
+            })
+        });
+        assert_eq!(requests, 0);
+        assert!(res.0.unwrap().is_empty());
+        assert!(res.1);
+    }
+
+    #[test]
+    fn find_information_stops_if_response_does_not_advance() {
+        // The server answers a request from handle 10 with handle 3.
+        let rsp = [att::ATT_FIND_INFORMATION_RSP, 1, 0x03, 0x00, 0x02, 0x29];
+        let found = run_client(&[&rsp], |c| {
+            Box::pin(async {
+                c.find_information(10, 0x20, |_, _| ControlFlow::<()>::Continue(()))
+                    .await
+            })
+        });
+        assert!(matches!(found, Ok(None)));
+    }
+
+    #[test]
+    fn services_by_uuid_stops_on_empty_response() {
+        let rsp = [att::ATT_FIND_BY_TYPE_VALUE_RSP];
+        let found = run_client(&[&rsp], |c| {
+            Box::pin(async { c.services_by_uuid(&Uuid::new_short(0x1800)).await })
+        });
+        assert!(found.unwrap().is_empty());
+    }
+
+    #[test]
+    fn services_rejects_invalid_handles() {
+        // Group entries: start handle, end handle, UUID 0x1800.
+        fn rsp(entries: &[(u16, u16)]) -> std::vec::Vec<u8> {
+            let mut v = std::vec![att::ATT_READ_BY_GROUP_TYPE_RSP, 6];
+            for (start, end) in entries {
+                v.extend_from_slice(&start.to_le_bytes());
+                v.extend_from_slice(&end.to_le_bytes());
+                v.extend_from_slice(&0x1800u16.to_le_bytes());
+            }
+            v
+        }
+
+        for entries in [
+            // No service: the same range would be requested again.
+            &[][..],
+            // Service starts before the requested range.
+            &[(0, 5)][..],
+            // Service ends before its start.
+            &[(5, 2)][..],
+            // Service starts before the end of the previous one.
+            &[(1, 10), (5, 12)][..],
+        ] {
+            let rsp = rsp(entries);
+            let res = run_client(&[&rsp], |c| Box::pin(async { c.services().await }));
+            assert!(
+                matches!(res, Err(BleHostError::BleHost(Error::UnexpectedGattResponse))),
+                "{entries:?}"
+            );
+        }
+    }
 
     /// Build a ReadByType ATT request PDU (ATT payload only, no L2CAP header).
     fn build_read_by_type_pdu(start: u16, end: u16, uuid: &Uuid) -> (<DefaultPacketPool as PacketPool>::Packet, usize) {
