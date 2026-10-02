@@ -955,13 +955,16 @@ where
                         }
                         Err(e) => {
                             warn!("Error decoding attribute payload: {:?}", e);
-                            let opcode = pdu.as_ref()[0];
-                            // Bit 6 = Command Flag. Only send error responses for requests (flag=0)
-                            if opcode & 0x40 == 0 {
+                            // An empty PDU has no opcode: ignore it.
+                            let Some(&opcode) = pdu.as_ref().first() else {
+                                return Ok(());
+                            };
+                            // Answer only requests; see `decode_error_code`.
+                            if let Some(code) = att::decode_error_code(opcode) {
                                 let rsp = att::Att::Server(AttServer::Response(att::AttRsp::Error {
                                     request: opcode,
                                     handle: 0,
-                                    code: att::AttErrorCode::REQUEST_NOT_SUPPORTED,
+                                    code,
                                 }));
                                 let l2cap = L2capHeader {
                                     channel: L2CAP_CID_ATT,
