@@ -455,9 +455,6 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
                 #[cfg(feature = "att-queued-writes")]
                 AttReq::PrepareWrite { handle, .. } => server.can_write(&data.connection, *handle),
                 AttReq::Read { handle } | AttReq::ReadBlob { handle, .. } => server.can_read(&data.connection, *handle),
-                AttReq::ReadMultiple { handles } => handles.chunks_exact(2).try_for_each(|handle| {
-                    server.can_read(&data.connection, u16::from_le_bytes(handle.try_into().unwrap()))
-                }),
                 _ => Ok(()),
             },
             _ => Ok(()),
@@ -2161,6 +2158,61 @@ mod tests {
             "should discover all {} characteristics",
             NUM_CHARACTERISTICS,
         );
+    }
+
+    /// ATT_READ_MULTIPLE_VARIABLE_REQ is not supported: the reply is always
+    /// `Request Not Supported` with handle 0x0000, whatever the handles are.
+    #[test]
+    fn test_read_multiple_variable_is_not_supported_for_any_handle() {
+        let _ = env_logger::try_init();
+
+        const MAX_ATTRIBUTES: usize = 16;
+        const CONNECTIONS_MAX: usize = 3;
+        let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
+        let mut storage = [0u8; 1];
+        let characteristic: Characteristic<u8> = table
+            .add_service(Service {
+                uuid: Uuid::new_long([0x44; 16]),
+            })
+            .add_characteristic(
+                Uuid::new_long([0x45; 16]),
+                [CharacteristicProp::Read],
+                0u8,
+                &mut storage[..],
+            )
+            .read_permission(PermissionLevel::EncryptionRequired)
+            .build();
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
+
+        let mgr = setup();
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        // One handle that does not exist, and one that needs encryption (the link is not encrypted).
+        for handles in [[0x00f0u16, 0x00f1], [characteristic.handle, characteristic.handle]] {
+            let mut packet = DefaultPacketPool::allocate().unwrap();
+            packet.as_mut()[0] = att::ATT_READ_MULTIPLE_REQ;
+            packet.as_mut()[1..3].copy_from_slice(&handles[0].to_le_bytes());
+            packet.as_mut()[3..5].copy_from_slice(&handles[1].to_le_bytes());
+            let pdu = Pdu::new(packet, 5);
+
+            let event = GattEvent::new(GattData::new(pdu, conn.clone()), &server);
+            assert!(matches!(event, GattEvent::Other(_)), "handles must not be checked");
+            let reply = event.accept().unwrap();
+            assert_eq!(
+                reply.att_payload().unwrap(),
+                &[att::ATT_ERROR_RSP, att::ATT_READ_MULTIPLE_REQ, 0, 0, 0x06]
+            );
+            core::mem::forget(reply);
+        }
     }
 
     #[test]

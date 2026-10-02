@@ -797,6 +797,10 @@ impl<'d> AttReq<'d> {
 
     fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<Self, codec::Error> {
         let payload = r.remaining();
+        // ATT_READ_MULTIPLE_VARIABLE_REQ needs a set of two or more handles.
+        if opcode == ATT_READ_MULTIPLE_REQ && (payload.len() < 4 || payload.len() & 1 != 0) {
+            return Err(codec::Error::InvalidValue);
+        }
         match opcode {
             ATT_READ_BY_GROUP_TYPE_REQ => {
                 let start_handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
@@ -898,6 +902,36 @@ impl<'d> AttReq<'d> {
             }
         }
     }
+}
+
+/// Returns the error code for an ATT PDU that failed to decode, or `None` if the server must not answer.
+///
+/// The server answers only requests: not commands (bit 6 of the opcode), not responses, notifications and
+/// indications (odd opcodes), and not the confirmation. A known request that is not valid gets
+/// `Invalid PDU`; an unknown request gets `Request Not Supported`.
+pub(crate) fn decode_error_code(opcode: u8) -> Option<AttErrorCode> {
+    if opcode & 0x40 != 0 || opcode & 1 != 0 || opcode == ATT_HANDLE_VALUE_CFM {
+        return None;
+    }
+    let known = matches!(
+        opcode,
+        ATT_READ_BY_GROUP_TYPE_REQ
+            | ATT_READ_BY_TYPE_REQ
+            | ATT_READ_REQ
+            | ATT_WRITE_REQ
+            | ATT_EXCHANGE_MTU_REQ
+            | ATT_FIND_BY_TYPE_VALUE_REQ
+            | ATT_FIND_INFORMATION_REQ
+            | ATT_PREPARE_WRITE_REQ
+            | ATT_EXECUTE_WRITE_REQ
+            | ATT_READ_MULTIPLE_REQ
+            | ATT_READ_BLOB_REQ
+    );
+    Some(if known {
+        AttErrorCode::INVALID_PDU
+    } else {
+        AttErrorCode::REQUEST_NOT_SUPPORTED
+    })
 }
 
 impl<'d> AttCmd<'d> {
@@ -1015,5 +1049,46 @@ impl codec::Encode for Att<'_> {
 impl<'d> codec::Decode<'d> for Att<'d> {
     fn decode(data: &'d [u8]) -> Result<Self, codec::Error> {
         Self::decode(data)
+    }
+}
+
+#[cfg(test)]
+mod error_code_tests {
+    use super::*;
+
+    #[test]
+    fn known_request_that_is_not_valid() {
+        assert_eq!(decode_error_code(ATT_READ_REQ), Some(AttErrorCode::INVALID_PDU));
+        assert_eq!(
+            decode_error_code(ATT_READ_MULTIPLE_REQ),
+            Some(AttErrorCode::INVALID_PDU)
+        );
+        assert!(Att::decode(&[ATT_READ_MULTIPLE_REQ, 1, 0]).is_err());
+    }
+
+    #[test]
+    fn unknown_request() {
+        // 0x0E is ATT_READ_MULTIPLE_REQ, which the server does not support.
+        assert_eq!(decode_error_code(0x0E), Some(AttErrorCode::REQUEST_NOT_SUPPORTED));
+        assert_eq!(decode_error_code(0x30), Some(AttErrorCode::REQUEST_NOT_SUPPORTED));
+    }
+
+    #[test]
+    fn no_answer_when_the_pdu_is_not_a_request() {
+        assert_eq!(decode_error_code(ATT_WRITE_CMD), None, "a command");
+        assert_eq!(decode_error_code(0xD2), None, "a signed write command");
+        assert_eq!(decode_error_code(ATT_READ_RSP), None, "a response");
+        assert_eq!(decode_error_code(ATT_ERROR_RSP), None, "a response");
+        assert_eq!(decode_error_code(ATT_HANDLE_VALUE_NTF), None, "a notification");
+        assert_eq!(decode_error_code(ATT_HANDLE_VALUE_IND), None, "an indication");
+        assert_eq!(decode_error_code(ATT_HANDLE_VALUE_CFM), None, "a confirmation");
+    }
+
+    #[test]
+    fn read_multiple_variable_needs_two_handles() {
+        assert!(Att::decode(&[ATT_READ_MULTIPLE_REQ]).is_err());
+        assert!(Att::decode(&[ATT_READ_MULTIPLE_REQ, 1, 0]).is_err(), "1 handle");
+        assert!(Att::decode(&[ATT_READ_MULTIPLE_REQ, 1, 0, 2]).is_err(), "odd length");
+        assert!(Att::decode(&[ATT_READ_MULTIPLE_REQ, 1, 0, 2, 0]).is_ok());
     }
 }
