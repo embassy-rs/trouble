@@ -72,7 +72,7 @@ impl PrepareWriteState {
             self.handle = handle;
             self.offset = offset;
             self.len = 0;
-        } else if self.handle != handle || self.offset + self.len != offset {
+        } else if self.handle != handle || u32::from(self.offset) + u32::from(self.len) != u32::from(offset) {
             return Err(crate::att::AttErrorCode::PREPARE_QUEUE_FULL);
         }
 
@@ -1557,6 +1557,16 @@ pub(crate) mod tests {
             bond_storage,
         );
         Box::leak(Box::new(mgr))
+    }
+
+    #[cfg(feature = "att-queued-writes")]
+    #[test]
+    fn queued_write_offset_near_u16_max() {
+        let mut state = PrepareWriteState::new();
+        state.queue(1, u16::MAX, &[1]).unwrap();
+        // The next offset would be 0x10000: it does not match, and it must not overflow.
+        assert!(state.queue(1, u16::MAX, &[2]).is_err());
+        assert!(state.queue(1, 0, &[2]).is_err());
     }
 
     #[test]
