@@ -732,7 +732,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
                 ConnectionState::Connecting | ConnectionState::Connected if storage.handle == conn => {
-                    storage.att_mtu = NonZeroU16::new(default_att_mtu.min(mtu));
+                    // The ATT_MTU is never below the default of 23, even if the peer sends less.
+                    storage.att_mtu = NonZeroU16::new(default_att_mtu.min(mtu).max(23));
                     return storage.att_mtu();
                 }
                 _ => {}
@@ -1557,6 +1558,22 @@ pub(crate) mod tests {
             bond_storage,
         );
         Box::leak(Box::new(mgr))
+    }
+
+    #[test]
+    fn att_mtu_minimum() {
+        let mgr = setup();
+        unwrap!(mgr.connect(
+            ConnHandle::new(7),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        assert_eq!(mgr.exchange_att_mtu(ConnHandle::new(7), 0), 23);
+        assert_eq!(mgr.exchange_att_mtu(ConnHandle::new(7), 1), 23);
+        assert_eq!(mgr.exchange_att_mtu(ConnHandle::new(7), 22), 23);
+        assert_eq!(mgr.exchange_att_mtu(ConnHandle::new(7), 23), 23);
+        assert!(mgr.exchange_att_mtu(ConnHandle::new(7), 100) >= 23);
     }
 
     #[test]
