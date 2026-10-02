@@ -57,6 +57,7 @@ cargo clippy --manifest-path ./host/Cargo.toml --features gatt,peripheral,centra
 cargo test --manifest-path ./host/Cargo.toml --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,legacy-pairing --lib -- --nocapture
+cargo test --manifest-path ./host/Cargo.toml --features central,gatt,peripheral,scan,security,att-queued-writes --lib -- --nocapture
 cargo test --manifest-path ./host/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./examples/tests/Cargo.toml --no-run -- --nocapture
 cargo test --manifest-path ./tester/app/Cargo.toml --lib -- --nocapture
