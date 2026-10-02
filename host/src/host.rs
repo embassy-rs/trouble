@@ -711,7 +711,7 @@ where
         true
     }
 
-    fn handle_acl(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
+    pub(crate) fn handle_acl(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
         self.state.connections.received(acl.handle())?;
         let handle = acl.handle();
         let (header, pdu) = match acl.boundary_flag() {
@@ -761,7 +761,7 @@ where
                             .reassembly(acl.handle(), |p| {
                                 let r = if !p.in_progress() {
                                     // Init the new assembly assuming the length of the SDU.
-                                    let (first, payload) = data.split_at(2);
+                                    let (first, payload) = data.split_at_checked(2).ok_or(Error::InvalidValue)?;
                                     let len: u16 = u16::from_le_bytes([first[0], first[1]]);
                                     self.state.channels.check_sdu_len(header.channel, len)?;
                                     let Some(packet) = P::allocate() else {
@@ -820,7 +820,7 @@ where
                             .connections
                             .reassembly(acl.handle(), |p| {
                                 if !p.in_progress() {
-                                    let (first, payload) = data.split_at(2);
+                                    let (first, payload) = data.split_at_checked(2).ok_or(Error::InvalidValue)?;
                                     let len: u16 = u16::from_le_bytes([first[0], first[1]]);
                                     self.state.channels.check_sdu_len(header.channel, len)?;
                                     let Some(packet) = P::allocate() else {
