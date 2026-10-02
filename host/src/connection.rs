@@ -290,6 +290,10 @@ pub enum ConnectionEvent {
     /// [`ConnectionParamsRequest::accept()`] or [`ConnectionParamsRequest::reject()`]
     /// must be called to respond to the request.
     RequestConnectionParams(ConnectionParamsRequest),
+    /// A request to exchange the ATT MTU.
+    ///
+    /// [`AttMtuRequest::accept()`] must be called to respond to the request.
+    RequestAttMtu(AttMtuRequest),
     #[cfg(feature = "security")]
     /// Request to display a pass key
     PassKeyDisplay(PassKey),
@@ -509,6 +513,76 @@ impl Drop for ConnectionParamsRequest {
     }
 }
 
+/// An ATT MTU exchange request
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AttMtuRequest {
+    handle: ConnHandle,
+    mtu: u16,
+    responded: bool,
+}
+
+impl AttMtuRequest {
+    pub(crate) fn new(handle: ConnHandle, mtu: u16) -> Self {
+        Self {
+            handle,
+            mtu,
+            responded: false,
+        }
+    }
+
+    /// The MTU requested by the peer.
+    pub fn mtu(&self) -> u16 {
+        self.mtu
+    }
+
+    /// The connection handle.
+    pub fn handle(&self) -> ConnHandle {
+        self.handle
+    }
+
+    /// Accept the ATT MTU exchange request with the connection's default MTU.
+    pub async fn accept<P: PacketPool>(self, connection: &Connection<'_, P>) -> Result<(), Error> {
+        self.accept_with_mtu(connection, None).await
+    }
+
+    /// Accept the ATT MTU exchange request with an optional MTU override.
+    ///
+    /// If `mtu` is `None`, the connection's default MTU is used.
+    pub async fn accept_with_mtu<P: PacketPool>(
+        mut self,
+        connection: &Connection<'_, P>,
+        mtu: Option<u16>,
+    ) -> Result<(), Error> {
+        self.responded = true;
+        if connection.handle() != self.handle {
+            return Err(Error::InvalidValue);
+        }
+        let mtu = match mtu {
+            Some(m) => self.mtu.min(m),
+            None => self.mtu,
+        };
+        connection.reply_att_mtu(mtu).await
+    }
+
+    /// Accept the ATT MTU request using the stack.
+    pub async fn accept_with_stack<C: crate::Controller, P: PacketPool>(
+        mut self,
+        stack: &Stack<'_, C, P>,
+    ) -> Result<(), Error> {
+        self.responded = true;
+        stack.host().reply_att_mtu(self.handle, self.mtu).await
+    }
+}
+
+impl Drop for AttMtuRequest {
+    fn drop(&mut self) {
+        if !self.responded {
+            warn!("AttMtuRequest dropped without being accepted");
+        }
+    }
+}
+
 impl Default for RequestedConnParams {
     fn default() -> Self {
         Self {
@@ -597,6 +671,15 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
 
     pub(crate) fn is_att_mtu_exchanged(&self) -> bool {
         self.manager.is_att_mtu_exchanged(self.index)
+    }
+
+    /// Accept an ATT MTU exchange request.
+    pub async fn accept_att_mtu(&self, req: AttMtuRequest) -> Result<(), Error> {
+        req.accept(self).await
+    }
+
+    pub(crate) async fn reply_att_mtu(&self, mtu: u16) -> Result<(), Error> {
+        self.manager.reply_att_mtu(self.index, mtu).await
     }
 
     pub(crate) fn set_l2cap_listening(&self, listening: bool) {

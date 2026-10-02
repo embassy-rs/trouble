@@ -97,6 +97,9 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
+                            GattConnectionEvent::RequestAttMtu(req) => {
+                                let _ = conn.accept_att_mtu(req).await;
+                            }
                             GattConnectionEvent::Gatt { event: GattEvent::Write(event) } => {
                                 let characteristic = server.table().find_characteristic_by_value_handle(event.handle()).unwrap();
                                 assert_eq!(characteristic.handle, event.handle());
