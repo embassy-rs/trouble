@@ -493,6 +493,26 @@ where
             return Ok(());
         }
 
+        self.sync_resolving_list_unchecked(update).await
+    }
+
+    /// Sync the controller's resolving list, without the check that no procedure is active.
+    ///
+    /// The runner uses it for the start-up full sync. An early `advertise()` (or scan, or connect)
+    /// makes its command state active before it waits for the host to be initialized, so the check
+    /// in `sync_resolving_list` would skip that sync. The caller must make sure that no advertising,
+    /// scanning or connect command can reach the controller during the sync (Bluetooth Core
+    /// Vol 4, Part E, §7.8.38, §7.8.40, §7.8.44, §7.8.77).
+    #[cfg(feature = "security")]
+    async fn sync_resolving_list_unchecked(&self, update: ResolvingListUpdate) -> Result<(), BleHostError<T::Error>>
+    where
+        T: ControllerCmdSync<LeClearResolvingList>
+            + ControllerCmdSync<LeSetAddrResolutionEnable>
+            + ControllerCmdSync<LeRemoveDeviceFromResolvingList>
+            + ControllerCmdSync<LeAddDeviceToResolvingList>
+            + ControllerCmdSync<LeSetPrivacyMode>,
+        T::Error: crate::fmt::Format,
+    {
         let local_irk = self.state.connections.security_manager.get_local_irk();
         let local_irk_bytes = local_irk.map(|k| k.to_le_bytes()).unwrap_or_default();
 
@@ -1878,13 +1898,16 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 }
         */
 
-        let _ = host.state.initialized.init(InitialState {
+        // Mark the host as initialized only after the privacy setup below. The start-up resolving
+        // list sync does not check that advertising, scanning and connecting are idle. This is safe
+        // only because the commands of these procedures wait for this mark, so none of them can
+        // reach the controller during the sync.
+        let initial_state = InitialState {
             acl_max: ret.le_acl_data_packet_length as usize,
             acl_total: ret.total_num_le_acl_data_packets as usize,
-        });
-        info!("[host] initialized");
+        };
 
-        let device_address = host.command(ReadBdAddr::new()).await?;
+        let device_address = ReadBdAddr::new().exec(host.controller).await?;
         if *device_address.raw() != [0, 0, 0, 0, 0, 0] {
             let device_address = Address::new(AddrKind::PUBLIC, device_address);
             info!("[host] Device Address {}", device_address);
@@ -1911,9 +1934,13 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
         #[cfg(feature = "security")]
         if host.is_privacy_enabled() {
             host.state.resolving_list_state.borrow_mut().clear();
-            host.sync_resolving_list(ResolvingListUpdate::FullSync).await?;
+            host.sync_resolving_list_unchecked(ResolvingListUpdate::FullSync)
+                .await?;
             info!("[host] privacy initialized");
         }
+
+        let _ = host.state.initialized.init(initial_state);
+        info!("[host] initialized");
 
         loop {
             match select5(
