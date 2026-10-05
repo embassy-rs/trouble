@@ -19,9 +19,9 @@ use crate::l2cap::{L2capChannel, L2capPendingConnection};
 use crate::pdu::{Pdu, Sdu};
 use crate::prelude::{ConnectionEvent, ConnectionParamsRequest, L2capChannelConfig};
 use crate::types::l2cap::{
-    CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq, DisconnectionRes, L2capHeader,
-    L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes, LeCreditConnResultCode,
-    LeCreditFlowInd, L2CAP_CID_LE_U_SIGNAL,
+    CommandRejectInvalidCid, CommandRejectRes, ConnParamUpdateReq, ConnParamUpdateRes, DisconnectionReq,
+    DisconnectionRes, L2capHeader, L2capSignal, L2capSignalCode, L2capSignalHeader, LeCreditConnReq, LeCreditConnRes,
+    LeCreditConnResultCode, LeCreditFlowInd, L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{config, BleHostError, Error, PacketPool};
 
@@ -668,12 +668,12 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 L2capSignalCode::DISCONNECTION_REQ => {
                     let req = DisconnectionReq::from_hci_bytes_complete(signal_data)?;
                     debug!("[l2cap][conn = {:?}, cid = {}] disconnect request", conn, req.dcid);
-                    self.handle_disconnect_request(conn, header.identifier, req.dcid, manager)
+                    self.handle_disconnect_request(conn, header.identifier, req.dcid, req.scid, manager)
                 }
                 L2capSignalCode::DISCONNECTION_RES => {
                     let res = DisconnectionRes::from_hci_bytes_complete(signal_data)?;
                     debug!("[l2cap][conn = {:?}, cid = {}] disconnect response", conn, res.scid);
-                    self.handle_disconnect_response(res.scid)
+                    self.handle_disconnect_response(conn, res.dcid, res.scid)
                 }
                 L2capSignalCode::CONN_PARAM_UPDATE_REQ => {
                     if manager.role_by_handle(conn) != Some(LeConnRole::Central) {
@@ -876,10 +876,21 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         conn: ConnHandle,
         identifier: u8,
         cid: u16,
+        scid: u16,
         manager: &ConnectionManager<'_, P>,
     ) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
-            if cid == storage.cid {
+            // Only an open channel of this connection. A free slot has CID 0 and no connection.
+            let open = matches!(storage.state, ChannelState::Connected | ChannelState::Disconnecting);
+            if open && storage.conn == Some(conn) && cid == storage.cid {
+                // The DCID matches but the SCID does not: discard the request (Vol 3, Part A, 4.6).
+                if scid != storage.peer_cid {
+                    warn!(
+                        "[l2cap][conn = {:?}, cid = {}] disconnect request with a wrong source CID",
+                        conn, cid
+                    );
+                    return Ok(());
+                }
                 storage.state = ChannelState::PeerDisconnecting(identifier);
                 let _ = storage.inbound.close();
                 self.state.borrow_mut().disconnect_waker.wake();
@@ -890,12 +901,27 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             "[l2cap][conn = {:?}, cid = {}] disconnect request for unknown channel",
             conn, cid
         );
-        Self::try_send_signal(conn, identifier, &CommandRejectRes { reason: 2 }, manager)
+        // The reason "Invalid CID in request" has the two CIDs of the request as data.
+        Self::try_send_signal(
+            conn,
+            identifier,
+            &CommandRejectInvalidCid {
+                reason: 2,
+                local_cid: cid,
+                remote_cid: scid,
+            },
+            manager,
+        )
     }
 
-    fn handle_disconnect_response(&self, cid: u16) -> Result<(), Error> {
+    fn handle_disconnect_response(&self, conn: ConnHandle, dcid: u16, scid: u16) -> Result<(), Error> {
         for storage in self.channels.borrow_mut().iter_mut() {
-            if storage.state == ChannelState::Disconnecting && cid == storage.cid {
+            // The CIDs are those of our request. A response that does not match is discarded (Vol 3, Part A, 4.7).
+            if storage.state == ChannelState::Disconnecting
+                && storage.conn == Some(conn)
+                && scid == storage.cid
+                && dcid == storage.peer_cid
+            {
                 storage.close();
                 break;
             }
@@ -1678,5 +1704,156 @@ mod tests {
             chan,
             Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
         ));
+    }
+
+    /// A Disconnection Request for CID 0 (the CID of a free slot) must not change a free slot.
+    /// A request for an open channel of another connection must not close it, and a request
+    /// with a wrong source CID must not close a channel.
+    #[test]
+    fn disconnect_request_only_for_own_open_channel() {
+        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let ble = MockController::new();
+        let builder = crate::new(ble, &mut resources);
+        let ble = BleHost::new(
+            builder.controller.as_ref().unwrap(),
+            builder.host_state.as_ref().unwrap(),
+        );
+
+        let conn = ConnHandle::new(33);
+        let other = ConnHandle::new(34);
+        for handle in [conn, other] {
+            ble.connections()
+                .connect(
+                    handle,
+                    Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+                    LeConnRole::Peripheral,
+                    ConnParams::new(),
+                )
+                .unwrap();
+        }
+        // An open channel of the other connection.
+        ble.channels()
+            .alloc(other, None, |storage| {
+                storage.conn = Some(other);
+                storage.state = ChannelState::Connected;
+            })
+            .unwrap();
+        let open_cid = ble
+            .channels()
+            .channels
+            .borrow()
+            .iter()
+            .find(|s| s.conn == Some(other))
+            .unwrap()
+            .cid;
+
+        // Disconnection Request: code 0x06, identifier 1, length 4, DCID, SCID.
+        for dcid in [0u16, open_cid] {
+            let [low, high] = dcid.to_le_bytes();
+            let _ = ble
+                .channels()
+                .signal(conn, &[0x06, 1, 4, 0, low, high, 0x40, 0], ble.connections());
+        }
+        for storage in ble.channels().channels.borrow().iter() {
+            assert!(
+                !matches!(storage.state, ChannelState::PeerDisconnecting(_)),
+                "slot {} (conn {:?}) was changed",
+                storage.cid,
+                storage.conn.map(|c| c.raw())
+            );
+        }
+        // An open channel of this connection, with peer CID 0x77: a wrong source
+        // CID does not close it, the correct one does.
+        ble.channels()
+            .alloc(conn, None, |storage| {
+                storage.conn = Some(conn);
+                storage.peer_cid = 0x77;
+                storage.state = ChannelState::Connected;
+            })
+            .unwrap();
+        let own_cid = ble
+            .channels()
+            .channels
+            .borrow()
+            .iter()
+            .find(|s| s.conn == Some(conn))
+            .unwrap()
+            .cid;
+        let [low, high] = own_cid.to_le_bytes();
+        let _ = ble
+            .channels()
+            .signal(conn, &[0x06, 2, 4, 0, low, high, 0x78, 0], ble.connections());
+        let state = |cid: u16| {
+            ble.channels()
+                .channels
+                .borrow()
+                .iter()
+                .find(|s| s.cid == cid)
+                .unwrap()
+                .state
+                .clone()
+        };
+        assert!(matches!(state(own_cid), ChannelState::Connected), "wrong source CID");
+        let _ = ble
+            .channels()
+            .signal(conn, &[0x06, 3, 4, 0, low, high, 0x77, 0], ble.connections());
+        assert!(
+            matches!(state(own_cid), ChannelState::PeerDisconnecting(3)),
+            "correct source CID"
+        );
+    }
+
+    /// A Disconnection Response closes a channel only if its CIDs are those of our request.
+    #[test]
+    fn disconnect_response_must_match_the_request() {
+        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let ble = MockController::new();
+        let builder = crate::new(ble, &mut resources);
+        let ble = BleHost::new(
+            builder.controller.as_ref().unwrap(),
+            builder.host_state.as_ref().unwrap(),
+        );
+
+        let conn = ConnHandle::new(33);
+        let other = ConnHandle::new(34);
+        for handle in [conn, other] {
+            ble.connections()
+                .connect(
+                    handle,
+                    Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+                    LeConnRole::Peripheral,
+                    ConnParams::new(),
+                )
+                .unwrap();
+        }
+        let idx = ble
+            .channels()
+            .alloc(conn, None, |storage| {
+                storage.conn = Some(conn);
+                storage.peer_cid = 0x77;
+                storage.state = ChannelState::Disconnecting;
+            })
+            .unwrap();
+        let cid = ble.channels().channels.borrow()[idx.0 as usize].cid;
+        let state = || ble.channels().channels.borrow()[idx.0 as usize].state.clone();
+
+        // Disconnection Response: code 0x07, identifier, length 4, DCID, SCID.
+        let [low, high] = cid.to_le_bytes();
+        // Another connection, a wrong DCID and a wrong SCID.
+        let _ = ble
+            .channels()
+            .signal(other, &[0x07, 1, 4, 0, 0x77, 0, low, high], ble.connections());
+        let _ = ble
+            .channels()
+            .signal(conn, &[0x07, 1, 4, 0, 0x78, 0, low, high], ble.connections());
+        let _ = ble
+            .channels()
+            .signal(conn, &[0x07, 1, 4, 0, 0x77, 0, 0, 0], ble.connections());
+        assert!(matches!(state(), ChannelState::Disconnecting));
+
+        let _ = ble
+            .channels()
+            .signal(conn, &[0x07, 1, 4, 0, 0x77, 0, low, high], ble.connections());
+        assert!(!matches!(state(), ChannelState::Disconnecting));
     }
 }
