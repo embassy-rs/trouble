@@ -1053,7 +1053,7 @@ impl<'d> codec::Decode<'d> for Att<'d> {
 }
 
 #[cfg(test)]
-mod error_code_tests {
+mod tests {
     use super::*;
 
     #[test]
