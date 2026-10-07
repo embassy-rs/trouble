@@ -30,6 +30,10 @@ const BASE_ID: u16 = 0x40;
 /// BT Core Spec Vol 3, Part A, Section 6.2.1: RTX signaling timeout.
 const L2CAP_RTX_TIMEOUT: embassy_time::Duration = embassy_time::Duration::from_secs(30);
 
+/// The smallest MTU and MPS of an LE credit based channel (Core spec, Vol 3, Part A, 4.22 and 4.23).
+const MIN_L2CAP_MTU: u16 = 23;
+const MIN_L2CAP_MPS: u16 = 23;
+
 struct State {
     next_req_id: u8,
     accept_waker: WakerRegistration,
@@ -756,6 +760,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             let mut state = self.state.borrow_mut();
             if !state.is_spsm_registered(req.spsm) {
                 Err(LeCreditConnResultCode::SpsmNotSupported)
+            } else if req.mps < MIN_L2CAP_MPS || req.mtu < MIN_L2CAP_MTU {
+                Err(LeCreditConnResultCode::UnacceptableParameters)
             } else if !manager.is_l2cap_listening(conn) {
                 Err(LeCreditConnResultCode::NoResources)
             } else {
@@ -1678,5 +1684,64 @@ mod tests {
             chan,
             Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
         ));
+    }
+
+    /// A connection request with an MTU or MPS below 23 does not create a channel.
+    #[test]
+    fn connection_request_minimum_mtu_mps() {
+        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let builder = crate::new(MockController::new(), &mut resources);
+        let ble = BleHost::new(
+            builder.controller.as_ref().unwrap(),
+            builder.host_state.as_ref().unwrap(),
+        );
+
+        let conn = ConnHandle::new(33);
+        ble.connections()
+            .connect(
+                conn,
+                Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            )
+            .unwrap();
+        ble.channels().state.borrow_mut().registered_spsms[0] |= 1 << 1;
+        ble.connections().set_l2cap_listening(0, true);
+
+        // LE Credit Based Connection Request: code 0x14, identifier, length 10, SPSM, SCID, MTU, MPS, credits.
+        let request = |mtu: u16, mps: u16| {
+            let mut data = [0x14, 1, 10, 0, 1, 0, 0x40, 0, 0, 0, 0, 0, 1, 0];
+            data[8..10].copy_from_slice(&mtu.to_le_bytes());
+            data[10..12].copy_from_slice(&mps.to_le_bytes());
+            data
+        };
+        let channels_in_use = || {
+            ble.channels()
+                .channels
+                .borrow()
+                .iter()
+                .filter(|s| s.state != ChannelState::Disconnected)
+                .count()
+        };
+        for (mtu, mps) in [(22, 23), (23, 22), (23, 0), (0, 23)] {
+            let _ = ble.channels().signal(conn, &request(mtu, mps), ble.connections());
+            assert_eq!(channels_in_use(), 0, "mtu = {mtu}, mps = {mps}");
+
+            // The host answers with an LE Credit Based Connection Response with the result
+            // "unacceptable parameters" (0x000B).
+            let Poll::Ready((handle, pdu)) = embassy_futures::poll_once(ble.connections().outbound()) else {
+                panic!("no response, mtu = {mtu}, mps = {mps}");
+            };
+            assert_eq!(handle, conn);
+            let pdu = pdu.as_ref();
+            // L2CAP header (length, CID), then the signal: code 0x15, identifier 1, length 10.
+            assert_eq!(&pdu[..8], &[14, 0, 0x05, 0, 0x15, 1, 10, 0], "mtu = {mtu}, mps = {mps}");
+            // The result field is the last field of the response.
+            assert_eq!(&pdu[16..18], &[0x0B, 0], "mtu = {mtu}, mps = {mps}");
+        }
+
+        // The minimum itself is accepted.
+        let _ = ble.channels().signal(conn, &request(23, 23), ble.connections());
+        assert_eq!(channels_in_use(), 1);
     }
 }
