@@ -78,7 +78,7 @@ use crate::connection_manager::ResolvablePrivateAddrs;
 use crate::connection_manager::{AclSendLock, ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
-use crate::prelude::{ConnectionParamsRequest, RequestedConnParams};
+use crate::prelude::{AttMtuRequest, ConnectionParamsRequest, RequestedConnParams};
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
@@ -898,24 +898,14 @@ where
                 // gatt to be enabled.
                 let a = att::Att::decode(pdu.as_ref());
                 if let Ok(att::Att::Client(AttClient::Request(att::AttReq::ExchangeMtu { mtu }))) = a {
-                    let mtu = self.state.connections.exchange_att_mtu(acl.handle(), mtu);
-
-                    let rsp = att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }));
-                    let l2cap = L2capHeader {
-                        channel: L2CAP_CID_ATT,
-                        length: 3,
-                    };
-
-                    let mut packet = pdu.into_inner();
-                    let mut w = WriteCursor::new(packet.as_mut());
-                    w.write_hci(&l2cap)?;
-                    w.write(rsp)?;
-
-                    debug!("[host] agreed att MTU of {}", mtu);
-                    let len = w.len();
-                    self.state
+                    let req = AttMtuRequest::new(acl.handle(), mtu);
+                    if let Err(e) = self
+                        .state
                         .connections
-                        .try_outbound(acl.handle(), Pdu::new(packet, len))?;
+                        .post_handle_event(acl.handle(), ConnectionEvent::RequestAttMtu(req))
+                    {
+                        warn!("[host] failed to post RequestAttMtu event: {:?}", e);
+                    }
                 } else if let Ok(att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }))) = a {
                     debug!("[host] remote agreed att MTU of {}", mtu);
                     self.state.connections.exchange_att_mtu(acl.handle(), mtu);
@@ -1171,6 +1161,10 @@ where
             .channels
             .send_conn_param_update_res(handle, self, param)
             .await
+    }
+
+    pub(crate) async fn reply_att_mtu(&self, handle: ConnHandle, mtu: u16) -> Result<(), Error> {
+        self.state.connections.reply_att_mtu_handle(handle, mtu).await
     }
 
     /// Read current host metrics

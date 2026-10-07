@@ -12,14 +12,17 @@ use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "security")]
 use embassy_time::TimeoutError;
 
+use crate::att::{self, AttServer};
 #[cfg(feature = "subrating")]
 use crate::connection::SubratingParams;
 use crate::connection::{ConnParams, Connection, ConnectionEvent, SecurityLevel};
+use crate::cursor::WriteCursor;
 use crate::host::EventHandler;
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
+use crate::types::l2cap::{L2capHeader, L2CAP_CID_ATT};
 use crate::{config, Address, Error, Identity, PacketPool};
 
 /// Resolvable private addresses used on a connection.
@@ -211,7 +214,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
 
     pub(crate) fn post_handle_event(&self, handle: ConnHandle, event: ConnectionEvent) -> Result<(), Error> {
         for entry in self.connections.borrow_mut().iter_mut() {
-            if entry.state == ConnectionState::Connected && handle == entry.handle {
+            if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected) && handle == entry.handle
+            {
                 match event {
                     ConnectionEvent::ConnectionParamsUpdated {
                         conn_interval,
@@ -740,6 +744,50 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             }
         }
         mtu
+    }
+
+    pub(crate) async fn reply_att_mtu(&self, index: u8, mtu: u16) -> Result<(), Error> {
+        if !matches!(
+            self.state(index),
+            ConnectionState::Connected | ConnectionState::Connecting
+        ) {
+            return Err(Error::Disconnected);
+        }
+        let handle = self.handle(index);
+        let mtu = self.exchange_att_mtu(handle, mtu);
+
+        let rsp = att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }));
+        let l2cap = L2capHeader {
+            channel: L2CAP_CID_ATT,
+            length: 3,
+        };
+
+        let mut packet = P::allocate().ok_or(Error::OutOfMemory)?;
+        let mut w = WriteCursor::new(packet.as_mut());
+        w.write_hci(&l2cap)?;
+        w.write(rsp)?;
+        let len = w.len();
+
+        debug!("[link] agreed att MTU of {} for connection {:?}", mtu, handle);
+        self.send(index, Pdu::new(packet, len)).await;
+        Ok(())
+    }
+
+    pub(crate) async fn reply_att_mtu_handle(&self, handle: ConnHandle, mtu: u16) -> Result<(), Error> {
+        let index = {
+            let conns = self.connections.borrow();
+            conns
+                .iter()
+                .position(|storage| {
+                    matches!(storage.state, ConnectionState::Connected | ConnectionState::Connecting)
+                        && storage.handle == handle
+                })
+                .map(|idx| idx as u8)
+        };
+        match index {
+            Some(idx) => self.reply_att_mtu(idx, mtu).await,
+            None => Err(Error::NotFound),
+        }
     }
 
     pub(crate) fn pass_key_confirm(&self, index: u8, confirm: bool) -> Result<(), Error> {
@@ -1996,5 +2044,44 @@ pub(crate) mod tests {
         handle.disconnect();
 
         assert!(!mgr.is_handle_connected(ConnHandle::new(3)));
+    }
+
+    #[test]
+    fn att_mtu_request_accept() {
+        let mgr = setup();
+
+        unwrap!(mgr.connect(
+            ConnHandle::new(3),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new()
+        ));
+
+        let Poll::Ready(handle) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        // Post AttMtuRequest event
+        let req = AttMtuRequest::new(ConnHandle::new(3), 256);
+        unwrap!(mgr.post_handle_event(ConnHandle::new(3), ConnectionEvent::RequestAttMtu(req)));
+
+        // Receive event on connection
+        let event = block_on(handle.next());
+        let ConnectionEvent::RequestAttMtu(req) = event else {
+            panic!("expected RequestAttMtu event");
+        };
+        assert_eq!(req.mtu(), 256);
+
+        // Accept request
+        block_on(handle.accept_att_mtu(req)).unwrap();
+
+        // Check agreed MTU
+        assert_eq!(handle.att_mtu(), 256.min(mgr.default_att_mtu()));
+
+        // Outbound packet should contain L2CAP ATT MTU response
+        let (conn_handle, pdu) = block_on(mgr.outbound());
+        assert_eq!(conn_handle, ConnHandle::new(3));
+        assert_eq!(pdu.as_ref()[0..4], [3, 0, 4, 0]); // len=3, cid=4 (ATT)
+        assert_eq!(pdu.as_ref()[4], att::ATT_EXCHANGE_MTU_RSP);
     }
 }
