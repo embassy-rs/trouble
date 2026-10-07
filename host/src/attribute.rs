@@ -1045,6 +1045,46 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         Ok(())
     }
 
+    /// Try to enqueue a notification without waiting for outbound queue capacity.
+    ///
+    /// Returns [`Error::OutOfMemory`] when the queue is full. If `store` is
+    /// true, the new value is written before attempting to enqueue it.
+    pub async fn try_notify<P: PacketPool>(
+        &self,
+        connection: &GattConnection<'_, '_, P>,
+        value: &T,
+        store: bool,
+    ) -> Result<(), Error> {
+        self.try_notify_raw(connection, value.as_gatt(), store).await
+    }
+
+    /// Try to enqueue a raw notification without waiting for outbound queue capacity.
+    pub async fn try_notify_raw<P: PacketPool>(
+        &self,
+        connection: &GattConnection<'_, '_, P>,
+        value: &[u8],
+        store: bool,
+    ) -> Result<(), Error> {
+        let server = connection.server;
+        if store {
+            server.set(connection.raw(), self.handle, value)?;
+        }
+
+        let cccd_handle = self.cccd_handle.ok_or(Error::NotFound)?;
+        let conn = connection.raw();
+        if !server.should_notify(conn, cccd_handle) {
+            return Ok(());
+        }
+
+        self.authorize_unsolicited(connection, cccd_handle).await?;
+        let uns = AttUns::Notify {
+            handle: self.handle,
+            data: value,
+        };
+        let pdu = gatt::assemble(conn, crate::att::AttServer::Unsolicited(uns))?;
+        conn.try_send(pdu)
+    }
+
     /// Check if indications should be sent to `connection` for this characteristic.
     pub fn should_indicate<P: PacketPool>(&self, connection: &GattConnection<'_, '_, P>) -> bool {
         let Some(cccd_handle) = self.cccd_handle else {
