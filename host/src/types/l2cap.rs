@@ -228,7 +228,11 @@ impl L2capSignal for LeCreditConnRes {
 
 unsafe impl FixedSizeValue for LeCreditConnRes {
     fn is_valid(data: &[u8]) -> bool {
-        true
+        // `result` is an enum: a value that is not a variant is undefined behavior.
+        matches!(
+            data.get(8..10).map(|b| u16::from_le_bytes([b[0], b[1]])),
+            Some(0x0000 | 0x0002 | 0x0004..=0x000B)
+        )
     }
 }
 
@@ -350,5 +354,35 @@ unsafe impl FixedSizeValue for ConnParamUpdateRes {
 impl L2capSignal for ConnParamUpdateRes {
     fn code() -> L2capSignalCode {
         L2capSignalCode::CONN_PARAM_UPDATE_RES
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bt_hci::FromHciBytes;
+
+    use super::*;
+
+    fn response(result: u16) -> [u8; 10] {
+        let mut data = [0u8; 10];
+        data[..8].copy_from_slice(&[0x40, 0, 23, 0, 23, 0, 1, 0]);
+        data[8..].copy_from_slice(&result.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn credit_connection_result_must_be_a_variant() {
+        for valid in [0x0000, 0x0002, 0x0004, 0x0005, 0x0008, 0x000B] {
+            assert!(
+                LeCreditConnRes::from_hci_bytes_complete(&response(valid)).is_ok(),
+                "{valid:#x}"
+            );
+        }
+        for invalid in [0x0001, 0x0003, 0x000C, 0x00FF, 0xFFFF] {
+            assert!(
+                LeCreditConnRes::from_hci_bytes_complete(&response(invalid)).is_err(),
+                "{invalid:#x}"
+            );
+        }
     }
 }

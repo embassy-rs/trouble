@@ -491,6 +491,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
 
     fn handle_find_type_value(
         &self,
+        connection: &Connection<'_, P>,
         buf: &mut [u8],
         start: u16,
         end: u16,
@@ -507,7 +508,8 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         w.write(att::ATT_FIND_BY_TYPE_VALUE_RSP)?;
         self.att_table.iterate_from(start, |mut it| {
             while let Some((handle, att)) = it.next() {
-                if handle <= end && att.uuid == attr_type {
+                // Only attributes that the link may read are compared.
+                if handle <= end && att.uuid == attr_type && self.can_read(connection, att).is_ok() {
                     let value = att.data.value();
                     if value == Some(attr_value) {
                         if w.available() < 4 {
@@ -755,7 +757,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
                 end_handle,
                 att_type,
                 att_value,
-            }) => self.handle_find_type_value(rx, *start_handle, *end_handle, *att_type, att_value)?,
+            }) => self.handle_find_type_value(connection, rx, *start_handle, *end_handle, *att_type, att_value)?,
 
             AttClient::Request(AttReq::PrepareWrite { handle, offset, value }) => {
                 self.handle_prepare_write(connection, rx, *handle, *offset, value)?
@@ -877,6 +879,63 @@ mod tests {
     use crate::connection_manager::tests::{setup, ADDR_1};
     use crate::prelude::*;
     use crate::Address;
+
+    // Find By Type Value does not compare a value that the link cannot read.
+    #[test]
+    fn find_type_value_obeys_read_permission() {
+        const SECRET: &[u8] = b"secret";
+        const PUBLIC: &[u8] = b"public";
+        let mut table: AttributeTable<'_, NoopRawMutex, 16> = AttributeTable::new();
+        {
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_short(0x1800),
+            });
+            let _ = svc
+                .add_characteristic_small(Uuid::new_short(0x2A00), [CharacteristicProp::Read], *b"secret")
+                .read_permission(PermissionLevel::EncryptionRequired)
+                .build();
+            let _ = svc
+                .add_characteristic_small(Uuid::new_short(0x2A01), [CharacteristicProp::Read], *b"public")
+                .build();
+        }
+        let server = AttributeServer::<_, DefaultPacketPool, 16, 1>::new(table);
+
+        let mgr = setup();
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        let mut buf = [0u8; 32];
+        // The link has no encryption: a guess of the protected value is not found.
+        let len = server
+            .handle_find_type_value(&conn, &mut buf, 1, u16::MAX, 0x2A00, SECRET)
+            .unwrap();
+        // Error response: opcode, request opcode, handle 1, "Attribute Not Found".
+        assert_eq!(
+            &buf[..len],
+            &[att::ATT_ERROR_RSP, att::ATT_FIND_BY_TYPE_VALUE_REQ, 1, 0, 0x0A]
+        );
+        // A public value is still found.
+        let len = server
+            .handle_find_type_value(&conn, &mut buf, 1, u16::MAX, 0x2A01, PUBLIC)
+            .unwrap();
+        assert_eq!(buf[0], att::ATT_FIND_BY_TYPE_VALUE_RSP);
+        assert_eq!(len, 5);
+        // Primary service discovery by UUID still works. The last service ends
+        // at 0xFFFF.
+        let len = server
+            .handle_find_type_value(&conn, &mut buf, 1, u16::MAX, 0x2800, &0x1800u16.to_le_bytes())
+            .unwrap();
+        assert_eq!(buf[0], att::ATT_FIND_BY_TYPE_VALUE_RSP);
+        assert_eq!(&buf[1..len], &[1, 0, 0xFF, 0xFF]);
+    }
 
     #[test]
     fn test_attribute_server_last_handle_of_group() {
