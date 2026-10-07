@@ -244,7 +244,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
 
         let idx = channels
             .iter()
-            .position(|s| s.state == ChannelState::Disconnected && s.refcount == 0 && s.disconnect_requests == 0)
+            .position(|s| s.state == ChannelState::Disconnected && s.refcount == 0)
             .ok_or(Error::NoChannelAvailable)?;
 
         let storage = &mut channels[idx];
@@ -441,7 +441,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         }
 
         // Allocate space for our new channel.
-        let idx = self.alloc_created(conn, |storage| {
+        let idx = self.alloc(conn, None, |storage| {
             cid = storage.cid;
             credits = initial_credits.unwrap_or(config::L2CAP_RX_QUEUE_SIZE.min(P::capacity()) as u16);
             storage.spsm = spsm;
@@ -450,9 +450,6 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             storage.flow_control = CreditFlowControl::new(*flow_policy, credits);
             storage.state = ChannelState::Connecting(req_id);
         })?;
-
-        // Clean up the channel slot if the future is dropped or fails.
-        let ondrop = OnDrop::new(|| self.release_created(idx));
 
         let mut tx = [0; 18];
         // Send the initial connect request.
@@ -464,6 +461,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             credits,
         };
         ble.l2cap_signal(conn, req_id, &command, &mut tx[..]).await?;
+
+        // Clean up the channel slot if the future is dropped before completion.
+        let ondrop = OnDrop::new(|| self.channel_mut(idx).close());
 
         // Wait until a response is accepted.
         let result = with_timeout(
@@ -477,36 +477,6 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         })?;
         ondrop.defuse();
         Ok(result)
-    }
-
-    /// Allocate a channel for `create`. `create` holds a reference to the channel until it gives
-    /// it to the new [`L2capChannel`] or calls `release_created`, so that the channel is not used
-    /// again while `create` can still access it, also when the channel is disconnected before.
-    fn alloc_created<F: FnOnce(&mut ChannelStorage<P::Packet>)>(
-        &self,
-        conn: ConnHandle,
-        f: F,
-    ) -> Result<ChannelIndex, Error> {
-        self.alloc(conn, None, |storage| {
-            f(storage);
-            storage.inc_ref();
-        })
-    }
-
-    /// Release the reference of a `create` that did not give a channel. A channel that is
-    /// disconnecting is freed after the disconnection signal is sent.
-    fn release_created(&self, idx: ChannelIndex) {
-        let mut storage = self.channel_mut(idx);
-        storage.refcount = unwrap!(
-            storage.refcount.checked_sub(1),
-            "bug: dropping a channel with refcount 0"
-        );
-        if !matches!(
-            storage.state,
-            ChannelState::Disconnecting | ChannelState::PeerDisconnecting(_)
-        ) {
-            storage.close();
-        }
     }
 
     fn poll_created<T: Controller>(
@@ -525,10 +495,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             return Poll::Ready(Err(Error::Disconnected.into()));
         }
 
-        //// Make sure something hasn't gone wrong. A channel that is closed has no connection.
-        if storage.state != ChannelState::Disconnected {
-            assert_eq!(Some(conn), storage.conn);
-        }
+        //// Make sure something hasn't gone wrong
+        assert_eq!(Some(conn), storage.conn);
 
         match storage.state {
             ChannelState::ConnectFailed(result) => {
@@ -539,12 +507,13 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 return Poll::Ready(Err(Error::Disconnected.into()));
             }
             ChannelState::Connected => {
-                // The reference of `create` becomes the reference of the channel.
-                if storage.refcount != 1 {
+                if storage.refcount != 0 {
                     core::mem::drop(storage);
                     self.log_status(true);
                     panic!("unexpected refcount");
                 }
+                assert_eq!(storage.refcount, 0);
+                storage.inc_ref();
                 return Poll::Ready(Ok(L2capChannel::new(idx, self)));
             }
             _ => {}
@@ -856,20 +825,6 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         };
 
         match res.result {
-            // The channel is open on the peer side, but the MTU or MPS is too small:
-            // disconnect it, and `create` fails.
-            LeCreditConnResultCode::Success if res.mps < MIN_L2CAP_MPS || res.mtu < MIN_L2CAP_MTU => {
-                warn!(
-                    "[l2cap][cid = {}] peer MTU {} or MPS {} below minimum, disconnecting channel",
-                    storage.cid, res.mtu, res.mps
-                );
-                storage.peer_cid = res.dcid;
-                storage.state = ChannelState::Disconnecting;
-                let mut state = self.state.borrow_mut();
-                state.disconnect_waker.wake();
-                state.create_waker.wake();
-                Err(Error::InvalidValue)
-            }
             LeCreditConnResultCode::Success => {
                 storage.peer_cid = res.dcid;
                 storage.peer_credits = res.credits;
@@ -1223,16 +1178,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         if let Some(cx) = cx {
             state.disconnect_waker.register(cx.waker());
         }
-        for (idx, storage) in self.channels.borrow_mut().iter_mut().enumerate() {
+        for (idx, storage) in self.channels.borrow().iter().enumerate() {
             match storage.state {
                 ChannelState::Disconnecting | ChannelState::PeerDisconnecting(_) => {
-                    // The request holds the slot, so that the channel is not used again while
-                    // the request is in progress, also when the link is lost before. This is a
-                    // separate count, so that it cannot overflow the count of user references.
-                    storage.disconnect_requests = unwrap!(
-                        storage.disconnect_requests.checked_add(1),
-                        "Too many disconnection requests for the same channel"
-                    );
                     return Poll::Ready(DisconnectRequest {
                         index: ChannelIndex(idx as u8),
                         handle: storage.conn.unwrap(),
@@ -1345,20 +1293,6 @@ impl<'a, P: PacketPool> DisconnectRequest<'a, P> {
     }
 }
 
-impl<P: PacketPool> Drop for DisconnectRequest<'_, P> {
-    fn drop(&mut self) {
-        // Release the slot. If the request is not confirmed, the channel stays disconnecting,
-        // and a new request is made.
-        let mut channels = self.channels.borrow_mut();
-        let chan = &mut channels[self.index.0 as usize];
-        chan.disconnect_requests = unwrap!(
-            chan.disconnect_requests.checked_sub(1),
-            "bug: dropping a disconnection request (i = {}) that was not counted",
-            self.index.0
-        );
-    }
-}
-
 fn encode(data: &[u8], packet: &mut [u8], peer_cid: u16, header: Option<u16>) -> Result<usize, Error> {
     let mut w = WriteCursor::new(packet);
     if header.is_some() {
@@ -1385,8 +1319,6 @@ pub struct ChannelStorage<P> {
     mtu: u16,
     flow_control: CreditFlowControl,
     refcount: u8,
-    /// Disconnection requests in progress for this channel (see `DisconnectRequest`).
-    disconnect_requests: u8,
 
     peer_cid: u16,
     peer_mps: u16,
@@ -1523,7 +1455,6 @@ impl<P> ChannelStorage<P> {
             peer_credits: 0,
             credit_waker: WakerRegistration::new(),
             refcount: 0,
-            disconnect_requests: 0,
             inbound: PacketChannel::new(),
             #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
             reassembly: PacketReassembly::new(),
@@ -1755,31 +1686,25 @@ mod tests {
         ));
     }
 
-    /// Create a host with one connection in `$ble`.
-    macro_rules! setup {
-        ($ble:ident, $conn:expr) => {
-            let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
-            let builder = crate::new(MockController::new(), &mut resources);
-            let $ble = BleHost::new(
-                builder.controller.as_ref().unwrap(),
-                builder.host_state.as_ref().unwrap(),
-            );
-            $ble.connections()
-                .connect(
-                    $conn,
-                    Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
-                    LeConnRole::Peripheral,
-                    ConnParams::new(),
-                )
-                .unwrap();
-        };
-    }
-
     /// A connection request with an MTU or MPS below 23 does not create a channel.
     #[test]
     fn connection_request_minimum_mtu_mps() {
+        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let builder = crate::new(MockController::new(), &mut resources);
+        let ble = BleHost::new(
+            builder.controller.as_ref().unwrap(),
+            builder.host_state.as_ref().unwrap(),
+        );
+
         let conn = ConnHandle::new(33);
-        setup!(ble, conn);
+        ble.connections()
+            .connect(
+                conn,
+                Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            )
+            .unwrap();
         ble.channels().state.borrow_mut().registered_spsms[0] |= 1 << 1;
         ble.connections().set_l2cap_listening(0, true);
 
@@ -1801,261 +1726,22 @@ mod tests {
         for (mtu, mps) in [(22, 23), (23, 22), (23, 0), (0, 23)] {
             let _ = ble.channels().signal(conn, &request(mtu, mps), ble.connections());
             assert_eq!(channels_in_use(), 0, "mtu = {mtu}, mps = {mps}");
-        }
-    }
 
-    /// A successful connection response with an MTU or MPS below 23 disconnects the channel,
-    /// and the connect fails.
-    #[test]
-    fn connection_response_minimum_mtu_mps() {
-        let conn = ConnHandle::new(33);
-        setup!(ble, conn);
-
-        // LE Credit Based Connection Response: code 0x15, identifier, length 10, DCID, MTU, MPS, credits, result.
-        let response = |mtu: u16, mps: u16| {
-            let mut data = [0x15, 7, 10, 0, 0x41, 0, 0, 0, 0, 0, 1, 0, 0, 0];
-            data[6..8].copy_from_slice(&mtu.to_le_bytes());
-            data[8..10].copy_from_slice(&mps.to_le_bytes());
-            data
-        };
-        let idx = |ble: &BleHost<'_, MockController, DefaultPacketPool>| {
-            ble.channels()
-                .alloc_created(conn, |storage| {
-                    storage.state = ChannelState::Connecting(7);
-                })
-                .unwrap()
-        };
-        for (mtu, mps) in [(22, 23), (23, 22), (23, 0), (0, 23)] {
-            let idx = idx(&ble);
-            let _ = ble.channels().signal(conn, &response(mtu, mps), ble.connections());
-            {
-                let channels = ble.channels().channels.borrow();
-                let storage = &channels[idx.0 as usize];
-                assert_eq!(storage.state, ChannelState::Disconnecting, "mtu = {mtu}, mps = {mps}");
-                assert_eq!(storage.peer_cid, 0x41, "mtu = {mtu}, mps = {mps}");
-            }
-
-            // The connect fails, and the channel stays for the disconnection request.
-            let created = ble.channels().poll_created(conn, idx, ble, None);
-            assert!(
-                matches!(created, Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))),
-                "mtu = {mtu}, mps = {mps}"
-            );
-            ble.channels().release_created(idx);
-            let Poll::Ready(request) = ble.channels().poll_disconnecting(None) else {
-                panic!("no disconnection request, mtu = {mtu}, mps = {mps}");
+            // The host answers with an LE Credit Based Connection Response with the result
+            // "unacceptable parameters" (0x000B).
+            let Poll::Ready((handle, pdu)) = embassy_futures::poll_once(ble.connections().outbound()) else {
+                panic!("no response, mtu = {mtu}, mps = {mps}");
             };
-            assert_eq!(request.index, idx);
-            request.confirm();
+            assert_eq!(handle, conn);
+            let pdu = pdu.as_ref();
+            // L2CAP header (length, CID), then the signal: code 0x15, identifier 1, length 10.
+            assert_eq!(&pdu[..8], &[14, 0, 0x05, 0, 0x15, 1, 10, 0], "mtu = {mtu}, mps = {mps}");
+            // The result field is the last field of the response.
+            assert_eq!(&pdu[16..18], &[0x0B, 0], "mtu = {mtu}, mps = {mps}");
         }
 
         // The minimum itself is accepted.
-        let idx = idx(&ble);
-        let _ = ble.channels().signal(conn, &response(23, 23), ble.connections());
-        let state = ble.channels().channels.borrow()[idx.0 as usize].state.clone();
-        assert!(matches!(state, ChannelState::Connected));
-    }
-
-    /// After a successful connection response with an MPS below 23, the channel is not used
-    /// again before both the disconnection and `create` are done with it.
-    #[test]
-    fn connection_response_minimum_mtu_mps_pending_create() {
-        // `create` sees the result before it is dropped, or is dropped first.
-        for poll_create in [true, false] {
-            let conn = ConnHandle::new(33);
-            let other = ConnHandle::new(34);
-            setup!(ble, conn);
-            ble.connections()
-                .connect(
-                    other,
-                    Address::new(AddrKind::PUBLIC, BdAddr::new([1; 6])),
-                    LeConnRole::Peripheral,
-                    ConnParams::new(),
-                )
-                .unwrap();
-            ble.channels().state.borrow_mut().registered_spsms[0] |= 1 << 1;
-            ble.connections().set_l2cap_listening(1, true);
-
-            // LE Credit Based Connection Request on `other`: SPSM 1, SCID `scid`, MTU 23, MPS 23, credits 1.
-            let request = |scid: u8| [0x14, 1, 10, 0, 1, 0, scid, 0, 23, 0, 23, 0, 1, 0];
-            let peer_connecting = |idx: ChannelIndex| {
-                let channels = ble.channels().channels.borrow();
-                let storage = &channels[idx.0 as usize];
-                matches!(storage.state, ChannelState::PeerConnecting(_)) && storage.conn == Some(other)
-            };
-
-            let idx = ble
-                .channels()
-                .alloc_created(conn, |storage| {
-                    storage.state = ChannelState::Connecting(7);
-                })
-                .unwrap();
-            // LE Credit Based Connection Response: DCID 0x41, MTU 23, MPS 0, credits 1, success.
-            let response = [0x15, 7, 10, 0, 0x41, 0, 23, 0, 0, 0, 1, 0, 0, 0];
-            let _ = ble.channels().signal(conn, &response, ble.connections());
-
-            // The disconnection request is sent before `create` is polled again.
-            let Poll::Ready(disconnect) = ble.channels().poll_disconnecting(None) else {
-                panic!("no disconnection request");
-            };
-            assert_eq!(disconnect.index, idx);
-            disconnect.confirm();
-
-            // Incoming connections use the other channel, but not the channel of `create`.
-            let _ = ble.channels().signal(other, &request(0x40), ble.connections());
-            let _ = ble.channels().signal(other, &request(0x42), ble.connections());
-            let replacement = ChannelIndex(1 - idx.0);
-            assert!(peer_connecting(replacement));
-            assert!(!peer_connecting(idx));
-
-            if poll_create {
-                let created = ble.channels().poll_created(conn, idx, ble, None);
-                assert!(matches!(
-                    created,
-                    Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
-                ));
-            }
-            // `create` is dropped.
-            ble.channels().release_created(idx);
-            assert!(peer_connecting(replacement));
-
-            // Now the channel is free.
-            let _ = ble.channels().signal(other, &request(0x44), ble.connections());
-            assert!(peer_connecting(idx));
-            assert!(peer_connecting(replacement));
-        }
-    }
-
-    /// A disconnection request holds its channel: when the link is lost while the request is
-    /// in progress, the channel is not used again before the request is done.
-    #[test]
-    fn disconnect_request_holds_channel() {
-        let conn = ConnHandle::new(33);
-        let other = ConnHandle::new(34);
-        setup!(ble, conn);
-        ble.connections()
-            .connect(
-                other,
-                Address::new(AddrKind::PUBLIC, BdAddr::new([1; 6])),
-                LeConnRole::Peripheral,
-                ConnParams::new(),
-            )
-            .unwrap();
-        ble.channels().state.borrow_mut().registered_spsms[0] |= 1 << 1;
-        ble.connections().set_l2cap_listening(1, true);
-
-        // LE Credit Based Connection Request on `other`: SPSM 1, SCID `scid`, MTU 23, MPS 23, credits 1.
-        let request = |scid: u8| [0x14, 1, 10, 0, 1, 0, scid, 0, 23, 0, 23, 0, 1, 0];
-        let peer_connecting = |idx: ChannelIndex| {
-            let channels = ble.channels().channels.borrow();
-            let storage = &channels[idx.0 as usize];
-            matches!(storage.state, ChannelState::PeerConnecting(_)) && storage.conn == Some(other)
-        };
-
-        let idx = ble
-            .channels()
-            .alloc_created(conn, |storage| {
-                storage.state = ChannelState::Connecting(7);
-            })
-            .unwrap();
-        // LE Credit Based Connection Response: DCID 0x41, MTU 23, MPS 0, credits 1, success.
-        let response = [0x15, 7, 10, 0, 0x41, 0, 23, 0, 0, 0, 1, 0, 0, 0];
-        let _ = ble.channels().signal(conn, &response, ble.connections());
-
-        // The disconnection request is in progress when the link is lost.
-        let Poll::Ready(disconnect) = ble.channels().poll_disconnecting(None) else {
-            panic!("no disconnection request");
-        };
-        assert_eq!(disconnect.index, idx);
-        ble.channels().disconnected(conn).unwrap();
-        let created = ble.channels().poll_created(conn, idx, ble, None);
-        assert!(matches!(
-            created,
-            Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
-        ));
-        ble.channels().release_created(idx);
-
-        // Incoming connections on `other` do not use the channel of the request.
-        let _ = ble.channels().signal(other, &request(0x40), ble.connections());
-        let _ = ble.channels().signal(other, &request(0x42), ble.connections());
-        let replacement = ChannelIndex(1 - idx.0);
-        assert!(peer_connecting(replacement));
-        assert!(!peer_connecting(idx));
-
-        // The request is done, and does not change the other channel.
-        disconnect.confirm();
-        assert!(peer_connecting(replacement));
-        assert_eq!(ble.channels().channels.borrow()[idx.0 as usize].refcount, 0);
-
-        // Now the channel is free.
-        let _ = ble.channels().signal(other, &request(0x44), ble.connections());
-        assert!(peer_connecting(idx));
-        assert!(peer_connecting(replacement));
-    }
-
-    /// A disconnection request that is dropped before it is confirmed (for example when the
-    /// signal cannot be sent) releases its reference, and the channel stays disconnecting.
-    #[test]
-    fn disconnect_request_dropped() {
-        let conn = ConnHandle::new(33);
-        setup!(ble, conn);
-        let idx = ble
-            .channels()
-            .alloc(conn, None, |storage| {
-                storage.state = ChannelState::Connected;
-                storage.inc_ref();
-            })
-            .unwrap();
-        let refcount = || ble.channels().channels.borrow()[idx.0 as usize].refcount;
-        let requests = || ble.channels().channels.borrow()[idx.0 as usize].disconnect_requests;
-
-        // The channel is closed by its user.
-        ble.channels().disconnect(idx);
-        ble.channels().dec_ref(idx);
-        assert_eq!(refcount(), 0);
-
-        let Poll::Ready(disconnect) = ble.channels().poll_disconnecting(None) else {
-            panic!("no disconnection request");
-        };
-        assert_eq!(requests(), 1);
-        core::mem::drop(disconnect);
-        assert_eq!(requests(), 0);
-
-        // A new request is made, and confirmed.
-        let Poll::Ready(disconnect) = ble.channels().poll_disconnecting(None) else {
-            panic!("no disconnection request");
-        };
-        assert_eq!(disconnect.index, idx);
-        disconnect.confirm();
-        assert_eq!(refcount(), 0);
-        assert_eq!(requests(), 0);
-        assert_eq!(
-            ble.channels().channels.borrow()[idx.0 as usize].state,
-            ChannelState::Disconnected
-        );
-        assert!(ble.channels().poll_disconnecting(None).is_pending());
-    }
-
-    /// A disconnection request does not use the count of user references, so a channel with
-    /// the maximum number of user references can still be disconnected.
-    #[test]
-    fn disconnect_request_with_max_references() {
-        let conn = ConnHandle::new(33);
-        setup!(ble, conn);
-        let idx = ble
-            .channels()
-            .alloc(conn, None, |storage| {
-                storage.state = ChannelState::Connected;
-                storage.refcount = u8::MAX;
-            })
-            .unwrap();
-
-        ble.channels().disconnect(idx);
-        let Poll::Ready(disconnect) = ble.channels().poll_disconnecting(None) else {
-            panic!("no disconnection request");
-        };
-        assert_eq!(disconnect.index, idx);
-        disconnect.confirm();
-        assert_eq!(ble.channels().channels.borrow()[idx.0 as usize].refcount, u8::MAX);
+        let _ = ble.channels().signal(conn, &request(23, 23), ble.connections());
+        assert_eq!(channels_in_use(), 1);
     }
 }
