@@ -121,6 +121,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bt-hci"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0048816dbf43511d51f46514fada281890aa0190ada5170cf7bbb66259b611e7"
+dependencies = [
+ "bt-hci-transport",
+ "btuuid",
+ "defmt 1.1.1",
+ "embassy-sync",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "futures-intrusive",
+ "heapless",
+]
+
+[[package]]
 name = "bt-hci-transport"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -538,7 +554,7 @@ source = "git+https://github.com/embassy-rs/embassy.git?rev=3cd51e6d8eb6aff8b0d6
 dependencies = [
  "aligned 0.4.3",
  "bit_field",
- "bt-hci",
+ "bt-hci 0.10.1",
  "cortex-m 0.7.9",
  "critical-section",
  "defmt 1.1.1",
@@ -1273,7 +1289,7 @@ version = "0.18.0"
 source = "git+https://github.com/embassy-rs/stm32wb-hci.git?rev=ca024be3d2ff107aeae4f9c9889edb9785b242ca#ca024be3d2ff107aeae4f9c9889edb9785b242ca"
 dependencies = [
  "bitflags 2.13.2",
- "bt-hci",
+ "bt-hci 0.10.1",
  "bt-hci-transport",
  "byteorder",
  "critical-section",
@@ -1426,7 +1442,7 @@ dependencies = [
 name = "trouble-example-apps"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.11.0",
  "defmt 1.1.1",
  "embassy-futures 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "embassy-sync",
@@ -1442,7 +1458,7 @@ dependencies = [
 name = "trouble-host"
 version = "0.8.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.11.0",
  "defmt 1.1.1",
  "embassy-crypto",
  "embassy-futures 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
