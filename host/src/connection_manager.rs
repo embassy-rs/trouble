@@ -965,11 +965,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     ) -> Result<(), crate::BleHostError<C::Error>>
     where
         C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
+            + crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestNegativeReply>
             + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
     {
         #[cfg(feature = "central")]
         use bt_hci::cmd::le::LeEnableEncryption;
-        use bt_hci::cmd::le::LeLongTermKeyRequestReply;
+        use bt_hci::cmd::le::{LeLongTermKeyRequestNegativeReply, LeLongTermKeyRequestReply};
 
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
@@ -993,12 +994,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                             .command(LeLongTermKeyRequestReply::new(handle, ltk.to_le_bytes()))
                             .await?;
                     } else {
-                        warn!("[host] Long term key request reply failed, no long term key");
-                        // Send disconnect event to the controller
-                        self.request_handle_disconnect(handle, DisconnectReason::AuthenticationFailure);
+                        warn!("[host] Long term key request, no long term key");
+                        host.command(LeLongTermKeyRequestNegativeReply::new(handle)).await?;
                     }
                 } else {
-                    warn!("[host] Long term key request reply failed, unknown peer")
+                    warn!("[host] Long term key request, unknown peer");
+                    host.command(LeLongTermKeyRequestNegativeReply::new(handle)).await?;
                 }
             }
             crate::security_manager::SecurityEventData::EnableEncryption(handle, bond_info) => {
