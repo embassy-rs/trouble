@@ -11,7 +11,7 @@ embassy-stm32-wpan = { version = "0.1.0", features = ["defmt", "bt-hci", "wb-ble
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 embassy-executor = { version = "0.10.0", features = ["defmt"] }
 embassy-time = { version = "0.5.1", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
-embassy-net = { version = "0.9.1", features = ["defmt", "udp", "proto-ipv6", "medium-ieee802154", ], optional = true }
+embassy-net = { version = "0.9.1", features = ["defmt", "udp", "ipv6", "medium-ieee802154", ], optional = true }
 trouble-example-apps = { version = "0.1.0", path = "../apps", features = ["defmt"] }
 trouble-host = { path = "../../host", features = ["default-packet-pool-mtu-255"] }
 
@@ -36,9 +36,9 @@ name = "ble_bas_central"
 name = "ble_bas_peripheral"
 
 [patch.crates-io]
-embassy-stm32 = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
-embassy-stm32-wpan = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
-embassy-net = { git = "https://github.com/embassy-rs/embassy.git", rev = "3cd51e6d8eb6aff8b0d64d9e56a75a538bcfc65a" }
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy.git", rev = "4e132c7cae97f142fa185aef765dd5f0459a04ba" }
+embassy-stm32-wpan = { git = "https://github.com/embassy-rs/embassy.git", rev = "4e132c7cae97f142fa185aef765dd5f0459a04ba" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "4e132c7cae97f142fa185aef765dd5f0459a04ba" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "4e132c7cae97f142fa185aef765dd5f0459a04ba" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "4e132c7cae97f142fa185aef765dd5f0459a04ba" }
+embassy-net = { git = "https://github.com/embassy-rs/embassy.git", rev = "4e132c7cae97f142fa185aef765dd5f0459a04ba" }
