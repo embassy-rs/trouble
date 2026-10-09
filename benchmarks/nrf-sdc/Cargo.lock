@@ -72,9 +72,9 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "bt-hci"
-version = "0.10.1"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f63b3d6f0ef006d9b87a075705d6c142b03681ad34090659647f0e227c1c667f"
+checksum = "0048816dbf43511d51f46514fada281890aa0190ada5170cf7bbb66259b611e7"
 dependencies = [
  "bt-hci-transport",
  "btuuid",
@@ -881,8 +881,8 @@ dependencies = [
 
 [[package]]
 name = "nrf-mpsl"
-version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1a6e661155cdd1d6a86f3ae7b7fb117343781533#1a6e661155cdd1d6a86f3ae7b7fb117343781533"
+version = "0.4.0"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=a22ca716c807496f98ae8d95cba5622b9fdd8a00#a22ca716c807496f98ae8d95cba5622b9fdd8a00"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -898,8 +898,8 @@ dependencies = [
 
 [[package]]
 name = "nrf-mpsl-sys"
-version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1a6e661155cdd1d6a86f3ae7b7fb117343781533#1a6e661155cdd1d6a86f3ae7b7fb117343781533"
+version = "0.3.0"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=a22ca716c807496f98ae8d95cba5622b9fdd8a00#a22ca716c807496f98ae8d95cba5622b9fdd8a00"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -918,7 +918,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1a6e661155cdd1d6a86f3ae7b7fb117343781533#1a6e661155cdd1d6a86f3ae7b7fb117343781533"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=a22ca716c807496f98ae8d95cba5622b9fdd8a00#a22ca716c807496f98ae8d95cba5622b9fdd8a00"
 dependencies = [
  "bt-hci",
  "bt-hci-transport",
@@ -935,8 +935,8 @@ dependencies = [
 
 [[package]]
 name = "nrf-sdc-sys"
-version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=1a6e661155cdd1d6a86f3ae7b7fb117343781533#1a6e661155cdd1d6a86f3ae7b7fb117343781533"
+version = "0.3.0"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=a22ca716c807496f98ae8d95cba5622b9fdd8a00#a22ca716c807496f98ae8d95cba5622b9fdd8a00"
 dependencies = [
  "bindgen",
  "doxygen-rs",
