@@ -1881,13 +1881,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 }
         */
 
-        let _ = host.state.initialized.init(InitialState {
-            acl_max: ret.le_acl_data_packet_length as usize,
-            acl_total: ret.total_num_le_acl_data_packets as usize,
-        });
-        info!("[host] initialized");
-
-        let device_address = host.command(ReadBdAddr::new()).await?;
+        let device_address = ReadBdAddr::new().exec(host.controller).await?;
         if *device_address.raw() != [0, 0, 0, 0, 0, 0] {
             let device_address = Address::new(AddrKind::PUBLIC, device_address);
             info!("[host] Device Address {}", device_address);
@@ -1900,16 +1894,6 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             }
         }
 
-        // Set default RPA timeout in controller
-        #[cfg(feature = "security")]
-        {
-            let timeout_secs = host.state.rpa_timeout.get().as_secs();
-            LeSetResolvablePrivateAddrTimeout::new(bt_hci::param::Duration::from_secs(timeout_secs as u32))
-                .exec(host.controller)
-                .await?;
-            info!("[host] RPA timeout set to {}s", timeout_secs);
-        }
-
         // Initialize privacy: sync resolving list
         #[cfg(feature = "security")]
         if host.is_privacy_enabled() {
@@ -1917,6 +1901,28 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
             host.sync_resolving_list(ResolvingListUpdate::FullSync).await?;
             info!("[host] privacy initialized");
         }
+
+        // Set default RPA timeout in controller. Until the host is initialized, `Stack::set_rpa_timeout()`
+        // only stores the timeout, so repeat if it changed while the command was running.
+        #[cfg(feature = "security")]
+        loop {
+            let timeout = host.state.rpa_timeout.get();
+            LeSetResolvablePrivateAddrTimeout::new(bt_hci::param::Duration::from_secs(timeout.as_secs() as u32))
+                .exec(host.controller)
+                .await?;
+            if host.state.rpa_timeout.get() == timeout {
+                info!("[host] RPA timeout set to {}s", timeout.as_secs());
+                break;
+            }
+        }
+
+        // Mark the host as initialized only once the startup sequence is complete, so that commands issued
+        // by the application (advertising, scanning, connecting, ...) do not contend with it.
+        let _ = host.state.initialized.init(InitialState {
+            acl_max: ret.le_acl_data_packet_length as usize,
+            acl_total: ret.total_num_le_acl_data_packets as usize,
+        });
+        info!("[host] initialized");
 
         loop {
             match select5(
