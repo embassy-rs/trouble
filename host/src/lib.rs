@@ -478,6 +478,7 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 pub trait SecurityCmds:
     bt_hci::controller::Controller
     + ControllerCmdSync<LeLongTermKeyRequestReply>
+    + ControllerCmdSync<LeLongTermKeyRequestNegativeReply>
     + ControllerCmdAsync<LeEnableEncryption>
     + ControllerCmdSync<LeAddDeviceToResolvingList>
     + ControllerCmdSync<LeRemoveDeviceFromResolvingList>
@@ -492,6 +493,7 @@ pub trait SecurityCmds:
 impl<
         C: bt_hci::controller::Controller
             + ControllerCmdSync<LeLongTermKeyRequestReply>
+            + ControllerCmdSync<LeLongTermKeyRequestNegativeReply>
             + ControllerCmdAsync<LeEnableEncryption>
             + ControllerCmdSync<LeAddDeviceToResolvingList>
             + ControllerCmdSync<LeRemoveDeviceFromResolvingList>
