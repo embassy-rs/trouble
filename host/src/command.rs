@@ -87,6 +87,13 @@ impl<CTX: Clone + Copy> CommandState<CTX> {
         })
     }
 
+    /// Signal that the controller accepted the cancel; the command stays busy until its completion event arrives.
+    pub fn cancel_accepted(&self, ctx: CTX) {
+        self.with_inner(|inner| {
+            inner.state = State::Active(ctx);
+        })
+    }
+
     /// Signal that a command has been canceled.
     pub fn canceled(&self) {
         self.with_inner(|inner| {
@@ -115,5 +122,28 @@ impl<CTX: Clone + Copy> CommandState<CTX> {
             inner.state = State::Idle;
             inner.controller.wake();
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::task::{Context, Poll, Waker};
+
+    use super::*;
+
+    #[test]
+    fn an_accepted_cancel_stays_busy_until_its_completion() {
+        let state = CommandState::new();
+        let mut cx = Context::from_waker(Waker::noop());
+
+        state.cancel(true);
+        assert_eq!(state.poll_cancelled(&mut cx), Poll::Ready(true));
+        state.cancel_accepted(true);
+
+        // Not cancelled a second time, and no new command starts before the completion event.
+        assert!(state.poll_cancelled(&mut cx).is_pending());
+        assert!(!state.is_idle());
+        state.canceled();
+        assert!(state.is_idle());
     }
 }
