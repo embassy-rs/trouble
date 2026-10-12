@@ -579,7 +579,16 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                     #[cfg(feature = "channel-metrics")]
                     storage.metrics.received(1);
                     if !storage.reassembly.in_progress() {
-                        let (first, _) = pdu.as_ref().split_at(2);
+                        // The first K-frame of an SDU starts with the 2-byte SDU length.
+                        let Some((first, _)) = pdu.as_ref().split_at_checked(2) else {
+                            warn!(
+                                "[l2cap][cid = {}] first K-frame without SDU length, disconnecting channel",
+                                channel
+                            );
+                            storage.disconnect();
+                            self.state.borrow_mut().disconnect_waker.wake();
+                            return Err(Error::InvalidValue);
+                        };
                         let sdu_len: u16 = u16::from_le_bytes([first[0], first[1]]);
 
                         storage
@@ -1678,5 +1687,116 @@ mod tests {
             chan,
             Poll::Ready(Err(BleHostError::BleHost(Error::Disconnected)))
         ));
+    }
+
+    /// The first K-frame of an SDU without the 2-byte SDU length is an error, not a panic.
+    #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+    #[test]
+    fn first_k_frame_without_sdu_length() {
+        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let ble = MockController::new();
+        let builder = crate::new(ble, &mut resources);
+        let ble = BleHost::new(
+            builder.controller.as_ref().unwrap(),
+            builder.host_state.as_ref().unwrap(),
+        );
+
+        let conn = ConnHandle::new(33);
+        ble.connections()
+            .connect(
+                conn,
+                Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            )
+            .unwrap();
+        for len in 0..2 {
+            let idx = ble
+                .channels()
+                .alloc(conn, Some(0x40 + len as u16), |storage| {
+                    storage.state = ChannelState::Connected;
+                    storage.flow_control = CreditFlowControl::new(CreditFlowPolicy::Every(1), 4);
+                })
+                .unwrap();
+            let cid = ble.channels().channels.borrow()[idx.0 as usize].cid;
+
+            let packet = DefaultPacketPool::allocate().unwrap();
+            let result = ble.channels().dispatch(cid, Pdu::new(packet, len));
+            assert!(matches!(result, Err(Error::InvalidValue)), "len = {len}");
+            // The channel must be disconnected, as for an invalid SDU length.
+            assert_eq!(
+                ble.channels().channels.borrow()[idx.0 as usize].state,
+                ChannelState::Disconnecting,
+                "len = {len}"
+            );
+            assert!(matches!(ble.channels().poll_disconnecting(None), Poll::Ready(_)));
+        }
+    }
+
+    /// Same as `first_k_frame_without_sdu_length`, for the SDU reassembly in `BleHost::handle_acl`.
+    #[cfg(feature = "l2cap-sdu-reassembly-optimization")]
+    #[test]
+    fn first_k_frame_without_sdu_length_in_acl() {
+        use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
+
+        struct Handler;
+        impl crate::prelude::EventHandler for Handler {}
+
+        let mut resources: HostResources<DefaultPacketPool, 2, 4> = HostResources::new();
+        let ble = MockController::new();
+        let builder = crate::new(ble, &mut resources);
+        let ble = BleHost::new(
+            builder.controller.as_ref().unwrap(),
+            builder.host_state.as_ref().unwrap(),
+        );
+
+        let conn = ConnHandle::new(33);
+        ble.connections()
+            .connect(
+                conn,
+                Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            )
+            .unwrap();
+
+        // (L2CAP PDU length, information payload): two complete K-frames that are too short, then
+        // first ACL fragments that do not hold the full SDU length. These are not supported, but
+        // must not panic.
+        let frames: [(u16, &[u8]); 4] = [(0, &[]), (1, &[0x01]), (10, &[]), (10, &[0x01])];
+        for (i, (pdu_len, payload)) in frames.into_iter().enumerate() {
+            let idx = ble
+                .channels()
+                .alloc(conn, Some(0x40 + i as u16), |storage| {
+                    storage.state = ChannelState::Connected;
+                    storage.mtu = 23;
+                    storage.mps = 23;
+                    storage.flow_control = CreditFlowControl::new(CreditFlowPolicy::Every(1), 4);
+                })
+                .unwrap();
+            let cid = ble.channels().channels.borrow()[idx.0 as usize].cid;
+
+            let mut data = [0u8; 5];
+            data[..2].copy_from_slice(&pdu_len.to_le_bytes());
+            data[2..4].copy_from_slice(&cid.to_le_bytes());
+            data[4..4 + payload.len()].copy_from_slice(payload);
+            let acl = AclPacket::new(
+                conn,
+                AclPacketBoundary::FirstFlushable,
+                AclBroadcastFlag::PointToPoint,
+                &data[..4 + payload.len()],
+            );
+
+            let result = ble.handle_acl(acl, &Handler);
+            assert!(matches!(result, Err(Error::InvalidValue)), "frame {i}");
+            if usize::from(pdu_len) != payload.len() {
+                continue;
+            }
+            assert_eq!(
+                ble.channels().channels.borrow()[idx.0 as usize].state,
+                ChannelState::Disconnecting,
+                "frame {i}"
+            );
+        }
     }
 }
