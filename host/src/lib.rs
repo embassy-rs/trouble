@@ -559,7 +559,7 @@ pub trait Controller:
     bt_hci::controller::Controller
     + embedded_io::ErrorType<Error: crate::fmt::Format>
     + ControllerCmdSync<LeReadBufferSize>
-    + ControllerCmdSync<Disconnect>
+    + ControllerCmdAsync<Disconnect>
     + ControllerCmdSync<SetEventMask>
     + ControllerCmdSync<SetEventMaskPage2>
     + ControllerCmdSync<LeSetEventMask>
@@ -596,7 +596,7 @@ impl<
         C: bt_hci::controller::Controller
             + embedded_io::ErrorType<Error: crate::fmt::Format>
             + ControllerCmdSync<LeReadBufferSize>
-            + ControllerCmdSync<Disconnect>
+            + ControllerCmdAsync<Disconnect>
             + ControllerCmdSync<SetEventMask>
             + ControllerCmdSync<SetEventMaskPage2>
             + ControllerCmdSync<LeSetEventMask>

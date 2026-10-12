@@ -22,7 +22,7 @@ features = ["defmt", "peripheral", "central", "gatt", "scan", "derive", "securit
 targets = ["thumbv7em-none-eabi"]
 
 [dependencies]
-bt-hci = { version = "0.10", features = ["uuid"] }
+bt-hci = { version = "0.11", features = ["uuid"] }
 embassy-crypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c", optional = true }
 embedded-io = { version = "0.7" }
 embassy-sync = "0.8"

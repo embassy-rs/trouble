@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 trouble-host = { path = "../../host", default-features = false, features = ["derive", "gatt", "peripheral", "default-packet-pool"] }
-bt-hci = "0.10"
+bt-hci = "0.11"
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.8" }
 embassy-time = "0.5"

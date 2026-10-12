@@ -142,9 +142,9 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.10.1"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f63b3d6f0ef006d9b87a075705d6c142b03681ad34090659647f0e227c1c667f"
+checksum = "0048816dbf43511d51f46514fada281890aa0190ada5170cf7bbb66259b611e7"
 dependencies = [
  "bt-hci-transport",
  "btuuid",
@@ -2555,7 +2555,7 @@ dependencies = [
 name = "trouble-example-apps"
 version = "0.1.0"
 dependencies = [
- "bt-hci 0.10.1",
+ "bt-hci 0.11.0",
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
@@ -2574,7 +2574,7 @@ dependencies = [
 name = "trouble-host"
 version = "0.8.0"
 dependencies = [
- "bt-hci 0.10.1",
+ "bt-hci 0.11.0",
  "embassy-crypto",
  "embassy-futures",
  "embassy-sync 0.8.0",

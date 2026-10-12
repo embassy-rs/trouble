@@ -5,7 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-bt-hci = "0.10"
+bt-hci = "0.11"
 bt-hci-usb = "0.2"
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
