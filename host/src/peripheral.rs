@@ -363,6 +363,18 @@ impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
     /// Accept the next peripheral connection for this advertiser.
     ///
     /// Returns Error::Timeout if advertiser stopped.
+    ///
+    /// For a legacy advertiser, a returned connection is what stops the advertising: the runner
+    /// disables legacy advertising in the controller before the state is idle again. This also
+    /// covers a connection that an earlier (replaced) advertising made: the controller stops that
+    /// advertising itself and reports the connection to this advertiser, and its own advertising
+    /// would otherwise stay enabled. Disabling legacy advertising that is already disabled has no
+    /// effect (Bluetooth Core v6.2, Vol 4, Part E, §7.8.9), so this is safe when the controller
+    /// already stopped the advertising. If the future is dropped before it completes, the
+    /// advertising is disabled as when an [`Advertiser`] is dropped.
+    ///
+    /// For an extended advertiser, the controller stops the advertising set that made the
+    /// connection itself, and no disable command is sent. Other advertising sets are not affected.
     pub async fn accept(mut self) -> Result<Connection<'d, P>, Error> {
         let result = match select(
             self.host.connections().accept(LeConnRole::Peripheral, &[]),
@@ -373,7 +385,15 @@ impl<'d, C: Controller, P: PacketPool> Advertiser<'d, C, P> {
             Either::First(conn) => Ok(conn),
             Either::Second(_) => Err(Error::Timeout),
         };
-        self.done = true;
+        // On a timeout, and for an extended advertiser (the controller stops the advertising set
+        // that made the connection itself; other sets are out of scope), no command is needed. For
+        // a legacy advertiser, leave the command state active so that Drop puts it in the cancel
+        // state: the runner then disables legacy advertising and makes the state idle, as for a
+        // dropped [`Advertiser`].
+        self.done = match &result {
+            Ok(_) => self.extended,
+            Err(_) => true,
+        };
         result
     }
 }
@@ -385,5 +405,74 @@ impl<C, P: PacketPool> Drop for Advertiser<'_, C, P> {
         } else {
             self.host.advertise_command_state().canceled();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+    use embassy_futures::block_on;
+
+    use super::Advertiser;
+    use crate::connection::ConnParams;
+    use crate::mock_controller::MockController;
+    use crate::prelude::DefaultPacketPool;
+    use crate::HostResources;
+
+    /// When a legacy advertiser accepts a connection, the advertising command state goes to the
+    /// cancel state, so the runner disables legacy advertising before the state is idle again.
+    #[test]
+    fn legacy_accept_cancels_advertising() {
+        let mut resources: HostResources<DefaultPacketPool, 1, 1> = HostResources::new();
+        let stack = crate::new(MockController::new(), &mut resources).build();
+        let peripheral = stack.peripheral();
+        let host = peripheral.host;
+
+        // A pending peripheral connection for the advertiser to accept.
+        unwrap!(host.connections().connect(
+            ConnHandle::new(0),
+            crate::Address::new(AddrKind::RANDOM, BdAddr::new([0x11, 0x22, 0x33, 0x44, 0x55, 0x66])),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+
+        let advertiser = Advertiser {
+            host,
+            extended: false,
+            done: false,
+        };
+        let _conn = block_on(advertiser.accept()).unwrap();
+
+        let state = host.advertise_command_state();
+        assert!(!state.is_idle());
+        let waker = core::task::Waker::noop();
+        let mut cx = core::task::Context::from_waker(waker);
+        assert!(matches!(state.poll_cancelled(&mut cx), core::task::Poll::Ready(false)));
+    }
+
+    /// When an extended advertiser accepts a connection, the advertising command state goes idle
+    /// without a cancel: the controller stops the advertising set itself.
+    #[test]
+    fn extended_accept_does_not_cancel_advertising() {
+        let mut resources: HostResources<DefaultPacketPool, 1, 1> = HostResources::new();
+        let stack = crate::new(MockController::new(), &mut resources).build();
+        let peripheral = stack.peripheral();
+        let host = peripheral.host;
+
+        unwrap!(host.connections().connect(
+            ConnHandle::new(0),
+            crate::Address::new(AddrKind::RANDOM, BdAddr::new([0x11, 0x22, 0x33, 0x44, 0x55, 0x66])),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+
+        let advertiser = Advertiser {
+            host,
+            extended: true,
+            done: false,
+        };
+        let _conn = block_on(advertiser.accept()).unwrap();
+
+        assert!(host.advertise_command_state().is_idle());
     }
 }
