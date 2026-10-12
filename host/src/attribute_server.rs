@@ -865,6 +865,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
 
 #[cfg(test)]
 mod tests {
+
     use core::task::Poll;
 
     use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
