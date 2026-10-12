@@ -124,17 +124,19 @@ impl IdentityResolvingKey {
         rng_fill_bytes(&mut prand);
 
         // Set the top 2 bits to 0b01 to indicate resolvable private address
-        prand[2] &= 0b00111111; // Clear top 2 bits
-        prand[2] |= 0b01000000; // Set 2nd bit from top
+        prand[0] &= 0b00111111; // Clear top 2 bits
+        prand[0] |= 0b01000000; // Set 2nd bit from top
 
         // Calculate hash using ah function
         let hash = self.ah(prand);
 
-        // Construct the address: prand || hash
+        // Construct the address: prand || hash, most significant octet first
         let mut address = [0u8; 6];
-        address[3..6].copy_from_slice(&prand);
-        address[0..3].copy_from_slice(&hash);
+        address[0..3].copy_from_slice(&prand);
+        address[3..6].copy_from_slice(&hash);
 
+        // BdAddr is little-endian
+        address.reverse();
         address
     }
 
@@ -959,6 +961,15 @@ mod tests {
         let address = BdAddr::new([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
         let re = irk.resolve_address(&address);
         assert_eq!(re, true);
+    }
+
+    #[test]
+    pub fn generated_rpa_resolves() {
+        let irk = IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d).unwrap();
+        for _ in 0..16 {
+            let address = BdAddr::new(irk.generate_resolvable_address());
+            assert!(irk.resolve_address(&address));
+        }
     }
 
     /// LE Legacy Pairing c1 test vector ([Vol 3] Part H, Appendix D.1).
