@@ -1988,18 +1988,30 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     CancelledCommandState::Advertise(ext) => {
                         trace!("[host] disabling advertising");
                         #[cfg(feature = "extended-advertising")]
-                        if ext {
-                            host.command(LeSetExtAdvEnable::new(false, &[])).await?
+                        let result = if ext {
+                            host.command(LeSetExtAdvEnable::new(false, &[])).await.map(drop)
                         } else {
-                            host.command(LeSetAdvEnable::new(false)).await?
-                        }
+                            host.command(LeSetAdvEnable::new(false)).await.map(drop)
+                        };
                         #[cfg(not(feature = "extended-advertising"))]
-                        {
+                        let result = {
                             // Extended advertising cannot have been started
                             // (`advertise_ext` is compiled out), so `ext` is
                             // always false here.
                             let _ = ext;
-                            host.command(LeSetAdvEnable::new(false)).await?
+                            host.command(LeSetAdvEnable::new(false)).await.map(drop)
+                        };
+                        match result {
+                            // Disabling legacy advertising that is already disabled has no effect
+                            // (Bluetooth Core v6.2, Vol 4, Part E, §7.8.9), but a controller may
+                            // still report "Command Disallowed" for it. That is benign, and must
+                            // not stop the runner: the disable also runs after every accepted
+                            // legacy advertising connection. For extended advertising, a rejected
+                            // disable can leave sets active, so the error is not tolerated there.
+                            Err(BleHostError::BleHost(Error::Hci(bt_hci::param::Error::CMD_DISALLOWED))) if !ext => {}
+                            // Any other failure is a real error: stop the runner with the original
+                            // error, like before the command state went through the cancel path.
+                            other => other?,
                         }
                         host.state.advertise_command_state.canceled();
                     }
