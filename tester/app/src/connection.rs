@@ -152,6 +152,9 @@ pub async fn run<'stack, C: crate::Controller, P: PacketPool>(
                         req.accept(None, stack).await?;
                     }
                 }
+                GattConnectionEvent::RequestAttMtu(req) => {
+                    gatt_conn.accept_att_mtu(req).await?;
+                }
                 GattConnectionEvent::DataLengthUpdated { .. } => warn!("Ignored DLU event"),
                 GattConnectionEvent::FrameSpaceUpdated { .. } => warn!("Ignored frame space update event"),
                 GattConnectionEvent::ConnectionRateChanged { .. } => warn!("Ignored connection rate changed event"),
