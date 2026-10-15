@@ -117,6 +117,15 @@ pub(crate) struct ConnectionManager<'d, P: PacketPool> {
     pub(crate) security_manager: SecurityManager<'d>,
 }
 
+impl<P: PacketPool> Drop for ConnectionManager<'_, P> {
+    fn drop(&mut self) {
+        // The storage is borrowed from `HostResources` and would otherwise keep its pooled packets.
+        for storage in self.connections.borrow_mut().iter_mut() {
+            *storage = ConnectionStorage::new();
+        }
+    }
+}
+
 impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn new(
         connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
