@@ -674,6 +674,7 @@ pub struct HostResources<
     advertise_handles: MaybeUninit<RefCell<[AdvHandleState; ADV_SETS]>>,
     #[cfg(feature = "security")]
     bond_storage: MaybeUninit<RefCell<Vec<BondInformation, BONDS>>>,
+    initialized: bool,
 }
 
 impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize, const BONDS: usize> Default
@@ -696,7 +697,31 @@ impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: u
             advertise_handles: MaybeUninit::uninit(),
             #[cfg(feature = "security")]
             bond_storage: MaybeUninit::uninit(),
+            initialized: false,
         }
+    }
+
+    /// Return pooled packets held by a previous host's storage; `new()` and `Drop` also do this.
+    pub fn recycle(&mut self) {
+        if !core::mem::replace(&mut self.initialized, false) {
+            return;
+        }
+        // SAFETY: storage was written by `new()`, and `&mut self` means no Stack borrows it.
+        unsafe {
+            #[cfg(feature = "security")]
+            self.bond_storage.assume_init_drop();
+            self.advertise_handles.assume_init_drop();
+            self.channels.assume_init_drop();
+            self.connections.assume_init_drop();
+        }
+    }
+}
+
+impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: usize, const BONDS: usize> Drop
+    for HostResources<P, CONNS, CHANNELS, ADV_SETS, BONDS>
+{
+    fn drop(&mut self) {
+        self.recycle();
     }
 }
 
@@ -714,6 +739,8 @@ pub fn new<
     controller: C,
     resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS, BONDS>,
 ) -> StackBuilder<'resources, C, P> {
+    resources.recycle();
+
     let connections: &'resources RefCell<[ConnectionStorage<P::Packet>]> = resources
         .connections
         .write(RefCell::new([const { ConnectionStorage::new() }; CONNS]));
@@ -748,6 +775,7 @@ pub fn new<
             #[cfg(feature = "security")]
             bond_storage,
         )));
+    resources.initialized = true;
 
     StackBuilder {
         host_state: Some(host_state),
@@ -1143,4 +1171,92 @@ pub(crate) fn bt_hci_ext_duration<const US: u16>(d: Duration) -> bt_hci::param::
 #[doc(hidden)]
 pub mod __export {
     pub use embassy_sync;
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+
+    struct CountedPacket([u8; 64]);
+
+    impl AsRef<[u8]> for CountedPacket {
+        fn as_ref(&self) -> &[u8] {
+            &self.0
+        }
+    }
+
+    impl AsMut<[u8]> for CountedPacket {
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+
+    impl Packet for CountedPacket {}
+
+    impl Drop for CountedPacket {
+        fn drop(&mut self) {
+            LIVE.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    struct CountingPool;
+
+    impl PacketPool for CountingPool {
+        type Packet = CountedPacket;
+        const MTU: usize = 64;
+
+        fn allocate() -> Option<CountedPacket> {
+            LIVE.fetch_add(1, Ordering::SeqCst);
+            Some(CountedPacket([0; 64]))
+        }
+
+        fn capacity() -> usize {
+            usize::MAX
+        }
+    }
+
+    #[cfg(feature = "gatt")]
+    #[test]
+    fn host_resources_return_pooled_packets() {
+        use bt_hci::param::LeConnRole;
+
+        use crate::connection::ConnParams;
+        use crate::mock_controller::MockController;
+        use crate::pdu::Pdu;
+
+        // Leaves one pooled packet queued in connection storage after the stack is gone.
+        fn hold_packet(res: &mut HostResources<CountingPool, 1, 1>) {
+            let builder = crate::new(MockController::new(), res);
+            let conns = &builder.host_state.as_ref().unwrap().connections;
+            assert!(conns.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+            unwrap!(conns.connect(
+                ConnHandle::new(0),
+                Address::new(AddrKind::RANDOM, BdAddr::new([1, 2, 3, 4, 5, 6])),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            ));
+            unwrap!(conns.post_gatt(ConnHandle::new(0), Pdu::new(CountingPool::allocate().unwrap(), 0)));
+        }
+
+        let mut res = HostResources::<CountingPool, 1, 1>::new();
+
+        hold_packet(&mut res);
+        assert_eq!(LIVE.load(Ordering::SeqCst), 1);
+        res.recycle();
+        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+        res.recycle();
+        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+
+        hold_packet(&mut res);
+        drop(crate::new(MockController::new(), &mut res));
+        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+
+        hold_packet(&mut res);
+        drop(res);
+        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+    }
 }
