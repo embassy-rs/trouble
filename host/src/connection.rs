@@ -715,6 +715,12 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.try_enable_encryption(self.index).await
     }
 
+    /// Request encryption with a bonded peer if not yet established, without waiting for it.
+    #[cfg(feature = "security")]
+    pub(crate) fn start_encryption(&self) -> Result<(), Error> {
+        self.manager.start_encryption(self.index).map(|_| ())
+    }
+
     /// Get the encrypted state of the connection
     pub fn security_level(&self) -> Result<SecurityLevel, Error> {
         self.manager.get_security_level(self.index)

@@ -793,14 +793,15 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             .is_some_and(|b| b.is_bonded)
     }
 
+    /// Request encryption with a bonded peer without waiting; returns the address to wait on, or `None` if already encrypted.
     #[cfg(feature = "security")]
-    pub(crate) async fn try_enable_encryption(&self, index: u8) -> Result<(), Error> {
+    pub(crate) fn start_encryption(&self, index: u8) -> Result<Option<Address>, Error> {
         let address = {
             let storage = self.connection(index);
             if storage.state != ConnectionState::Connected {
                 return Err(Error::Disconnected);
             } else if storage.security_level != SecurityLevel::NoEncryption {
-                return Ok(());
+                return Ok(None);
             }
             storage
                 .resolvable_addrs
@@ -812,6 +813,14 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         if !self.security_manager.is_pairing_in_progress(address) {
             self.request_security(index, false)?;
         }
+        Ok(Some(address))
+    }
+
+    #[cfg(feature = "security")]
+    pub(crate) async fn try_enable_encryption(&self, index: u8) -> Result<(), Error> {
+        let Some(address) = self.start_encryption(index)? else {
+            return Ok(());
+        };
         match self.security_manager.wait_finished(address).await {
             Ok(()) => Ok(()),
             Err(Error::Busy) => {
