@@ -5,6 +5,8 @@ use core::future::Future;
 use core::num::NonZeroU16;
 use core::task::{Context, Poll};
 
+#[cfg(feature = "extended-advertising")]
+use bt_hci::param::AdvHandle;
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -15,6 +17,8 @@ use embassy_time::TimeoutError;
 #[cfg(feature = "subrating")]
 use crate::connection::SubratingParams;
 use crate::connection::{ConnParams, Connection, ConnectionEvent, SecurityLevel};
+#[cfg(feature = "extended-advertising")]
+use crate::host::AdvHandleState::{self, Advertising};
 use crate::host::EventHandler;
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
@@ -106,6 +110,8 @@ type GattChannel<P> = Channel<NoopRawMutex, Pdu<P>, { config::L2CAP_RX_QUEUE_SIZ
 pub(crate) struct ConnectionManager<'d, P: PacketPool> {
     state: RefCell<State>,
     connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
+    #[cfg(feature = "extended-advertising")]
+    adv_handles: &'d RefCell<[AdvHandleState]>,
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "security")]
     pub(crate) security_manager: SecurityManager<'d>,
@@ -114,6 +120,7 @@ pub(crate) struct ConnectionManager<'d, P: PacketPool> {
 impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn new(
         connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
+        #[cfg(feature = "extended-advertising")] adv_handles: &'d RefCell<[AdvHandleState]>,
         #[cfg(feature = "security")] bond_storage: &'d RefCell<heapless::VecView<crate::BondInformation>>,
     ) -> Self {
         Self {
@@ -124,6 +131,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 default_link_credits: 0,
             }),
             connections,
+            #[cfg(feature = "extended-advertising")]
+            adv_handles,
             outbound: Channel::new(),
             #[cfg(feature = "security")]
             security_manager: SecurityManager::new(bond_storage),
@@ -354,6 +363,16 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         self.connection(index).peer_identity
     }
 
+    /// Records that advertising set `adv`, advertising as `addr`, made the connection `handle`.
+    #[cfg(feature = "extended-advertising")]
+    pub(crate) fn set_adv_source(&self, handle: ConnHandle, adv: AdvHandle, addr: Option<BdAddr>) {
+        if let Some(mut storage) = self.connection_by_handle_mut(handle) {
+            storage.adv_handle = Some(adv);
+            storage.local_address = addr;
+        }
+        self.state.borrow_mut().peripheral_waker.wake();
+    }
+
     pub(crate) fn params(&self, index: u8) -> ConnParams {
         self.connection(index).params
     }
@@ -533,6 +552,11 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 #[cfg(not(feature = "security"))]
                 let identity = Identity::from(peer_addr);
                 storage.peer_identity = identity;
+                #[cfg(feature = "extended-advertising")]
+                {
+                    storage.adv_handle = None;
+                    storage.local_address = None;
+                }
                 storage.role = role;
                 storage.params = params;
                 #[cfg(feature = "subrating")]
@@ -586,6 +610,13 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             if let ConnectionState::Connecting = storage.state {
                 let handle = storage.handle;
                 let r = storage.role;
+                #[cfg(feature = "extended-advertising")]
+                if r == LeConnRole::Peripheral && storage.adv_handle.is_none() {
+                    let sets = self.adv_handles.borrow();
+                    if sets.iter().any(|s| matches!(s, Advertising(_, Some(_)))) {
+                        continue;
+                    }
+                }
                 if r == role {
                     if !peers.is_empty() {
                         for peer in peers.iter() {
@@ -1168,6 +1199,12 @@ pub struct ConnectionStorage<P> {
     pub handle: ConnHandle,
     pub role: LeConnRole,
     pub peer_identity: Identity,
+    /// The advertising set that made this connection, from LE Advertising Set Terminated.
+    #[cfg(feature = "extended-advertising")]
+    pub adv_handle: Option<AdvHandle>,
+    /// That advertising set's own random address: our address on this connection.
+    #[cfg(feature = "extended-advertising")]
+    pub local_address: Option<BdAddr>,
     pub params: ConnParams,
     #[cfg(feature = "subrating")]
     pub subrating_params: Option<SubratingParams>,
@@ -1290,6 +1327,10 @@ impl<P> ConnectionStorage<P> {
                 #[cfg(feature = "security")]
                 irk: None,
             },
+            #[cfg(feature = "extended-advertising")]
+            adv_handle: None,
+            #[cfg(feature = "extended-advertising")]
+            local_address: None,
             params: ConnParams::new(),
             #[cfg(feature = "subrating")]
             subrating_params: None,
@@ -1554,6 +1595,8 @@ pub(crate) mod tests {
         >::new())));
         let mgr = ConnectionManager::new(
             storage,
+            #[cfg(feature = "extended-advertising")]
+            Box::leak(Box::new(RefCell::new([]))),
             #[cfg(feature = "security")]
             bond_storage,
         );

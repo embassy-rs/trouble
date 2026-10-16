@@ -219,12 +219,20 @@ impl Inner {
 
     /// Get the local address to use for pairing calculations.
     /// When privacy is enabled and a local RPA was used for this connection, use it;
+    /// otherwise use the address of the advertising set that made the connection, if it had one;
     /// otherwise fall back to the identity address.
     fn connection_local_address<P>(&self, storage: &ConnectionStorage<P>) -> Result<Address, Error> {
         if let Some(rpa) = storage.resolvable_addrs.local {
             return Ok(Address {
                 kind: bt_hci::param::AddrKind::RANDOM,
                 addr: rpa,
+            });
+        }
+        #[cfg(feature = "extended-advertising")]
+        if let Some(addr) = storage.local_address {
+            return Ok(Address {
+                kind: bt_hci::param::AddrKind::RANDOM,
+                addr,
             });
         }
         self.state.local_address.ok_or(Error::InvalidValue)
@@ -1309,7 +1317,12 @@ mod tests {
         let storage: &RefCell<[_]> = Box::leak(Box::new(RefCell::new([const { ConnectionStorage::new() }; 2])));
         let bond_storage: &RefCell<heapless::VecView<_>> =
             Box::leak(Box::new(RefCell::new(heapless::Vec::<BondInformation, 4>::new())));
-        Box::leak(Box::new(ConnectionManager::new(storage, bond_storage)))
+        Box::leak(Box::new(ConnectionManager::new(
+            storage,
+            #[cfg(feature = "extended-advertising")]
+            Box::leak(Box::new(RefCell::new([]))),
+            bond_storage,
+        )))
     }
 
     fn test_inner(peer_address: Address) -> Inner {

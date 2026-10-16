@@ -46,7 +46,7 @@ use bt_hci::event::le::{
 #[cfg(feature = "iso")]
 use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
 use bt_hci::event::{DisconnectionComplete, EventKind, NumberOfCompletedPackets, Vendor};
-#[cfg(feature = "security")]
+#[cfg(any(feature = "security", feature = "extended-advertising"))]
 use bt_hci::param::BdAddr;
 #[cfg(feature = "scan")]
 use bt_hci::param::FilterDuplicates;
@@ -169,6 +169,8 @@ impl<'d, P: PacketPool> HostState<'d, P> {
             metrics: RefCell::new(HostMetrics::default()),
             connections: ConnectionManager::new(
                 connections,
+                #[cfg(feature = "extended-advertising")]
+                advertise_handles,
                 #[cfg(feature = "security")]
                 bond_storage,
             ),
@@ -221,7 +223,8 @@ pub(crate) struct InitialState {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AdvHandleState {
     None,
-    Advertising(AdvHandle),
+    /// The handle, and the set's own random address if it has one.
+    Advertising(AdvHandle, #[cfg(feature = "extended-advertising")] Option<BdAddr>),
     Terminated(AdvHandle),
 }
 
@@ -249,13 +252,31 @@ impl<'d> AdvState<'d> {
     pub(crate) fn terminate(&self, handle: AdvHandle) {
         for entry in self.handles.borrow_mut().iter_mut() {
             match entry {
-                AdvHandleState::Advertising(h) if *h == handle => {
+                AdvHandleState::Advertising(h, ..) if *h == handle => {
                     *entry = AdvHandleState::Terminated(handle);
                 }
                 _ => {}
             }
         }
         self.waker.borrow_mut().wake();
+    }
+
+    #[cfg(feature = "extended-advertising")]
+    pub(crate) fn set_address(&self, handle: AdvHandle, addr: Option<BdAddr>) {
+        for entry in self.handles.borrow_mut().iter_mut() {
+            match entry {
+                AdvHandleState::Advertising(h, a) if *h == handle => *a = addr,
+                _ => {}
+            }
+        }
+    }
+
+    #[cfg(feature = "extended-advertising")]
+    pub(crate) fn address_of(&self, handle: AdvHandle) -> Option<BdAddr> {
+        self.handles.borrow().iter().find_map(|entry| match entry {
+            AdvHandleState::Advertising(h, a) if *h == handle => *a,
+            _ => None,
+        })
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -270,7 +291,11 @@ impl<'d> AdvState<'d> {
         }
 
         for (idx, entry) in sets.iter().enumerate() {
-            handles[idx] = AdvHandleState::Advertising(entry.adv_handle);
+            handles[idx] = AdvHandleState::Advertising(
+                entry.adv_handle,
+                #[cfg(feature = "extended-advertising")]
+                None,
+            );
         }
     }
 
@@ -1486,6 +1511,14 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 }
                                 LeEventKind::LeAdvertisingSetTerminated => {
                                     let set = unwrap!(LeAdvertisingSetTerminated::from_hci_bytes_complete(event.data));
+                                    #[cfg(feature = "extended-advertising")]
+                                    if set.status.to_result().is_ok() {
+                                        host.state.connections.set_adv_source(
+                                            set.handle,
+                                            set.adv_handle,
+                                            host.state.advertise_state.address_of(set.adv_handle),
+                                        );
+                                    }
                                     host.state.advertise_state.terminate(set.adv_handle);
                                 }
                                 LeEventKind::LeExtendedAdvertisingReport => {
