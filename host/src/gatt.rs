@@ -568,6 +568,9 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
             AttClient::Request(AttReq::ReadBlob { offset, .. }) => (att::ATT_READ_BLOB_RSP, offset as usize),
             _ => unreachable!(),
         };
+        if offset > data.as_gatt().len() {
+            return self.reject(AttErrorCode::INVALID_OFFSET);
+        }
         self.data.pdu = None;
 
         let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
@@ -2557,5 +2560,42 @@ mod tests {
             0,
             "rejected Execute Write must clear the prepare queue",
         );
+    }
+
+    #[test]
+    fn test_accept_unprocessed_read_blob_offset_past_end() {
+        let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
+        let handle = table
+            .add_service(Service::new(Uuid::new_short(0x1234)))
+            .add_characteristic_ro::<[u8; 2], _>(Uuid::new_short(0x5678), &[1, 2])
+            .build()
+            .handle;
+        let server = AttributeServer::<_, DefaultPacketPool, 8, 3>::new(table);
+
+        let mgr = setup();
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+
+        let mut packet = DefaultPacketPool::allocate().unwrap();
+        let mut w = WriteCursor::new(packet.as_mut());
+        w.write(Att::Client(AttClient::Request(AttReq::ReadBlob { handle, offset: 3 })))
+            .unwrap();
+        let len = w.len();
+        let pdu = Pdu::new(packet, len);
+        let GattEvent::Read(read) = GattEvent::new(GattData::new(pdu, conn), &server) else {
+            panic!("expected a read event");
+        };
+        let reply = read.accept_unprocessed(&[1u8, 2]).unwrap();
+        let att = reply.att_payload().unwrap();
+        assert_eq!(att[0], att::ATT_ERROR_RSP);
+        assert_eq!(att[4], 0x07); // Invalid Offset
+        core::mem::forget(reply);
     }
 }
