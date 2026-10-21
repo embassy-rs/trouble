@@ -127,6 +127,9 @@ async fn gatt_client_server() {
                                 println!("Disconnected: {:?}", reason);
                                 break;
                             }
+                            GattConnectionEvent::RequestAttMtu(req) => {
+                                let _ = conn.accept_att_mtu(req).await;
+                            }
                             GattConnectionEvent::Gatt { event: GattEvent::Write(event) } => {
                                 if writes == 0 {
                                     event.reject(AttErrorCode::VALUE_NOT_ALLOWED).unwrap().send().await;
