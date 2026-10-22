@@ -1,0 +1,23 @@
+[package]
+name = "trouble-bsim"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Native Unix HCI transport and discrete-time execution for TrouBLE tests"
+publish = false
+
+[dependencies]
+bt-hci-serial = "0.1"
+embassy-sync = "0.8"
+embassy-time-driver = { version = "0.2.2", features = ["tick-hz-1_000_000"] }
+embassy-time-queue-utils = { version = "0.3.2", features = ["generic-queue-64"] }
+embedded-io = { version = "0.7", features = ["std"] }
+embedded-io-async = "0.7"
+libc = "0.2"
+
+[dev-dependencies]
+bt-hci = "0.11"
+embassy-futures = "0.1"
+embassy-time = "0.5.1"
+critical-section = { version = "1", features = ["std"] }
+tempfile = "3"

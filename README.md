@@ -23,6 +23,7 @@ TrouBLE can use any controller that implements the traits from `bt-hci`. At pres
 * [ESP32](https://github.com/esp-rs/esp-hal).
 * [STM32WB](https://github.com/embassy-rs/embassy/tree/main/embassy-stm32-wpan).
 * [Linux HCI Sockets](examples/linux).
+* [BSWorld virtual Controllers](https://github.com/XiaoMi/bsworld).
 
 ## Current status
 
@@ -58,6 +59,7 @@ See `examples` for example applications for different BLE controllers.
 * `rp-pico-2-w` which uses the BLE controller in the [Raspberry Pi Pico 2 W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#raspberry-pi-pico-2-w).
 * `stm32wb` for the STM32WB55 using the [`embassy-stm32-wpan`](https://github.com/embassy-rs/embassy/tree/main/embassy-stm32-wpan) crate's `bt-hci` controller adapter.
 * `linux` which uses the HCI socket interface.
+* [`bsworld`](examples/bsworld) for hardware-free testing with virtual Controllers and discrete simulation time.
 
 Since a lot of the examples demo the same BLE functionality, they only contain basic wiring specific to the BLE controller, and share the 'business logic' within the `examples/apps` folder.
 

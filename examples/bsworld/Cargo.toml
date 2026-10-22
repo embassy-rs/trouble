@@ -1,0 +1,13 @@
+[package]
+name = "trouble-bsworld-examples"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+bt-hci = "0.11"
+critical-section = { version = "1", features = ["std"] }
+env_logger = "0.11"
+trouble-example-apps = { path = "../apps", features = ["log", "std"] }
+trouble-bsim = { path = "bsim" }
