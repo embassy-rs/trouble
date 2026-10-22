@@ -51,7 +51,7 @@ bt-hci-serial = "0.1"
 tokio-serial = "5.4"
 env_logger = "0.11"
 critical-section = { version = "1", features = ["std"] }  # needed for CI builds
-rand = "0.8.5"
+rand = "0.10"
 embassy-crypto-rustcrypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c", features = ["embassy-crypto-aes128-ecb", "embassy-crypto-aes128-cmac", "embassy-crypto-p256-ecdh"] }
 embassy-crypto-rand = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c" }
 heapless = "0.9"
