@@ -287,6 +287,7 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
 
         trace!("[host] enabling extended advertising");
         host.advertise_state().start(handles);
+        #[cfg(feature = "per-connection-address")]
         for (i, set) in sets.iter().enumerate() {
             host.advertise_state().set_address(AdvHandle::new(i as u8), set.address);
         }

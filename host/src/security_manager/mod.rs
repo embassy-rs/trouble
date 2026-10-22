@@ -228,7 +228,7 @@ impl Inner {
                 addr: rpa,
             });
         }
-        #[cfg(feature = "extended-advertising")]
+        #[cfg(feature = "per-connection-address")]
         if let Some(addr) = storage.local_address {
             return Ok(Address {
                 kind: bt_hci::param::AddrKind::RANDOM,
@@ -1319,7 +1319,7 @@ mod tests {
             Box::leak(Box::new(RefCell::new(heapless::Vec::<BondInformation, 4>::new())));
         Box::leak(Box::new(ConnectionManager::new(
             storage,
-            #[cfg(feature = "extended-advertising")]
+            #[cfg(feature = "per-connection-address")]
             Box::leak(Box::new(RefCell::new([]))),
             bond_storage,
         )))

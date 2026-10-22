@@ -5,7 +5,7 @@ use core::future::Future;
 use core::num::NonZeroU16;
 use core::task::{Context, Poll};
 
-#[cfg(feature = "extended-advertising")]
+#[cfg(feature = "per-connection-address")]
 use bt_hci::param::AdvHandle;
 use bt_hci::param::{AddrKind, BdAddr, ConnHandle, DisconnectReason, LeConnRole, Status};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -17,7 +17,7 @@ use embassy_time::TimeoutError;
 #[cfg(feature = "subrating")]
 use crate::connection::SubratingParams;
 use crate::connection::{ConnParams, Connection, ConnectionEvent, SecurityLevel};
-#[cfg(feature = "extended-advertising")]
+#[cfg(feature = "per-connection-address")]
 use crate::host::AdvHandleState::{self, Advertising};
 use crate::host::EventHandler;
 use crate::pdu::Pdu;
@@ -110,7 +110,7 @@ type GattChannel<P> = Channel<NoopRawMutex, Pdu<P>, { config::L2CAP_RX_QUEUE_SIZ
 pub(crate) struct ConnectionManager<'d, P: PacketPool> {
     state: RefCell<State>,
     connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
-    #[cfg(feature = "extended-advertising")]
+    #[cfg(feature = "per-connection-address")]
     adv_handles: &'d RefCell<[AdvHandleState]>,
     outbound: Channel<NoopRawMutex, (ConnHandle, Pdu<P::Packet>), { config::L2CAP_TX_QUEUE_SIZE }>,
     #[cfg(feature = "security")]
@@ -120,7 +120,7 @@ pub(crate) struct ConnectionManager<'d, P: PacketPool> {
 impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn new(
         connections: &'d RefCell<[ConnectionStorage<P::Packet>]>,
-        #[cfg(feature = "extended-advertising")] adv_handles: &'d RefCell<[AdvHandleState]>,
+        #[cfg(feature = "per-connection-address")] adv_handles: &'d RefCell<[AdvHandleState]>,
         #[cfg(feature = "security")] bond_storage: &'d RefCell<heapless::VecView<crate::BondInformation>>,
     ) -> Self {
         Self {
@@ -131,7 +131,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 default_link_credits: 0,
             }),
             connections,
-            #[cfg(feature = "extended-advertising")]
+            #[cfg(feature = "per-connection-address")]
             adv_handles,
             outbound: Channel::new(),
             #[cfg(feature = "security")]
@@ -364,7 +364,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     }
 
     /// Records that advertising set `adv`, advertising as `addr`, made the connection `handle`.
-    #[cfg(feature = "extended-advertising")]
+    #[cfg(feature = "per-connection-address")]
     pub(crate) fn set_adv_source(&self, handle: ConnHandle, adv: AdvHandle, addr: Option<BdAddr>) {
         if let Some(mut storage) = self.connection_by_handle_mut(handle) {
             storage.adv_handle = Some(adv);
@@ -552,7 +552,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 #[cfg(not(feature = "security"))]
                 let identity = Identity::from(peer_addr);
                 storage.peer_identity = identity;
-                #[cfg(feature = "extended-advertising")]
+                #[cfg(feature = "per-connection-address")]
                 {
                     storage.adv_handle = None;
                     storage.local_address = None;
@@ -610,7 +610,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             if let ConnectionState::Connecting = storage.state {
                 let handle = storage.handle;
                 let r = storage.role;
-                #[cfg(feature = "extended-advertising")]
+                #[cfg(feature = "per-connection-address")]
                 if r == LeConnRole::Peripheral && storage.adv_handle.is_none() {
                     let sets = self.adv_handles.borrow();
                     if sets.iter().any(|s| matches!(s, Advertising(_, Some(_)))) {
@@ -1200,10 +1200,10 @@ pub struct ConnectionStorage<P> {
     pub role: LeConnRole,
     pub peer_identity: Identity,
     /// The advertising set that made this connection, from LE Advertising Set Terminated.
-    #[cfg(feature = "extended-advertising")]
+    #[cfg(feature = "per-connection-address")]
     pub adv_handle: Option<AdvHandle>,
     /// That advertising set's own random address: our address on this connection.
-    #[cfg(feature = "extended-advertising")]
+    #[cfg(feature = "per-connection-address")]
     pub local_address: Option<BdAddr>,
     pub params: ConnParams,
     #[cfg(feature = "subrating")]
@@ -1327,9 +1327,9 @@ impl<P> ConnectionStorage<P> {
                 #[cfg(feature = "security")]
                 irk: None,
             },
-            #[cfg(feature = "extended-advertising")]
+            #[cfg(feature = "per-connection-address")]
             adv_handle: None,
-            #[cfg(feature = "extended-advertising")]
+            #[cfg(feature = "per-connection-address")]
             local_address: None,
             params: ConnParams::new(),
             #[cfg(feature = "subrating")]
@@ -1595,7 +1595,7 @@ pub(crate) mod tests {
         >::new())));
         let mgr = ConnectionManager::new(
             storage,
-            #[cfg(feature = "extended-advertising")]
+            #[cfg(feature = "per-connection-address")]
             Box::leak(Box::new(RefCell::new([]))),
             #[cfg(feature = "security")]
             bond_storage,

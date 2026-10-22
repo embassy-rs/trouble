@@ -8,7 +8,7 @@ use bt_hci::cmd::le::{
 };
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-#[cfg(feature = "extended-advertising")]
+#[cfg(feature = "per-connection-address")]
 use bt_hci::param::{AdvHandle, BdAddr};
 use bt_hci::param::{
     AllPhys, ConnHandle, DisconnectReason, FilterDuplicates, FrameSpaceInitiator, LeConnRole, PhyKind, PhyMask,
@@ -684,13 +684,13 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 
     /// The extended advertising set that made this connection, if one did.
-    #[cfg(feature = "extended-advertising")]
+    #[cfg(feature = "per-connection-address")]
     pub fn adv_handle(&self) -> Option<AdvHandle> {
         self.manager.connection(self.index).adv_handle
     }
 
     /// Our address on this connection, if the extended advertising set that made it had its own address.
-    #[cfg(feature = "extended-advertising")]
+    #[cfg(feature = "per-connection-address")]
     pub fn local_address(&self) -> Option<BdAddr> {
         self.manager.connection(self.index).local_address
     }

@@ -75,6 +75,8 @@ scan = ["central"]
 # advertising HCI commands (e.g. the SoftDevice Controller peripheral-only
 # binary) can link.
 extended-advertising = []
+# Track per-connection advertising addresses for pairing and address queries.
+per-connection-address = ["extended-advertising"]
 # Enable macros
 derive = ["trouble-host-macros"]
 # Enable controller-to-host flow control
