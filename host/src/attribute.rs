@@ -1050,7 +1050,7 @@ impl<T: AsGatt + ?Sized> Characteristic<T> {
         let Some(cccd_handle) = self.cccd_handle else {
             return false;
         };
-        connection.server.should_notify(connection.raw(), cccd_handle)
+        connection.server.should_indicate(connection.raw(), cccd_handle)
     }
 
     /// Send an indication to `connection` with a new `value` for the characteristic.
