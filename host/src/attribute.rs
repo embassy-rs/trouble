@@ -2032,216 +2032,214 @@ mod tests {
         assert_eq!(stored.as_str(), "12345678");
     }
 
-    mod try_notify {
-        use core::cell::RefCell;
-        use core::task::Poll;
+    use core::cell::RefCell;
+    use core::task::Poll;
 
-        use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
-        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-        use super::super::*;
-        use crate::att::{AttClient, AttReq};
-        use crate::attribute_server::AttributeServer;
-        use crate::connection::{ConnParams, Connection};
-        use crate::connection_manager::tests::ADDR_1;
-        use crate::connection_manager::{ConnectionManager, ConnectionStorage};
-        use crate::gatt::GattConnection;
-        use crate::pdu::Pdu;
-        use crate::{config, Address, Error, PacketPool};
+    use super::*;
+    use crate::att::{AttClient, AttReq};
+    use crate::attribute_server::AttributeServer;
+    use crate::connection::{ConnParams, Connection};
+    use crate::connection_manager::tests::ADDR_1;
+    use crate::connection_manager::{ConnectionManager, ConnectionStorage};
+    use crate::gatt::GattConnection;
+    use crate::pdu::Pdu;
+    use crate::{config, Address, Error, PacketPool};
 
-        struct TestPacket([u8; 64]);
+    struct TestPacket([u8; 64]);
 
-        impl AsRef<[u8]> for TestPacket {
-            fn as_ref(&self) -> &[u8] {
-                &self.0
-            }
+    impl AsRef<[u8]> for TestPacket {
+        fn as_ref(&self) -> &[u8] {
+            &self.0
+        }
+    }
+
+    impl AsMut<[u8]> for TestPacket {
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+
+    impl crate::Packet for TestPacket {}
+
+    /// Own pool: filling the outbound queue must not drain the global default pool.
+    struct UnboundedPool;
+
+    impl PacketPool for UnboundedPool {
+        type Packet = TestPacket;
+        const MTU: usize = 64;
+
+        fn allocate() -> Option<TestPacket> {
+            Some(TestPacket([0; 64]))
         }
 
-        impl AsMut<[u8]> for TestPacket {
-            fn as_mut(&mut self) -> &mut [u8] {
-                &mut self.0
-            }
+        fn capacity() -> usize {
+            usize::MAX
         }
+    }
 
-        impl crate::Packet for TestPacket {}
-
-        /// Unbounded pool, so assembly never fails for pool reasons.
-        struct TestPool;
-
-        impl PacketPool for TestPool {
-            type Packet = TestPacket;
-            const MTU: usize = 64;
-
-            fn allocate() -> Option<TestPacket> {
-                Some(TestPacket([0; 64]))
-            }
-
-            fn capacity() -> usize {
-                usize::MAX
-            }
-        }
-
-        struct Fixture {
-            connections: RefCell<[ConnectionStorage<TestPacket>; 1]>,
-            #[cfg(feature = "security")]
-            bonds: RefCell<heapless::Vec<crate::BondInformation, 1>>,
-        }
-
-        impl Fixture {
-            fn new() -> Self {
-                Self {
-                    connections: RefCell::new([const { ConnectionStorage::new() }; 1]),
-                    #[cfg(feature = "security")]
-                    bonds: RefCell::new(heapless::Vec::new()),
-                }
-            }
-
-            fn manager(&self) -> ConnectionManager<'_, TestPool> {
-                ConnectionManager::new(
-                    &self.connections,
-                    #[cfg(feature = "security")]
-                    &self.bonds,
-                )
-            }
-        }
-
-        fn peer() -> Address {
-            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1))
-        }
-
-        fn accept<'d>(mgr: &'d ConnectionManager<'d, TestPool>) -> Connection<'d, TestPool> {
-            assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
-            unwrap!(mgr.connect(ConnHandle::new(0), peer(), LeConnRole::Peripheral, ConnParams::new()));
-            let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
-                panic!("expected connection to be accepted");
-            };
-            conn
-        }
-
-        /// Fill the outbound queue, returning how many PDUs still fit.
-        fn fill_outbound(mgr: &ConnectionManager<'_, TestPool>) -> usize {
-            let mut free = 0;
-            while mgr
-                .try_outbound(ConnHandle::new(0), Pdu::new(unwrap!(TestPool::allocate()), 0))
-                .is_ok()
-            {
-                free += 1;
-            }
-            free
-        }
-
-        fn subscribe<P: PacketPool>(
-            server: &AttributeServer<'_, NoopRawMutex, P, 8, 1>,
-            conn: &Connection<'_, P>,
-            cccd: u16,
-        ) {
-            let req = AttClient::Request(AttReq::Write {
-                handle: cccd,
-                data: &[0x01, 0x00],
-            });
-            unwrap!(server.process(conn, &req, &mut [0u8; 64]));
-        }
-
-        #[test]
-        fn try_notify_full_queue_returns_out_of_memory_and_stores_value() {
-            let fixture = Fixture::new();
-            let mgr = fixture.manager();
-            let mut storage = [0u8; 2];
-            let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
-            let ch = table
-                .add_service(Service {
-                    uuid: Uuid::new_long([0x20; 16]),
-                })
-                .add_characteristic(
-                    Uuid::new_long([0x21; 16]),
-                    [CharacteristicProp::Notify, CharacteristicProp::Read],
-                    [0u8; 2],
-                    &mut storage,
-                )
-                .build();
-            let server = AttributeServer::<_, TestPool, 8, 1>::new(table);
-            let gatt = unwrap!(GattConnection::try_new(accept(&mgr), &server));
-            subscribe(&server, gatt.raw(), unwrap!(ch.cccd_handle));
-
-            fill_outbound(&mgr);
-            assert_eq!(ch.try_notify(&gatt, &[7, 8], true), Err(Error::OutOfMemory));
-            assert_eq!(unwrap!(server.table().get(&ch)), [7, 8]);
-        }
-
-        #[test]
-        fn try_notify_unsubscribed_queues_nothing() {
-            let fixture = Fixture::new();
-            let mgr = fixture.manager();
-            let mut storage = [0u8; 2];
-            let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
-            let ch = table
-                .add_service(Service {
-                    uuid: Uuid::new_long([0x20; 16]),
-                })
-                .add_characteristic(
-                    Uuid::new_long([0x21; 16]),
-                    [CharacteristicProp::Notify, CharacteristicProp::Read],
-                    [0u8; 2],
-                    &mut storage,
-                )
-                .build();
-            let server = AttributeServer::<_, TestPool, 8, 1>::new(table);
-            let gatt = unwrap!(GattConnection::try_new(accept(&mgr), &server));
-
-            assert_eq!(ch.try_notify(&gatt, &[1, 2], false), Ok(()));
-            assert_eq!(fill_outbound(&mgr), config::L2CAP_TX_QUEUE_SIZE);
-        }
-
+    struct Fixture {
+        connections: RefCell<[ConnectionStorage<TestPacket>; 1]>,
         #[cfg(feature = "security")]
-        #[test]
-        fn try_notify_bonded_unencrypted_returns_busy() {
-            use crate::prelude::SecurityLevel;
-            use crate::{BondInformation, Identity, LongTermKey};
+        bonds: RefCell<heapless::Vec<crate::BondInformation, 1>>,
+    }
 
-            let fixture = Fixture::new();
-            let mgr = fixture.manager();
-            let mut storage = [0u8; 2];
-            let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
-            let ch = table
-                .add_service(Service {
-                    uuid: Uuid::new_long([0x20; 16]),
-                })
-                .add_characteristic(
-                    Uuid::new_long([0x21; 16]),
-                    [CharacteristicProp::Notify, CharacteristicProp::Read],
-                    [0u8; 2],
-                    &mut storage,
-                )
-                .cccd_permission(PermissionLevel::EncryptionRequired)
-                .build();
-            let cccd = unwrap!(ch.cccd_handle);
-            let server = AttributeServer::<_, TestPool, 8, 1>::new(table);
-            let gatt = unwrap!(GattConnection::try_new(accept(&mgr), &server));
-
-            // Subscribe as if the peer had been encrypted when it wrote the CCCD.
-            server
-                .table()
-                .with_attribute_mut(cccd, |a| a.permissions.write = PermissionLevel::Allowed);
-            subscribe(&server, gatt.raw(), cccd);
-            server
-                .table()
-                .with_attribute_mut(cccd, |a| a.permissions.write = PermissionLevel::EncryptionRequired);
-
-            mgr.security_manager
-                .set_local_address(Address::random([1, 2, 3, 4, 5, 6]));
-            unwrap!(mgr.security_manager.add_bond_information(BondInformation::new(
-                Identity::from(peer()),
-                LongTermKey::new(1),
-                SecurityLevel::EncryptedAuthenticated,
-                true,
-            )));
-
-            assert_eq!(ch.try_notify(&gatt, &[3, 4], true), Err(Error::Busy));
-            assert!(mgr.security_manager.is_pairing_in_progress(peer()));
-            assert_eq!(ch.try_notify(&gatt, &[3, 4], true), Err(Error::Busy));
-            assert_eq!(unwrap!(server.table().get(&ch)), [3, 4]);
-            // One security request was queued; the second call sent nothing.
-            assert_eq!(fill_outbound(&mgr), config::L2CAP_TX_QUEUE_SIZE - 1);
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                connections: RefCell::new([const { ConnectionStorage::new() }; 1]),
+                #[cfg(feature = "security")]
+                bonds: RefCell::new(heapless::Vec::new()),
+            }
         }
+
+        fn manager(&self) -> ConnectionManager<'_, UnboundedPool> {
+            ConnectionManager::new(
+                &self.connections,
+                #[cfg(feature = "security")]
+                &self.bonds,
+            )
+        }
+    }
+
+    fn peer() -> Address {
+        Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1))
+    }
+
+    fn accept<'d>(mgr: &'d ConnectionManager<'d, UnboundedPool>) -> Connection<'d, UnboundedPool> {
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(ConnHandle::new(0), peer(), LeConnRole::Peripheral, ConnParams::new()));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        conn
+    }
+
+    /// Fill the outbound queue, returning how many PDUs still fit.
+    fn fill_outbound(mgr: &ConnectionManager<'_, UnboundedPool>) -> usize {
+        let mut free = 0;
+        while mgr
+            .try_outbound(ConnHandle::new(0), Pdu::new(unwrap!(UnboundedPool::allocate()), 0))
+            .is_ok()
+        {
+            free += 1;
+        }
+        free
+    }
+
+    fn subscribe<P: PacketPool>(
+        server: &AttributeServer<'_, NoopRawMutex, P, 8, 1>,
+        conn: &Connection<'_, P>,
+        cccd: u16,
+    ) {
+        let req = AttClient::Request(AttReq::Write {
+            handle: cccd,
+            data: &[0x01, 0x00],
+        });
+        unwrap!(server.process(conn, &req, &mut [0u8; 64]));
+    }
+
+    #[test]
+    fn try_notify_full_queue_returns_out_of_memory_and_stores_value() {
+        let fixture = Fixture::new();
+        let mgr = fixture.manager();
+        let mut storage = [0u8; 2];
+        let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
+        let ch = table
+            .add_service(Service {
+                uuid: Uuid::new_long([0x20; 16]),
+            })
+            .add_characteristic(
+                Uuid::new_long([0x21; 16]),
+                [CharacteristicProp::Notify, CharacteristicProp::Read],
+                [0u8; 2],
+                &mut storage,
+            )
+            .build();
+        let server = AttributeServer::<_, UnboundedPool, 8, 1>::new(table);
+        let gatt = unwrap!(GattConnection::try_new(accept(&mgr), &server));
+        subscribe(&server, gatt.raw(), unwrap!(ch.cccd_handle));
+
+        fill_outbound(&mgr);
+        assert_eq!(ch.try_notify(&gatt, &[7, 8], true), Err(Error::OutOfMemory));
+        assert_eq!(unwrap!(server.table().get(&ch)), [7, 8]);
+    }
+
+    #[test]
+    fn try_notify_unsubscribed_queues_nothing() {
+        let fixture = Fixture::new();
+        let mgr = fixture.manager();
+        let mut storage = [0u8; 2];
+        let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
+        let ch = table
+            .add_service(Service {
+                uuid: Uuid::new_long([0x20; 16]),
+            })
+            .add_characteristic(
+                Uuid::new_long([0x21; 16]),
+                [CharacteristicProp::Notify, CharacteristicProp::Read],
+                [0u8; 2],
+                &mut storage,
+            )
+            .build();
+        let server = AttributeServer::<_, UnboundedPool, 8, 1>::new(table);
+        let gatt = unwrap!(GattConnection::try_new(accept(&mgr), &server));
+
+        assert_eq!(ch.try_notify(&gatt, &[1, 2], false), Ok(()));
+        assert_eq!(fill_outbound(&mgr), config::L2CAP_TX_QUEUE_SIZE);
+    }
+
+    #[cfg(feature = "security")]
+    #[test]
+    fn try_notify_bonded_unencrypted_returns_busy() {
+        use crate::prelude::SecurityLevel;
+        use crate::{BondInformation, Identity, LongTermKey};
+
+        let fixture = Fixture::new();
+        let mgr = fixture.manager();
+        let mut storage = [0u8; 2];
+        let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
+        let ch = table
+            .add_service(Service {
+                uuid: Uuid::new_long([0x20; 16]),
+            })
+            .add_characteristic(
+                Uuid::new_long([0x21; 16]),
+                [CharacteristicProp::Notify, CharacteristicProp::Read],
+                [0u8; 2],
+                &mut storage,
+            )
+            .cccd_permission(PermissionLevel::EncryptionRequired)
+            .build();
+        let cccd = unwrap!(ch.cccd_handle);
+        let server = AttributeServer::<_, UnboundedPool, 8, 1>::new(table);
+        let gatt = unwrap!(GattConnection::try_new(accept(&mgr), &server));
+
+        // Subscribe as if the peer had been encrypted when it wrote the CCCD.
+        server
+            .table()
+            .with_attribute_mut(cccd, |a| a.permissions.write = PermissionLevel::Allowed);
+        subscribe(&server, gatt.raw(), cccd);
+        server
+            .table()
+            .with_attribute_mut(cccd, |a| a.permissions.write = PermissionLevel::EncryptionRequired);
+
+        mgr.security_manager
+            .set_local_address(Address::random([1, 2, 3, 4, 5, 6]));
+        unwrap!(mgr.security_manager.add_bond_information(BondInformation::new(
+            Identity::from(peer()),
+            LongTermKey::new(1),
+            SecurityLevel::EncryptedAuthenticated,
+            true,
+        )));
+
+        assert_eq!(ch.try_notify(&gatt, &[3, 4], true), Err(Error::Busy));
+        assert!(mgr.security_manager.is_pairing_in_progress(peer()));
+        assert_eq!(ch.try_notify(&gatt, &[3, 4], true), Err(Error::Busy));
+        assert_eq!(unwrap!(server.table().get(&ch)), [3, 4]);
+        // One security request was queued; the second call sent nothing.
+        assert_eq!(fill_outbound(&mgr), config::L2CAP_TX_QUEUE_SIZE - 1);
     }
 }
