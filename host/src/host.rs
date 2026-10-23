@@ -2011,13 +2011,19 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                 }
                 Either5::Third(action) => match action {
                     #[cfg(feature = "central")]
-                    CancelledCommandState::Connect(_) => {
+                    CancelledCommandState::Connect(ctx) => {
                         trace!("[host] cancel connection create");
-                        if let Err(err) = host.command(LeCreateConnCancel::new()).await {
-                            warn!("[host] error cancelling connection: {:?}", err);
+                        match host.command(LeCreateConnCancel::new()).await {
+                            // The controller ends the initiation with an LE Connection Complete event
+                            // (Unknown Connection Identifier), which returns the state to idle. Going
+                            // idle here instead lets that late event cancel the next connect.
+                            Ok(_) => host.state.connect_command_state.cancel_accepted(ctx),
+                            Err(err) => {
+                                warn!("[host] error cancelling connection: {:?}", err);
+                                // Signal to ensure no one is stuck
+                                host.state.connect_command_state.canceled();
+                            }
                         }
-                        // Signal to ensure no one is stuck
-                        host.state.connect_command_state.canceled();
                     }
                     #[cfg(feature = "peripheral")]
                     CancelledCommandState::Advertise(ext) => {
