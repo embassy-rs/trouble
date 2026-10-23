@@ -49,6 +49,15 @@ pub struct ChannelManager<'d, P: PacketPool> {
     channels: &'d RefCell<[ChannelStorage<P::Packet>]>,
 }
 
+impl<P: PacketPool> Drop for ChannelManager<'_, P> {
+    fn drop(&mut self) {
+        // The storage is borrowed from `HostResources` and would otherwise keep its pooled packets.
+        for storage in self.channels.borrow_mut().iter_mut() {
+            *storage = ChannelStorage::new();
+        }
+    }
+}
+
 pub(crate) struct PacketChannel<P, const QLEN: usize> {
     chan: Channel<NoopRawMutex, Option<Pdu<P>>, QLEN>,
 }
@@ -2040,5 +2049,30 @@ mod tests {
         // The minimum itself is accepted.
         let _ = ble.channels().signal(conn, &request(23, 23), ble.connections());
         assert_eq!(channels_in_use(), 1);
+    }
+
+    #[test]
+    fn dropping_stack_returns_channel_packets() {
+        use crate::tests::{live_packets, CountingPool};
+
+        let mut resources: HostResources<CountingPool, 1, 1> = HostResources::new();
+        let builder = crate::new(MockController::new(), &mut resources);
+        let channels = &builder.host_state.as_ref().unwrap().channels;
+        let conn = ConnHandle::new(33);
+        let idx = channels
+            .alloc(conn, None, |storage| {
+                storage.conn = Some(conn);
+                storage.state = ChannelState::Connected;
+            })
+            .unwrap();
+        channels
+            .channel(idx)
+            .inbound
+            .try_send(Pdu::new(CountingPool::allocate().unwrap(), 0))
+            .unwrap();
+        assert_eq!(live_packets(), 1);
+
+        drop(builder.build());
+        assert_eq!(live_packets(), 0);
     }
 }
