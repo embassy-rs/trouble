@@ -1135,4 +1135,51 @@ mod tests {
             .to_le_bytes();
         assert_eq!(&rsp[4..20], &expected);
     }
+
+    #[test]
+    fn characteristic_subscription_predicates_read_their_own_cccd_bit() {
+        let mut table: AttributeTable<'_, NoopRawMutex, 8> = AttributeTable::new();
+        let characteristic = {
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_short(0x1800),
+            });
+            svc.add_characteristic_small(
+                Uuid::new_short(0x2A00),
+                [CharacteristicProp::Notify, CharacteristicProp::Indicate],
+                [0u8; 2],
+            )
+            .build()
+        };
+        let cccd_handle = characteristic.cccd_handle.expect("notify/indicate adds a CCCD");
+        let server = AttributeServer::<_, DefaultPacketPool, 8, 1>::new(table);
+
+        let mgr = setup();
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        let conn = unwrap!(GattConnection::try_new(conn, &server));
+
+        for (cccd, notify, indicate) in [
+            ([0x00, 0x00], false, false),
+            ([0x01, 0x00], true, false),
+            ([0x02, 0x00], false, true),
+            ([0x03, 0x00], true, true),
+        ] {
+            unwrap!(sealed::DynamicAttributeServer::set(
+                &server,
+                conn.raw(),
+                cccd_handle,
+                &cccd
+            ));
+            assert_eq!(characteristic.should_notify(&conn), notify, "CCCD {cccd:02x?}");
+            assert_eq!(characteristic.should_indicate(&conn), indicate, "CCCD {cccd:02x?}");
+        }
+    }
 }
