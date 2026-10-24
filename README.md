@@ -36,6 +36,12 @@ The implementation has the following functionality working:
 
 See the [issues](https://github.com/embassy-rs/trouble/issues) for a list of TODOs.
 
+## Integration testing
+
+[BSWorld](https://github.com/XiaoMi/bsworld) provides hardware-free integration
+testing for TrouBLE with deterministic radio simulation and HCI and
+over-the-air traces.
+
 ## Documentation
 
 See the [documentation](https://embassy.dev/trouble) and the [rustdoc](https://docs.embassy.dev/trouble-host/git/default/index.html).
