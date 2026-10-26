@@ -1146,3 +1146,98 @@ pub(crate) fn bt_hci_ext_duration<const US: u16>(d: Duration) -> bt_hci::param::
 pub mod __export {
     pub use embassy_sync;
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    extern crate std;
+
+    use core::cell::Cell;
+
+    use super::*;
+
+    std::thread_local! {
+        // Per test thread, so tests running in parallel do not see each other's packets.
+        static LIVE: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Packets of [`CountingPool`] currently alive on this thread.
+    pub(crate) fn live_packets() -> usize {
+        LIVE.with(Cell::get)
+    }
+
+    pub(crate) struct CountedPacket([u8; 64]);
+
+    impl AsRef<[u8]> for CountedPacket {
+        fn as_ref(&self) -> &[u8] {
+            &self.0
+        }
+    }
+
+    impl AsMut<[u8]> for CountedPacket {
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+
+    impl Packet for CountedPacket {}
+
+    impl Drop for CountedPacket {
+        fn drop(&mut self) {
+            LIVE.with(|n| n.set(n.get() - 1));
+        }
+    }
+
+    /// Unbounded pool that counts its live packets, to detect packets lost in storage.
+    pub(crate) struct CountingPool;
+
+    impl PacketPool for CountingPool {
+        type Packet = CountedPacket;
+        const MTU: usize = 64;
+
+        fn allocate() -> Option<CountedPacket> {
+            LIVE.with(|n| n.set(n.get() + 1));
+            Some(CountedPacket([0; 64]))
+        }
+
+        fn capacity() -> usize {
+            usize::MAX
+        }
+    }
+
+    #[cfg(feature = "gatt")]
+    #[test]
+    fn dropping_stack_returns_connection_packets() {
+        use bt_hci::param::LeConnRole;
+
+        use crate::connection::ConnParams;
+        use crate::connection_manager::ConnectionManager;
+        use crate::mock_controller::MockController;
+        use crate::pdu::Pdu;
+
+        fn queue_packet(conns: &ConnectionManager<'_, CountingPool>) {
+            assert!(conns.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+            unwrap!(conns.connect(
+                ConnHandle::new(0),
+                Address::new(AddrKind::RANDOM, BdAddr::new([1, 2, 3, 4, 5, 6])),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            ));
+            unwrap!(conns.post_gatt(ConnHandle::new(0), Pdu::new(unwrap!(CountingPool::allocate()), 0)));
+            assert_eq!(live_packets(), 1);
+        }
+
+        let mut res = HostResources::<CountingPool, 1, 1>::new();
+
+        // Builder dropped without `build()`.
+        let builder = crate::new(MockController::new(), &mut res);
+        queue_packet(&builder.host_state.as_ref().unwrap().connections);
+        drop(builder);
+        assert_eq!(live_packets(), 0);
+
+        // Built stack dropped, on rebuilt resources.
+        let stack = crate::new(MockController::new(), &mut res).build();
+        queue_packet(&stack.host_state.connections);
+        drop(stack);
+        assert_eq!(live_packets(), 0);
+    }
+}
