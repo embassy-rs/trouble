@@ -24,6 +24,8 @@ cargo batch \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,central \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan \
+    --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,security \
+    --- build --release --manifest-path host/Cargo.toml --no-default-features --features central,security \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,security \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,legacy-pairing \
     --- build --release --manifest-path host/Cargo.toml --no-default-features --features gatt,peripheral,central,scan,controller-host-flow-control \
