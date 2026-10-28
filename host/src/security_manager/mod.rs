@@ -12,9 +12,7 @@ use core::task::Poll;
 
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
-#[cfg(feature = "central")]
-use bt_hci::param::BdAddr;
-use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
+use bt_hci::param::{BdAddr, ConnHandle, EncryptionEnabledLevel, LeConnRole};
 use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
