@@ -8,7 +8,7 @@ use crate::{config, Packet, PacketPool};
 
 struct PacketBuf<const MTU: usize> {
     buf: [u8; MTU],
-    free: bool,
+    allocated: bool,
 }
 
 impl<const MTU: usize> PacketBuf<MTU> {
@@ -17,7 +17,7 @@ impl<const MTU: usize> PacketBuf<MTU> {
     pub(crate) const fn new() -> Self {
         Self {
             buf: [0; MTU],
-            free: true,
+            allocated: false,
         }
     }
 }
@@ -35,9 +35,9 @@ impl<const MTU: usize, const N: usize> State<MTU, N> {
 
     fn alloc(&mut self) -> Option<PacketRef<MTU>> {
         for (idx, packet) in self.packets.iter_mut().enumerate() {
-            if packet.free {
+            if !packet.allocated {
                 // info!("[{}] alloc {}", id.0, idx);
-                packet.free = false;
+                packet.allocated = true;
                 packet.buf.iter_mut().for_each(|b| *b = 0);
                 return Some(PacketRef {
                     idx,
@@ -50,11 +50,11 @@ impl<const MTU: usize, const N: usize> State<MTU, N> {
 
     fn free(&mut self, p_ref: &PacketRef<MTU>) {
         // info!("[{}] free {}", id.0, p_ref.idx);
-        self.packets[p_ref.idx].free = true;
+        self.packets[p_ref.idx].allocated = false;
     }
 
     fn available(&mut self) -> usize {
-        self.packets.iter().filter(|p| p.free).count()
+        self.packets.iter().filter(|p| !p.allocated).count()
     }
 }
 
@@ -190,5 +190,11 @@ mod tests {
 
         let b2 = pool.alloc();
         assert!(b2.is_none());
+        assert_eq!(pool.available(), 0);
+
+        pool.free(&a1.unwrap());
+        assert_eq!(pool.available(), 1);
+        assert!(pool.alloc().is_some());
+        assert!(pool.alloc().is_none());
     }
 }
