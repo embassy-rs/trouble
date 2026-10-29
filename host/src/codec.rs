@@ -25,8 +25,10 @@ impl<T: FixedSize> Type for T {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum Error {
+    #[error("insufficient space")]
     InsufficientSpace,
+    #[error("invalid value")]
     InvalidValue,
 }
