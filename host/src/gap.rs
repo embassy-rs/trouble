@@ -20,16 +20,33 @@ const DEVICE_NAME_MAX_LENGTH: usize = 22;
 /// ├── APPEARANCE:                   2
 /// └── CENTRAL_ADDRESS_RESOLUTION:   2 (security+central only)
 /// GATT_SERVICE:                   + 1
+/// └── SERVICE_CHANGED:              3 (declaration, value, CCCD)
 ///                                 ---
-///                                 = 6 (or 8 with security+central)
+///                                 = 9 (or 11 with security+central)
 #[cfg(not(feature = "security"))]
-pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 6;
+pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 9;
 /// The number of attributes added by the GAP and GATT services (with security, peripheral only)
 #[cfg(all(feature = "security", not(feature = "central")))]
-pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 6;
+pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 9;
 /// The number of attributes added by the GAP and GATT services (with security)
 #[cfg(all(feature = "security", feature = "central"))]
-pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 8;
+pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 11;
+
+/// Value of the Service Changed characteristic that asks the client to rediscover every attribute
+/// (start handle 0x0001, end handle 0xFFFF, both little endian).
+///
+/// See Core Specification Vol 3, Part G, Section 7.1
+pub const SERVICE_CHANGED_ALL: [u8; 4] = [0x01, 0x00, 0xFF, 0xFF];
+
+fn add_gatt_service<'a, M: RawMutex, const MAX: usize>(table: &mut AttributeTable<'a, M, MAX>) {
+    let mut gatt_builder = table.add_service(Service::new(service::GATT));
+    gatt_builder.add_characteristic_small(
+        characteristic::SERVICE_CHANGED,
+        [CharacteristicProp::Indicate],
+        SERVICE_CHANGED_ALL,
+    );
+    gatt_builder.build();
+}
 
 /// Configuration for the GAP Service.
 pub enum GapConfig<'a> {
@@ -101,7 +118,7 @@ impl<'a> PeripheralConfig<'a> {
         gap_builder.add_characteristic_ro(characteristic::CENTRAL_ADDRESS_RESOLUTION, &1u8);
         gap_builder.build();
 
-        table.add_service(Service::new(service::GATT));
+        add_gatt_service(table);
 
         Ok(())
     }
@@ -123,7 +140,7 @@ impl<'a> CentralConfig<'a> {
         gap_builder.add_characteristic_ro(characteristic::CENTRAL_ADDRESS_RESOLUTION, &1u8);
         gap_builder.build();
 
-        table.add_service(Service::new(service::GATT));
+        add_gatt_service(table);
 
         Ok(())
     }
@@ -149,6 +166,25 @@ mod tests {
             })
             .build(&mut table)
             .unwrap();
+        }
+    }
+
+    #[test]
+    fn gatt_service_offers_service_changed() {
+        for gap in [
+            GapConfig::default("trouble"),
+            GapConfig::Central(CentralConfig {
+                name: "trouble",
+                appearance: &appearance::UNKNOWN,
+            }),
+        ] {
+            let mut table: AttributeTable<'_, NoopRawMutex, GAP_SERVICE_ATTRIBUTE_COUNT> = AttributeTable::new();
+            gap.build(&mut table).unwrap();
+            assert_eq!(table.len(), GAP_SERVICE_ATTRIBUTE_COUNT);
+
+            let service_changed = table.service_changed().unwrap();
+            assert!(service_changed.props.any(&[CharacteristicProp::Indicate]));
+            assert!(service_changed.cccd_handle.is_some());
         }
     }
 }
