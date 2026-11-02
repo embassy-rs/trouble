@@ -672,7 +672,9 @@ impl<'d, M: RawMutex, const MAX: usize> AttributeTable<'d, M, MAX> {
     /// Return the Service Changed characteristic of the GATT service, added by the GAP configuration.
     ///
     /// Indicate [`crate::gap::SERVICE_CHANGED_ALL`] on it to make a bonded client rediscover the attribute table,
-    /// for example after a firmware update changed it.
+    /// for example after a firmware update changed it. A bonded client may keep its cached attribute table until it
+    /// receives this indication, so the application must send it whenever the table has changed.
+    #[cfg(feature = "service-changed")]
     pub fn service_changed(&self) -> Result<Characteristic<[u8; 4]>, Error> {
         let value_handle = self.iterate(|mut it| {
             it.find(|(_, att)| att.uuid == bt_hci::uuid::characteristic::SERVICE_CHANGED.into())
