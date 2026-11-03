@@ -1224,11 +1224,12 @@ where
     pub(crate) async fn send_conn_param_update_res(
         &self,
         handle: ConnHandle,
+        identifier: Option<u8>,
         param: &ConnParamUpdateRes,
     ) -> Result<(), BleHostError<T::Error>> {
         self.state
             .channels
-            .send_conn_param_update_res(handle, self, param)
+            .send_conn_param_update_res(handle, self, identifier, param)
             .await
     }
 
@@ -1653,6 +1654,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             ..Default::default()
                                         },
                                         event.handle,
+                                        None,
                                         #[cfg(feature = "connection-params-update")]
                                         false,
                                     );
@@ -2390,5 +2392,57 @@ mod tests {
             ble.state.resolving_list_state.borrow().state,
             Some(ResolvingListUpdate::FullSync)
         ));
+    }
+
+    /// The response to an L2CAP Connection Parameter Update Request uses the identifier of the request.
+    #[cfg(feature = "central")]
+    #[test]
+    fn conn_param_update_response_uses_request_identifier() {
+        use bt_hci::param::{AddrKind, BdAddr};
+        use embassy_futures::block_on;
+
+        use crate::mock_controller::MockController;
+        use crate::prelude::{ConnParams, ConnectionEvent, DefaultPacketPool};
+        use crate::{Address, HostResources};
+
+        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let stack = crate::new(MockController::new(), &mut resources).build();
+        let ble = stack.host();
+        let _ = ble.state.initialized.init(InitialState {
+            acl_max: 27,
+            acl_total: 1,
+        });
+        ble.connections().set_link_credits(1);
+
+        let conn = ConnHandle::new(33);
+        ble.connections()
+            .connect(
+                conn,
+                Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+                LeConnRole::Central,
+                ConnParams::new(),
+            )
+            .unwrap();
+        let Poll::Ready(connection) = ble.connections().poll_accept(LeConnRole::Central, &[], None) else {
+            panic!("connection not accepted");
+        };
+
+        // Connection Parameter Update Request: code 0x12, identifier 7, length 8,
+        // interval min 24, interval max 40, latency 0, timeout 400.
+        ble.channels()
+            .signal(
+                conn,
+                &[0x12, 7, 8, 0, 24, 0, 40, 0, 0, 0, 0x90, 0x01],
+                ble.connections(),
+            )
+            .unwrap();
+        let ConnectionEvent::RequestConnectionParams(request) = block_on(connection.next()) else {
+            panic!("no connection parameters request");
+        };
+        block_on(request.reject(&stack)).unwrap();
+
+        // L2CAP header (length 6, CID 5), then the response: code 0x13, identifier 7, length 2, result 1.
+        let acl = stack.controller.acl.borrow();
+        assert_eq!(acl.as_slice(), &[[6, 0, 0x05, 0, 0x13, 7, 2, 0, 1, 0]]);
     }
 }
