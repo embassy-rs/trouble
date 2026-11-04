@@ -415,6 +415,7 @@ mod tests {
         pub(crate) encryptions: heapless::Vec<LongTermKey, 10>,
         pub(crate) connection_events: heapless::Vec<ConnectionEvent, 10>,
         pub(crate) bond_information: Option<BondInformation>,
+        pub(crate) bond_rejected: bool,
         pub(crate) bondable: bool,
         pub(crate) oob_available: bool,
         pub(crate) passkey: Option<u32>,
@@ -431,6 +432,7 @@ mod tests {
                 encryptions: heapless::Vec::new(),
                 connection_events: heapless::Vec::new(),
                 bond_information: None,
+                bond_rejected: false,
                 bondable: false,
                 oob_available: false,
                 passkey: None,
@@ -474,6 +476,9 @@ mod tests {
         }
 
         fn try_enable_bonded_encryption(&mut self) -> Result<Option<BondInformation>, Error> {
+            if self.bond_rejected {
+                return Ok(None);
+            }
             if let Some(bond) = &self.bond_information {
                 self.encryptions.push(bond.ltk.clone()).unwrap();
                 Ok(Some(bond.clone()))
@@ -1199,6 +1204,58 @@ mod tests {
                 panic!("Too many loops");
             }
         }
+    }
+
+    #[test]
+    fn rejected_bond_security_request_does_not_start_pairing() {
+        let peripheral = Address::random([0xff, 1, 2, 3, 4, 5]);
+        let central = Address::random([0xff, 2, 2, 3, 4, 5]);
+
+        let mut peripheral_ops = TestOps::<80>::new(0xDEAD);
+        let mut central_ops = TestOps::<80>::new(0xBEEF);
+        // The central still has a stored bond, but encryption with it already failed
+        // on this connection, so bonded encryption is not available
+        central_ops.bond_information = Some(BondInformation {
+            security_level: SecurityLevel::Encrypted,
+            is_bonded: true,
+            ltk: LongTermKey(1),
+            identity: peripheral.into(),
+            #[cfg(feature = "legacy-pairing")]
+            ediv: 0,
+            #[cfg(feature = "legacy-pairing")]
+            rand: [0; 8],
+            #[cfg(feature = "legacy-pairing")]
+            encryption_key_len: 16,
+        });
+        central_ops.bond_rejected = true;
+
+        let _peripheral_pairing = Pairing::initiate_peripheral(
+            peripheral,
+            central,
+            &mut peripheral_ops,
+            IoCapabilities::NoInputNoOutput,
+            false,
+        )
+        .unwrap();
+        let mut central_pairing = Pairing::new_central(central, peripheral, IoCapabilities::NoInputNoOutput);
+
+        assert_eq!(peripheral_ops.sent_packets[0].command, Command::SecurityRequest);
+        let res = central_pairing.handle_l2cap_command(
+            peripheral_ops.sent_packets[0].command,
+            peripheral_ops.sent_packets[0].payload(),
+            &mut central_ops,
+        );
+
+        // Rejected with Pairing Not Supported (Vol 3, Part H, 2.4.6) and the app is told. No panic
+        // and no second encryption attempt with the rejected key
+        let expected = Error::Security(crate::security_manager::Reason::PairingNotSupported);
+        assert_eq!(res, Err(expected.clone()));
+        assert!(central_ops.sent_packets.is_empty());
+        assert!(central_ops.encryptions.is_empty());
+        assert!(matches!(
+            central_ops.connection_events.as_slice(),
+            [ConnectionEvent::PairingFailed(e)] if *e == expected
+        ));
     }
 
     #[test]
