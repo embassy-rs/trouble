@@ -10,6 +10,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::with_timeout;
 
+use crate::connection::ConnParamsRequestSource;
 use crate::connection_manager::ConnectionManager;
 use crate::cursor::WriteCursor;
 use crate::host::{BleHost, OnDrop};
@@ -734,9 +735,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         let req = ConnectionParamsRequest::new(
                             params,
                             conn,
-                            Some(header.identifier),
-                            #[cfg(feature = "connection-params-update")]
-                            true,
+                            ConnParamsRequestSource::L2cap {
+                                identifier: header.identifier,
+                            },
                         );
 
                         let _ = manager.post_handle_event(conn, ConnectionEvent::RequestConnectionParams(req));
@@ -1138,10 +1139,9 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         &self,
         handle: ConnHandle,
         host: &BleHost<'_, T, P>,
-        identifier: Option<u8>,
+        identifier: u8,
         param: &ConnParamUpdateRes,
     ) -> Result<(), BleHostError<T::Error>> {
-        let identifier = identifier.unwrap_or_else(|| self.next_request_id());
         let mut tx = [0; 16];
         host.l2cap_signal(handle, identifier, param, &mut tx[..]).await
     }
