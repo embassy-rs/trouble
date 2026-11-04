@@ -387,7 +387,13 @@ impl Pairing {
             .as_ref()
             .is_some_and(|b| !peer_requests_mitm || b.security_level == SecurityLevel::EncryptedAuthenticated);
         if bond_sufficient {
-            let bond = ops.try_enable_bonded_encryption()?.unwrap();
+            // Encryption with this bond already failed on this connection, so it can't
+            // be used again. Core Spec Vol 3, Part H, Section 2.4.6: if encryption can't
+            // be initiated, respond with Pairing Failed, reason Pairing Not Supported.
+            let Some(bond) = ops.try_enable_bonded_encryption()? else {
+                warn!("[smp central] Bond was rejected on this connection, rejecting security request");
+                return Err(Error::Security(Reason::PairingNotSupported));
+            };
             pairing_data.bond_information = Some(bond);
             Ok(Step::WaitingBondedLinkEncryption)
         } else {
