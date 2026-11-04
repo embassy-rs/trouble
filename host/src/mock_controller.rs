@@ -1,14 +1,22 @@
+extern crate std;
+
+use core::cell::RefCell;
 use core::convert::Infallible;
 use core::future::Future;
+use std::vec::Vec;
 
 use bt_hci::cmd::{self, AsyncCmd, SyncCmd};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 
-pub struct MockController {}
+pub struct MockController {
+    pub acl: RefCell<Vec<Vec<u8>>>,
+}
 
 impl MockController {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            acl: RefCell::new(Vec::new()),
+        }
     }
 }
 
@@ -76,7 +84,8 @@ impl bt_hci::controller::Controller for MockController {
     }
 
     fn write_acl_data(&self, packet: &bt_hci::data::AclPacket) -> impl Future<Output = Result<(), Self::Error>> {
-        async { todo!() }
+        self.acl.borrow_mut().push(packet.data().to_vec());
+        async { Ok(()) }
     }
 
     fn write_sync_data(&self, packet: &bt_hci::data::SyncPacket) -> impl Future<Output = Result<(), Self::Error>> {

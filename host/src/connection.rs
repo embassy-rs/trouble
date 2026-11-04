@@ -336,6 +336,7 @@ pub enum ConnectionEvent {
 pub struct ConnectionParamsRequest {
     params: RequestedConnParams,
     handle: ConnHandle,
+    identifier: Option<u8>,
     responded: bool,
     #[cfg(feature = "connection-params-update")]
     l2cap: bool,
@@ -345,11 +346,13 @@ impl ConnectionParamsRequest {
     pub(crate) fn new(
         params: RequestedConnParams,
         handle: ConnHandle,
+        identifier: Option<u8>,
         #[cfg(feature = "connection-params-update")] l2cap: bool,
     ) -> Self {
         Self {
             params,
             handle,
+            identifier,
             responded: false,
             #[cfg(feature = "connection-params-update")]
             l2cap,
@@ -393,7 +396,10 @@ impl ConnectionParamsRequest {
         {
             Ok(()) => {
                 let param = ConnParamUpdateRes { result: 0 };
-                stack.host().send_conn_param_update_res(self.handle, &param).await
+                stack
+                    .host()
+                    .send_conn_param_update_res(self.handle, self.identifier, &param)
+                    .await
             }
             Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                 Err(crate::Error::Disconnected.into())
@@ -415,7 +421,10 @@ impl ConnectionParamsRequest {
     {
         self.responded = true;
         let param = ConnParamUpdateRes { result: 1 };
-        stack.host().send_conn_param_update_res(self.handle, &param).await
+        stack
+            .host()
+            .send_conn_param_update_res(self.handle, self.identifier, &param)
+            .await
     }
 }
 
@@ -450,7 +459,10 @@ impl ConnectionParamsRequest {
                 if self.l2cap {
                     // Use L2CAP signaling to update connection parameters
                     let param = ConnParamUpdateRes { result: 0 };
-                    stack.host().send_conn_param_update_res(self.handle, &param).await
+                    stack
+                        .host()
+                        .send_conn_param_update_res(self.handle, self.identifier, &param)
+                        .await
                 } else {
                     let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);
                     let interval_max: bt_hci::param::Duration<1_250> = bt_hci_duration(params.max_connection_interval);
@@ -491,7 +503,10 @@ impl ConnectionParamsRequest {
         self.responded = true;
         if self.l2cap {
             let param = ConnParamUpdateRes { result: 1 };
-            stack.host().send_conn_param_update_res(self.handle, &param).await
+            stack
+                .host()
+                .send_conn_param_update_res(self.handle, self.identifier, &param)
+                .await
         } else {
             stack
                 .host()
