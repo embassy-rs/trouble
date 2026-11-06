@@ -330,32 +330,34 @@ pub enum ConnectionEvent {
     OobRequest,
 }
 
+/// The origin of a connection parameters update request, which sets how to answer it.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum ConnParamsRequestSource {
+    /// An L2CAP Connection Parameter Update Request. The response must use the same identifier.
+    L2cap { identifier: u8 },
+    /// An HCI LE Remote Connection Parameter Request event.
+    #[cfg(feature = "connection-params-update")]
+    Hci,
+}
+
 /// A connection parameters update request
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionParamsRequest {
     params: RequestedConnParams,
     handle: ConnHandle,
-    identifier: Option<u8>,
+    source: ConnParamsRequestSource,
     responded: bool,
-    #[cfg(feature = "connection-params-update")]
-    l2cap: bool,
 }
 
 impl ConnectionParamsRequest {
-    pub(crate) fn new(
-        params: RequestedConnParams,
-        handle: ConnHandle,
-        identifier: Option<u8>,
-        #[cfg(feature = "connection-params-update")] l2cap: bool,
-    ) -> Self {
+    pub(crate) fn new(params: RequestedConnParams, handle: ConnHandle, source: ConnParamsRequestSource) -> Self {
         Self {
             params,
             handle,
-            identifier,
+            source,
             responded: false,
-            #[cfg(feature = "connection-params-update")]
-            l2cap,
         }
     }
 
@@ -395,10 +397,11 @@ impl ConnectionParamsRequest {
             .await
         {
             Ok(()) => {
+                let ConnParamsRequestSource::L2cap { identifier } = self.source;
                 let param = ConnParamUpdateRes { result: 0 };
                 stack
                     .host()
-                    .send_conn_param_update_res(self.handle, self.identifier, &param)
+                    .send_conn_param_update_res(self.handle, identifier, &param)
                     .await
             }
             Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
@@ -420,10 +423,11 @@ impl ConnectionParamsRequest {
         C: crate::Controller,
     {
         self.responded = true;
+        let ConnParamsRequestSource::L2cap { identifier } = self.source;
         let param = ConnParamUpdateRes { result: 1 };
         stack
             .host()
-            .send_conn_param_update_res(self.handle, self.identifier, &param)
+            .send_conn_param_update_res(self.handle, identifier, &param)
             .await
     }
 }
@@ -455,15 +459,16 @@ impl ConnectionParamsRequest {
             .async_command(into_le_conn_update(self.handle, params))
             .await
         {
-            Ok(()) => {
-                if self.l2cap {
+            Ok(()) => match self.source {
+                ConnParamsRequestSource::L2cap { identifier } => {
                     // Use L2CAP signaling to update connection parameters
                     let param = ConnParamUpdateRes { result: 0 };
                     stack
                         .host()
-                        .send_conn_param_update_res(self.handle, self.identifier, &param)
+                        .send_conn_param_update_res(self.handle, identifier, &param)
                         .await
-                } else {
+                }
+                ConnParamsRequestSource::Hci => {
                     let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);
                     let interval_max: bt_hci::param::Duration<1_250> = bt_hci_duration(params.max_connection_interval);
                     let timeout: bt_hci::param::Duration<10_000> = bt_hci_duration(params.supervision_timeout);
@@ -481,7 +486,7 @@ impl ConnectionParamsRequest {
                         .await
                         .map(|_| ())
                 }
-            }
+            },
             Err(BleHostError::BleHost(crate::Error::Hci(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER))) => {
                 Err(crate::Error::Disconnected.into())
             }
@@ -501,21 +506,22 @@ impl ConnectionParamsRequest {
         C: crate::Controller + ControllerCmdSync<LeRemoteConnectionParameterRequestNegativeReply>,
     {
         self.responded = true;
-        if self.l2cap {
-            let param = ConnParamUpdateRes { result: 1 };
-            stack
-                .host()
-                .send_conn_param_update_res(self.handle, self.identifier, &param)
-                .await
-        } else {
-            stack
+        match self.source {
+            ConnParamsRequestSource::L2cap { identifier } => {
+                let param = ConnParamUpdateRes { result: 1 };
+                stack
+                    .host()
+                    .send_conn_param_update_res(self.handle, identifier, &param)
+                    .await
+            }
+            ConnParamsRequestSource::Hci => stack
                 .host()
                 .command(LeRemoteConnectionParameterRequestNegativeReply::new(
                     self.handle,
                     RemoteConnectionParamsRejectReason::UnacceptableConnParameters,
                 ))
                 .await
-                .map(|_| ())
+                .map(|_| ()),
         }
     }
 }

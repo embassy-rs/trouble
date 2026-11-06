@@ -36,12 +36,14 @@ use bt_hci::data::{AclBroadcastFlag, AclPacket, AclPacketBoundary};
 use bt_hci::event::le::LeAdvertisingReport;
 #[cfg(feature = "scan")]
 use bt_hci::event::le::LeExtendedAdvertisingReport;
+#[cfg(feature = "connection-params-update")]
+use bt_hci::event::le::LeRemoteConnectionParameterRequest;
 #[cfg(feature = "subrating")]
 use bt_hci::event::le::LeSubrateChange;
 use bt_hci::event::le::{
     LeAdvertisingSetTerminated, LeConnectionComplete, LeConnectionRateChange, LeConnectionUpdateComplete,
     LeDataLengthChange, LeEnhancedConnectionComplete, LeEventKind, LeEventPacket, LeFrameSpaceUpdateComplete,
-    LePhyUpdateComplete, LeRemoteConnectionParameterRequest,
+    LePhyUpdateComplete,
 };
 #[cfg(feature = "iso")]
 use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
@@ -78,7 +80,6 @@ use crate::connection_manager::ResolvablePrivateAddrs;
 use crate::connection_manager::{AclSendLock, ConnectionManager, ConnectionStorage};
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
-use crate::prelude::{ConnectionParamsRequest, RequestedConnParams};
 #[cfg(feature = "security")]
 use crate::security_manager::SecurityEventData;
 use crate::types::l2cap::{
@@ -86,6 +87,11 @@ use crate::types::l2cap::{
     L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER, L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{att, Address, BleHostError, Error, PacketPool};
+#[cfg(feature = "connection-params-update")]
+use crate::{
+    connection::ConnParamsRequestSource,
+    prelude::{ConnectionParamsRequest, RequestedConnParams},
+};
 
 #[cfg(feature = "security")]
 #[derive(Clone, Copy)]
@@ -1224,7 +1230,7 @@ where
     pub(crate) async fn send_conn_param_update_res(
         &self,
         handle: ConnHandle,
-        identifier: Option<u8>,
+        identifier: u8,
         param: &ConnParamUpdateRes,
     ) -> Result<(), BleHostError<T::Error>> {
         self.state
@@ -1637,6 +1643,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                         );
                                     }
                                 }
+                                #[cfg(feature = "connection-params-update")]
                                 LeEventKind::LeRemoteConnectionParameterRequest => {
                                     let event = unwrap!(LeRemoteConnectionParameterRequest::from_hci_bytes_complete(
                                         event.data
@@ -1654,9 +1661,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                             ..Default::default()
                                         },
                                         event.handle,
-                                        None,
-                                        #[cfg(feature = "connection-params-update")]
-                                        false,
+                                        ConnParamsRequestSource::Hci,
                                     );
                                     let _ = host
                                         .state
