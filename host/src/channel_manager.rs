@@ -87,6 +87,11 @@ impl<P, const QLEN: usize> PacketChannel<P, QLEN> {
         self.chan.poll_receive(cx)
     }
 
+    /// Number of SDUs in the queue.
+    pub fn len(&self) -> usize {
+        self.chan.len()
+    }
+
     pub fn clear(&self) {
         self.chan.clear()
     }
@@ -457,6 +462,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
             storage.mtu = mtu;
             storage.mps = mps;
             storage.flow_control = CreditFlowControl::new(*flow_policy, credits);
+            // May be capped to the inbound queue size.
+            credits = storage.flow_control.available();
             storage.state = ChannelState::Connecting(req_id);
         })?;
 
@@ -1164,7 +1171,8 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let (conn, cid, credits) = {
             let mut chan = self.channel_mut(index);
             if chan.state == ChannelState::Connected {
-                (chan.conn.unwrap(), chan.cid, chan.flow_control.process())
+                let free_slots = (config::L2CAP_RX_QUEUE_SIZE - chan.inbound.len()) as u16;
+                (chan.conn.unwrap(), chan.cid, chan.flow_control.process(free_slots))
             } else {
                 debug!("[l2cap][flow_control_process] channel {:?} not found", index);
                 return Err(Error::NotFound.into());
@@ -1588,15 +1596,19 @@ impl Default for CreditFlowPolicy {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct CreditFlowControl {
     policy: CreditFlowPolicy,
+    /// Credits the peer holds.
     credits: u16,
+    /// Credits used by the peer since the last grant.
     received: u16,
 }
 
 impl CreditFlowControl {
+    /// Initial credits are capped to the inbound queue size.
     const fn new(policy: CreditFlowPolicy, initial_credits: u16) -> Self {
+        let max = config::L2CAP_RX_QUEUE_SIZE as u16;
         Self {
             policy,
-            credits: initial_credits,
+            credits: if initial_credits > max { max } else { initial_credits },
             received: 0,
         }
     }
@@ -1615,19 +1627,24 @@ impl CreditFlowControl {
         self.credits = self.credits.saturating_add(amount);
     }
 
-    // Check if policy says we should grant more credits
-    fn process(&mut self) -> Option<u16> {
+    /// Credits to grant, if the policy says so. The peer never holds more credits than
+    /// there are free inbound queue slots, so it cannot overflow the queue.
+    fn process(&mut self, free_slots: u16) -> Option<u16> {
+        let grant = self.received.min(free_slots.saturating_sub(self.credits));
+        if grant == 0 {
+            return None;
+        }
         match self.policy {
             CreditFlowPolicy::Every(count) => {
                 if self.received >= count {
-                    Some(self.received)
+                    Some(grant)
                 } else {
                     None
                 }
             }
             CreditFlowPolicy::MinThreshold(threshold) => {
                 if self.credits < threshold {
-                    Some(self.received)
+                    Some(grant)
                 } else {
                     None
                 }
@@ -2074,5 +2091,28 @@ mod tests {
 
         drop(builder.build());
         assert_eq!(live_packets(), 0);
+    }
+
+    /// The peer never holds more credits than there are free inbound queue slots.
+    #[test]
+    fn credits_never_exceed_free_rx_queue_slots() {
+        let queue = config::L2CAP_RX_QUEUE_SIZE as u16;
+        for policy in [CreditFlowPolicy::Every(1), CreditFlowPolicy::MinThreshold(queue)] {
+            // Initial credits are capped to the queue size.
+            let mut fc = CreditFlowControl::new(policy, 2 * queue);
+            assert_eq!(fc.available(), queue);
+
+            // The peer fills the queue, the reader takes one SDU: one slot is free.
+            fc.confirm_received(queue);
+            let queued = queue - 1;
+            let grant = fc.process(queue - queued).unwrap();
+            fc.confirm_granted(grant);
+            assert_eq!(fc.available() + queued, queue, "{policy:?}");
+
+            // The reader empties the queue: the peer gets all credits back.
+            let grant = fc.process(queue).unwrap();
+            fc.confirm_granted(grant);
+            assert_eq!(fc.available(), queue, "{policy:?}");
+        }
     }
 }
