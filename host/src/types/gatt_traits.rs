@@ -3,13 +3,15 @@ use core::{mem, slice};
 use bt_hci::uuid::BluetoothUuid16;
 use heapless::{String, Vec};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// Error type to signify an issue when converting from GATT bytes to a concrete type
 pub enum FromGattError {
     /// Byte array's length did not match what was expected for the converted type
+    #[error("invalid length")]
     InvalidLength,
     /// Attempt to encode as string failed due to an invalid character representation in the byte array
+    #[error("invalid character")]
     InvalidCharacter,
 }
 

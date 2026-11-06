@@ -362,10 +362,11 @@ pub const SIMUL_LE_BR_CONTROLLER: u8 = 0b00001000;
 pub const SIMUL_LE_BR_HOST: u8 = 0b00010000;
 
 /// Error encoding advertisement data.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdvertisementDataError {
     /// Advertisement data too long for buffer.
+    #[error("advertisement data too long for buffer")]
     TooLong,
 }
 
