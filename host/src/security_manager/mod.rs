@@ -493,7 +493,7 @@ impl Inner {
                 .cloned()
             {
                 Some(b) if encrypted => {
-                    info!("[smp] Encrypted using bond {:?}", b.identity);
+                    info!("[smp] Encrypted using bond {:?}", b.identity.addr);
                     storage.security_level = b.security_level;
                     #[cfg(feature = "legacy-pairing")]
                     {
@@ -1222,7 +1222,7 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         #[cfg(feature = "legacy-pairing")] rand: [u8; 8],
         #[cfg(feature = "legacy-pairing")] encryption_key_len: u8,
     ) -> Result<BondInformation, Error> {
-        info!("Enabling encryption for {:?}", self.peer_identity);
+        info!("Enabling encryption for {:?}", self.peer_identity.addr);
         let bond_info = BondInformation {
             ltk: *ltk,
             identity: self.peer_identity,
