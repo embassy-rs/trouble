@@ -205,10 +205,13 @@ async fn custom_task<C: Controller, P: PacketPool>(
     loop {
         tick = tick.wrapping_add(1);
         info!("[custom_task] notifying connection of tick {}", tick);
-        if level.notify(conn, &tick, true).await.is_err() {
-            info!("[custom_task] error notifying connection");
-            break;
-        };
+        match level.notify(conn, &tick, true).await {
+            Ok(()) | Err(Error::NotSubscribed) => {}
+            Err(_) => {
+                info!("[custom_task] error notifying connection");
+                break;
+            }
+        }
         // read RSSI (Received Signal Strength Indicator) of the connection.
         if let Ok(rssi) = conn.raw().rssi(stack).await {
             info!("[custom_task] RSSI: {:?}", rssi);
