@@ -953,6 +953,11 @@ fn process_reject<'stack, P: PacketPool>(
     let Att::Client(att) = att else {
         unreachable!("Expected Att::Client, got {:?}", att)
     };
+    // ATT commands have no response, including when permission is denied
+    // (Core Spec Vol 3, Part F, section 3.4.5.3).
+    if matches!(att, AttClient::Command(_)) {
+        return Ok(Reply::new(connection.clone(), None));
+    }
     // An Execute Write empties the prepare queue regardless of outcome (Core
     // Spec Vol 3, Part F, §3.4.6.3). `process_accept` clears it via the attribute
     // server (`handle_execute_write`), and `accept_unprocessed` clears it too, but
@@ -965,7 +970,6 @@ fn process_reject<'stack, P: PacketPool>(
     }
     let handle = match att {
         AttClient::Request(AttReq::Write { handle, .. }) => handle,
-        AttClient::Command(AttCmd::Write { handle, .. }) => handle,
         AttClient::Request(AttReq::Read { handle }) => handle,
         AttClient::Request(AttReq::ReadBlob { handle, .. }) => handle,
         _ => 0, // As per spec, if the incoming ATT does not have an ATT handle, we should report with handle 0
@@ -2489,6 +2493,106 @@ mod tests {
 
         let stored: u8 = server.table().get(&characteristic).unwrap();
         assert_eq!(stored, payload[0]);
+    }
+
+    enum DeniedWriteHandling {
+        Accept,
+        Reject,
+        Drop,
+    }
+
+    fn check_denied_write(opcode: u8, handling: DeniedWriteHandling) {
+        use embassy_futures::poll_once;
+        const MAX_ATTRIBUTES: usize = 16;
+        const CONNECTIONS_MAX: usize = 3;
+        const WRITE_NOT_PERMITTED_CODE: u8 = 0x03;
+        let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
+        let mut storage = [0u8; 1];
+        let characteristic: Characteristic<u8> = table
+            .add_service(Service {
+                uuid: Uuid::new_long([0x44; 16]),
+            })
+            .add_characteristic(
+                Uuid::new_long([0x45; 16]),
+                [CharacteristicProp::Read],
+                0u8,
+                &mut storage[..],
+            )
+            .build();
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
+        let mgr = setup();
+        assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected connection to be accepted");
+        };
+        let (mut packet, len) = build_write_cmd_pdu(characteristic.handle, &[0x2a]);
+        packet.as_mut()[0] = opcode;
+        let event = GattEvent::new(GattData::new(Pdu::new(packet, len), conn), &server);
+        assert!(matches!(event, GattEvent::NotAllowed(_)));
+        let reply = match handling {
+            DeniedWriteHandling::Accept => Some(event.accept().unwrap()),
+            DeniedWriteHandling::Reject => Some(event.reject(AttErrorCode::WRITE_NOT_PERMITTED).unwrap()),
+            DeniedWriteHandling::Drop => {
+                drop(event);
+                None
+            }
+        };
+        if let Some(reply) = reply {
+            if opcode == att::ATT_WRITE_REQ {
+                reply.try_send().unwrap();
+                let Poll::Ready((conn_handle, pdu)) = poll_once(mgr.outbound()) else {
+                    panic!("expected an ATT error response for the denied request");
+                };
+                assert_eq!(conn_handle, ConnHandle::new(0));
+                let handle = characteristic.handle.to_le_bytes();
+                assert_eq!(
+                    &pdu.as_ref()[4..],
+                    &[
+                        att::ATT_ERROR_RSP,
+                        att::ATT_WRITE_REQ,
+                        handle[0],
+                        handle[1],
+                        WRITE_NOT_PERMITTED_CODE
+                    ]
+                );
+            } else {
+                assert!(
+                    reply.att_payload().is_none(),
+                    "denied command must not send an ATT response"
+                );
+                drop(reply);
+            }
+        }
+        // Commands enqueue nothing; the request's single error response was consumed above.
+        assert!(poll_once(mgr.outbound()).is_pending(), "unexpected ATT response");
+        let stored: u8 = server.table().get(&characteristic).unwrap();
+        assert_eq!(stored, 0);
+    }
+
+    #[test]
+    fn test_denied_write_command_accept_has_no_response() {
+        check_denied_write(att::ATT_WRITE_CMD, DeniedWriteHandling::Accept);
+    }
+
+    #[test]
+    fn test_denied_write_command_reject_has_no_response() {
+        check_denied_write(att::ATT_WRITE_CMD, DeniedWriteHandling::Reject);
+    }
+
+    #[test]
+    fn test_denied_write_command_drop_has_no_response() {
+        check_denied_write(att::ATT_WRITE_CMD, DeniedWriteHandling::Drop);
+    }
+
+    #[test]
+    fn test_denied_write_request_retains_error_response() {
+        check_denied_write(att::ATT_WRITE_REQ, DeniedWriteHandling::Accept);
     }
 
     /// Regression test: a *rejected* Execute Write must empty the prepare queue.
