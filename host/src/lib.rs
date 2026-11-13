@@ -704,6 +704,7 @@ impl<P: PacketPool, const CONNS: usize, const CHANNELS: usize, const ADV_SETS: u
 
 /// Create a new instance of the BLE host using the provided controller implementation and
 /// the resource configuration
+#[inline(never)]
 pub fn new<
     'resources,
     C: Controller,
