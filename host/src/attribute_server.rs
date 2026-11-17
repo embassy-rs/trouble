@@ -18,12 +18,26 @@ mod client_att_table;
 #[derive(Default)]
 struct Client {
     identity: Identity,
+    #[cfg(feature = "per-connection-address")]
+    local_address: Option<bt_hci::param::BdAddr>,
     is_connected: bool,
 }
 
 impl Client {
-    fn set_identity(&mut self, identity: Identity) {
-        self.identity = identity;
+    fn matches(&self, conn: &Connection<'_, impl PacketPool>) -> bool {
+        #[cfg(feature = "per-connection-address")]
+        if self.local_address != conn.local_address() {
+            return false;
+        }
+        self.identity.match_identity(&conn.peer_identity())
+    }
+
+    fn set_identity(&mut self, conn: &Connection<'_, impl PacketPool>) {
+        self.identity = conn.peer_identity();
+        #[cfg(feature = "per-connection-address")]
+        {
+            self.local_address = conn.local_address();
+        }
     }
 }
 
@@ -77,7 +91,7 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> se
         #[cfg(not(feature = "security"))]
         let bonded = false;
 
-        self.client_att_tables.disconnect(&connection.peer_identity(), bonded);
+        self.client_att_tables.disconnect(connection, bonded);
     }
 
     fn process(
@@ -101,8 +115,7 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> se
         self.att_table
             .with_attribute(att_handle, |att| {
                 if matches!(att.data, AttributeData::ClientSpecific { .. }) {
-                    self.client_att_tables
-                        .read(&connection.peer_identity(), att_handle, 0, buf)
+                    self.client_att_tables.read(connection, att_handle, 0, buf)
                 } else {
                     att.read(0, buf)
                 }
@@ -121,7 +134,7 @@ impl<M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: usize> se
                     })
                 } else if matches!(att.data, AttributeData::ClientSpecific { .. }) {
                     self.client_att_tables
-                        .write(&connection.peer_identity(), att_handle, 0, input)
+                        .write(connection, att_handle, 0, input)
                         .map_err(Into::into)
                 } else {
                     att.write(0, input).map_err(Into::into)
@@ -176,12 +189,12 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
     }
 
     pub(crate) fn connect(&self, connection: &Connection<'_, P>) -> Result<(), Error> {
-        self.client_att_tables.connect(&connection.peer_identity())
+        self.client_att_tables.connect(connection)
     }
 
     pub(crate) fn should_notify(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
         self.client_att_tables
-            .with_value(&connection.peer_identity(), cccd_handle, |value| {
+            .with_value(connection, cccd_handle, |value| {
                 if let Ok(value) = value.try_into() {
                     CCCD(u16::from_le_bytes(value)).should_notify()
                 } else {
@@ -193,7 +206,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
 
     pub(crate) fn should_indicate(&self, connection: &Connection<'_, P>, cccd_handle: u16) -> bool {
         self.client_att_tables
-            .with_value(&connection.peer_identity(), cccd_handle, |value| {
+            .with_value(connection, cccd_handle, |value| {
                 if let Ok(value) = value.try_into() {
                     CCCD(u16::from_le_bytes(value)).should_indicate()
                 } else {
@@ -235,9 +248,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
     ) -> Result<usize, AttErrorCode> {
         self.can_read(connection, att)?;
         if matches!(att.data, AttributeData::ClientSpecific { .. }) {
-            return self
-                .client_att_tables
-                .read(&connection.peer_identity(), handle, offset, data);
+            return self.client_att_tables.read(connection, handle, offset, data);
         }
         att.read(offset, data)
     }
@@ -252,9 +263,7 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
     ) -> Result<(), AttErrorCode> {
         self.can_write(connection, att)?;
         if matches!(att.data, AttributeData::ClientSpecific { .. }) {
-            return self
-                .client_att_tables
-                .write(&connection.peer_identity(), handle, offset, data);
+            return self.client_att_tables.write(connection, handle, offset, data);
         }
         att.write(offset, data)
     }
@@ -853,13 +862,12 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
 
     /// Get the client-specific attribute table for a connection
     pub fn get_client_att_table(&self, connection: &Connection<'_, P>) -> Option<ClientAttTable> {
-        self.client_att_tables.get_client_att_table(&connection.peer_identity())
+        self.client_att_tables.get_client_att_table(connection)
     }
 
     /// Set the client-specific attribute table for a connection
     pub fn set_client_att_table(&self, connection: &Connection<'_, P>, table: &ClientAttTableView<'_>) {
-        self.client_att_tables
-            .set_client_att_table(&connection.peer_identity(), table);
+        self.client_att_tables.set_client_att_table(connection, table);
     }
 }
 
