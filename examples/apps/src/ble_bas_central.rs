@@ -1,4 +1,5 @@
 use embassy_futures::join::join;
+use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
@@ -43,43 +44,72 @@ where
         let conn = central.connect(&config).await.unwrap();
         info!("Connected, creating gatt client");
 
-        let client = GattClient::<C, DefaultPacketPool, 10>::new(&stack, &conn)
-            .await
-            .unwrap();
-
-        let _ = join(client.task(), async {
-            info!("Looking for battery service");
-            let services = client.services_by_uuid(&Uuid::new_short(0x180f)).await.unwrap();
-            let service = services.first().unwrap().clone();
-
-            info!("Looking for value handle");
-            let c: Characteristic<u8> = client
-                .characteristic_by_uuid(&service, &Uuid::new_short(0x2a19))
-                .await
-                .unwrap();
-
-            info!("Subscribing notifications");
-            let mut listener = client.subscribe(&c, false).await.unwrap();
-
-            let _ = join(
-                async {
-                    loop {
-                        let mut data = [0; 1];
-                        client.read_characteristic(&c, &mut data[..]).await.unwrap();
-                        info!("Read value: {}", data[0]);
-                        Timer::after(Duration::from_secs(10)).await;
+        // Keep one event consumer alive from connection through GATT setup and
+        // until disconnection, including while a parameter reply is in flight.
+        let events = async {
+            loop {
+                match conn.next().await {
+                    ConnectionEvent::RequestConnectionParams(request) => {
+                        info!("Peer requested connection parameter update: {:?}", request.params());
+                        if let Err(error) = request.accept(None, &stack).await {
+                            error!("Connection parameter update failed: {:?}", error);
+                            conn.disconnect();
+                        }
                     }
-                },
-                async {
-                    loop {
-                        let data = listener.next().await;
-                        info!("Got notification: {:?} (val: {})", data.as_ref(), data.as_ref()[0]);
+                    ConnectionEvent::Disconnected { reason } => {
+                        info!("Disconnected: {:?}", reason);
+                        break;
                     }
-                },
-            )
+                    _ => {}
+                }
+            }
+        };
+        let gatt = async {
+            let result = async {
+                let client = GattClient::<C, DefaultPacketPool, 10>::new(&stack, &conn).await?;
+                let operations = async {
+                    info!("Looking for battery service");
+                    let services = client.services_by_uuid(&Uuid::new_short(0x180f)).await?;
+                    let Some(service) = services.first() else {
+                        error!("Battery service not found");
+                        return Ok(());
+                    };
+
+                    info!("Looking for value handle");
+                    let c: Characteristic<u8> =
+                        client.characteristic_by_uuid(service, &Uuid::new_short(0x2a19)).await?;
+                    info!("Subscribing notifications");
+                    let mut listener = client.subscribe(&c, false).await?;
+                    let reads = async {
+                        loop {
+                            let mut data = [0; 1];
+                            client.read_characteristic(&c, &mut data[..]).await?;
+                            info!("Read value: {}", data[0]);
+                            Timer::after(Duration::from_secs(10)).await;
+                        }
+                    };
+                    let notifications = async {
+                        loop {
+                            let data = listener.next().await;
+                            info!("Got notification: {:?} (val: {})", data.as_ref(), data.as_ref()[0]);
+                        }
+                    };
+                    match select(reads, notifications).await {
+                        Either::First(result) => result,
+                        Either::Second(()) => Ok(()),
+                    }
+                };
+                match select(client.task(), operations).await {
+                    Either::First(result) | Either::Second(result) => result,
+                }
+            }
             .await;
-        })
-        .await;
+            if let Err(error) = result {
+                error!("GATT client stopped: {:?}", error);
+            }
+            conn.disconnect();
+        };
+        let _ = join(events, gatt).await;
     })
     .await;
 }

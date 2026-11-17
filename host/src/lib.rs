@@ -554,6 +554,33 @@ pub trait ShortConnIntervalCmds: bt_hci::controller::Controller {}
 #[cfg(not(feature = "shorter-connection-intervals"))]
 impl<C: bt_hci::controller::Controller> ShortConnIntervalCmds for C {}
 
+/// Controller commands for responding to remote connection parameter requests.
+///
+/// When `connection-params-update` is disabled, this is implemented for all controllers.
+#[cfg(feature = "connection-params-update")]
+pub trait ConnectionParamsCmds:
+    bt_hci::controller::Controller
+    + ControllerCmdSync<LeRemoteConnectionParameterRequestReply>
+    + ControllerCmdSync<LeRemoteConnectionParameterRequestNegativeReply>
+{
+}
+
+#[cfg(feature = "connection-params-update")]
+impl<
+        C: bt_hci::controller::Controller
+            + ControllerCmdSync<LeRemoteConnectionParameterRequestReply>
+            + ControllerCmdSync<LeRemoteConnectionParameterRequestNegativeReply>,
+    > ConnectionParamsCmds for C
+{
+}
+
+/// Auto-implemented when `connection-params-update` is not enabled.
+#[cfg(not(feature = "connection-params-update"))]
+pub trait ConnectionParamsCmds: bt_hci::controller::Controller {}
+
+#[cfg(not(feature = "connection-params-update"))]
+impl<C: bt_hci::controller::Controller> ConnectionParamsCmds for C {}
+
 /// Trait that defines the controller implementation required by the host.
 ///
 /// The controller must implement the required commands and events to be able to be used with Trouble.
@@ -588,6 +615,7 @@ pub trait Controller:
     + for<'t> ControllerCmdSync<LeSetScanResponseData>
     + ControllerCmdSync<ReadBdAddr>
     + SecurityCmds
+    + ConnectionParamsCmds
     + SubratingCmds
     + IsoStreamCmds
     + ShortConnIntervalCmds
@@ -625,6 +653,7 @@ impl<
             + for<'t> ControllerCmdSync<LeSetScanResponseData>
             + ControllerCmdSync<ReadBdAddr>
             + SecurityCmds
+            + ConnectionParamsCmds
             + SubratingCmds
             + IsoStreamCmds
             + ShortConnIntervalCmds,

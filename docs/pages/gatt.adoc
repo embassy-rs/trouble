@@ -166,6 +166,16 @@ let _ = join(client.task(), async {
 }).await;
 ----
 
+=== Connection Events and Parameter Requests
+
+Some peripherals disconnect if a connection-parameter request goes unanswered. These requests arrive through `Connection::next()`, separately from the ATT traffic handled by `GattClient::task()`. They can arrive during GATT setup or later use, so run a connection-event loop from the end of `connect()` until disconnection, including after pairing.
+
+For `ConnectionEvent::RequestConnectionParams(request)`, inspect the proposed settings with `request.params()`. `request.accept(None, &stack).await` accepts those settings. Pass your own `RequestedConnParams` to accept different settings, or use `request.reject(&stack).await` to reject the request. Dropping a request sends no reply. Replies need the stack runner to make progress, so keep it running and handle any reply error.
+
+`GattConnection::next()` reads the same queue as `Connection::next()`. If you use a `GattConnection`, handle `GattConnectionEvent::RequestConnectionParams` in its existing loop to avoid competing consumers.
+
+The https://github.com/embassy-rs/trouble/blob/main/examples/apps/src/ble_bas_central.rs[Battery Service central example] shows this alongside GATT operations. When GATT work ends, it requests disconnection and keeps the event handler alive so a pending parameter reply can finish.
+
 === Service Discovery
 
 [source,rust]
