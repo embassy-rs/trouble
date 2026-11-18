@@ -145,6 +145,19 @@ level.indicate(&conn, &new_value, true).await?;
 
 NOTE: Notifications/indications will only be delivered if the client has enabled them by writing to the characteristic's CCCD (Client Characteristic Configuration Descriptor).
 
+=== Service Changed
+
+The `service-changed` feature adds the Service Changed characteristic to the GATT service. Its presence changes what a client may assume: a bonded client can keep its cached attribute table across connections and rely on indications to learn about changes. An application that enables the feature must therefore indicate after any change to its attribute table, such as a firmware update that adds or moves characteristics:
+
+[source,rust]
+----
+server.table().service_changed()?.indicate(&conn, &SERVICE_CHANGED_ALL, false).await?;
+----
+
+The indication only reaches a client that has enabled it in the CCCD, and a table change usually happens while the client is disconnected. To tell a client on its next connection, store a value per bond that identifies the table it last saw, such as `AttributeTable::hash()` (available with the `security` feature), and compare it when the bonded client encrypts the link.
+
+The feature adds 3 attributes. The derived table size accounts for them, and a server that sets `attribute_table_size` by hand needs 3 more entries.
+
 == The GATT Client
 
 The GATT client is used from the central role to discover and interact with services on a connected peripheral.
