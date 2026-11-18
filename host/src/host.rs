@@ -2445,4 +2445,91 @@ mod tests {
         let acl = stack.controller.acl.borrow();
         assert_eq!(acl.as_slice(), &[[6, 0, 0x05, 0, 0x13, 7, 2, 0, 1, 0]]);
     }
+
+    /// Without pairing support, each SMP PDU on a connection is answered with Pairing Failed, reason
+    /// Pairing Not Supported.
+    #[cfg(not(feature = "security"))]
+    fn assert_smp_answered_with_pairing_not_supported(role: LeConnRole, accept: bool, smp: &[&[u8]]) {
+        use bt_hci::param::{AddrKind, BdAddr};
+        use embassy_futures::poll_once;
+
+        use crate::mock_controller::MockController;
+        use crate::prelude::DefaultPacketPool;
+        use crate::{Address, HostResources};
+
+        struct Handler;
+        impl EventHandler for Handler {}
+
+        let mut resources: HostResources<DefaultPacketPool, 2, 2> = HostResources::new();
+        let builder = crate::new(MockController::new(), &mut resources);
+        let ble = BleHost::new(
+            builder.controller.as_ref().unwrap(),
+            builder.host_state.as_ref().unwrap(),
+        );
+
+        let conn = ConnHandle::new(33);
+        ble.connections()
+            .connect(
+                conn,
+                Address::new(AddrKind::PUBLIC, BdAddr::new([0; 6])),
+                role,
+                ConnParams::new(),
+            )
+            .unwrap();
+        // Dropping the accepted connection would disconnect it
+        let _connection = accept.then(|| {
+            let Poll::Ready(connection) = ble.connections().poll_accept(role, &[], None) else {
+                panic!("connection not accepted");
+            };
+            connection
+        });
+
+        for (i, payload) in smp.iter().enumerate() {
+            // L2CAP header (CID 6), then the SMP PDU
+            let mut data = [0u8; 4 + 7];
+            data[..2].copy_from_slice(&(payload.len() as u16).to_le_bytes());
+            data[2..4].copy_from_slice(&L2CAP_CID_LE_U_SECURITY_MANAGER.to_le_bytes());
+            data[4..4 + payload.len()].copy_from_slice(payload);
+            let acl = AclPacket::new(
+                conn,
+                AclPacketBoundary::FirstFlushable,
+                AclBroadcastFlag::PointToPoint,
+                &data[..4 + payload.len()],
+            );
+            ble.handle_acl(acl, &Handler).unwrap();
+
+            // L2CAP header (length 2, CID 6), then Pairing Failed (0x05), reason Pairing Not Supported (0x05)
+            let Poll::Ready((handle, pdu)) = poll_once(ble.connections().outbound()) else {
+                panic!("PDU {i} not answered");
+            };
+            assert_eq!(handle, conn, "PDU {i}");
+            assert_eq!(pdu.as_ref(), &[2, 0, 0x06, 0, 0x05, 0x05], "PDU {i}");
+        }
+    }
+
+    /// A peripheral answers a Pairing Request, also before the connection is accepted. A Pairing
+    /// Failed and an empty PDU get the same answer.
+    #[cfg(all(feature = "peripheral", not(feature = "security")))]
+    #[test]
+    fn peripheral_without_security_answers_pairing_not_supported() {
+        // Pairing Request: IO capability NoInputNoOutput, no OOB data, bonding, maximum key size
+        // 16, key distribution EncKey and IdKey in both directions.
+        let pairing_request: &[u8] = &[0x01, 0x03, 0x00, 0x01, 0x10, 0x03, 0x03];
+        // Pairing Failed, reason Unspecified Reason
+        let pairing_failed: &[u8] = &[0x05, 0x08];
+        assert_smp_answered_with_pairing_not_supported(
+            LeConnRole::Peripheral,
+            false,
+            &[pairing_request, pairing_failed, &[]],
+        );
+    }
+
+    /// A central answers a Security Request.
+    #[cfg(all(feature = "central", not(feature = "security")))]
+    #[test]
+    fn central_without_security_answers_pairing_not_supported() {
+        // Security Request, AuthReq bonding
+        let security_request: &[u8] = &[0x0b, 0x01];
+        assert_smp_answered_with_pairing_not_supported(LeConnRole::Central, true, &[security_request]);
+    }
 }
