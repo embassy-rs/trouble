@@ -295,12 +295,14 @@ impl Identity {
 }
 
 /// Errors returned by the host.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BleHostError<E> {
     /// Error from the controller.
+    #[error("controller error")]
     Controller(E),
     /// Error from the host.
+    #[error("{0}")]
     BleHost(Error),
 }
 
@@ -308,21 +310,27 @@ pub enum BleHostError<E> {
 pub const MAX_INVALID_DATA_LEN: usize = 16;
 
 /// Errors related to Host.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Error encoding parameters for HCI commands.
+    #[error("HCI error: {0}")]
     Hci(bt_hci::param::Error),
     /// Error decoding responses from HCI commands.
+    #[error("HCI decode error")]
     HciDecode(FromHciBytesError),
     /// Error from the Attribute Protocol.
+    #[error("ATT error: {0}")]
     Att(AttErrorCode),
     #[cfg(feature = "security")]
     /// Error from the security manager
+    #[error("pairing failed: {0}")]
     Security(PairingFailedReason),
     /// Insufficient space in the buffer.
+    #[error("insufficient space in buffer")]
     InsufficientSpace,
     /// Invalid value.
+    #[error("invalid value")]
     InvalidValue,
 
     /// Unexpected data length.
@@ -330,6 +338,7 @@ pub enum Error {
     /// This happens if the attribute data length doesn't match the input length size,
     /// and the attribute is deemed as *not* having variable length due to the characteristic's
     /// `MAX_SIZE` and `MIN_SIZE` being defined as equal.
+    #[error("unexpected data length: expected {expected}, got {actual}")]
     UnexpectedDataLength {
         /// Expected length.
         expected: usize,
@@ -338,15 +347,19 @@ pub enum Error {
     },
 
     /// Error converting from GATT value.
+    #[error("cannot construct GATT value")]
     CannotConstructGattValue([u8; MAX_INVALID_DATA_LEN]),
 
     /// Scan config filter accept list is empty.
+    #[error("scan config filter accept list is empty")]
     ConfigFilterAcceptListIsEmpty,
 
     /// Unexpected GATT response.
+    #[error("unexpected GATT response")]
     UnexpectedGattResponse,
 
     /// Received characteristic declaration data shorter than the minimum required length (5 bytes).
+    #[error("malformed characteristic declaration: expected at least {expected} bytes, got {actual}")]
     MalformedCharacteristicDeclaration {
         /// Expected length.
         expected: usize,
@@ -355,9 +368,11 @@ pub enum Error {
     },
 
     /// Failed to decode the data structure within a characteristic declaration attribute value.
+    #[error("invalid characteristic declaration data")]
     InvalidCharacteristicDeclarationData,
 
     /// Failed to finalize the packet.
+    #[error("failed to finalize packet: expected {expected} bytes, got {actual}")]
     FailedToFinalize {
         /// Expected length.
         expected: usize,
@@ -366,49 +381,69 @@ pub enum Error {
     },
 
     /// Codec error.
+    #[error("codec error: {0}")]
     CodecError(codec::Error),
 
     /// Extended advertising not supported.
+    #[error("extended advertising not supported")]
     ExtendedAdvertisingNotSupported,
 
     /// Invalid UUID length.
+    #[error("invalid UUID length: {0}")]
     InvalidUuidLength(usize),
 
     /// Error decoding advertisement data.
+    #[error("advertisement data error: {0}")]
     Advertisement(AdvertisementDataError),
-    /// L2CAP credit-based connection refused by the peer.
-    L2capConnectError(crate::types::l2cap::LeCreditConnResultCode),
+    /// L2CAP credit-based connection refused, with the reason given by the result code.
+    #[error("L2CAP connection refused")]
+    L2capConnectionRefused(crate::types::l2cap::LeCreditConnResultCode),
     /// Invalid l2cap channel id provided.
+    #[error("invalid L2CAP channel id")]
     InvalidChannelId,
     /// No l2cap channel available.
+    #[error("no L2CAP channel available")]
     NoChannelAvailable,
     /// Resource not found.
+    #[error("resource not found")]
     NotFound,
     /// Invalid state.
+    #[error("invalid state")]
     InvalidState,
     /// Out of memory.
+    #[error("out of memory")]
     OutOfMemory,
     /// Unsupported operation.
+    #[error("operation not supported")]
     NotSupported,
     /// L2cap channel closed.
+    #[error("L2CAP channel closed")]
     ChannelClosed,
     /// Operation timed out.
+    #[error("operation timed out")]
     Timeout,
     /// Controller is busy.
+    #[error("controller is busy")]
     Busy,
     /// No send permits available.
+    #[error("no send permits available")]
     NoPermits,
     /// Connection is disconnected.
+    #[error("connection is disconnected")]
     Disconnected,
     /// Connection limit has been reached.
+    #[error("connection limit reached")]
     ConnectionLimitReached,
     /// GATT subscriber limit has been reached.
     ///
     /// The limit can be modified using the `gatt-client-notification-max-subscribers-N` features.
+    #[error("GATT subscriber limit reached")]
     GattSubscriberLimitReached,
     /// Resource is already in use.
+    #[error("resource already in use")]
     AlreadyInUse,
     /// Other error.
+    #[error("other error")]
     Other,
 }
 

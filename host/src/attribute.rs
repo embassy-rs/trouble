@@ -744,17 +744,10 @@ impl<T: AsGatt + ?Sized> AttributeHandle for Characteristic<T> {
 }
 
 /// Invalid handle value
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[error("invalid handle")]
 pub struct InvalidHandle;
-
-impl core::fmt::Display for InvalidHandle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        core::fmt::Debug::fmt(self, f)
-    }
-}
-
-impl core::error::Error for InvalidHandle {}
 
 impl From<InvalidHandle> for Error {
     fn from(value: InvalidHandle) -> Self {

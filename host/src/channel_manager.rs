@@ -252,7 +252,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 s.conn == Some(conn) && s.peer_cid == peer_cid && !matches!(s.state, ChannelState::Disconnected)
             });
             if in_use {
-                return Err(Error::L2capConnectError(LeCreditConnResultCode::ScidAlreadyAllocated));
+                return Err(Error::L2capConnectionRefused(LeCreditConnResultCode::ScidAlreadyAllocated));
             }
         }
 
@@ -517,7 +517,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         match storage.state {
             ChannelState::ConnectFailed(result) => {
                 storage.state = ChannelState::Disconnected;
-                return Poll::Ready(Err(Error::L2capConnectError(result).into()));
+                return Poll::Ready(Err(Error::L2capConnectionRefused(result).into()));
             }
             ChannelState::Disconnected | ChannelState::Disconnecting | ChannelState::PeerDisconnecting(_) => {
                 return Poll::Ready(Err(Error::Disconnected.into()));
@@ -803,7 +803,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                         state.accept_waker.wake();
                         Ok(())
                     }
-                    Err(Error::L2capConnectError(result)) => Err(result),
+                    Err(Error::L2capConnectionRefused(result)) => Err(result),
                     Err(Error::NoChannelAvailable) => Err(LeCreditConnResultCode::NoResources),
                     Err(e) => return Err(e),
                 }
@@ -864,7 +864,7 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
                 warn!("Channel open request failed: {:?}", other);
                 storage.state = ChannelState::ConnectFailed(other);
                 self.state.borrow_mut().create_waker.wake();
-                Err(Error::L2capConnectError(other))
+                Err(Error::L2capConnectionRefused(other))
             }
         }
     }
