@@ -1,6 +1,8 @@
+use bt_hci::cmd::le::LeReadLocalSupportedFeatures;
+use bt_hci::controller::ControllerCmdSync;
 use embassy_futures::join::join;
 use embassy_futures::select::select;
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -30,7 +32,7 @@ struct BatteryService {
 /// Run the BLE stack.
 pub async fn run<C>(controller: C)
 where
-    C: Controller,
+    C: Controller + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
@@ -196,13 +198,28 @@ async fn advertise<'values, 'server, C: Controller>(
 /// This task will notify the connected central of a counter value every 2 seconds.
 /// It will also read the RSSI value every 2 seconds.
 /// and will stop when the connection is closed by the central or an error occurs.
-async fn custom_task<C: Controller, P: PacketPool>(
+async fn custom_task<C: Controller + ControllerCmdSync<LeReadLocalSupportedFeatures>, P: PacketPool>(
     server: &Server<'_>,
     conn: &GattConnection<'_, '_, P>,
     stack: &Stack<'_, C, P>,
 ) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
+    // Centrals connect with a short interval and no peripheral latency (macOS: 30 ms / 0), which
+    // keeps the radio up every event. Ask for a slower interval with latency: the controller then
+    // only listens every 5th event when it has nothing to send (Core v6.0 Vol 6 Part B 4.5.1).
+    // 60-75 ms / latency 4 / 4 s is also within Apple's accessory connection parameter rules.
+    let params = RequestedConnParams {
+        min_connection_interval: Duration::from_millis(60),
+        max_connection_interval: Duration::from_millis(75),
+        max_latency: 4,
+        min_event_length: Duration::from_secs(0),
+        max_event_length: Duration::from_secs(0),
+        supervision_timeout: Duration::from_secs(4),
+    };
+    if conn.raw().update_connection_params(stack, &params).await.is_err() {
+        info!("[custom_task] connection parameter request failed");
+    }
     loop {
         tick = tick.wrapping_add(1);
         info!("[custom_task] notifying connection of tick {}", tick);
