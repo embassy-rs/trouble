@@ -1,5 +1,5 @@
 use tokio::select;
-use trouble_example_tests::{TestContext, await_test, serial};
+use trouble_example_tests::{await_test, serial, TestContext};
 use trouble_host::prelude::*;
 
 #[tokio::test]
@@ -8,10 +8,7 @@ async fn ble_bas_peripheral_nrf52() {
     let firmware = "bins/nrf52/ble_bas_peripheral";
     let local = tokio::task::LocalSet::new();
     local
-        .run_until(run_bas_peripheral_test(
-            &[("target", "nrf52")],
-            firmware,
-        ))
+        .run_until(run_bas_peripheral_test(&[("target", "nrf52")], firmware))
         .await;
 }
 
@@ -21,10 +18,7 @@ async fn ble_bas_peripheral_nrf54() {
     let firmware = "bins/nrf54/ble_bas_peripheral";
     let local = tokio::task::LocalSet::new();
     local
-        .run_until(run_bas_peripheral_test(
-            &[("target", "nrf54")],
-            firmware,
-        ))
+        .run_until(run_bas_peripheral_test(&[("target", "nrf54")], firmware))
         .await;
 }
 
@@ -65,6 +59,8 @@ async fn run_bas_peripheral_test(labels: &[(&str, &str)], firmware: &str) {
                 loop {
                     let conn = central.connect(&config).await.unwrap();
                     log::info!("[central] connected");
+                    // Keep the connection unsubscribed across a notification timer tick.
+                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                     let client = GattClient::<serial::Controller, DefaultPacketPool, 10>::new(&stack, &conn).await.unwrap();
                     select! {
                         _r = async {
