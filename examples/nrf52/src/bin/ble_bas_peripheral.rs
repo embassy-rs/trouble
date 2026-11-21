@@ -62,11 +62,15 @@ fn build_sdc<'d, const N: usize>(
 async fn main(spawner: Spawner) {
     let p = embassy_nrf::init(Default::default());
     let mpsl_p = mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
+    // The nRF52 DKs fit a 32.768 kHz crystal. The RC oscillator needs MPSL to recalibrate it
+    // against the HFXO every 4-8 s (mpsl_clock.h, rc_temp_ctiv) and its accuracy widens every
+    // receive window. Boards without an LF crystal use MPSL_CLOCK_LF_SRC_RC with
+    // rc_ctiv = MPSL_RECOMMENDED_RC_CTIV, rc_temp_ctiv = MPSL_RECOMMENDED_RC_TEMP_CTIV.
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-        source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
-        rc_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
-        rc_temp_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
-        accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+        source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
+        rc_ctiv: 0,
+        rc_temp_ctiv: 0,
+        accuracy_ppm: 50, // NCS default for an LF crystal (CLOCK_CONTROL_NRF_K32SRC_50PPM)
         skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
     };
     static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
