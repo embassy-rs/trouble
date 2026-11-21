@@ -321,7 +321,14 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
                     // If we get here, we always have had a successful read, and we can check that we still have space
                     // left in the buffer to write the next entry if it exists.
                     if let Ok(expected_length) = ret {
-                        if body.available() < expected_length + 2 {
+                        // Also cap each READ_BY_TYPE response to ~44 bytes. Some
+                        // GATT clients (notably Windows/WinRT) silently reject a
+                        // larger discovery response even when the ATT MTU is much
+                        // bigger and nothing is fragmented — they stop sending
+                        // requests, sit idle, then drop the link. A client just
+                        // re-requests from the next handle, so capping is fully
+                        // spec-valid; it only adds a few round-trips at discovery.
+                        if body.available() < expected_length + 2 || body.len() >= 40 {
                             break;
                         }
                     }
