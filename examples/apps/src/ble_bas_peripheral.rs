@@ -157,6 +157,13 @@ async fn gatt_events_task<P: PacketPool>(server: &Server<'_>, conn: &GattConnect
                     Err(e) => warn!("[gatt] error sending response: {:?}", e),
                 };
             }
+            // Ignoring `RequestConnectionParams` is safe here. It is raised only for a central's
+            // LL_CONNECTION_PARAM_REQ, and only with the `connection-params-update` feature, which
+            // unmasks HCI_LE_Remote_Connection_Parameter_Request. Without it the controller must
+            // reject the request itself (Core Vol 6 Part B 5.1.7.1). The nRF SoftDevice Controller
+            // never gets that far: it leaves feature bit 1 clear and answers LL_UNKNOWN_RSP, so the
+            // central uses LL_CONNECTION_UPDATE_IND. Enable that feature on another controller and
+            // this event must be accepted or rejected, or the central drops the link after 40 s.
             _ => {} // ignore other Gatt Connection Events
         }
     };
