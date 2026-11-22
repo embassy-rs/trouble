@@ -157,13 +157,6 @@ async fn gatt_events_task<P: PacketPool>(server: &Server<'_>, conn: &GattConnect
                     Err(e) => warn!("[gatt] error sending response: {:?}", e),
                 };
             }
-            // Ignoring `RequestConnectionParams` is safe here. It is raised only for a central's
-            // LL_CONNECTION_PARAM_REQ, and only with the `connection-params-update` feature, which
-            // unmasks HCI_LE_Remote_Connection_Parameter_Request. Without it the controller must
-            // reject the request itself (Core Vol 6 Part B 5.1.7.1). The nRF SoftDevice Controller
-            // never gets that far: it leaves feature bit 1 clear and answers LL_UNKNOWN_RSP, so the
-            // central uses LL_CONNECTION_UPDATE_IND. Enable that feature on another controller and
-            // this event must be accepted or rejected, or the central drops the link after 40 s.
             _ => {} // ignore other Gatt Connection Events
         }
     };
@@ -212,10 +205,8 @@ async fn custom_task<C: Controller + ControllerCmdSync<LeReadLocalSupportedFeatu
 ) {
     let mut tick: u8 = 0;
     let level = server.battery_service.level;
-    // Centrals connect with a short interval and no peripheral latency (macOS: 30 ms / 0), which
-    // keeps the radio up every event. Ask for a slower interval with latency: the controller then
-    // only listens every 5th event when it has nothing to send (Core v6.0 Vol 6 Part B 4.5.1).
-    // 60-75 ms / latency 4 / 4 s is also within Apple's accessory connection parameter rules.
+    // Ask the central for a slower interval with peripheral latency to save power when idle.
+    // This adds up to (latency + 1) * interval of delay before a request is heard.
     let params = RequestedConnParams {
         min_connection_interval: Duration::from_millis(60),
         max_connection_interval: Duration::from_millis(75),
