@@ -17,6 +17,8 @@ use embassy_time::TimeoutError;
 #[cfg(feature = "subrating")]
 use crate::connection::SubratingParams;
 use crate::connection::{ConnParams, Connection, ConnectionEvent, SecurityLevel};
+#[cfg(not(feature = "security"))]
+use crate::cursor::WriteCursor;
 #[cfg(feature = "per-connection-address")]
 use crate::host::AdvHandleState::{self, Advertising};
 use crate::host::EventHandler;
@@ -24,6 +26,8 @@ use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
+#[cfg(not(feature = "security"))]
+use crate::types::l2cap::{L2capHeader, L2CAP_CID_LE_U_SECURITY_MANAGER};
 use crate::{config, Address, Error, Identity, PacketPool};
 
 /// Resolvable private addresses used on a connection.
@@ -985,6 +989,27 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     }
                     _ => (),
                 }
+            }
+        }
+        #[cfg(not(feature = "security"))]
+        {
+            // A device that does not support pairing answers every SMP command with Pairing Failed,
+            // reason Pairing Not Supported (Core 5.4, Vol 3, Part H, Section 3.3). The answer does not
+            // depend on the PDU, so an empty PDU or a Pairing Failed gets it too.
+            if self.connection_by_handle(handle).is_some() {
+                // Pairing Failed command code, then reason Pairing Not Supported
+                const PAIRING_NOT_SUPPORTED: [u8; 2] = [0x05, 0x05];
+                let l2cap = L2capHeader {
+                    channel: L2CAP_CID_LE_U_SECURITY_MANAGER,
+                    length: PAIRING_NOT_SUPPORTED.len() as u16,
+                };
+                let mut packet = pdu.into_inner();
+                let mut w = WriteCursor::new(packet.as_mut());
+                w.write_hci(&l2cap)?;
+                w.append(&PAIRING_NOT_SUPPORTED)?;
+                let len = w.len();
+                self.try_outbound(handle, Pdu::new(packet, len))?;
+                warn!("[host] got security manager PDU but 'security' feature is not enabled.");
             }
         }
         Ok(())
