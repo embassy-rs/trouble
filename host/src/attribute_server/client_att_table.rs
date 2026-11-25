@@ -6,7 +6,8 @@ use embassy_sync::blocking_mutex::Mutex;
 use super::{AttributeData, AttributeTable, Client};
 use crate::att::AttErrorCode;
 use crate::config::CLIENT_ATT_TABLE_SIZE;
-use crate::{Error, Identity};
+use crate::connection::Connection;
+use crate::{Error, Identity, PacketPool};
 
 const HEADER_SIZE: usize = core::mem::size_of::<Header>();
 const ENTRY_SIZE: usize = core::mem::size_of::<Entry>();
@@ -415,20 +416,20 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
         }
     }
 
-    pub(crate) fn connect(&self, peer_identity: &Identity) -> Result<(), Error> {
+    pub(crate) fn connect(&self, conn: &Connection<'_, impl PacketPool>) -> Result<(), Error> {
         self.state.lock(|n| {
-            trace!("[server] searching for peer {:?}", peer_identity);
+            trace!("[server] searching for peer {:?}", conn.peer_identity());
             let mut n = n.borrow_mut();
             let empty_slot = Identity::default();
             for (client, table) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
+                if client.matches(conn) {
                     // trace!("[server] found! table = {:?}", *table);
                     client.is_connected = true;
                     return Ok(());
                 } else if client.identity == empty_slot {
                     //  trace!("[server] empty slot: connecting");
                     client.is_connected = true;
-                    client.set_identity(*peer_identity);
+                    client.set_identity(conn);
                     return Ok(());
                 }
             }
@@ -438,7 +439,7 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
                 if !client.is_connected {
                     trace!("[server] booting disconnected peer {:?}", client.identity);
                     client.is_connected = true;
-                    client.set_identity(*peer_identity);
+                    client.set_identity(conn);
                     // erase the previous client's config
                     table.clear();
                     return Ok(());
@@ -451,11 +452,11 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
         })
     }
 
-    pub(crate) fn disconnect(&self, peer_identity: &Identity, bonded: bool) {
+    pub(crate) fn disconnect(&self, conn: &Connection<'_, impl PacketPool>, bonded: bool) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, table) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
+                if client.matches(conn) {
                     if !bonded {
                         *client = Client::default();
                         table.clear();
@@ -470,14 +471,14 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
 
     pub(crate) fn with_value<R>(
         &self,
-        peer_identity: &Identity,
+        conn: &Connection<'_, impl PacketPool>,
         att_handle: u16,
         f: impl FnOnce(&[u8]) -> R,
     ) -> Option<R> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
-                if client.identity.match_identity(peer_identity) {
+                if client.matches(conn) {
                     return table.get(att_handle).map(f);
                 }
             }
@@ -487,7 +488,7 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
 
     pub(crate) fn read(
         &self,
-        peer_identity: &Identity,
+        conn: &Connection<'_, impl PacketPool>,
         att_handle: u16,
         offset: usize,
         data: &mut [u8],
@@ -495,7 +496,7 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
-                if client.identity.match_identity(peer_identity) {
+                if client.matches(conn) {
                     let value = table.get(att_handle).ok_or(AttErrorCode::ATTRIBUTE_NOT_FOUND)?;
                     if offset > value.len() {
                         return Err(AttErrorCode::INVALID_OFFSET);
@@ -512,7 +513,7 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
 
     pub(crate) fn write(
         &self,
-        peer_identity: &Identity,
+        conn: &Connection<'_, impl PacketPool>,
         att_handle: u16,
         offset: usize,
         data: &[u8],
@@ -520,7 +521,7 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, table) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
+                if client.matches(conn) {
                     return table.write(att_handle, offset, data);
                 }
             }
@@ -528,11 +529,11 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
         })
     }
 
-    pub(crate) fn get_client_att_table(&self, peer_identity: &Identity) -> Option<ClientAttTable> {
+    pub(crate) fn get_client_att_table(&self, conn: &Connection<'_, impl PacketPool>) -> Option<ClientAttTable> {
         self.state.lock(|n| {
             let n = n.borrow();
             for (client, table) in n.iter() {
-                if client.identity.match_identity(peer_identity) {
+                if client.matches(conn) {
                     return Some(table.clone());
                 }
             }
@@ -540,12 +541,16 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
         })
     }
 
-    pub(crate) fn set_client_att_table(&self, peer_identity: &Identity, table: &ClientAttTableView<'_>) {
+    pub(crate) fn set_client_att_table(&self, conn: &Connection<'_, impl PacketPool>, table: &ClientAttTableView<'_>) {
         self.state.lock(|n| {
             let mut n = n.borrow_mut();
             for (client, t) in n.iter_mut() {
-                if client.identity.match_identity(peer_identity) {
-                    trace!("Setting client attribute table {:?} for {:?}", table, peer_identity);
+                if client.matches(conn) {
+                    trace!(
+                        "Setting client attribute table {:?} for {:?}",
+                        table,
+                        conn.peer_identity()
+                    );
                     t.set_values(table);
                     break;
                 }
@@ -558,7 +563,7 @@ impl<M: RawMutex, const CONN_MAX: usize> ClientAttTables<M, CONN_MAX> {
             let mut n = n.borrow_mut();
             for (client, _) in n.iter_mut() {
                 if identity.match_identity(&client.identity) {
-                    client.set_identity(identity);
+                    client.identity = identity;
                     return Ok(());
                 }
             }
