@@ -16,6 +16,7 @@ pub(crate) struct ServerArgs {
     packet_type: Option<syn::Type>,
     attribute_table_size: Option<Expr>,
     connections_max: Option<Expr>,
+    service_changed: Option<Expr>,
 }
 
 impl ServerArgs {
@@ -58,8 +59,14 @@ impl ServerArgs {
                 })?;
                 self.connections_max = Some(buffer.parse()?);
             }
+            "service_changed" => {
+                let buffer = meta.value().map_err(|_| {
+                    Error::custom("service_changed must be followed by `= [bool]`. e.g. service_changed = true".to_string())
+                })?;
+                self.service_changed = Some(buffer.parse()?);
+            }
             other => return Err(meta.error(format!(
-                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, packet_type, attribute_table_size, connections_max"
+                "Unsupported server property: '{other}'.\nSupported properties are: mutex_type, packet_type, attribute_table_size, connections_max, service_changed"
             ))),
         }
         Ok(())
@@ -89,6 +96,9 @@ impl ServerBuilder {
             .arguments
             .packet_type
             .unwrap_or(syn::Type::Verbatim(quote!(trouble_host::prelude::DefaultPacketPool)));
+
+        let service_changed = self.arguments.service_changed.unwrap_or(parse_quote!(false));
+        let gatt_config = quote!(trouble_host::gap::GattServiceConfig { service_changed: #service_changed });
 
         let mut code_service_definition = TokenStream2::new();
         let mut code_service_init = TokenStream2::new();
@@ -136,7 +146,7 @@ impl ServerBuilder {
             })
         }
 
-        let attr_sum = quote!({let mut attr_sum = trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT;
+        let attr_sum = quote!({let mut attr_sum = trouble_host::gap::GAP_SERVICE_ATTRIBUTE_COUNT + #gatt_config.extra_attribute_count();
             #code_attribute_summation
             attr_sum
         });
@@ -161,7 +171,7 @@ impl ServerBuilder {
             };
             const _: () = const {
                 let exact = {4 + 6 * ({
-                    let mut cccd_sum = 0;
+                    let mut cccd_sum = if #service_changed { 1 } else { 0 };
                     #code_cccd_summation
                     cccd_sum
                 }
@@ -202,7 +212,7 @@ impl ServerBuilder {
                 #visibility fn new_default(name: &'values str) -> Result<Self, &'static str> {
                     let mut table: trouble_host::attribute::AttributeTable<'_, #mutex_type, _ATTRIBUTE_TABLE_SIZE> = trouble_host::attribute::AttributeTable::new();
 
-                    trouble_host::gap::GapConfig::default(name).build(&mut table)?;
+                    trouble_host::gap::GapConfig::default(name).build_with_gatt(&mut table, #gatt_config)?;
 
                     #code_service_init
 
@@ -220,7 +230,7 @@ impl ServerBuilder {
                 #visibility fn new_with_config(gap: trouble_host::gap::GapConfig<'values>) -> Result<Self, &'static str> {
                     let mut table: trouble_host::attribute::AttributeTable<'_, #mutex_type, _ATTRIBUTE_TABLE_SIZE> = trouble_host::attribute::AttributeTable::new();
 
-                    gap.build(&mut table)?;
+                    gap.build_with_gatt(&mut table, #gatt_config)?;
 
                     #code_service_init
 

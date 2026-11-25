@@ -147,16 +147,26 @@ NOTE: Notifications/indications will only be delivered if the client has enabled
 
 === Service Changed
 
-The `service-changed` feature adds the Service Changed characteristic to the GATT service. Its presence changes what a client may assume: a bonded client can keep its cached attribute table across connections and rely on indications to learn about changes. An application that enables the feature must therefore indicate after any change to its attribute table, such as a firmware update that adds or moves characteristics:
+The `service_changed` option of `#[gatt_server]` adds the Service Changed characteristic to the GATT service:
 
 [source,rust]
 ----
-server.table().service_changed()?.indicate(&conn, &SERVICE_CHANGED_ALL, false).await?;
+#[gatt_server(service_changed = true)]
+struct Server {
+    battery_service: BatteryService,
+}
+----
+
+Its presence changes what a client may assume: a bonded client can keep its cached attribute table across connections and rely on indications to learn about changes. A server that enables it must therefore indicate after any change to its attribute table, such as a firmware update that adds or moves characteristics:
+
+[source,rust]
+----
+server.table().service_changed()?.indicate(&conn, &ServiceChanged::ALL, false).await?;
 ----
 
 The indication only reaches a client that has enabled it in the CCCD, and a table change usually happens while the client is disconnected. To tell a client on its next connection, store a value per bond that identifies the table it last saw, such as `AttributeTable::hash()` (available with the `security` feature), and compare it when the bonded client encrypts the link.
 
-The feature adds 3 attributes. The derived table size accounts for them, and a server that sets `attribute_table_size` by hand needs 3 more entries.
+The option adds 3 attributes. The derived table size accounts for them, and a server that sets `attribute_table_size` by hand needs 3 more entries. A server that builds its own table passes `GattServiceConfig { service_changed: true }` to `GapConfig::build_with_gatt`.
 
 == The GATT Client
 
