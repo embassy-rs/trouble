@@ -12,7 +12,7 @@ use core::task::Poll;
 
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
-use bt_hci::param::{BdAddr, ConnHandle, EncryptionEnabledLevel, LeConnRole};
+use bt_hci::param::{BdAddr, ConnHandle, EncryptionEnabledLevel};
 use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -350,6 +350,7 @@ impl Inner {
         pairing_sm.handle_l2cap_command(command, payload, &mut ops)
     }
 
+    #[cfg(feature = "central")]
     fn handle_central<P: PacketPool>(
         &mut self,
         bonds: &mut VecView<BondInformation>,
@@ -602,23 +603,13 @@ impl Inner {
             peer_identity,
             state: &self.state,
         };
-        if role == LeConnRole::Peripheral {
-            self.pairing_sm = Some(Pairing::initiate_peripheral(
-                local_address,
-                peer_address,
-                &mut ops,
-                local_io,
-                user_initiated,
-            )?);
-        } else {
-            self.pairing_sm = Some(Pairing::initiate_central(
-                local_address,
-                peer_address,
-                &mut ops,
-                local_io,
-                user_initiated,
-            )?);
-        }
+        self.pairing_sm = Some(match role {
+            #[cfg(feature = "central")]
+            bt_hci::param::LeConnRole::Central => {
+                Pairing::initiate_central(local_address, peer_address, &mut ops, local_io, user_initiated)?
+            }
+            _ => Pairing::initiate_peripheral(local_address, peer_address, &mut ops, local_io, user_initiated)?,
+        });
         Ok(())
     }
 }
@@ -865,6 +856,7 @@ impl<'d> SecurityManager<'d> {
         )
     }
 
+    #[cfg(feature = "central")]
     fn handle_central<P: PacketPool>(
         &self,
         pdu: Pdu<P::Packet>,
@@ -892,10 +884,10 @@ impl<'d> SecurityManager<'d> {
     ) -> Result<(), Error> {
         let role = storage.role;
 
-        let result = if role == LeConnRole::Peripheral {
-            self.handle_peripheral(pdu, connections, storage)
-        } else {
-            self.handle_central(pdu, connections, storage)
+        let result = match role {
+            #[cfg(feature = "central")]
+            bt_hci::param::LeConnRole::Central => self.handle_central(pdu, connections, storage),
+            _ => self.handle_peripheral(pdu, connections, storage),
         };
 
         {
