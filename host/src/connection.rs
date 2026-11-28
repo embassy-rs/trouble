@@ -786,6 +786,25 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.set_bondable(self.index, bondable)
     }
 
+    /// Get whether the connection accepts pairing.
+    pub fn pairable(&self) -> Result<bool, Error> {
+        self.manager.get_pairable(self.index)
+    }
+
+    /// Set whether the connection accepts pairing.
+    ///
+    /// By default a connection is pairable.
+    ///
+    /// On a connection that is not pairable, the peripheral answers a Pairing Request with
+    /// Pairing Failed, reason Pairing Not Supported, as a device without pairing support does.
+    /// A bonded peer can still encrypt the link with its bond.
+    ///
+    /// Unlike [`Connection::set_bondable`], which still lets a peer pair without bonding, this
+    /// refuses the pairing itself.
+    pub fn set_pairable(&self, pairable: bool) -> Result<(), Error> {
+        self.manager.set_pairable(self.index, pairable)
+    }
+
     /// Confirm that the displayed pass key matches the one displayed on the other party
     pub fn pass_key_confirm(&self) -> Result<(), Error> {
         self.manager.pass_key_confirm(self.index, true)

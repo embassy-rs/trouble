@@ -272,6 +272,9 @@ impl Inner {
             handle,
             peer_identity,
         } = *cmd;
+        if command == Command::PairingRequest && !storage.pairable {
+            return Err(Error::Security(Reason::PairingNotSupported));
+        }
         if self.is_idle() && command == Command::PairingRequest {
             let local_address = self.connection_local_address(storage)?;
             let peer_address = Self::connection_peer_address(storage);
@@ -1432,5 +1435,82 @@ mod tests {
             assert_eq!(inner.pairing_sm.as_ref().unwrap().peer_address(), other);
             Ok(())
         }));
+    }
+
+    const PAIRING_REQUEST: [u8; 6] = [0x03, 0x00, 0x0D, 16, 0x07, 0x07];
+    const LEGACY_PAIRING_REQUEST: [u8; 6] = [0x03, 0x00, 0x05, 16, 0x07, 0x07];
+
+    fn pairing_request_result(handle: ConnHandle, peer: Identity, pairable: Option<bool>) -> (Result<(), Error>, bool) {
+        pairing_request_result_for(&PAIRING_REQUEST, handle, peer, pairable)
+    }
+
+    fn pairing_request_result_for(
+        request: &[u8],
+        handle: ConnHandle,
+        peer: Identity,
+        pairable: Option<bool>,
+    ) -> (Result<(), Error>, bool) {
+        let mgr = setup_manager();
+        unwrap!(mgr.connect(handle, peer.addr, LeConnRole::Peripheral, ConnParams::new()));
+        if let Some(pairable) = pairable {
+            unwrap!(mgr.with_connected_handle(handle, |storage| {
+                storage.pairable = pairable;
+                Ok(())
+            }));
+        }
+        let mut inner = test_inner(peer.addr);
+        inner.pairing_sm = None;
+        let mut bonds: heapless::Vec<BondInformation, 4> = heapless::Vec::new();
+        let events = Channel::<NoopRawMutex, SecurityEventData, 3>::new();
+        let cmd = SmpCommand {
+            command: Command::PairingRequest,
+            payload: request,
+            handle,
+            peer_identity: peer,
+        };
+        unwrap!(mgr.with_connected_handle(handle, |storage| {
+            let result = inner.handle_peripheral(&mut bonds, &events, &cmd, mgr, storage);
+            Ok((result, inner.pairing_sm.is_some()))
+        }))
+    }
+
+    #[test]
+    fn connection_is_pairable_by_default() {
+        let mgr = setup_manager();
+        let handle = ConnHandle::new(5);
+        unwrap!(mgr.connect(
+            handle,
+            Address::random([0x13, 2, 3, 4, 5, 6]),
+            LeConnRole::Peripheral,
+            ConnParams::new()
+        ));
+        assert!(unwrap!(
+            mgr.with_connected_handle(handle, |storage| Ok(storage.pairable))
+        ));
+    }
+
+    #[test]
+    fn non_pairable_connection_refuses_pairing_request() {
+        let peer = Identity::from(Address::random([0x14, 2, 3, 4, 5, 6]));
+        let (result, started) = pairing_request_result(ConnHandle::new(6), peer, Some(false));
+        assert_eq!(result, Err(Error::Security(Reason::PairingNotSupported)));
+        assert!(!started);
+    }
+
+    #[test]
+    fn pairable_connection_starts_pairing() {
+        let peer = Identity::from(Address::random([0x15, 2, 3, 4, 5, 6]));
+        let (result, started) = pairing_request_result(ConnHandle::new(7), peer, None);
+        assert_ne!(result, Err(Error::Security(Reason::PairingNotSupported)));
+        assert!(started);
+    }
+
+    #[test]
+    fn non_pairable_connection_refuses_pairing_request_without_secure_connections() {
+        let peer = Identity::from(Address::random([0x16, 2, 3, 4, 5, 6]));
+        let (result, started) =
+            pairing_request_result_for(&LEGACY_PAIRING_REQUEST, ConnHandle::new(8), peer, Some(false));
+        assert_eq!(result, Err(Error::Security(Reason::PairingNotSupported)));
+        assert!(!started);
     }
 }
