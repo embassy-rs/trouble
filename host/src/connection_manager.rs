@@ -918,6 +918,37 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         }
     }
 
+    pub(crate) fn get_pairable(&self, index: u8) -> Result<bool, Error> {
+        let storage = self.connection(index);
+        match storage.state {
+            ConnectionState::Connected => {
+                #[cfg(feature = "security")]
+                {
+                    Ok(storage.pairable)
+                }
+                #[cfg(not(feature = "security"))]
+                Ok(false)
+            }
+            _ => Err(Error::Disconnected),
+        }
+    }
+
+    pub(crate) fn set_pairable(&self, index: u8, pairable: bool) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            let mut storage = self.connection_mut(index);
+            match storage.state {
+                ConnectionState::Connected => {
+                    storage.pairable = pairable;
+                    Ok(())
+                }
+                _ => Err(Error::Disconnected),
+            }
+        }
+        #[cfg(not(feature = "security"))]
+        Err(Error::NotSupported)
+    }
+
     pub(crate) fn set_bondable(&self, index: u8, bondable: bool) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
@@ -1265,6 +1296,8 @@ pub struct ConnectionStorage<P> {
     #[cfg(feature = "security")]
     pub bondable: bool,
     #[cfg(feature = "security")]
+    pub pairable: bool,
+    #[cfg(feature = "security")]
     pub oob_available: bool,
     #[cfg(feature = "security")]
     pub bond_rejected: bool,
@@ -1416,6 +1449,8 @@ impl<P> ConnectionStorage<P> {
             #[cfg(feature = "security")]
             bondable: false,
             #[cfg(feature = "security")]
+            pairable: true,
+            #[cfg(feature = "security")]
             oob_available: false,
             #[cfg(feature = "att-queued-writes")]
             prepare_write: PrepareWriteState::new(),
@@ -1446,6 +1481,7 @@ impl<P> ConnectionStorage<P> {
         {
             self.security_level = SecurityLevel::NoEncryption;
             self.bondable = false;
+            self.pairable = true;
         }
         #[cfg(feature = "att-queued-writes")]
         self.prepare_write.clear();
